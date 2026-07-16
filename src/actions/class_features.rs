@@ -8034,3 +8034,95 @@ pub const INURED_TO_UNDEATH_TAG: &str = "wizard.inured_to_undeath";
 /// Psychic Defenses (RAW lv14) — class templates target a balanced
 /// playable level, not lockstep PHB progression.
 pub const STORM_SOUL_SEA_TAG: &str = "barbarian.storm_soul_sea";
+
+/// 5e Barbarian Primal Path — **Path of the Storm Herald (Desert)** —
+/// **Storm Soul (Desert)** subclass feature tag (level 6, XGtE). Passive:
+/// the desert storm herald's body absorbs the heat of the sun-scorched
+/// dunes — the barbarian gains **resistance to fire damage**.
+///
+/// RAW pairs the fire resistance with an "immune to extreme heat" clause
+/// (the RAW `Adventuring/Environment/Extreme Heat` exhaustion rider) and
+/// a "you can ignite an unattended flammable object within 5 ft" ribbon.
+/// Neither has a combat surface on today's engine — extreme-heat
+/// exhaustion sits outside the tactical loop, and the ignite ribbon is
+/// out-of-combat flavor — so both are left as future work. The resistance
+/// clause is the load-bearing defensive half and rides here alone,
+/// matching the way `STORM_SOUL_SEA_TAG` ships without the swim /
+/// water-breathing halves and `INURED_TO_UNDEATH_TAG` ships without the
+/// max-HP-can't-be-reduced clause.
+///
+/// Second Barbarian-chassis row on the passive typed-resistance lane —
+/// `STORM_SOUL_SEA_TAG` (Sea, Lightning) blazed the trail; every earlier
+/// row (Dwarven / Fiendish / Draconic / Heart of the Storm / Psychic
+/// Defenses / Radiant Soul / Marid / Dao / Djinni Elemental Gift /
+/// Inured to Undeath) came off a racial trait or a Warlock / Sorcerer
+/// / Wizard subclass. The Barbarian chassis's rage-gated broad
+/// resistance (Bear Totem, `RAGE_GATED_BROAD_RESISTANCES`) is distinct
+/// on both axis (broad, not typed) and gate (rage-gated, not always-on)
+/// from this always-on typed-resistance grant.
+///
+/// Overlaps the Fire axis with **Fiendish Resilience** (Warlock Fiend
+/// Patron lv10) and **Draconic Resilience** (Sorcerer Draconic
+/// Bloodline lv6) on different chassis — the three never legally
+/// co-occur on a single build (Barbarian vs. Warlock vs. Sorcerer
+/// subclass), and a hypothetical multiclass carrier caps at a single
+/// /2 per Fire hit via the "one halving per damage instance" rule.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to Storm Soul (Sea)'s lightning row,
+/// Fiendish / Draconic Resilience's fire rows, the Warlock Elemental
+/// Gift rows (Marid Cold / Dao Bludgeoning / Djinni Thunder), Radiant
+/// Soul's radiant row, Heart of the Storm's lightning + thunder row,
+/// Psychic Defenses' psychic row, and Inured to Undeath's necrotic row.
+/// Single-type slice (Fire only) — same shape as the Fiendish Resilience
+/// / Draconic Resilience Fire rows on the single-type-per-subclass lane.
+///
+/// Sibling to `STORM_SOUL_SEA_TAG` on the Primal Path: Storm Herald
+/// lane — same helper (`subclass_barbarian_template`), same level-6
+/// subclass tell, same always-on resistance shape, different elemental
+/// flavor and different damage axis (Fire here vs. Lightning there).
+/// The two never legally co-occur on a single build (RAW: one Storm
+/// Herald flavor picked at lv3). Also sibling to `MARID_ELEMENTAL_GIFT_TAG`
+/// / `DAO_ELEMENTAL_GIFT_TAG` / `DJINNI_ELEMENTAL_GIFT_TAG` /
+/// `RADIANT_SOUL_TAG` / `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG`
+/// / `INURED_TO_UNDEATH_TAG` on the "one feature tag drives one cohort
+/// row" declarative-table pattern — different source chassis (Barbarian
+/// Primal Path vs. Warlock Otherworldly Patron / Sorcerer Sorcerous
+/// Origin / Wizard Arcane Tradition) and different damage axis.
+///
+/// Ships on `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE` — the second Path
+/// of the Storm Herald subclass template on the barbarian chassis
+/// (extending the Bear / Wolf / Eagle / Tiger / Elk / Wolverine /
+/// Panther / Berserker / Zealot / Sea Storm Herald subclass roster).
+/// Distinct from every other barbarian subclass template — the Totem
+/// Warrior templates stack rage-gated broad resistance (Bear) or rage-
+/// gated speed / ally-aura bumps (Wolf / Eagle / Tiger / Elk / Wolverine
+/// / Panther), while the Storm Heralds layer on always-on typed
+/// resistance regardless of rage state, differing only in elemental
+/// flavor.
+///
+/// RAW's Storm Herald picks up other features not shipped on this
+/// template — **Storm Aura (Desert)** (lv3: while raging, every hostile
+/// within 10ft eats a fixed 2 fire damage at the start of each of the
+/// barbarian's turns, no save; a per-turn AoE aura mechanic that needs
+/// a per-turn aura fire hook and a target-filtering policy), **Shielding
+/// Storm** (lv10: allies within 10ft of the raging barbarian ALSO gain
+/// Storm Soul's resistance; an ally-aura extension mechanic), and
+/// **Raging Storm (Desert)** (lv14: reaction-on-attacker-melee-hit fire
+/// damage rider; a per-attack reactive install mechanic). Only the lv6
+/// Storm Soul passive has a mechanical surface that plugs cleanly into
+/// the shared passive typed-resistance cohort, so we ship that half and
+/// leave the rest as future work — matching the way `STORM_SOUL_SEA_TAG`
+/// / `INURED_TO_UNDEATH_TAG` / `MARID_ELEMENTAL_GIFT_TAG` /
+/// `DAO_ELEMENTAL_GIFT_TAG` / `DJINNI_ELEMENTAL_GIFT_TAG` each ship
+/// only the passive resistance half of their broader RAW kit.
+///
+/// Ships on the CR-4 (level-9) barbarian chassis at (or above) its
+/// strict RAW lv6 gate for the same reason `STORM_SOUL_SEA_TAG` ships
+/// on `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`, `MARID_WARLOCK_TEMPLATE`
+/// / `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` ship Elemental
+/// Gift (RAW lv6), `NECROMANCY_WIZARD_TEMPLATE` ships Inured to Undeath
+/// (RAW lv10), and `ABERRANT_MIND_SORCERER_TEMPLATE` ships Psychic
+/// Defenses (RAW lv14) — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+pub const STORM_SOUL_DESERT_TAG: &str = "barbarian.storm_soul_desert";

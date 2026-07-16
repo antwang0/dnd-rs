@@ -55792,6 +55792,323 @@ mod tests {
         assert_eq!(e.actors[&sea].brutal_critical_dice(), 1);
     }
 
+    /// Storm Soul (Desert) halves incoming Fire damage on the Desert
+    /// Storm Herald Barbarian; the baseline barbarian eats the full hit;
+    /// other damage types on the desert storm herald pass through
+    /// unchanged (the RAW subclass grant is scoped to Fire). Sibling to
+    /// `storm_soul_sea_halves_lightning_damage_on_sea_storm_herald` on
+    /// the same passive-typed-resistance cohort-row lane — different
+    /// elemental flavor, same shape.
+    #[test]
+    fn storm_soul_desert_halves_fire_damage_on_desert_storm_herald() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let desert = e
+            .instantiate_creature(&DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&desert].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_DESERT_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_DESERT_TAG,
+        ));
+        // 20 fire → 10 (halved by Storm Soul (Desert)).
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Fire),
+            10,
+            "desert storm herald halves fire damage",
+        );
+        // Baseline barbarian eats the full 20 fire.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Fire),
+            20,
+            "baseline barbarian takes full fire damage",
+        );
+        // Other damage types still take full damage on the Desert Storm
+        // Herald outside of rage — the RAW subclass grant is scoped to
+        // Fire. Cold, Lightning, Radiant, Psychic, Necrotic, Thunder,
+        // and Acid all pass through unchanged (the Sea Storm Herald's
+        // Lightning row lives on a different chassis; the sibling
+        // subclass rows cover those damage types on their respective
+        // chassis, not here).
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Lightning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Psychic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+        assert_eq!(
+            e.actors[&desert].effective_damage(20, DamageType::Acid),
+            20,
+        );
+    }
+
+    /// Storm Soul (Desert) plugs into `has_own_typed_reduction(Fire)` —
+    /// the "does this actor already scale this type?" gate used by Aura
+    /// of Warding to enforce the "one halving per damage instance" rule.
+    /// Locks the shared read chokepoint so a hypothetical Desert Storm
+    /// Herald Barbarian / Ancients Paladin party sees the aura no-op
+    /// cleanly on fire hits (the /2 already fires via Storm Soul; the
+    /// aura would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Storm Soul (Sea) / Marid / Dao / Djinni Elemental Gift, Radiant
+    /// Soul, Draconic / Fiendish Resilience, and Inured to Undeath
+    /// registration tests on the same helper.
+    #[test]
+    fn storm_soul_desert_registers_own_typed_reduction_for_fire() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let desert = e
+            .instantiate_creature(&DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Desert storm herald's Storm Soul (Desert) flag registers as an
+        // own typed reduction on the Fire lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&desert].has_own_typed_reduction(DamageType::Fire),
+            "Storm Soul (Desert) registers as own typed reduction on Fire",
+        );
+        // Baseline barbarian without the tag has no own reduction on
+        // Fire — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Fire),
+            "baseline barbarian has no own fire reduction",
+        );
+    }
+
+    /// Template drift check: only the Desert Storm Herald Barbarian
+    /// ships the `STORM_SOUL_DESERT_TAG` passive feature. Neither the
+    /// baseline Barbarian nor any of the totem-family subclass templates
+    /// (Bear / Wolf / Eagle / Tiger / Elk / Wolverine / Panther) nor
+    /// the Berserker / Zealot / Sea Storm Herald subclass templates
+    /// carry the tag — keeps the subclass tell scoped to its own chassis
+    /// so a future regression (e.g., accidental tag insertion into the
+    /// shared `subclass_barbarian_template` helper bleeding into every
+    /// subclass build) is caught here. Sibling to
+    /// `storm_soul_sea_lands_only_on_sea_storm_herald_barbarian` /
+    /// `djinni_elemental_gift_lands_only_on_djinni_warlock` /
+    /// `inured_to_undeath_lands_only_on_necromancy_wizard` on the same
+    /// "single-subclass-tag ownership" lock.
+    #[test]
+    fn storm_soul_desert_lands_only_on_desert_storm_herald_barbarian() {
+        use crate::actions::class_features::STORM_SOUL_DESERT_TAG;
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, BERSERKER_BARBARIAN_TEMPLATE,
+            DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, ELK_TOTEM_BARBARIAN_TEMPLATE,
+            SEA_STORM_HERALD_BARBARIAN_TEMPLATE, TOTEM_BARBARIAN_TEMPLATE,
+            ZEALOT_BARBARIAN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let desert = e
+            .instantiate_creature(&DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        let bear = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        let elk = e
+            .instantiate_creature(&ELK_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        let berserker = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(12, 2), 0, 0)
+            .unwrap();
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(14, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&desert].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        // Sibling sea storm herald doesn't carry the Desert tag — the
+        // two Storm Herald flavors sit as distinct subclass tells, not a
+        // shared "Storm Herald" tag.
+        assert!(!e.actors[&sea].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        assert!(!e.actors[&bear].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        assert!(!e.actors[&elk].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        assert!(!e.actors[&berserker].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        assert!(!e.actors[&zealot].has_passive_feature(STORM_SOUL_DESERT_TAG));
+    }
+
+    /// Sanity: the Desert Storm Herald Barbarian inherits the shared
+    /// level-9 barbarian subclass envelope through the
+    /// `subclass_barbarian_template` helper — Rage, Fast Movement,
+    /// Relentless Rage, Persistent Rage, Feral Instinct, Danger Sense,
+    /// Extra Attack, and Brutal Critical(1d) all carry through alongside
+    /// the subclass-only Storm Soul (Desert) tag. Guards against a
+    /// regression where the helper drops the baseline feature set on
+    /// its way to inserting the subclass tag. Sibling to
+    /// `sea_storm_herald_inherits_shared_barbarian_envelope` on the same
+    /// clone-and-layer lock, but on the sibling elemental flavor.
+    #[test]
+    fn desert_storm_herald_inherits_shared_barbarian_envelope() {
+        use crate::actions::class_features::{
+            FAST_MOVEMENT_TAG, RAGE_TAG, RELENTLESS_RAGE_TAG, STORM_SOUL_DESERT_TAG,
+        };
+        use crate::actors::creatures::barbarians::DESERT_STORM_HERALD_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let desert = e
+            .instantiate_creature(&DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline barbarian envelope features still carry through.
+        assert!(e.actors[&desert].has_passive_feature(RAGE_TAG));
+        assert!(e.actors[&desert].has_passive_feature(FAST_MOVEMENT_TAG));
+        assert!(e.actors[&desert].has_passive_feature(RELENTLESS_RAGE_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&desert].has_passive_feature(STORM_SOUL_DESERT_TAG));
+        // Level-9 chassis inherits: Danger Sense (lv2, DEX-save advantage),
+        // Feral Instinct (lv7, initiative advantage), Persistent Rage
+        // (lv15, doubled rage duration), Extra Attack (lv5), Brutal
+        // Critical(1d) (lv9 melee crit rider).
+        assert!(e.actors[&desert].has_danger_sense());
+        assert!(e.actors[&desert].has_feral_instinct());
+        assert!(e.actors[&desert].has_persistent_rage());
+        assert!(e.actors[&desert].has_extra_attack());
+        assert_eq!(e.actors[&desert].brutal_critical_dice(), 1);
+    }
+
+    /// Cohort-promotion sanity: after promoting `condition_attack_bonus`
+    /// from the inline `if self.has_condition(...) { bonus += N; }`
+    /// chain to a shared `CONDITION_ATTACK_BONUSES` cohort walk (matching
+    /// the shape of the sibling `CONDITION_SAVE_BONUSES` /
+    /// `CONDITION_AC_BONUSES` cohorts), every flat row still fires
+    /// identically. Exercises Inspired (+3 attack), PrecisionAttacking
+    /// (+4 attack), GuidedStriking (+10 attack), and their combinations —
+    /// vertical stacking (Inspired + PrecisionAttacking + GuidedStriking
+    /// → +17 attacks) folds through the same filter-map-sum walk as the
+    /// sibling save / AC cohorts.
+    ///
+    /// Sacred (`+CHA modifier`) stays inline as the variable-magnitude
+    /// outlier — this test also locks that Sacred continues to fire
+    /// alongside the cohort walk on the same call.
+    #[test]
+    fn condition_attack_bonus_cohort_preserves_behavior_after_promotion() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline: no attack-bump condition, no cohort bonus.
+        assert_eq!(e.actors[&a].condition_attack_bonus(), 0);
+        // Inspired alone: +3 attacks via the Inspired row.
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::Inspired, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&a].condition_attack_bonus(), 3);
+        // Inspired + PrecisionAttacking: +7 attacks via the summed
+        // cohort walk — same filter-map-sum shape the save / AC cohorts
+        // use for their vertical stacking.
+        e.actors.get_mut(&a).unwrap().add_condition(
+            Condition::PrecisionAttacking,
+            ConditionTimer::Rounds(10),
+        );
+        assert_eq!(e.actors[&a].condition_attack_bonus(), 7);
+        // Inspired + PrecisionAttacking + GuidedStriking: +17 attacks
+        // (the largest single-swing accuracy stack).
+        e.actors.get_mut(&a).unwrap().add_condition(
+            Condition::GuidedStriking,
+            ConditionTimer::Rounds(10),
+        );
+        assert_eq!(e.actors[&a].condition_attack_bonus(), 17);
+        // Clear the cohort rows and verify Sacred fires inline. The
+        // commoner has CHA 10 (mod +0) so Sacred adds 0 to the bonus —
+        // switch to a paladin chassis to exercise Sacred's variable
+        // magnitude with a non-zero CHA mod.
+        e.actors.get_mut(&a).unwrap().remove_condition(Condition::Inspired);
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::PrecisionAttacking);
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::GuidedStriking);
+        assert_eq!(e.actors[&a].condition_attack_bonus(), 0);
+    }
+
+    /// Sacred (Sacred Weapon: +CHA modifier) stays inline in
+    /// `condition_attack_bonus` rather than riding the
+    /// `CONDITION_ATTACK_BONUSES` cohort because its magnitude reads
+    /// the holder's CHA modifier at attack time — a variable-magnitude
+    /// outlier that the flat-integer cohort row shape can't express
+    /// without a widening. Locks the inline Sacred branch against a
+    /// "we promoted all rows including the variable one and dropped
+    /// the CHA scaling" regression by exercising it on a paladin
+    /// chassis (CHA 14 → +2 mod) alongside a cohort row (Inspired +3)
+    /// to confirm the two lanes compose as +3 (cohort) + 2 (inline
+    /// Sacred) = +5.
+    #[test]
+    fn condition_attack_bonus_sacred_stays_inline_with_charisma_scaling() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Paladin CHA 14 (mod +2). Sacred alone fires the inline branch
+        // for +2 on top of the cohort walk's zero.
+        assert_eq!(e.actors[&pal].condition_attack_bonus(), 0);
+        e.actors
+            .get_mut(&pal)
+            .unwrap()
+            .add_condition(Condition::Sacred, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.actors[&pal].condition_attack_bonus(),
+            2,
+            "Sacred adds paladin's CHA modifier (+2) via inline branch below the cohort walk",
+        );
+        // Sacred + Inspired: +2 (Sacred CHA mod) + +3 (Inspired cohort
+        // row) = +5. The inline outlier composes cleanly with the
+        // cohort walk.
+        e.actors
+            .get_mut(&pal)
+            .unwrap()
+            .add_condition(Condition::Inspired, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.actors[&pal].condition_attack_bonus(),
+            5,
+            "Sacred (+CHA inline) composes with Inspired (+3 cohort row) to +5 total",
+        );
+    }
+
     /// Cohort-promotion sanity: after promoting `condition_save_bonus`
     /// from the inline `if self.has_condition(...) { bonus += N; }`
     /// chain to a shared `CONDITION_SAVE_BONUSES` cohort walk (matching

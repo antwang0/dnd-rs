@@ -539,6 +539,34 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Lightning],
     },
+    // 5e Barbarian Primal Path **Path of the Storm Herald (Desert)** —
+    // **Storm Soul (Desert)** (level 6, XGtE). RAW grants resistance to
+    // fire damage (paired with an "immune to extreme heat" exhaustion
+    // rider and an "ignite an unattended flammable object" ribbon —
+    // neither has a combat surface today, both left as future work).
+    // Second Barbarian-chassis row on the passive typed-resistance lane
+    // — `STORM_SOUL_SEA_TAG` blazed the trail with the Lightning row.
+    // Overlaps the Fire axis with Fiendish Resilience (Warlock Fiend
+    // Patron lv10) and Draconic Resilience (Sorcerer Draconic Bloodline
+    // lv6) on different chassis; the three never legally co-occur on a
+    // single build (Barbarian vs. Warlock vs. Sorcerer subclass) and a
+    // hypothetical multiclass carrier caps at a single /2 per Fire hit
+    // under the "one halving per damage instance" rule. Distinct from
+    // the barbarian chassis's rage-gated broad resistance (Bear Totem,
+    // `RAGE_GATED_BROAD_RESISTANCES`) on both axis (typed, not broad)
+    // and gate (always-on, not rage-gated). Ships on
+    // `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE` at (or above) its strict
+    // RAW lv6 gate for the same reason `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`
+    // ships Storm Soul (Sea) (RAW lv6) and `MARID_WARLOCK_TEMPLATE` /
+    // `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` ship Elemental
+    // Gift (RAW lv6) — class templates target a balanced playable
+    // level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_DESERT_TAG,
+        ),
+        types: &[DamageType::Fire],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive
@@ -1329,6 +1357,119 @@ const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
     ConditionSaveBonus {
         source: Condition::WardingBonded,
         bonus: 1,
+    },
+];
+
+/// One row in the `CONDITION_ATTACK_BONUSES` cohort — a single condition
+/// whose presence contributes a flat attack-roll delta to the holder.
+/// Sibling to `ConditionSaveBonus { source, bonus }` and
+/// `ConditionAcBonus { source, bonus }` on the "single-condition source +
+/// signed magnitude" cohort lane — same declarative row shape, different
+/// affected axis (attack roll here vs. save roll / AC there) and same
+/// unit (integer to-hit points, same scale as save / AC integers). The
+/// delta is signed for the same reason `ConditionSaveBonus.bonus` and
+/// `ConditionAcBonus.bonus` are signed: a hypothetical to-hit-debuff
+/// row (a future "Blessed-by-the-Enemy → -1 attacks" entry) would sit
+/// on the same table as the +3 / +4 / +10 buff rows without a separate
+/// cohort.
+///
+/// Bless / Bane deliberately don't ride this cohort — their d4 die
+/// lives on `bless_bane_attack_die` and their +N / -N flat lives on
+/// `attack_bonus_buff`, so including them here would double-count on
+/// the attack pipeline. Sacred (Sacred Weapon: +CHA modifier) also
+/// stays inline in `condition_attack_bonus` rather than riding this
+/// cohort — its magnitude is variable (per-actor CHA), while every row
+/// on this cohort carries a compile-time flat integer under the
+/// declarative-table pattern shared with `CONDITION_SAVE_BONUSES` and
+/// `CONDITION_AC_BONUSES`. A future closure-based sibling cohort could
+/// absorb variable-magnitude to-hit riders (a hypothetical Guided +CHA
+/// on attacks, etc.) if a second entry appears — a single Sacred outlier
+/// doesn't justify widening the row shape today.
+struct ConditionAttackBonus {
+    /// Source condition whose presence gates the row. Every attack-bump
+    /// buff on this cohort currently uses a plain single-condition
+    /// gate, matching the `ConditionSaveBonus.source` /
+    /// `ConditionAcBonus.source` shape. A future compound-gate to-hit
+    /// buff (a hypothetical "+2 attacks while Raging and Reckless") would
+    /// either widen this row to a `flag` closure or land as a sibling
+    /// cohort with the compound predicate — the shape is deliberately
+    /// narrower here than a closure-based cohort to keep the common
+    /// single-condition case a bare row.
+    source: Condition,
+    /// Signed to-hit delta contributed while `source` is held. Positive
+    /// for the current buff rows (Inspired +3 d6-average, PrecisionAttacking
+    /// +4 d8-average, GuidedStriking +10 flat); a future negative entry
+    /// for an attack-debuff would sit here as a signed delta. Summed by
+    /// `condition_attack_bonus` so vertical stacking (Inspired +
+    /// PrecisionAttacking → +7 attacks) folds through the same
+    /// filter-map-sum walk as horizontal stacking on the sibling
+    /// `CONDITION_SAVE_BONUSES` / `CONDITION_AC_BONUSES` cohorts.
+    bonus: i32,
+}
+
+/// Condition-driven attack-bonus cohort read by
+/// `ActorInstance::condition_attack_bonus`. Every row's `bonus` is
+/// summed (signed) when the row's `source` condition is held; the
+/// resulting delta is added to the attacker's to-hit roll via the shared
+/// attack-composition path. Adding a fresh condition-driven attack bump
+/// (a hypothetical Sanctuary-broken +N attack rider, a future Mark of
+/// the Hunter +N attack aura, etc.) lands as a one-line entry here
+/// rather than another `if self.has_condition(...) { bonus += N; }`
+/// branch in `condition_attack_bonus`.
+///
+/// Sibling to `CONDITION_SAVE_BONUSES` (save-roll delta) and
+/// `CONDITION_AC_BONUSES` (AC delta) on the "single-condition source +
+/// signed magnitude" cohort pattern — the three tables split by affected
+/// axis: attack roll here vs. save roll vs. AC. Same filter-map-sum
+/// walk shape, same signed-delta convention, same "one row per source
+/// condition" ordering discipline.
+///
+/// Entries (order doesn't affect the summed total; grouped by
+/// buff-vs-debuff flavor for readability):
+///   - **Bardic Inspiration** (`Inspired`, +3 attacks): the bard's
+///     signature Inspired die (RAW scales d6→d8→d10→d12 by bard level);
+///     collapses to the d6-average (+3) matching the twin `Inspired
+///     → +3 saves` row on the sibling `CONDITION_SAVE_BONUSES` cohort.
+///     Consumed by `clear_attack_advantage_riders` so the bonus doesn't
+///     double-fire across multiple swings.
+///   - **Precision Attack** (`PrecisionAttacking`, +4 attacks): the
+///     Battle Master Fighter maneuver — RAW +1d8 (d8-average, rounded
+///     down to +4) on the primed attack roll. Symmetric with Inspired
+///     on the "one-shot self-prime" lane; consumed by
+///     `clear_attack_advantage_riders` via `CONSUMED_ON_ATTACK` so the
+///     bonus only fires on the first swing after the prime installs.
+///   - **Guided Strike** (`GuidedStriking`, +10 attacks): the War Domain
+///     Cleric Channel Divinity — RAW flat +10 to the next attack roll
+///     (the largest single-swing accuracy buff in the game). Sibling
+///     to PrecisionAttacking on the "one-shot self-prime" lane; consumed
+///     by `clear_attack_advantage_riders` via `CONSUMED_ON_ATTACK` so
+///     the bonus only fires on the first swing after the prime installs.
+///
+/// Sacred Weapon's `Sacred` condition (Paladin Oath of Devotion Channel
+/// Divinity: +CHA modifier on attacks) deliberately doesn't ride this
+/// cohort — its magnitude reads the holder's CHA mod at attack time,
+/// while every row here carries a compile-time flat integer. The
+/// variable-magnitude case lives in `condition_attack_bonus` as an
+/// inline outlier, matching how Bless / Bane are intentionally excluded
+/// from the cohort due to their double-count risk with `attack_bonus_buff`
+/// / `bless_bane_attack_die` — the exclusion pattern here is "shape
+/// mismatch" rather than "lane mismatch". A future closure-based
+/// sibling cohort (or a widened `bonus: BonusValue` enum row shape)
+/// could absorb variable-magnitude to-hit riders if a second entry
+/// appears — a single Sacred outlier doesn't justify widening the row
+/// shape today.
+const CONDITION_ATTACK_BONUSES: &[ConditionAttackBonus] = &[
+    ConditionAttackBonus {
+        source: Condition::Inspired,
+        bonus: 3,
+    },
+    ConditionAttackBonus {
+        source: Condition::PrecisionAttacking,
+        bonus: 4,
+    },
+    ConditionAttackBonus {
+        source: Condition::GuidedStriking,
+        bonus: 10,
     },
 ];
 
@@ -4926,40 +5067,53 @@ impl ActorInstance {
     /// (`bless_bane_attack_die`), so they're intentionally excluded
     /// from this lane — including them here would double-count. This
     /// lane is reserved for condition-only flat bonuses (Sacred
-    /// Weapon: +CHA, Bardic Inspiration: +3 d6-average).
+    /// Weapon: +CHA, Bardic Inspiration: +3 d6-average, Precision
+    /// Attack: +4 d8-average, Guided Strike: +10).
+    ///
+    /// Walks the shared `CONDITION_ATTACK_BONUSES` cohort — each row is
+    /// a `ConditionAttackBonus { source, bonus }`; every held source
+    /// contributes its signed `bonus` to the sum, matching the
+    /// filter-map-sum shape used by `condition_save_bonus` /
+    /// `condition_ac_bonus` on their respective sibling cohorts.
+    /// Adding a future flat condition-driven attack bump (a hypothetical
+    /// Sanctuary-broken +N attack rider, a future Mark of the Hunter +N
+    /// attack aura, etc.) lands as a one-line entry in the cohort
+    /// rather than another `if self.has_condition(...) { bonus += N; }`
+    /// branch here.
+    ///
+    /// Sacred Weapon (`Condition::Sacred`, +CHA modifier) stays inline
+    /// below the cohort walk because its magnitude reads the holder's
+    /// CHA mod at attack time, while every cohort row carries a
+    /// compile-time flat integer. The exclusion mirrors how Bless /
+    /// Bane are intentionally left off the cohort — the pattern here is
+    /// "shape mismatch" (variable vs. flat magnitude) rather than "lane
+    /// mismatch" (`attack_bonus_buff` double-count). A future
+    /// closure-based sibling cohort could absorb variable-magnitude
+    /// riders if a second entry appears — a single Sacred outlier
+    /// doesn't justify widening the row shape today.
+    ///
+    /// Sibling to `condition_save_bonus` / `condition_ac_bonus` on the
+    /// condition-driven cohort-walk lane — same filter-map-sum shape
+    /// (walk the cohort, sum every held row's magnitude), different
+    /// affected axis (attack roll here vs. save / AC there).
     pub fn condition_attack_bonus(&self) -> i32 {
-        let mut bonus = 0;
+        let mut bonus: i32 = CONDITION_ATTACK_BONUSES
+            .iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| row.bonus)
+            .sum();
         // 5e Channel Divinity: Sacred Weapon — paladin's weapon glows
         // with divine light, adding their CHA modifier to attack rolls.
         // Sourced from the holder's own CHA so monsters who somehow grab
         // the buff still scale off their own stat block (no edge case
-        // today, but the symmetry beats hard-coding a +3).
+        // today, but the symmetry beats hard-coding a +3). Stays inline
+        // rather than riding `CONDITION_ATTACK_BONUSES` because its
+        // magnitude is variable (per-actor CHA mod), while every cohort
+        // row carries a compile-time flat integer under the shared
+        // declarative-table pattern with `CONDITION_SAVE_BONUSES` /
+        // `CONDITION_AC_BONUSES`.
         if self.has_condition(Condition::Sacred) {
             bonus += modifier_from_score(self.charisma);
-        }
-        // 5e Bardic Inspiration: holder adds a d6 (RAW scales d6→d8→d10→d12
-        // by bard level) to the next attack roll. We collapse to the
-        // d6-average (+3); the condition is consumed by the next attack
-        // via `clear_attack_advantage_riders` so the bonus doesn't
-        // double-fire across multiple swings.
-        if self.has_condition(Condition::Inspired) {
-            bonus += 3;
-        }
-        // 5e Battle Master Precision Attack maneuver: +1d8 (d8 avg,
-        // rounded down to +4) on the primed attack roll. Symmetric with
-        // Inspired; consumed by `clear_attack_advantage_riders` so the
-        // bonus only fires on the first swing after the prime.
-        if self.has_condition(Condition::PrecisionAttacking) {
-            bonus += 4;
-        }
-        // 5e War Domain Cleric **Guided Strike** — flat +10 to the next
-        // attack roll (largest single-swing accuracy buff in the game).
-        // Sibling to PrecisionAttacking (+4) — same one-shot self-prime
-        // lane; consumed by `clear_attack_advantage_riders` via
-        // `CONSUMED_ON_ATTACK` so the bonus only fires on the first
-        // swing after the prime installs.
-        if self.has_condition(Condition::GuidedStriking) {
-            bonus += 10;
         }
         bonus
     }
