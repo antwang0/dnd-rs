@@ -239,6 +239,61 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     }
 });
 
+/// Shared "clone baseline WARLOCK_TEMPLATE + insert one subclass tag"
+/// helper for every Otherworldly Patron subclass whose distinguishing
+/// mechanical surface collapses to a single passive-feature tag added
+/// on top of the baseline envelope. The per-subclass swaps are exactly
+/// three axes:
+///   1. Display `name` (e.g. `"Marid Warlock"`, `"Undying Warlock"`).
+///   2. Map `glyph` (single character, per-subclass identity marker).
+///   3. The one subclass feature `subclass_tag` inserted into the shared
+///      `WARLOCK_TEMPLATE.features` set.
+///
+/// Users:
+///   - **The Undying** (SCAG) — `ASPECT_OF_THE_MOON_TAG`
+///     (`UNDYING_WARLOCK_TEMPLATE`).
+///   - **The Great Old One** (PHB) — `ENTROPIC_WARD_TAG`
+///     (`GREAT_OLD_ONE_WARLOCK_TEMPLATE`).
+///   - **The Archfey** (PHB) — `BEGUILING_DEFENSES_TAG`
+///     (`ARCHFEY_WARLOCK_TEMPLATE`).
+///   - **The Celestial** (XGtE) — `RADIANT_SOUL_TAG`
+///     (`CELESTIAL_WARLOCK_TEMPLATE`).
+///   - **The Genie (Marid)** (TCE) — `MARID_ELEMENTAL_GIFT_TAG`
+///     (`MARID_WARLOCK_TEMPLATE`).
+///   - **The Genie (Dao)** (TCE) — `DAO_ELEMENTAL_GIFT_TAG`
+///     (`DAO_WARLOCK_TEMPLATE`).
+///   - **The Genie (Djinni)** (TCE) — `DJINNI_ELEMENTAL_GIFT_TAG`
+///     (`DJINNI_WARLOCK_TEMPLATE`).
+///
+/// `FIEND_WARLOCK_TEMPLATE` is intentionally NOT a user — the Fiend
+/// patron adds a full action (`HURL_THROUGH_HELL`), a struct-field
+/// flag (`has_fiendish_resilience`), and three tags rather than one, so
+/// it falls outside the "tag-only" envelope this helper covers.
+///
+/// The subclass-of pattern (single-tag layer on top of a shared
+/// envelope) matches the way `subclass_barbarian_template` collapses
+/// the Totem / Storm Herald barbarian family on the barbarian chassis
+/// and `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` used to hand-roll a 10-line struct
+/// literal before this helper folded the shape end-to-end. Adding a
+/// new tag-only warlock subclass (a future Fathomless / Hexblade
+/// tag-only variant, or the RAW Efreeti Genie patron for Fire
+/// resistance) lands as a one-line entry.
+fn subclass_warlock_template(
+    name: &'static str,
+    glyph: char,
+    subclass_tag: &'static str,
+) -> CreatureTemplate {
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(subclass_tag);
+    CreatureTemplate {
+        name,
+        glyph,
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+}
+
 /// Fiend Warlock — Otherworldly Patron **The Fiend** subclass build.
 /// Identical envelope to the baseline `WARLOCK_TEMPLATE` (CHA-primary
 /// half-caster with Pact Magic, Eldritch Blast + Hex + Witch Bolt at
@@ -346,21 +401,18 @@ pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// Glyph 'U' so the Undying warlock shows up distinctly on the map
 /// next to baseline warlock 'L' and Fiend warlock 'F'.
 pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Undying patron feature — Aspect of the Moon
-    // via the `ASPECT_OF_THE_MOON_TAG` passive-feature tag. The
-    // `..base.clone()` tail picks up every other field — stats, spell
-    // slots, save profs, invocation-driven cantrips — without an N-line
-    // field-by-field copy. Same shape as `FIEND_WARLOCK_TEMPLATE` and
-    // the paladin / rogue / ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::ASPECT_OF_THE_MOON_TAG);
-    CreatureTemplate {
-        name: "Undying Warlock",
-        glyph: 'U',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — folds the "clone baseline warlock envelope + insert one
+    // subclass tag" shape end-to-end. The Undying patron's mechanical
+    // surface collapses to a single passive-feature tag
+    // (`ASPECT_OF_THE_MOON_TAG`) on top of the shared envelope, so the
+    // whole subclass template lands as a three-argument helper call
+    // (name, glyph, tag) rather than an inline clone-and-insert.
+    subclass_warlock_template(
+        "Undying Warlock",
+        'U',
+        crate::actions::class_features::ASPECT_OF_THE_MOON_TAG,
+    )
 });
 
 /// Great Old One Warlock — Otherworldly Patron **The Great Old One**
@@ -424,25 +476,17 @@ pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// (the sorcerer as a channel for the patron's incomprehensible
 /// awareness).
 pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Great Old One patron feature — Entropic
-    // Ward via the `ENTROPIC_WARD_TAG` passive-feature tag registered
-    // in `SHORT_REST_FEATURES`. The `..base.clone()` tail picks up
-    // every other field — stats, spell slots, save profs, invocation-
-    // driven cantrips — without an N-line field-by-field copy. Same
-    // shape as `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass build
-    // (Aspect of the Moon) and the sorcerer / paladin / rogue /
-    // ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::ENTROPIC_WARD_TAG);
-    CreatureTemplate {
-        name: "Great Old One Warlock",
-        // 'O' — distinct from baseline warlock 'L', Fiend 'F', and
-        // Undying 'U'; 'O' for the alien "Old One" flavor.
-        glyph: 'O',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Great Old One patron's mechanical surface collapses
+    // to one passive-feature tag (`ENTROPIC_WARD_TAG`, registered in
+    // `SHORT_REST_FEATURES` for per-rest charge refresh) on top of the
+    // shared envelope. 'O' — distinct from baseline warlock 'L', Fiend
+    // 'F', and Undying 'U'; 'O' for the alien "Old One" flavor.
+    subclass_warlock_template(
+        "Great Old One Warlock",
+        'O',
+        crate::actions::class_features::ENTROPIC_WARD_TAG,
+    )
 });
 
 /// Archfey Warlock — Otherworldly Patron **The Archfey** subclass build
@@ -512,27 +556,17 @@ pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// "Archfey" identity (the warlock as a court-linked emissary of a
 /// fey monarch's whimsy).
 pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Archfey patron feature — Beguiling Defenses
-    // via the `BEGUILING_DEFENSES_TAG` passive-feature tag. The
-    // `..base.clone()` tail picks up every other field — stats, spell
-    // slots, save profs, invocation-driven cantrips — without an N-line
-    // field-by-field copy. Same shape as
-    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
-    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
-    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
-    // ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::BEGUILING_DEFENSES_TAG);
-    CreatureTemplate {
-        name: "Archfey Warlock",
-        // 'A' — distinct from baseline warlock 'L', Fiend 'F',
-        // Undying 'U', and Great Old One 'O'; 'A' for the "Archfey"
-        // identity.
-        glyph: 'A',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Archfey patron's mechanical surface collapses to one
+    // passive-feature tag (`BEGUILING_DEFENSES_TAG`, Charmed install-
+    // immunity) on top of the shared envelope. 'A' — distinct from
+    // baseline warlock 'L', Fiend 'F', Undying 'U', and Great Old One
+    // 'O'; 'A' for the "Archfey" identity.
+    subclass_warlock_template(
+        "Archfey Warlock",
+        'A',
+        crate::actions::class_features::BEGUILING_DEFENSES_TAG,
+    )
 });
 
 /// Celestial Warlock — Otherworldly Patron **The Celestial** subclass
@@ -596,28 +630,17 @@ pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// warlock 'A'; 'C' for the "Celestial" identity (the warlock as a
 /// mortal channel for celestial radiance).
 pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Celestial patron feature — Radiant Soul via
-    // the `RADIANT_SOUL_TAG` passive-feature tag. The `..base.clone()`
-    // tail picks up every other field — stats, spell slots, save profs,
-    // invocation-driven cantrips — without an N-line field-by-field
-    // copy. Same shape as `ARCHFEY_WARLOCK_TEMPLATE`'s tag-only
-    // subclass build (Beguiling Defenses),
-    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
-    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
-    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
-    // ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::RADIANT_SOUL_TAG);
-    CreatureTemplate {
-        name: "Celestial Warlock",
-        // 'C' — distinct from baseline warlock 'L', Fiend 'F',
-        // Undying 'U', Great Old One 'O', and Archfey 'A'; 'C' for
-        // the "Celestial" identity.
-        glyph: 'C',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Celestial patron's mechanical surface collapses to
+    // one passive-feature tag (`RADIANT_SOUL_TAG`, radiant resistance)
+    // on top of the shared envelope. 'C' — distinct from baseline
+    // warlock 'L', Fiend 'F', Undying 'U', Great Old One 'O', and
+    // Archfey 'A'; 'C' for the "Celestial" identity.
+    subclass_warlock_template(
+        "Celestial Warlock",
+        'C',
+        crate::actions::class_features::RADIANT_SOUL_TAG,
+    )
 });
 
 /// Marid Warlock — Otherworldly Patron **The Genie (Marid)** subclass
@@ -690,29 +713,17 @@ pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// warlock as a mortal bonded to a water-and-ice genie sovereign of
 /// the Elemental Plane of Water).
 pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Marid Genie patron feature — Elemental Gift
-    // via the `MARID_ELEMENTAL_GIFT_TAG` passive-feature tag. The
-    // `..base.clone()` tail picks up every other field — stats, spell
-    // slots, save profs, invocation-driven cantrips — without an
-    // N-line field-by-field copy. Same shape as
-    // `CELESTIAL_WARLOCK_TEMPLATE`'s tag-only subclass build (Radiant
-    // Soul), `ARCHFEY_WARLOCK_TEMPLATE`'s tag-only subclass build
-    // (Beguiling Defenses), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only
-    // subclass build (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s
-    // tag-only subclass build (Aspect of the Moon), and the sorcerer /
-    // paladin / rogue / ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG);
-    CreatureTemplate {
-        name: "Marid Warlock",
-        // 'M' — distinct from baseline warlock 'L', Fiend 'F',
-        // Undying 'U', Great Old One 'O', Archfey 'A', and Celestial
-        // 'C'; 'M' for the "Marid" identity.
-        glyph: 'M',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Marid Genie patron's mechanical surface collapses to
+    // one passive-feature tag (`MARID_ELEMENTAL_GIFT_TAG`, cold
+    // resistance) on top of the shared envelope. 'M' — distinct from
+    // baseline warlock 'L', Fiend 'F', Undying 'U', Great Old One 'O',
+    // Archfey 'A', and Celestial 'C'; 'M' for the "Marid" identity.
+    subclass_warlock_template(
+        "Marid Warlock",
+        'M',
+        crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG,
+    )
 });
 
 /// Dao Warlock — Otherworldly Patron **The Genie (Dao)** subclass build
@@ -784,35 +795,21 @@ pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// bonded to an earth-and-stone genie sovereign of the Elemental Plane
 /// of Earth).
 pub static DAO_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Dao Genie patron feature — Elemental Gift
-    // via the `DAO_ELEMENTAL_GIFT_TAG` passive-feature tag. The
-    // `..base.clone()` tail picks up every other field — stats, spell
-    // slots, save profs, invocation-driven cantrips — without an
-    // N-line field-by-field copy. Same shape as
-    // `MARID_WARLOCK_TEMPLATE`'s tag-only subclass build (Elemental
-    // Gift, Cold variant), `CELESTIAL_WARLOCK_TEMPLATE`'s tag-only
-    // subclass build (Radiant Soul), `ARCHFEY_WARLOCK_TEMPLATE`'s
-    // tag-only subclass build (Beguiling Defenses),
-    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
-    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
-    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
-    // ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG);
-    CreatureTemplate {
-        name: "Dao Warlock",
-        // 'D' — collides with the Draconic Sorcerer 'D', but the two
-        // subclass templates never legally co-occur on a single team
-        // (one glyph per team-color-and-team-id combo suffices to
-        // disambiguate them in a mixed encounter). Distinct from
-        // baseline warlock 'L', Fiend 'F', Undying 'U', Great Old One
-        // 'O', Archfey 'A', Celestial 'C', and Marid 'M'; 'D' for the
-        // "Dao" identity.
-        glyph: 'D',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Dao Genie patron's mechanical surface collapses to
+    // one passive-feature tag (`DAO_ELEMENTAL_GIFT_TAG`, bludgeoning
+    // resistance) on top of the shared envelope. 'D' — collides with
+    // the Draconic Sorcerer 'D', but the two subclass templates never
+    // legally co-occur on a single team (one glyph per team-color-and-
+    // team-id combo suffices to disambiguate them in a mixed encounter).
+    // Distinct from baseline warlock 'L', Fiend 'F', Undying 'U', Great
+    // Old One 'O', Archfey 'A', Celestial 'C', and Marid 'M'; 'D' for
+    // the "Dao" identity.
+    subclass_warlock_template(
+        "Dao Warlock",
+        'D',
+        crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG,
+    )
 });
 
 /// Djinni Warlock — Otherworldly Patron **The Genie (Djinni)** subclass
@@ -892,23 +889,16 @@ pub static DAO_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// bonded to an air-and-storm genie sovereign of the Elemental Plane
 /// of Air).
 pub static DJINNI_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the one Djinni Genie patron feature — Elemental Gift
-    // via the `DJINNI_ELEMENTAL_GIFT_TAG` passive-feature tag. The
-    // `..base.clone()` tail picks up every other field — stats, spell
-    // slots, save profs, invocation-driven cantrips — without an
-    // N-line field-by-field copy. Same shape as `MARID_WARLOCK_TEMPLATE`
-    // / `DAO_WARLOCK_TEMPLATE` (their tag-only subclass builds) and the
-    // sorcerer / paladin / rogue / ranger subclass templates.
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG);
-    CreatureTemplate {
-        name: "Djinni Warlock",
-        // 'J' for the "Djinni" identity — distinct from baseline warlock
-        // 'L', Fiend 'F', Undying 'U', Great Old One 'O', Archfey 'A',
-        // Celestial 'C', Marid 'M', and Dao 'D'.
-        glyph: 'J',
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Djinni Genie patron's mechanical surface collapses
+    // to one passive-feature tag (`DJINNI_ELEMENTAL_GIFT_TAG`, thunder
+    // resistance) on top of the shared envelope. 'J' for the "Djinni"
+    // identity — distinct from baseline warlock 'L', Fiend 'F', Undying
+    // 'U', Great Old One 'O', Archfey 'A', Celestial 'C', Marid 'M', and
+    // Dao 'D'.
+    subclass_warlock_template(
+        "Djinni Warlock",
+        'J',
+        crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
+    )
 });

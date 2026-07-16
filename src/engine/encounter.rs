@@ -55413,6 +55413,101 @@ mod tests {
         assert!(e.actors[&djinni].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
     }
 
+    /// Helper-promotion sanity: every tag-only warlock subclass built
+    /// through the shared `subclass_warlock_template` helper preserves
+    /// the baseline warlock envelope AND lands with its own subclass
+    /// tag installed, uniformly across all seven users (Undying / Great
+    /// Old One / Archfey / Celestial / Marid / Dao / Djinni). Locks the
+    /// helper against a regression where a future edit to the "clone
+    /// baseline features + insert one tag" body drops the baseline
+    /// invocation set OR silently omits the subclass tag insertion.
+    /// Sibling to the individual per-subclass
+    /// `<x>_warlock_inherits_baseline_warlock_features` tests on the
+    /// same clone-and-layer lock, but exercises every user in one pass
+    /// so a helper-level drift lights up here even when the per-subclass
+    /// tests have not been updated to match. Distinct from
+    /// `FIEND_WARLOCK_TEMPLATE` which does NOT route through the helper
+    /// (Fiend adds a full action, a struct-field flag, and three tags
+    /// rather than one, so it falls outside the helper's "tag-only"
+    /// envelope) — the Fiend template is deliberately excluded from
+    /// this per-helper sweep.
+    #[test]
+    fn subclass_warlock_helper_installs_tag_and_preserves_baseline() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, ASPECT_OF_THE_MOON_TAG, BEGUILING_DEFENSES_TAG,
+            DAO_ELEMENTAL_GIFT_TAG, DJINNI_ELEMENTAL_GIFT_TAG, ELDRITCH_MIND_TAG, ENTROPIC_WARD_TAG,
+            MARID_ELEMENTAL_GIFT_TAG, RADIANT_SOUL_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
+            DJINNI_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE,
+            UNDYING_WARLOCK_TEMPLATE,
+        };
+        use std::sync::LazyLock;
+
+        // Every (template, expected-subclass-tag) pair a warlock built
+        // through `subclass_warlock_template` should satisfy. Ordered
+        // by publication order (Undying SCAG → Great Old One PHB →
+        // Archfey PHB → Celestial XGtE → Marid TCE → Dao TCE → Djinni
+        // TCE) so a new tag-only user drops in as a fresh tuple.
+        let subclasses: &[(&LazyLock<CreatureTemplate>, &'static str)] = &[
+            (&UNDYING_WARLOCK_TEMPLATE, ASPECT_OF_THE_MOON_TAG),
+            (&GREAT_OLD_ONE_WARLOCK_TEMPLATE, ENTROPIC_WARD_TAG),
+            (&ARCHFEY_WARLOCK_TEMPLATE, BEGUILING_DEFENSES_TAG),
+            (&CELESTIAL_WARLOCK_TEMPLATE, RADIANT_SOUL_TAG),
+            (&MARID_WARLOCK_TEMPLATE, MARID_ELEMENTAL_GIFT_TAG),
+            (&DAO_WARLOCK_TEMPLATE, DAO_ELEMENTAL_GIFT_TAG),
+            (&DJINNI_WARLOCK_TEMPLATE, DJINNI_ELEMENTAL_GIFT_TAG),
+        ];
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        for (i, (tmpl, tag)) in subclasses.iter().enumerate() {
+            let actor = e
+                .instantiate_creature(tmpl, Coordinate::new((2 * i + 1) as isize, 1), 0, 0)
+                .unwrap();
+            // Baseline invocations still carry through the clone.
+            assert!(
+                e.actors[&actor].has_passive_feature(AGONIZING_BLAST_TAG),
+                "{} missing baseline Agonizing Blast invocation",
+                tmpl.name,
+            );
+            assert!(
+                e.actors[&actor].has_passive_feature(REPELLING_BLAST_TAG),
+                "{} missing baseline Repelling Blast invocation",
+                tmpl.name,
+            );
+            assert!(
+                e.actors[&actor].has_passive_feature(ELDRITCH_MIND_TAG),
+                "{} missing baseline Eldritch Mind invocation",
+                tmpl.name,
+            );
+            // Subclass tag lands on top.
+            assert!(
+                e.actors[&actor].has_passive_feature(tag),
+                "{} missing its subclass tag {}",
+                tmpl.name,
+                tag,
+            );
+            // Cross-subclass check: no OTHER subclass's tag bleeds onto
+            // this chassis (the helper only inserts the ONE tag it was
+            // called with; a regression that widened the insertion or
+            // shared a features set across LazyLocks would light up here).
+            for (other_tmpl, other_tag) in subclasses.iter() {
+                if other_tmpl.name == tmpl.name {
+                    continue;
+                }
+                assert!(
+                    !e.actors[&actor].has_passive_feature(other_tag),
+                    "{} unexpectedly carries {}'s tag {}",
+                    tmpl.name,
+                    other_tmpl.name,
+                    other_tag,
+                );
+            }
+        }
+    }
+
     /// Necromancy Wizard's **Inured to Undeath** (School of Necromancy
     /// subclass lv10, PHB) halves incoming necrotic damage — the RAW
     /// subclass grant folds through the shared `PASSIVE_TYPED_RESISTANCES`
@@ -55999,6 +56094,221 @@ mod tests {
         assert!(e.actors[&desert].has_persistent_rage());
         assert!(e.actors[&desert].has_extra_attack());
         assert_eq!(e.actors[&desert].brutal_critical_dice(), 1);
+    }
+
+    /// Storm Soul (Tundra) halves incoming Cold damage on the Tundra
+    /// Storm Herald Barbarian; the baseline barbarian eats the full hit;
+    /// other damage types on the tundra storm herald pass through
+    /// unchanged (the RAW subclass grant is scoped to Cold). Sibling to
+    /// `storm_soul_desert_halves_fire_damage_on_desert_storm_herald` and
+    /// `storm_soul_sea_halves_lightning_damage_on_sea_storm_herald` on
+    /// the same passive-typed-resistance cohort-row lane — different
+    /// elemental flavor, same shape.
+    #[test]
+    fn storm_soul_tundra_halves_cold_damage_on_tundra_storm_herald() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tundra = e
+            .instantiate_creature(&TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&tundra].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_TUNDRA_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_TUNDRA_TAG,
+        ));
+        // 20 cold → 10 (halved by Storm Soul (Tundra)).
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Cold),
+            10,
+            "tundra storm herald halves cold damage",
+        );
+        // Baseline barbarian eats the full 20 cold.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Cold),
+            20,
+            "baseline barbarian takes full cold damage",
+        );
+        // Other damage types still take full damage on the Tundra Storm
+        // Herald outside of rage — the RAW subclass grant is scoped to
+        // Cold. Fire, Lightning, Radiant, Psychic, Necrotic, Thunder,
+        // and Acid all pass through unchanged (the sibling Storm Herald
+        // rows cover Fire (Desert) and Lightning (Sea) on their
+        // respective chassis, not here).
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Lightning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Psychic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+        assert_eq!(
+            e.actors[&tundra].effective_damage(20, DamageType::Acid),
+            20,
+        );
+    }
+
+    /// Storm Soul (Tundra) plugs into `has_own_typed_reduction(Cold)` —
+    /// the "does this actor already scale this type?" gate used by Aura
+    /// of Warding to enforce the "one halving per damage instance" rule.
+    /// Locks the shared read chokepoint so a hypothetical Tundra Storm
+    /// Herald Barbarian / Ancients Paladin party sees the aura no-op
+    /// cleanly on cold hits (the /2 already fires via Storm Soul; the
+    /// aura would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Storm Soul (Sea) / (Desert) / Marid / Dao / Djinni Elemental
+    /// Gift, Radiant Soul, Draconic / Fiendish Resilience, and Inured
+    /// to Undeath registration tests on the same helper.
+    #[test]
+    fn storm_soul_tundra_registers_own_typed_reduction_for_cold() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tundra = e
+            .instantiate_creature(&TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Tundra storm herald's Storm Soul (Tundra) flag registers as an
+        // own typed reduction on the Cold lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&tundra].has_own_typed_reduction(DamageType::Cold),
+            "Storm Soul (Tundra) registers as own typed reduction on Cold",
+        );
+        // Baseline barbarian without the tag has no own reduction on
+        // Cold — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Cold),
+            "baseline barbarian has no own cold reduction",
+        );
+    }
+
+    /// Template drift check: only the Tundra Storm Herald Barbarian
+    /// ships the `STORM_SOUL_TUNDRA_TAG` passive feature. Neither the
+    /// baseline Barbarian nor any of the totem-family subclass templates
+    /// (Bear / Wolf / Eagle / Tiger / Elk / Wolverine / Panther) nor
+    /// the Berserker / Zealot / Sea Storm Herald / Desert Storm Herald
+    /// subclass templates carry the tag — keeps the subclass tell scoped
+    /// to its own chassis so a future regression (e.g., accidental tag
+    /// insertion into the shared `subclass_barbarian_template` helper
+    /// bleeding into every subclass build) is caught here. Sibling to
+    /// `storm_soul_desert_lands_only_on_desert_storm_herald_barbarian` /
+    /// `storm_soul_sea_lands_only_on_sea_storm_herald_barbarian` /
+    /// `djinni_elemental_gift_lands_only_on_djinni_warlock` /
+    /// `inured_to_undeath_lands_only_on_necromancy_wizard` on the same
+    /// "single-subclass-tag ownership" lock.
+    #[test]
+    fn storm_soul_tundra_lands_only_on_tundra_storm_herald_barbarian() {
+        use crate::actions::class_features::STORM_SOUL_TUNDRA_TAG;
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, BERSERKER_BARBARIAN_TEMPLATE,
+            DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, ELK_TOTEM_BARBARIAN_TEMPLATE,
+            SEA_STORM_HERALD_BARBARIAN_TEMPLATE, TOTEM_BARBARIAN_TEMPLATE,
+            TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE, ZEALOT_BARBARIAN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let tundra = e
+            .instantiate_creature(&TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let desert = e
+            .instantiate_creature(&DESERT_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        let bear = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        let elk = e
+            .instantiate_creature(&ELK_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(12, 2), 0, 0)
+            .unwrap();
+        let berserker = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(14, 2), 0, 0)
+            .unwrap();
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(16, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&tundra].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        // Sibling storm heralds don't carry the Tundra tag — the three
+        // Storm Herald flavors sit as distinct subclass tells, not a
+        // shared "Storm Herald" tag.
+        assert!(!e.actors[&desert].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&sea].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&bear].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&elk].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&berserker].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        assert!(!e.actors[&zealot].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+    }
+
+    /// Sanity: the Tundra Storm Herald Barbarian inherits the shared
+    /// level-9 barbarian subclass envelope through the
+    /// `subclass_barbarian_template` helper — Rage, Fast Movement,
+    /// Relentless Rage, Persistent Rage, Feral Instinct, Danger Sense,
+    /// Extra Attack, and Brutal Critical(1d) all carry through alongside
+    /// the subclass-only Storm Soul (Tundra) tag. Guards against a
+    /// regression where the helper drops the baseline feature set on
+    /// its way to inserting the subclass tag. Sibling to
+    /// `desert_storm_herald_inherits_shared_barbarian_envelope` and
+    /// `sea_storm_herald_inherits_shared_barbarian_envelope` on the same
+    /// clone-and-layer lock, but on the sibling elemental flavor.
+    #[test]
+    fn tundra_storm_herald_inherits_shared_barbarian_envelope() {
+        use crate::actions::class_features::{
+            FAST_MOVEMENT_TAG, RAGE_TAG, RELENTLESS_RAGE_TAG, STORM_SOUL_TUNDRA_TAG,
+        };
+        use crate::actors::creatures::barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tundra = e
+            .instantiate_creature(&TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline barbarian envelope features still carry through.
+        assert!(e.actors[&tundra].has_passive_feature(RAGE_TAG));
+        assert!(e.actors[&tundra].has_passive_feature(FAST_MOVEMENT_TAG));
+        assert!(e.actors[&tundra].has_passive_feature(RELENTLESS_RAGE_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&tundra].has_passive_feature(STORM_SOUL_TUNDRA_TAG));
+        // Level-9 chassis inherits: Danger Sense (lv2, DEX-save advantage),
+        // Feral Instinct (lv7, initiative advantage), Persistent Rage
+        // (lv15, doubled rage duration), Extra Attack (lv5), Brutal
+        // Critical(1d) (lv9 melee crit rider).
+        assert!(e.actors[&tundra].has_danger_sense());
+        assert!(e.actors[&tundra].has_feral_instinct());
+        assert!(e.actors[&tundra].has_persistent_rage());
+        assert!(e.actors[&tundra].has_extra_attack());
+        assert_eq!(e.actors[&tundra].brutal_critical_dice(), 1);
     }
 
     /// Cohort-promotion sanity: after promoting `condition_attack_bonus`

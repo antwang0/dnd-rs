@@ -567,6 +567,37 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Fire],
     },
+    // 5e Barbarian Primal Path **Path of the Storm Herald (Tundra)** —
+    // **Storm Soul (Tundra)** (level 6, XGtE). RAW grants resistance to
+    // cold damage (paired with an "immune to extreme cold" exhaustion
+    // rider and a "freeze water within 5 ft" ribbon — neither has a
+    // combat surface today, both left as future work). Third Barbarian-
+    // chassis row on the passive typed-resistance lane — `STORM_SOUL_SEA_TAG`
+    // blazed the trail with the Lightning row and `STORM_SOUL_DESERT_TAG`
+    // followed with the Fire row; this row completes the three-flavor
+    // Storm Herald elemental trio (Sea Lightning / Desert Fire / Tundra
+    // Cold) on the barbarian chassis. Overlaps the Cold axis with
+    // Marid's Elemental Gift (Warlock Genie Marid Patron lv6) on a
+    // different chassis; the two never legally co-occur on a single
+    // build (Barbarian vs. Warlock subclass) and a hypothetical
+    // multiclass carrier caps at a single /2 per Cold hit under the
+    // "one halving per damage instance" rule. Distinct from the
+    // barbarian chassis's rage-gated broad resistance (Bear Totem,
+    // `RAGE_GATED_BROAD_RESISTANCES`) on both axis (typed, not broad)
+    // and gate (always-on, not rage-gated). Ships on
+    // `TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE` at (or above) its strict
+    // RAW lv6 gate for the same reason `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`
+    // ships Storm Soul (Sea) (RAW lv6), `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE`
+    // ships Storm Soul (Desert) (RAW lv6), and `MARID_WARLOCK_TEMPLATE` /
+    // `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` ship Elemental
+    // Gift (RAW lv6) — class templates target a balanced playable
+    // level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_TUNDRA_TAG,
+        ),
+        types: &[DamageType::Cold],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive

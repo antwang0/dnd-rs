@@ -541,6 +541,103 @@ pub static DESERT_STORM_HERALD_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = 
     )
 });
 
+/// Tundra Storm Herald Barbarian — Path of the Storm Herald, **Tundra**
+/// flavor (level 6 subclass tell, XGtE). Third Storm Herald elemental
+/// variant to land on this chassis, completing the three-flavor RAW
+/// Storm Herald elemental trio (Sea Lightning /
+/// `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`, Desert Fire /
+/// `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE`, Tundra Cold / this
+/// template). Same level-9 envelope as every other user of the
+/// `subclass_barbarian_template` helper (76 HP, AC 15, STR / CON 18,
+/// Reckless Attack / Brutal Critical 1d / Relentless Rage / Feral
+/// Instinct / Persistent Rage / Fast Movement / Danger Sense) with the
+/// subclass feature swapped from the sibling Sea / Desert flavors'
+/// lightning / fire tells to the tundra storm herald's passive
+/// cold-resistance tell.
+///
+/// Headline mechanic: **Storm Soul (Tundra)** — passive **resistance to
+/// cold damage**. Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort
+/// in `actor_template.rs` next to the sibling Sea flavor's lightning
+/// row, the Desert flavor's fire row, Fiendish / Draconic Resilience's
+/// fire rows, the Warlock Elemental Gift rows (Marid Cold / Dao
+/// Bludgeoning / Djinni Thunder), Radiant Soul's radiant row, Heart of
+/// the Storm's lightning + thunder row, Psychic Defenses' psychic row,
+/// and Inured to Undeath's necrotic row — same halving rule, different
+/// subclass source. Third **Barbarian**-chassis row on that cohort —
+/// the Sea flavor's lightning row was the first, the Desert flavor's
+/// fire row was the second.
+///
+/// Distinct from every other barbarian subclass template:
+///   - Distinct from the sibling **Sea Storm Herald** and **Desert
+///     Storm Herald** on the elemental-flavor axis — Sea covers
+///     Lightning (a storm's electric-arc half), Desert covers Fire (a
+///     desert's sun-scorched half), Tundra covers Cold (a tundra's
+///     numbing-chill half); the three never legally co-occur on a
+///     single build (RAW: one Storm Herald flavor picked at lv3).
+///   - Distinct from the **Totem Warrior / Wild Heart family** (Bear /
+///     Wolf / Eagle / Tiger / Elk / Wolverine / Panther) in that the
+///     resistance is **always-on**, not rage-gated — a Tundra Storm
+///     Herald outside of rage still halves the incoming Cone of Cold /
+///     Ray of Frost / Ice Storm. Distinct from Bear Totem's rage-gated
+///     broad resistance (on `RAGE_GATED_BROAD_RESISTANCES`) on both
+///     axis (typed, not broad) and gate (always-on, not rage-gated).
+///   - Distinct from the **Berserker Barbarian** (Frenzy bonus-action
+///     swing + Mindless Rage) and **Zealot Barbarian** (Divine Fury
+///     radiant on-hit rider + Iron Mind WIS-save + Zealous Presence
+///     ally-buff) on the entire subclass feature axis — Storm Herald
+///     is a defensive resistance chassis rather than an offensive /
+///     resource-focused chassis.
+///
+/// Overlaps the Cold axis with Marid's Elemental Gift (Warlock Genie
+/// Marid Patron lv6) on a different chassis — the two never legally
+/// co-occur on a single build (Barbarian vs. Warlock subclass), and a
+/// hypothetical multiclass carrier caps at a single /2 per Cold hit via
+/// the "one halving per damage instance" rule.
+///
+/// RAW's Path of the Storm Herald picks up other features not shipped
+/// on this template — **Storm Aura (Tundra)** (lv3: while raging, every
+/// friendly within 10 ft gains 2 temp HP at the start of each of the
+/// barbarian's turns; a per-turn ally-buff aura mechanic that needs a
+/// per-turn aura fire hook and a target-filtering policy), **Shielding
+/// Storm** (lv10: allies within 10 ft of the raging barbarian ALSO gain
+/// Storm Soul's resistance; an ally-aura extension mechanic that needs
+/// a per-tile ally sweep at the resistance-lookup chokepoint), and
+/// **Raging Storm (Tundra)** (lv14: reaction-on-attacker-melee-hit
+/// STR-save vs. speed-0 rider). Only the lv6 Storm Soul passive has a
+/// mechanical surface that plugs cleanly into the shared passive
+/// typed-resistance cohort, so we ship that half and leave the rest as
+/// future work — matching the way `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`
+/// / `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE` each ship only the lv6
+/// Storm Soul passive half of their RAW Path of the Storm Herald kit,
+/// and `NECROMANCY_WIZARD_TEMPLATE` ships only the lv10 Inured to
+/// Undeath passive half of its RAW School of Necromancy kit.
+///
+/// Ships on the CR-4 (level-9) barbarian chassis at (or above) its
+/// strict RAW lv6 gate for the same reason `SEA_STORM_HERALD_BARBARIAN_TEMPLATE`
+/// / `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE` ship their Storm Soul
+/// flavors (RAW lv6), `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE`
+/// / `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6),
+/// `NECROMANCY_WIZARD_TEMPLATE` ships Inured to Undeath (RAW lv10), and
+/// `ABERRANT_MIND_SORCERER_TEMPLATE` ships Psychic Defenses (RAW lv14)
+/// — class templates target a balanced playable level, not lockstep
+/// PHB progression.
+///
+/// Glyph 'N' (for tuNdra, since Sea already claimed 'H' for storm
+/// Herald and Desert claimed 'R' for aRid; 'T' would collide with
+/// Totem/Bear and 'C' would collide with Champion) — distinct from
+/// every other barbarian subclass glyph (baseline Barbarian 'B',
+/// Totem/Bear 'T', Wolf 'W', Eagle 'A', Tiger 'I', Elk 'E', Wolverine
+/// 'V', Panther 'P', Berserker 'Z', Zealot 'X', Sea Storm Herald 'H',
+/// Desert Storm Herald 'R').
+pub static TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Tundra Storm Herald Barbarian",
+        'N',
+        crate::actions::class_features::STORM_SOUL_TUNDRA_TAG,
+        &[],
+    )
+});
+
 /// Berserker Barbarian — Path of the Berserker subclass build. Identical
 /// envelope to the baseline `BARBARIAN_TEMPLATE` (greataxe + reckless
 /// attack + rage + brutal critical, level-9 stat block) with one subclass
