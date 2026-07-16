@@ -486,6 +486,41 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Thunder],
     },
+    // 5e Warlock Genie (Efreeti) Patron **Elemental Gift** (level 6, TCE).
+    // RAW grants a per-genie-kind damage-type resistance; the Efreeti
+    // variant covers **fire** — the efreeti's flame-flavored patron pact
+    // hardens the warlock against the blaze. Fourth (and final) of the
+    // four RAW Genie kinds to land on the passive typed-resistance cohort
+    // — completes the four-quadrant Genie patron coverage grid alongside
+    // Marid (Cold), Dao (Bludgeoning), and Djinni (Thunder). The four
+    // never legally co-occur on a single build (RAW: one genie kind per
+    // warlock), so the split-tag shape is a template-drift lock rather
+    // than a stacking concern.
+    //
+    // Semantic duplicate on the Fire axis of Fiendish Resilience (Warlock
+    // Fiend Patron lv10) and Draconic Resilience (Sorcerer Draconic
+    // Bloodline lv6). The duplication is a **taxonomic completeness**
+    // grant, not a mechanical-coverage grant — the Efreeti variant lands
+    // so the four-genie family reads as a full quadrant even though the
+    // Fire axis is already covered by two other rows on distinct chassis.
+    // The three Fire-resistance rows (Fiendish / Draconic / Efreeti) never
+    // legally co-occur on a single build (Warlock Fiend vs. Warlock
+    // Efreeti vs. Sorcerer Draconic subclass), and a hypothetical
+    // multiclass carrier caps at a single /2 per Fire hit under the "one
+    // halving per damage instance" rule. Also overlaps the Fire axis with
+    // Storm Soul (Desert) on the Barbarian chassis — same "one halving
+    // per damage instance" cap applies. Ships on `EFREETI_WARLOCK_TEMPLATE`
+    // above its strict RAW lv6 gate for the same reason
+    // `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+    // `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6) — class
+    // templates target a balanced playable level, not lockstep PHB
+    // progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::EFREETI_ELEMENTAL_GIFT_TAG,
+        ),
+        types: &[DamageType::Fire],
+    },
     // 5e Wizard Arcane Tradition **School of Necromancy** — **Inured to
     // Undeath** (level 10, PHB). RAW grants resistance to necrotic damage
     // (paired with a max-HP-can't-be-reduced clause that has no combat
@@ -2387,6 +2422,62 @@ impl CreatureTemplate {
     /// by hand, and lets new template fields (added in future work) land
     /// without an N-file mechanical edit — old templates pick up the new
     /// field's default automatically via `..defaults()`.
+    /// Clone this template as a subclass build: override `name` + `glyph`
+    /// (the two per-subclass identity axes) and insert a single passive
+    /// feature `subclass_tag` into the shared feature set. The rest of the
+    /// template — actions, stats, spell slots, save profs, struct-field
+    /// flags — carries through the `..self.clone()` tail unchanged.
+    ///
+    /// The **cross-class shared helper** for the "clone base + insert one
+    /// tag" declarative-template pattern that every tag-only subclass
+    /// build on every class chassis has been repeating by hand.
+    /// Consolidates the per-class ad-hoc bodies (a five-line `let mut
+    /// features = BASE.features.clone(); features.insert(TAG);
+    /// CreatureTemplate { name, glyph, features, ..BASE.clone() }` block
+    /// repeated once per subclass) into a single method call per
+    /// subclass template.
+    ///
+    /// Users (11+ callsites across five class chassis today):
+    ///   - **Warlock** (7 tag-only Otherworldly Patron subclass templates
+    ///     via the class-scoped `subclass_warlock_template` helper —
+    ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
+    ///     Djinni / Efreeti).
+    ///   - **Sorcerer** (2 tag-only Sorcerous Origin subclass templates —
+    ///     Aberrant Mind, Divine Soul).
+    ///   - **Wizard** (1 tag-only Arcane Tradition subclass template —
+    ///     Necromancy).
+    ///   - **Cleric** (1 tag-only Divine Domain subclass template — Life).
+    ///
+    /// Distinct from `subclass_barbarian_template` (barbarian family
+    /// helper): that helper builds the shared level-9 envelope from
+    /// scratch rather than cloning off a base template, so it doesn't
+    /// route through this method. Also distinct from tag-plus-actions
+    /// / tag-plus-struct-field-flag subclass templates (Fiend Warlock,
+    /// War / Light / Tempest Cleric, Berserker / Zealot Barbarian, Storm
+    /// Sorcerer, the four paladin oaths) which layer more than a single
+    /// feature tag on top of the baseline — those subclasses stay on the
+    /// per-file explicit clone-and-insert body since the helper's
+    /// tag-only interface can't express the additional actions / flags /
+    /// languages / tags they need.
+    ///
+    /// A new tag-only subclass on any class chassis lands as a one-line
+    /// entry: `BASE_TEMPLATE.with_subclass_tag(name, glyph, tag)`.
+    pub fn with_subclass_tag(
+        &self,
+        name: &'static str,
+        glyph: char,
+        subclass_tag: &'static str,
+    ) -> Self {
+        let mut features = self.features.clone();
+        features.insert(subclass_tag);
+        Self {
+            name,
+            glyph,
+            features,
+            ..self.clone()
+        }
+    }
+
     pub fn defaults() -> Self {
         use crate::actions::default_actions::DEFAULT_ACTIONS;
         Self {

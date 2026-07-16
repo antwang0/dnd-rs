@@ -284,14 +284,26 @@ fn subclass_warlock_template(
     glyph: char,
     subclass_tag: &'static str,
 ) -> CreatureTemplate {
-    let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(subclass_tag);
-    CreatureTemplate {
-        name,
-        glyph,
-        features,
-        ..WARLOCK_TEMPLATE.clone()
-    }
+    // Delegate to the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — collapses the five-line "clone WARLOCK_TEMPLATE
+    // features + insert one tag + rebuild struct" body every tag-only
+    // warlock subclass template used to inline (before the class-scoped
+    // helper landed) into a single method call. Sibling users on the
+    // "clone base + insert one tag" cross-class helper lane:
+    //   - `LIFE_CLERIC_TEMPLATE`   (Cleric baseline + `DISCIPLE_OF_LIFE_TAG`)
+    //   - `NECROMANCY_WIZARD_TEMPLATE` (Wizard baseline + `INURED_TO_UNDEATH_TAG`)
+    //   - `ABERRANT_MIND_SORCERER_TEMPLATE` (Sorcerer baseline + `PSYCHIC_DEFENSES_TAG`)
+    //   - `DIVINE_SOUL_SORCERER_TEMPLATE`   (Sorcerer baseline + `FAVORED_BY_THE_GODS_TAG`)
+    //
+    // Keeping the class-scoped `subclass_warlock_template` wrapper on top
+    // of the shared method preserves the "callsite explicitly names the
+    // chassis" tell — every warlock subclass literal reads
+    // `subclass_warlock_template(...)` next to the sibling Undying / Great
+    // Old One / Archfey / etc. templates, rather than
+    // `WARLOCK_TEMPLATE.with_subclass_tag(...)` which is functionally
+    // identical but scatters the "warlock" identity across each callsite's
+    // template-path prefix.
+    WARLOCK_TEMPLATE.with_subclass_tag(name, glyph, subclass_tag)
 }
 
 /// Fiend Warlock — Otherworldly Patron **The Fiend** subclass build.
@@ -900,5 +912,119 @@ pub static DJINNI_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         "Djinni Warlock",
         'J',
         crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
+    )
+});
+
+/// Efreeti Warlock — Otherworldly Patron **The Genie (Efreeti)** subclass
+/// build (TCE). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex + Witch
+/// Bolt at will, Agonizing / Repelling / Eldritch Mind invocations) with
+/// one subclass feature layered on: **Elemental Gift** (Genie subclass
+/// level 6, Efreeti variant) — passive **resistance to fire damage**.
+///
+/// The signature "the efreeti's flame ward blunts the blaze" tell — where
+/// a baseline Warlock eats a Fireball / Wall of Fire / Burning Hands hit
+/// clean, the Efreeti Warlock halves the incoming fire damage. Read at
+/// the shared `PASSIVE_TYPED_RESISTANCES` cohort in `actor_template.rs`
+/// next to the Marid Elemental Gift's cold row, the Dao Elemental Gift's
+/// bludgeoning row, the Djinni Elemental Gift's thunder row, Radiant
+/// Soul's radiant row, Fiendish / Draconic Resilience's fire rows, Storm
+/// Soul (Sea / Desert / Tundra)'s Lightning / Fire / Cold rows, Heart of
+/// the Storm's lightning + thunder row, Psychic Defenses' psychic row,
+/// and Inured to Undeath's necrotic row — same halving rule, different
+/// patron flavor and different damage axis.
+///
+/// Fourth (and final) of the four RAW Genie variants to ship on the
+/// warlock family — completes the four-genie taxonomic set alongside
+/// `MARID_WARLOCK_TEMPLATE` (Cold, water/ice), `DAO_WARLOCK_TEMPLATE`
+/// (Bludgeoning, earth/stone), and `DJINNI_WARLOCK_TEMPLATE` (Thunder,
+/// sky/storm). Semantic duplicate on the resistance axis of
+/// `FIEND_WARLOCK_TEMPLATE`'s Fiendish Resilience (Fire, via the
+/// struct-field `has_fiendish_resilience` flag) and
+/// `DRACONIC_SORCERER_TEMPLATE`'s Draconic Resilience (Fire, via the
+/// struct-field `has_draconic_resilience` flag) — all three cover the
+/// Fire axis. The duplication is a **taxonomic completeness** grant,
+/// not a mechanical-coverage grant: the Efreeti variant lands so the
+/// four-genie Genie patron family reads as a full quadrant on the map
+/// even though the Fire axis is already covered by two other passive-
+/// resistance rows on distinct chassis. The three Fire-resistance
+/// rows never legally co-occur on a single build (Warlock Fiend vs.
+/// Warlock Efreeti vs. Sorcerer Draconic subclass), and a hypothetical
+/// multiclass carrier caps at a single /2 per Fire hit under the "one
+/// halving per damage instance" rule — the triple coverage is a
+/// taxonomic tell rather than a stacking bug. Also overlaps the Fire
+/// axis with Storm Soul (Desert) on the Barbarian chassis — same "one
+/// halving per damage instance" cap applies.
+///
+/// RAW's Genie Warlock (Efreeti variant) picks up other features not
+/// shipped on this template — **Genie's Vessel** (lv1: bonus-action
+/// bottle a creature into the efreeti vessel; a save-and-condition-install
+/// resource lane that needs a per-warlock vessel tracker), **Bottled
+/// Respite** (lv6: 10-min in-vessel short rest; sits outside combat),
+/// **Sanctuary Vessel** (lv10: refresh temp HP on party short rest inside
+/// the vessel), and **Limited Wish** (lv14 capstone: cast any lv6-or-lower
+/// spell on a 1d4-day cooldown). Only the lv6 Elemental Gift passive has
+/// a mechanical surface on the CR-4 chassis that plugs cleanly into the
+/// shared passive typed-resistance cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` each ship only the Elemental Gift resistance
+/// half of their RAW kit.
+///
+/// Sibling on the passive typed-resistance patron lane to:
+///   - **Elemental Gift (Marid)** (Marid Warlock lv6, TCE): Cold.
+///   - **Elemental Gift (Dao)** (Dao Warlock lv6, TCE): Bludgeoning.
+///   - **Elemental Gift (Djinni)** (Djinni Warlock lv6, TCE): Thunder.
+///     All four Genie variants share the "one feature tag drives one
+///     cohort row" declarative-table shape, different damage axis. Any
+///     two never legally co-occur on a single build (RAW: one genie
+///     kind per warlock).
+///   - **Radiant Soul** (Celestial Warlock lv6, XGtE): Radiant.
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire — same
+///     damage axis, different patron flavor. Never legally co-occur.
+///   - **Draconic Resilience** (Draconic Sorcerer lv6): Fire — same
+///     damage axis, different chassis.
+///   - **Storm Soul (Desert)** (Desert Storm Herald Barbarian lv6):
+///     Fire — same damage axis, different chassis.
+///
+/// Sibling on the Otherworldly Patron subclass lane to
+/// `MARID_WARLOCK_TEMPLATE` (Marid — Cold),
+/// `DAO_WARLOCK_TEMPLATE` (Dao — Bludgeoning),
+/// `DJINNI_WARLOCK_TEMPLATE` (Djinni — Thunder),
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck +
+/// Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the alien-
+/// awareness reactive build), `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling
+/// Defenses — the Charmed-bounce build), and `CELESTIAL_WARLOCK_TEMPLATE`
+/// (Radiant Soul — the radiant-resistance build).
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the same
+/// reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6): class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Glyph 'Y' — distinct from baseline warlock 'L', Fiend 'F', Undying
+/// 'U', Great Old One 'O', Archfey 'A', Celestial 'C', Marid 'M', Dao
+/// 'D', and Djinni 'J'; 'Y' for the "Efreetiy" identity (the warlock as
+/// a mortal bonded to a fire-and-flame genie sovereign of the Elemental
+/// Plane of Fire). 'E' would collide with the Elk Totem Barbarian on
+/// the barbarian family; a hypothetical cross-team mix (Efreeti Warlock
+/// on team A, Elk Totem Barbarian on team B) would then need the team-
+/// color tint to disambiguate them on the map, which is a per-encounter
+/// disambiguation cost we avoid by picking a fresh glyph up front.
+pub static EFREETI_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `subclass_warlock_template`
+    // helper — the Efreeti Genie patron's mechanical surface collapses
+    // to one passive-feature tag (`EFREETI_ELEMENTAL_GIFT_TAG`, fire
+    // resistance) on top of the shared envelope. 'Y' for the "Efreetiy"
+    // identity — distinct from baseline warlock 'L', Fiend 'F', Undying
+    // 'U', Great Old One 'O', Archfey 'A', Celestial 'C', Marid 'M',
+    // Dao 'D', and Djinni 'J'.
+    subclass_warlock_template(
+        "Efreeti Warlock",
+        'Y',
+        crate::actions::class_features::EFREETI_ELEMENTAL_GIFT_TAG,
     )
 });

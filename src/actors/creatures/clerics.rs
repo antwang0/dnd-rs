@@ -446,21 +446,20 @@ pub static TEMPEST_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// 'V' (for Vita) so the Life Cleric shows up distinctly on the map
 /// next to baseline 'C', War 'W', Light 'L', and Tempest 'S'.
 pub static LIFE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Cleric envelope wholesale
-    // and layer on the Disciple of Life passive tag. The
-    // `..CLERIC_TEMPLATE.clone()` tail picks up the full spell ladder,
-    // save profs, stats, and slots without an N-line field-by-field
-    // copy — same shape as WAR_CLERIC_TEMPLATE / LIGHT_CLERIC_TEMPLATE /
-    // TEMPEST_CLERIC_TEMPLATE. No new actions are pushed — Disciple of
-    // Life is a purely passive amplifier read at the leveled-heal
-    // chokepoints (HealSpell / CureWounds / MassHealingWord /
-    // MassCureWounds), not a fresh action surface.
-    let mut features = CLERIC_TEMPLATE.features.clone();
-    features.insert(DISCIPLE_OF_LIFE_TAG);
-    CreatureTemplate {
-        name: "Life Cleric",
-        glyph: 'V',
-        features,
-        ..CLERIC_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Cleric envelope wholesale
+    // and layers on the Disciple of Life passive tag. The `..base.clone()`
+    // tail inside the helper picks up the full spell ladder, save profs,
+    // stats, and slots without an N-line field-by-field copy. No new
+    // actions are pushed — Disciple of Life is a purely passive amplifier
+    // read at the leveled-heal chokepoints (HealSpell / CureWounds /
+    // MassHealingWord / MassCureWounds), not a fresh action surface, so
+    // the "tag-only" shape the helper wraps is a natural fit. Sibling
+    // helper users on the "clone base + insert one tag" cross-class lane:
+    // every tag-only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `NECROMANCY_WIZARD_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`.
+    // WAR / LIGHT / TEMPEST cleric subclasses layer actions plus their
+    // subclass tags so they stay on the explicit clone-and-insert body.
+    CLERIC_TEMPLATE.with_subclass_tag("Life Cleric", 'V', DISCIPLE_OF_LIFE_TAG)
 });

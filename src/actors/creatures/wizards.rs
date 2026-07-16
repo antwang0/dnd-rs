@@ -696,26 +696,22 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// (one glyph per team-color-and-team-id combo suffices to disambiguate
 /// them in a mixed encounter).
 pub static NECROMANCY_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Wizard envelope wholesale
-    // and layer on the one Necromancy Arcane Tradition subclass feature
-    // — Inured to Undeath via the `INURED_TO_UNDEATH_TAG` passive-
-    // feature tag. The `..base.clone()` tail picks up every other field
-    // — stats, spell slots, save profs, the full wizard cantrip / lv1-9
-    // spell loadout, and the Arcane Recovery feature — without an
-    // N-line field-by-field copy. Same shape as the sibling Warlock
-    // Genie / Celestial / Archfey subclass templates on
-    // `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
-    // `DJINNI_WARLOCK_TEMPLATE` / `CELESTIAL_WARLOCK_TEMPLATE` /
-    // `ARCHFEY_WARLOCK_TEMPLATE`, and the sorcerer / paladin / rogue /
-    // ranger subclass templates on the same clone-and-layer lane.
-    let mut features = WIZARD_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::INURED_TO_UNDEATH_TAG);
-    CreatureTemplate {
-        name: "Necromancy Wizard",
-        // 'N' for the "Necromancy" identity — distinct from baseline
-        // wizard 'M' (mage).
-        glyph: 'N',
-        features,
-        ..WIZARD_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Wizard envelope wholesale
+    // and layers on the one Necromancy Arcane Tradition subclass feature
+    // (`INURED_TO_UNDEATH_TAG`). The `..base.clone()` tail inside the
+    // helper picks up every other field — stats, spell slots, save
+    // profs, the full wizard cantrip / lv1-9 spell loadout, and the
+    // Arcane Recovery feature — without an N-line field-by-field copy.
+    // Sibling helper users on the "clone base + insert one tag" cross-
+    // class lane: every tag-only Warlock Otherworldly Patron subclass
+    // (via `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`.
+    // Glyph 'N' — for the "Necromancy" identity; distinct from baseline
+    // wizard 'M' (mage).
+    WIZARD_TEMPLATE.with_subclass_tag(
+        "Necromancy Wizard",
+        'N',
+        crate::actions::class_features::INURED_TO_UNDEATH_TAG,
+    )
 });

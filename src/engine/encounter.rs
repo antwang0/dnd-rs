@@ -55413,13 +55413,253 @@ mod tests {
         assert!(e.actors[&djinni].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
     }
 
+    /// Efreeti Warlock's **Elemental Gift (Efreeti)** (Otherworldly Patron:
+    /// The Genie subclass lv6, TCE) halves incoming fire damage — the RAW
+    /// subclass grant folds through the shared `PASSIVE_TYPED_RESISTANCES`
+    /// cohort's `effective_damage` halving site. Sibling test to
+    /// `elemental_gift_halves_cold_damage_on_marid_warlock` /
+    /// `dao_elemental_gift_halves_bludgeoning_damage_on_dao_warlock` /
+    /// `djinni_elemental_gift_halves_thunder_damage_on_djinni_warlock` on
+    /// the "typed resistance from a Genie patron template" lane — same
+    /// halving-vs-full assertion shape, same subclass chassis (Warlock
+    /// Otherworldly Patron: The Genie), different damage axis (Fire vs.
+    /// Cold / Bludgeoning / Thunder).
+    #[test]
+    fn efreeti_elemental_gift_halves_fire_damage_on_efreeti_warlock() {
+        use crate::actors::creatures::warlocks::{EFREETI_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let efreeti = e
+            .instantiate_creature(&EFREETI_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&efreeti].has_passive_feature(
+            crate::actions::class_features::EFREETI_ELEMENTAL_GIFT_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::EFREETI_ELEMENTAL_GIFT_TAG,
+        ));
+        // 20 fire → 10 (halved by Efreeti Elemental Gift).
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Fire),
+            10,
+            "efreeti warlock halves fire damage"
+        );
+        // Baseline warlock eats the full 20 fire.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Fire),
+            20,
+            "baseline warlock takes full fire damage"
+        );
+        // Other damage types still take full damage on the Efreeti Warlock
+        // — the RAW subclass grant is scoped to Fire. Cold, Thunder,
+        // Radiant, Psychic, Piercing, Bludgeoning, and Slashing all pass
+        // through unchanged; the patron-lane siblings (Marid Cold / Dao
+        // Bludgeoning / Djinni Thunder / Radiant Soul / Inured to Undeath)
+        // cover those types on their respective subclass chassis, not
+        // here.
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Psychic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Bludgeoning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Piercing),
+            20,
+        );
+        assert_eq!(
+            e.actors[&efreeti].effective_damage(20, DamageType::Slashing),
+            20,
+        );
+    }
+
+    /// Efreeti Elemental Gift plugs into `has_own_typed_reduction(Fire)` —
+    /// the "does this actor already scale this type?" gate used by Aura of
+    /// Warding to enforce the "one halving per damage instance" rule.
+    /// Locks the shared read chokepoint so a hypothetical Efreeti Warlock
+    /// / Ancients Paladin party sees the aura no-op cleanly on fire hits
+    /// (the /2 already fires via Elemental Gift; the aura would otherwise
+    /// stack a second /2 for /4 unless `has_own_typed_reduction` picked it
+    /// up here). Sibling to the Marid / Dao / Djinni Elemental Gift,
+    /// Radiant Soul, Fiendish / Draconic Resilience, Storm Soul, and
+    /// Inured to Undeath registration tests on the same helper.
+    #[test]
+    fn efreeti_elemental_gift_registers_own_typed_reduction_for_fire() {
+        use crate::actors::creatures::warlocks::{EFREETI_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let efreeti = e
+            .instantiate_creature(&EFREETI_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Efreeti warlock's Elemental Gift flag registers as an own typed
+        // reduction on the Fire lane so aura-style stacking no-ops.
+        assert!(
+            e.actors[&efreeti].has_own_typed_reduction(DamageType::Fire),
+            "Efreeti Elemental Gift registers as own typed reduction on Fire"
+        );
+        // Baseline warlock without the tag has no own reduction on Fire —
+        // aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Fire),
+            "baseline warlock has no own fire reduction"
+        );
+    }
+
+    /// Template drift check: only the Efreeti Warlock ships the
+    /// `EFREETI_ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend
+    /// / Undying / Great Old One / Archfey / Celestial / Marid / Dao /
+    /// Djinni warlock chassis do NOT carry the tag — keeps the subclass
+    /// tell scoped to the Efreeti chassis so a future regression (e.g.,
+    /// accidental tag insertion on `WARLOCK_TEMPLATE` bleeding into every
+    /// subclass build via the `..base.clone()` tail) is caught here.
+    /// Sibling to `djinni_elemental_gift_lands_only_on_djinni_warlock` /
+    /// `dao_elemental_gift_lands_only_on_dao_warlock` /
+    /// `elemental_gift_lands_only_on_marid_warlock` on the same
+    /// "single-subclass-tag ownership" lock — and mirror-locks the four
+    /// genie-variant tags never crossing chassis (the Marid, Dao, Djinni,
+    /// and Efreeti tags each ride only their own subclass chassis).
+    ///
+    /// Locks a specific coupling: the Efreeti chassis does NOT carry
+    /// Fiendish Resilience's `has_fiendish_resilience` struct-field flag,
+    /// even though the two share the Fire resistance axis. The two Fire-
+    /// resistance surfaces sit on distinct implementation lanes (feature-
+    /// tag closure on the Efreeti chassis vs. struct-field flag closure
+    /// on the Fiend chassis), and neither bleeds onto the other's
+    /// template.
+    #[test]
+    fn efreeti_elemental_gift_lands_only_on_efreeti_warlock() {
+        use crate::actions::class_features::{
+            DAO_ELEMENTAL_GIFT_TAG, DJINNI_ELEMENTAL_GIFT_TAG, EFREETI_ELEMENTAL_GIFT_TAG,
+            MARID_ELEMENTAL_GIFT_TAG,
+        };
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
+            DJINNI_WARLOCK_TEMPLATE, EFREETI_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE,
+            GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
+            WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(11, 1), 0, 0)
+            .unwrap();
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(13, 1), 0, 0)
+            .unwrap();
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(15, 1), 0, 0)
+            .unwrap();
+        let djinni = e
+            .instantiate_creature(&DJINNI_WARLOCK_TEMPLATE, Coordinate::new(17, 1), 0, 0)
+            .unwrap();
+        let efreeti = e
+            .instantiate_creature(&EFREETI_WARLOCK_TEMPLATE, Coordinate::new(19, 1), 0, 0)
+            .unwrap();
+        // Only the Efreeti warlock ships the Efreeti tag.
+        assert!(e.actors[&efreeti].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&celestial].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&marid].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&dao].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&djinni].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        // And the sibling genie-variant tags don't bleed onto the Efreeti
+        // chassis — the four genie-variant tags each ride only their own
+        // subclass build.
+        assert!(!e.actors[&efreeti].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&efreeti].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&efreeti].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        // Fire-axis distinctness: the Efreeti chassis does NOT carry
+        // Fiendish Resilience's struct-field flag even though the two
+        // share the Fire damage axis. The Fire coverage comes only from
+        // the Efreeti tag closure on this chassis, not the Fiend chassis's
+        // struct-field lane.
+        assert!(!e.actors[&efreeti].has_fiendish_resilience());
+        // Symmetrically, the Fiend chassis does NOT carry the Efreeti
+        // Elemental Gift tag — its Fire coverage rides the struct-field
+        // flag lane, not the tag closure lane.
+        assert!(!e.actors[&fiend].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+        assert!(e.actors[&fiend].has_fiendish_resilience());
+    }
+
+    /// Sanity: the Efreeti Warlock inherits the baseline Warlock envelope
+    /// through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch Blast's
+    /// signature invocations (Agonizing / Repelling / Eldritch Mind) all
+    /// carry through, alongside the subclass-only Efreeti Elemental Gift
+    /// tag. Guards against a regression where the subclass template's
+    /// explicit `features` builder drops the baseline invocation set on
+    /// its way to inserting the new tag. Sibling to
+    /// `djinni_warlock_inherits_baseline_warlock_features` and
+    /// `dao_warlock_inherits_baseline_warlock_features` on the same
+    /// clone-and-layer lock.
+    #[test]
+    fn efreeti_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, EFREETI_ELEMENTAL_GIFT_TAG, ELDRITCH_MIND_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::EFREETI_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let efreeti = e
+            .instantiate_creature(&EFREETI_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&efreeti].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&efreeti].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&efreeti].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&efreeti].has_passive_feature(EFREETI_ELEMENTAL_GIFT_TAG));
+    }
+
     /// Helper-promotion sanity: every tag-only warlock subclass built
     /// through the shared `subclass_warlock_template` helper preserves
     /// the baseline warlock envelope AND lands with its own subclass
-    /// tag installed, uniformly across all seven users (Undying / Great
-    /// Old One / Archfey / Celestial / Marid / Dao / Djinni). Locks the
-    /// helper against a regression where a future edit to the "clone
-    /// baseline features + insert one tag" body drops the baseline
+    /// tag installed, uniformly across all eight users (Undying / Great
+    /// Old One / Archfey / Celestial / Marid / Dao / Djinni / Efreeti).
+    /// Locks the helper against a regression where a future edit to the
+    /// "clone baseline features + insert one tag" body drops the baseline
     /// invocation set OR silently omits the subclass tag insertion.
     /// Sibling to the individual per-subclass
     /// `<x>_warlock_inherits_baseline_warlock_features` tests on the
@@ -55435,14 +55675,15 @@ mod tests {
     fn subclass_warlock_helper_installs_tag_and_preserves_baseline() {
         use crate::actions::class_features::{
             AGONIZING_BLAST_TAG, ASPECT_OF_THE_MOON_TAG, BEGUILING_DEFENSES_TAG,
-            DAO_ELEMENTAL_GIFT_TAG, DJINNI_ELEMENTAL_GIFT_TAG, ELDRITCH_MIND_TAG, ENTROPIC_WARD_TAG,
-            MARID_ELEMENTAL_GIFT_TAG, RADIANT_SOUL_TAG, REPELLING_BLAST_TAG,
+            DAO_ELEMENTAL_GIFT_TAG, DJINNI_ELEMENTAL_GIFT_TAG, EFREETI_ELEMENTAL_GIFT_TAG,
+            ELDRITCH_MIND_TAG, ENTROPIC_WARD_TAG, MARID_ELEMENTAL_GIFT_TAG, RADIANT_SOUL_TAG,
+            REPELLING_BLAST_TAG,
         };
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::warlocks::{
             ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
-            DJINNI_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE,
-            UNDYING_WARLOCK_TEMPLATE,
+            DJINNI_WARLOCK_TEMPLATE, EFREETI_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+            MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
         };
         use std::sync::LazyLock;
 
@@ -55450,7 +55691,8 @@ mod tests {
         // through `subclass_warlock_template` should satisfy. Ordered
         // by publication order (Undying SCAG → Great Old One PHB →
         // Archfey PHB → Celestial XGtE → Marid TCE → Dao TCE → Djinni
-        // TCE) so a new tag-only user drops in as a fresh tuple.
+        // TCE → Efreeti TCE) so a new tag-only user drops in as a fresh
+        // tuple.
         let subclasses: &[(&LazyLock<CreatureTemplate>, &'static str)] = &[
             (&UNDYING_WARLOCK_TEMPLATE, ASPECT_OF_THE_MOON_TAG),
             (&GREAT_OLD_ONE_WARLOCK_TEMPLATE, ENTROPIC_WARD_TAG),
@@ -55459,6 +55701,7 @@ mod tests {
             (&MARID_WARLOCK_TEMPLATE, MARID_ELEMENTAL_GIFT_TAG),
             (&DAO_WARLOCK_TEMPLATE, DAO_ELEMENTAL_GIFT_TAG),
             (&DJINNI_WARLOCK_TEMPLATE, DJINNI_ELEMENTAL_GIFT_TAG),
+            (&EFREETI_WARLOCK_TEMPLATE, EFREETI_ELEMENTAL_GIFT_TAG),
         ];
 
         let mut e = ei_with_terrain(30, 30, &[]);
@@ -55505,6 +55748,140 @@ mod tests {
                     other_tag,
                 );
             }
+        }
+    }
+
+    /// Helper-promotion sanity: `CreatureTemplate::with_subclass_tag` (the
+    /// shared cross-class "clone base + override name/glyph + insert one
+    /// feature tag" helper) preserves the baseline features set AND
+    /// installs the new tag on every tag-only subclass template that
+    /// routes through it — LIFE_CLERIC (CLERIC baseline +
+    /// DISCIPLE_OF_LIFE_TAG), NECROMANCY_WIZARD (WIZARD baseline +
+    /// INURED_TO_UNDEATH_TAG), ABERRANT_MIND_SORCERER (SORCERER baseline
+    /// + PSYCHIC_DEFENSES_TAG), DIVINE_SOUL_SORCERER (SORCERER baseline
+    /// + FAVORED_BY_THE_GODS_TAG). Locks the shared helper against a
+    /// regression where a future edit to its body drops the baseline
+    /// feature set OR silently omits the subclass tag insertion.
+    ///
+    /// Sibling to `subclass_warlock_helper_installs_tag_and_preserves_baseline`
+    /// on the same "clone base + insert one tag" lane — the per-class
+    /// warlock helper (`subclass_warlock_template`) delegates to the same
+    /// shared method under the hood, but that sweep asserts the warlock-
+    /// family invocations; this sweep exercises the cleric / wizard /
+    /// sorcerer chassis that route through the shared method directly.
+    /// A helper-body drift (e.g., accidentally rebinding `features` to a
+    /// fresh empty HashSet before insert) would light up here on the
+    /// baseline-feature checks even when the per-class tests haven't been
+    /// updated to match.
+    #[test]
+    fn with_subclass_tag_helper_installs_tag_and_preserves_baseline() {
+        use crate::actions::class_features::{
+            ARCANE_RECOVERY_TAG, DISCIPLE_OF_LIFE_TAG, FAVORED_BY_THE_GODS_TAG,
+            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
+        };
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE};
+        use crate::actors::creatures::sorcerers::{
+            ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+        };
+        use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use std::sync::LazyLock;
+
+        // Each tuple: (subclass template, base template, expected
+        // subclass tag, one baseline-only tag known to live on the base
+        // template and expected to carry through the clone). Ordered by
+        // class chassis so a helper-body drift on any single chassis
+        // lights up with a specific assertion pointing at that chassis's
+        // baseline invariant.
+        let subclasses: &[(
+            &LazyLock<CreatureTemplate>,
+            &LazyLock<CreatureTemplate>,
+            &'static str,
+            &'static str,
+        )] = &[
+            (
+                &LIFE_CLERIC_TEMPLATE,
+                &CLERIC_TEMPLATE,
+                DISCIPLE_OF_LIFE_TAG,
+                // Cleric baseline features: Turn Undead / Destroy Undead
+                // both ride the CLERIC_TEMPLATE features set; a helper
+                // drift that drops the baseline set would strip both.
+                TURN_UNDEAD_TAG,
+            ),
+            (
+                &NECROMANCY_WIZARD_TEMPLATE,
+                &WIZARD_TEMPLATE,
+                INURED_TO_UNDEATH_TAG,
+                ARCANE_RECOVERY_TAG,
+            ),
+            (
+                &ABERRANT_MIND_SORCERER_TEMPLATE,
+                &SORCERER_TEMPLATE,
+                PSYCHIC_DEFENSES_TAG,
+                WILD_MAGIC_SURGE_TAG,
+            ),
+            (
+                &DIVINE_SOUL_SORCERER_TEMPLATE,
+                &SORCERER_TEMPLATE,
+                FAVORED_BY_THE_GODS_TAG,
+                WILD_MAGIC_SURGE_TAG,
+            ),
+        ];
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        for (i, (subclass_tmpl, base_tmpl, subclass_tag, baseline_tag)) in
+            subclasses.iter().enumerate()
+        {
+            // Sanity: the baseline tag is actually on the base template
+            // (guards this test's own baseline-tag pick against a
+            // baseline-template edit that quietly moved the tag off).
+            assert!(
+                base_tmpl.features.contains(baseline_tag),
+                "test-data drift: {} does not carry {} on its baseline features set",
+                base_tmpl.name,
+                baseline_tag,
+            );
+            let actor = e
+                .instantiate_creature(
+                    subclass_tmpl,
+                    Coordinate::new((2 * i + 1) as isize, 1),
+                    0,
+                    0,
+                )
+                .unwrap();
+            // Baseline tag carries through the helper's `..self.clone()`
+            // tail — a helper drift that dropped `features` from the tail
+            // would strip this tag from the subclass build.
+            assert!(
+                e.actors[&actor].has_passive_feature(baseline_tag),
+                "{} missing baseline tag {} — helper dropped features carry-through",
+                subclass_tmpl.name,
+                baseline_tag,
+            );
+            // Subclass tag lands on top — a helper drift that
+            // short-circuited the `features.insert(subclass_tag)` line
+            // would strip this tag from the subclass build.
+            assert!(
+                e.actors[&actor].has_passive_feature(subclass_tag),
+                "{} missing subclass tag {} — helper skipped insert",
+                subclass_tmpl.name,
+                subclass_tag,
+            );
+            // Name and glyph are overridden by the helper — the subclass
+            // build's identity axes don't get inherited from the base.
+            // A helper drift that dropped the `name` / `glyph` override
+            // would leave the subclass template carrying the base's name
+            // and glyph.
+            assert_ne!(
+                subclass_tmpl.name, base_tmpl.name,
+                "{} name should differ from base {}",
+                subclass_tmpl.name, base_tmpl.name,
+            );
+            assert_ne!(
+                subclass_tmpl.glyph, base_tmpl.glyph,
+                "{} glyph {:?} should differ from base {} glyph {:?}",
+                subclass_tmpl.name, subclass_tmpl.glyph, base_tmpl.name, base_tmpl.glyph,
+            );
         }
     }
 

@@ -721,35 +721,29 @@ pub static STORM_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// the Storm Sorcerer 'Ω' — greek psi for the psionic / psychic
 /// flavor.
 pub static ABERRANT_MIND_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Sorcerer envelope
-    // wholesale and layer on the Aberrant Mind lv14 feature tag:
-    //   - `PSYCHIC_DEFENSES_TAG` (lv14): passive psychic resistance +
-    //     Charmed / Frightened install immunity. Tag-based rather than a
-    //     struct-field flag since the shared cohort tables
-    //     (`PASSIVE_TYPED_RESISTANCES` + `FLAG_DRIVEN_IMMUNITIES`) both
-    //     fold one tag through one row apiece — no need for a new
-    //     `has_psychic_defenses: bool` struct field. Read at the shared
-    //     `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage` next
-    //     to Heart of the Storm's lightning + thunder row, and at the
-    //     shared `FLAG_DRIVEN_IMMUNITIES` cohort in `dynamic_immunity_to`
-    //     next to Nature's Ward's Charmed + Frightened row.
-    //
-    // The `..base.clone()` tail picks up every other field — actions,
-    // spell slots, sorcery points, save profs, features — without an
-    // N-line field-by-field copy. Same shape as
-    // `STORM_SORCERER_TEMPLATE`'s tag-only subclass build (Heart of
-    // the Storm) and `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
-    // build (Aspect of the Moon).
-    let mut features = SORCERER_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::PSYCHIC_DEFENSES_TAG);
-    CreatureTemplate {
-        name: "Aberrant Mind Sorcerer",
-        // 'Ψ' — distinct from baseline sorcerer 'S', Draconic 'D', and
-        // Storm 'Ω', greek psi for the psionic / psychic flavor.
-        glyph: 'Ψ',
-        features,
-        ..SORCERER_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Sorcerer envelope
+    // wholesale and layers on the Aberrant Mind lv14 feature tag
+    // (`PSYCHIC_DEFENSES_TAG`, passive psychic resistance + Charmed /
+    // Frightened install immunity — read at `PASSIVE_TYPED_RESISTANCES`
+    // and `FLAG_DRIVEN_IMMUNITIES` respectively). The `..base.clone()`
+    // tail inside the helper picks up every other field — actions, spell
+    // slots, sorcery points, save profs, features — without an N-line
+    // field-by-field copy. Sibling helper users on the "clone base +
+    // insert one tag" cross-class lane: every tag-only Warlock
+    // Otherworldly Patron subclass (via `subclass_warlock_template`),
+    // `LIFE_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`. STORM_SORCERER_TEMPLATE inserts
+    // one tag AND adds a language (Primordial) so it stays on the
+    // explicit clone-and-insert body — the helper's tag-only interface
+    // can't express the language axis. Glyph 'Ψ' (greek psi) — distinct
+    // from baseline sorcerer 'S', Draconic 'D', and Storm 'Ω', for the
+    // psionic / psychic flavor.
+    SORCERER_TEMPLATE.with_subclass_tag(
+        "Aberrant Mind Sorcerer",
+        'Ψ',
+        crate::actions::class_features::PSYCHIC_DEFENSES_TAG,
+    )
 });
 
 /// Divine Soul Sorcerer — Sorcerous Origin **Divine Soul** subclass
@@ -805,31 +799,27 @@ pub static ABERRANT_MIND_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
 /// Aberrant Mind Sorcerer 'Ψ' — 'V' for "divine / vessel" flavor
 /// (the sorcerer as a vessel for divine power).
 pub static DIVINE_SOUL_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Sorcerer envelope
-    // wholesale and layer on the Divine Soul lv1 feature tag:
-    //   - `FAVORED_BY_THE_GODS_TAG` (lv1): once-per-short-rest
-    //     auto-fire "add 2d4 to a failed save total" gate. Ships in
-    //     `SHORT_REST_FEATURES` so the charge refreshes alongside
-    //     Dark One's Own Luck / Fanatical Focus / etc. on the
-    //     failed-save recovery lane; fired at the shared save
-    //     chokepoint via the `FAILED_SAVE_ADD_DIE_SOURCES` cohort
-    //     next to Dark One's Own Luck.
-    //
-    // The `..base.clone()` tail picks up every other field — actions,
-    // spell slots, sorcery points, save profs, features — without an
-    // N-line field-by-field copy. Same shape as
-    // `STORM_SORCERER_TEMPLATE`'s tag-only subclass build (Heart of
-    // the Storm) and `ABERRANT_MIND_SORCERER_TEMPLATE`'s tag-only
-    // subclass build (Psychic Defenses).
-    let mut features = SORCERER_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::FAVORED_BY_THE_GODS_TAG);
-    CreatureTemplate {
-        name: "Divine Soul Sorcerer",
-        // 'V' — distinct from baseline sorcerer 'S', Draconic 'D',
-        // Storm 'Ω', and Aberrant Mind 'Ψ', 'V' for the "divine
-        // vessel" flavor.
-        glyph: 'V',
-        features,
-        ..SORCERER_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Sorcerer envelope
+    // wholesale and layers on the Divine Soul lv1 feature tag
+    // (`FAVORED_BY_THE_GODS_TAG`: once-per-short-rest auto-fire "add 2d4
+    // to a failed save total" gate; ships in `SHORT_REST_FEATURES` so the
+    // charge refreshes alongside Dark One's Own Luck / Fanatical Focus /
+    // etc. on the failed-save recovery lane; fired at the shared save
+    // chokepoint via the `FAILED_SAVE_ADD_DIE_SOURCES` cohort next to
+    // Dark One's Own Luck). The `..base.clone()` tail inside the helper
+    // picks up every other field — actions, spell slots, sorcery points,
+    // save profs, features — without an N-line field-by-field copy.
+    // Sibling helper users on the "clone base + insert one tag" cross-
+    // class lane: every tag-only Warlock Otherworldly Patron subclass
+    // (via `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`.
+    // Glyph 'V' — distinct from baseline sorcerer 'S', Draconic 'D',
+    // Storm 'Ω', and Aberrant Mind 'Ψ'; 'V' for the "divine vessel"
+    // flavor (the sorcerer as a vessel for divine power).
+    SORCERER_TEMPLATE.with_subclass_tag(
+        "Divine Soul Sorcerer",
+        'V',
+        crate::actions::class_features::FAVORED_BY_THE_GODS_TAG,
+    )
 });

@@ -7889,6 +7889,82 @@ pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
 /// playable level, not lockstep PHB progression.
 pub const DJINNI_ELEMENTAL_GIFT_TAG: &str = "warlock.djinni_elemental_gift";
 
+/// 5e Warlock Otherworldly Patron — **The Genie (Efreeti)** — **Elemental
+/// Gift** subclass feature tag (level 6, TCE). Passive: the Efreeti-pact
+/// warlock gains **resistance to fire damage** — the efreeti's flame-
+/// and desert-flavored patron pact leaks its elemental affinity into the
+/// warlock's own resilience, hardening them against Burning Hands,
+/// Fireball, Wall of Fire, and every other blaze the fiery lords of the
+/// Elemental Plane of Fire have ever taught a mortal to cast.
+///
+/// Fourth (and final) of the four RAW genie-kind variants of Elemental
+/// Gift to land on the passive typed-resistance cohort — completes the
+/// four-quadrant Genie patron coverage grid alongside **Marid** (Cold,
+/// water/ice), **Dao** (Bludgeoning, earth/stone), and **Djinni**
+/// (Thunder, sky/storm). The four never legally co-occur on a single
+/// build (RAW: one genie kind picked at lv1), so the split-tag shape is
+/// a template-drift lock rather than a stacking concern.
+///
+/// Semantic duplicate on the resistance axis of `FIEND_WARLOCK_TEMPLATE`'s
+/// **Fiendish Resilience** (Warlock Fiend Patron lv10) and
+/// `DRACONIC_SORCERER_TEMPLATE`'s **Draconic Resilience** (Sorcerer
+/// Draconic Bloodline lv6) — all three cover the Fire axis. The
+/// semantic duplication is a **taxonomic completeness** grant, not a
+/// mechanical-coverage grant: the Efreeti variant lands so the four-
+/// genie Genie patron family reads as a full quadrant on the map even
+/// though the Fire axis is already covered by two other passive-
+/// resistance rows on distinct chassis. The three Fire-resistance rows
+/// never legally co-occur on a single build (Barbarian vs. Warlock
+/// Fiend vs. Warlock Efreeti vs. Sorcerer Draconic), and a hypothetical
+/// multiclass carrier caps at a single /2 per Fire hit under the "one
+/// halving per damage instance" rule — the triple coverage is a
+/// taxonomic tell rather than a stacking bug.
+///
+/// RAW's Elemental Gift also grants a per-day 10-minute **flying speed
+/// equal to walking speed** clause; the flight half needs a per-cast
+/// timer / activated-buff surface not yet wired on this chassis. Left
+/// as future work — the resistance clause is the load-bearing defensive
+/// half and rides here alone, matching the way the Marid / Dao / Djinni
+/// variants each ship without the flight half.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to Marid's Cold row, Dao's Bludgeoning row,
+/// Djinni's Thunder row, Radiant Soul's radiant row, Fiendish /
+/// Draconic Resilience's fire rows, Storm Soul (Sea / Desert / Tundra)'s
+/// Lightning / Fire / Cold rows, Heart of the Storm's lightning +
+/// thunder row, Psychic Defenses' psychic row, and Inured to Undeath's
+/// necrotic row. Single-type slice (Fire only) — same shape as the
+/// Marid Cold / Dao Bludgeoning / Djinni Thunder / Radiant Soul
+/// Radiant / Inured to Undeath Necrotic single-type rows on the
+/// single-type-per-subclass lane.
+///
+/// Sibling to `MARID_ELEMENTAL_GIFT_TAG` (Marid, Cold),
+/// `DAO_ELEMENTAL_GIFT_TAG` (Dao, Bludgeoning), and
+/// `DJINNI_ELEMENTAL_GIFT_TAG` (Djinni, Thunder) on the Genie patron
+/// lane — same "one feature tag drives one cohort row" declarative-
+/// table pattern, different damage axis. Sibling to `RADIANT_SOUL_TAG`
+/// / `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the
+/// Otherworldly Patron / Sorcerous Origin subclass passive lane — same
+/// "one feature tag drives one cohort row" declarative-table pattern.
+///
+/// Ships on `EFREETI_WARLOCK_TEMPLATE` — the fourth Otherworldly
+/// Patron: The Genie subclass template — alongside the baseline Warlock
+/// envelope. Distinct from `MARID_WARLOCK_TEMPLATE` (Cold),
+/// `DAO_WARLOCK_TEMPLATE` (Bludgeoning), `DJINNI_WARLOCK_TEMPLATE`
+/// (Thunder), `FIEND_WARLOCK_TEMPLATE` (Fire, via the struct-field
+/// `has_fiendish_resilience` flag rather than a feature tag),
+/// `UNDYING_WARLOCK_TEMPLATE` / `GREAT_OLD_ONE_WARLOCK_TEMPLATE` /
+/// `ARCHFEY_WARLOCK_TEMPLATE` / `CELESTIAL_WARLOCK_TEMPLATE` (their
+/// respective single-patron flavor tells), and the baseline
+/// `WARLOCK_TEMPLATE` (patron-less baseline).
+///
+/// Ships on the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6) — class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const EFREETI_ELEMENTAL_GIFT_TAG: &str = "warlock.efreeti_elemental_gift";
+
 /// 5e Wizard Arcane Tradition — **School of Necromancy** — **Inured to
 /// Undeath** subclass feature tag (level 10, PHB). Passive: the
 /// necromancer's long study of death and undeath leaves the body
