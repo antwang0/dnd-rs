@@ -734,6 +734,78 @@ const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
     },
 ];
 
+/// Cohort row shape for a passive subclass feature that grants the
+/// swinging actor temporary hit points whenever their damage drops a
+/// hostile creature to 0 HP. Rows carry the identifying tag plus a
+/// stat-block-driven amount closure — the shared trigger body lives
+/// in `EncounterInstance::trigger_kill_triggered_temp_hp` so a new
+/// sibling drops in as a fresh row rather than a new open-coded
+/// method.
+///
+/// The closure takes an `&ActorInstance` (the swinger) rather than
+/// running against raw ability scores because each source pulls from
+/// a different ability + level combination — Fiend Warlock keys off
+/// CHA + warlock level (min 1); Long Death Monk keys off CON + monk
+/// level with a base +1 offset. Passing the actor lets each row read
+/// its own stat pair through the shared `ability_modifier` + `level`
+/// accessors without a per-source column in the row.
+struct KillTriggeredTempHpSource {
+    /// Feature tag for the row — read via `has_passive_feature(tag)`.
+    /// Appears as the row's identity: `DARK_ONES_BLESSING_TAG`,
+    /// `TOUCH_OF_DEATH_TAG`.
+    tag: &'static str,
+    /// Formula closure: given the swinger, return the temp HP amount
+    /// (already `max(1, ...)`-floored). Runs once per matching kill;
+    /// the returned value goes through the standard `GainTempHp` side
+    /// effect so the max-of-current-and-new stack rule still holds.
+    amount: fn(&ActorInstance) -> u32,
+}
+
+/// Ordered cohort of "kill-triggered temp HP" sources, walked by
+/// `EncounterInstance::trigger_kill_triggered_temp_hp` at the
+/// `DealDamage::apply` chokepoint on the `Downed` / `Killed` outcome
+/// branches. Iteration stops as soon as the first row's tag matches
+/// on the swinger, so at most one temp HP grant fires per kill —
+/// mirrors the "at most one add-die per save" / "at most one reactive
+/// disadvantage per attack" ordering semantics on
+/// `FAILED_SAVE_ADD_DIE_SOURCES` / `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`.
+///
+/// Entries:
+///   - **Dark One's Blessing** (Fiend Warlock lv1): temp HP =
+///     `max(1, CHA mod + warlock level)`. Ships on
+///     `FIEND_WARLOCK_TEMPLATE` via `DARK_ONES_BLESSING_TAG`.
+///   - **Touch of Death** (Long Death Monk lv3): temp HP =
+///     `max(1, 1 + CON mod + monk level)`. Ships on
+///     `LONG_DEATH_MONK_TEMPLATE` via `TOUCH_OF_DEATH_TAG`.
+///
+/// Order: entries are consulted in listed order. On a hypothetical
+/// multiclass holding both flags (RAW rules this out — Warlock Fiend
+/// vs. Monk Long Death are different classes with different
+/// subclasses, so no legal single-build carries both), the first-
+/// listed row would fire; the ordering is a stable pick rather than
+/// an inventory of expected multiclass co-occurrence.
+///
+/// A new kill-triggered temp HP feature drops in as a fresh row
+/// with its own `(tag, amount)` pair.
+const KILL_TRIGGERED_TEMP_HP_SOURCES: &[KillTriggeredTempHpSource] = &[
+    KillTriggeredTempHpSource {
+        tag: crate::actions::class_features::DARK_ONES_BLESSING_TAG,
+        amount: |a| {
+            let cha = a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+            let level = a.level() as i32;
+            (cha + level).max(1) as u32
+        },
+    },
+    KillTriggeredTempHpSource {
+        tag: crate::actions::class_features::TOUCH_OF_DEATH_TAG,
+        amount: |a| {
+            let con = a.ability_modifier(crate::engine::types::AbilityScoreType::Constitution);
+            let level = a.level() as i32;
+            (1 + con + level).max(1) as u32
+        },
+    },
+];
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -4672,35 +4744,49 @@ impl EncounterInstance {
         self.initiative_tracker.current_player()
     }
 
-    /// 5e Warlock **The Fiend** patron, level-1 subclass feature —
-    /// **Dark One's Blessing** trigger. Called from
-    /// `DealDamage::apply` when the damage instance drops
-    /// `dropped_target_id` to 0 HP (`Downed`) or kills it outright
-    /// (`Killed`). If the current turn actor holds
-    /// `DARK_ONES_BLESSING_TAG` AND the dropped target belongs to a
-    /// different team (RAW: "hostile creature"), grant the warlock
-    /// `max(1, CHA mod + level)` temporary HP through the standard
-    /// `GainTempHp` side effect. The temp-HP grant uses the
-    /// max-of-current-and-new stack rule, matching RAW: a warlock
-    /// killing two enemies in one turn keeps whichever gift was
-    /// larger, not both stacked.
+    /// **Kill-triggered temp HP** trigger — shared entry point for the
+    /// family of passive subclass features that grant the swinging
+    /// actor temporary hit points whenever their damage drops a
+    /// hostile creature to 0 HP. Called from `DealDamage::apply` on
+    /// the `Downed` / `Killed` outcome branches.
+    ///
+    /// Walks the `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort — each row
+    /// pairs a passive-feature tag with a temp-HP formula closure. If
+    /// the current turn actor holds any row's tag AND the dropped
+    /// target belongs to a different team (RAW: "hostile creature"),
+    /// the row's formula runs against the swinger's stat block and the
+    /// resulting temp HP is granted through the standard `GainTempHp`
+    /// side effect so the max-of-current-and-new stack rule still
+    /// holds (a killer who drops two enemies keeps whichever gift was
+    /// larger, not both stacked). First matching row wins — RAW rules
+    /// out multiclass co-occurrence for the currently-shipped sources
+    /// (Fiend Warlock vs. Long Death Monk are different classes with
+    /// different templates), so the first-match short-circuit is a
+    /// deterministic pick rather than an ordering hazard.
     ///
     /// The self-kill guard (`current_turn != dropped_target`) covers
     /// the pathological "reduce self to 0" case (e.g. Hellish Rebuke
     /// mirroring damage back onto the caster via Warding Bond). The
     /// team check runs even when both actors are hostile-to-hostile —
-    /// a Fiend warlock on the enemy team dropping a party PC still
-    /// fires Dark One's Blessing per RAW ("hostile" is anchored to
-    /// the warlock, not the party); the team-distinct filter is the
-    /// engine's cleanest proxy.
+    /// a Fiend warlock / Long Death monk on the enemy team dropping a
+    /// party PC still fires the temp HP grant per RAW ("hostile" is
+    /// anchored to the swinger, not the party); the team-distinct
+    /// filter is the engine's cleanest proxy.
     ///
     /// No-op when the current turn actor is missing (start-of-encounter
-    /// pre-init edge case) or lacks the tag — the check runs on every
-    /// downed / killed event, and template-flag lookup is cheap.
-    pub fn trigger_dark_ones_blessing(&mut self, dropped_target_id: usize) {
-        use crate::actions::class_features::DARK_ONES_BLESSING_TAG;
+    /// pre-init edge case) or holds none of the cohort's tags — the
+    /// check runs on every downed / killed event, and template-flag
+    /// lookup is cheap.
+    ///
+    /// Sibling to the shared attack-chokepoint cohorts
+    /// (`REACTIVE_ATTACK_DISADVANTAGE_SOURCES`,
+    /// `FAILED_SAVE_ADD_DIE_SOURCES`, `PASSIVE_TYPED_RESISTANCES`) —
+    /// same "walk a table of `{tag, closure}` rows at a chokepoint"
+    /// pattern that lets a new feature drop in as a one-line row
+    /// entry rather than a fresh open-coded trigger function.
+    pub fn trigger_kill_triggered_temp_hp(&mut self, dropped_target_id: usize) {
         use crate::engine::side_effects::{ApplicableSideEffect, GainTempHp};
-        let Some(warlock_id) = self.current_turn_actor_id() else {
+        let Some(swinger_id) = self.current_turn_actor_id() else {
             return;
         };
         // Team-distinct guard runs through the shared `actors_enemies`
@@ -4708,23 +4794,23 @@ impl EncounterInstance {
         // harmful-action pipeline uses. This handles both the self-kill
         // case (`actors_enemies(x, x)` is false) and the friendly-fire
         // case (same team → false) in one check.
-        if !self.actors_enemies(warlock_id, dropped_target_id) {
+        if !self.actors_enemies(swinger_id, dropped_target_id) {
             return;
         }
         let temp_amount = {
-            let Some(warlock) = self.actors.get(&warlock_id) else {
+            let Some(swinger) = self.actors.get(&swinger_id) else {
                 return;
             };
-            if !warlock.has_passive_feature(DARK_ONES_BLESSING_TAG) {
+            let Some(row) = KILL_TRIGGERED_TEMP_HP_SOURCES
+                .iter()
+                .find(|r| swinger.has_passive_feature(r.tag))
+            else {
                 return;
-            }
-            let cha = warlock
-                .ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
-            let level = warlock.level() as i32;
-            (cha + level).max(1) as u32
+            };
+            (row.amount)(swinger)
         };
         GainTempHp {
-            actor_id: warlock_id,
+            actor_id: swinger_id,
             amount: temp_amount,
         }
         .apply(self);
@@ -51757,6 +51843,153 @@ mod tests {
             e.actors[&w].temp_hp(),
             0,
             "baseline Warlock (no Fiend patron tag) shouldn't get temp HP on kill"
+        );
+    }
+
+    /// 5e Long Death Monk **Touch of Death** (lv3 subclass tell):
+    /// passive: when the monk's swing reduces a hostile to 0 HP, they
+    /// gain `max(1, 1 + CON mod + monk level)` temp HP. Sibling to the
+    /// Dark One's Blessing coverage above on the shared
+    /// `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort — verifies the temp HP
+    /// grant lands on kill via a direct DealDamage burn (same
+    /// side-step of the seed sweep of the attack pipeline the sibling
+    /// test uses — the trigger fires on the outcome, not on a
+    /// specific attack path).
+    #[test]
+    fn touch_of_death_grants_temp_hp_on_hostile_kill() {
+        use crate::actions::class_features::TOUCH_OF_DEATH_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::LONG_DEATH_MONK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&LONG_DEATH_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&m].has_passive_feature(TOUCH_OF_DEATH_TAG));
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        while e.current_turn_actor_id() != Some(m) {
+            e.skip_turn();
+        }
+        assert_eq!(e.actors[&m].temp_hp(), 0);
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        // Expected temp HP = max(1, 1 + CON mod + monk level). Compute
+        // against the actual template to stay resilient to level shifts.
+        let expected = {
+            let a = &e.actors[&m];
+            let con = a.ability_modifier(crate::engine::types::AbilityScoreType::Constitution);
+            let lvl = a.level() as i32;
+            (1 + con + lvl).max(1) as u32
+        };
+        // Use >= to accommodate any future template level bump making
+        // the pool larger; the load-bearing check is "temp HP > 0".
+        assert!(
+            e.actors[&m].temp_hp() >= expected,
+            "expected at least {} temp HP (1 + CON + level), got {}",
+            expected,
+            e.actors[&m].temp_hp()
+        );
+    }
+
+    /// Touch of Death does NOT fire on a same-team kill — friendly
+    /// drops shouldn't reward the monk. RAW gates the temp-HP grant on
+    /// "hostile creature" — the team-distinct filter is our closest
+    /// engine proxy. Mirrors the Dark One's Blessing friendly-fire
+    /// test above on the shared cohort's other row.
+    #[test]
+    fn touch_of_death_does_not_fire_on_friendly_kill() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::LONG_DEATH_MONK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&LONG_DEATH_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Ally goblin on team 0 (same team as monk).
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        while e.current_turn_actor_id() != Some(m) {
+            e.skip_turn();
+        }
+        assert_eq!(e.actors[&m].temp_hp(), 0);
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&m].temp_hp(),
+            0,
+            "Touch of Death should NOT fire on a same-team kill"
+        );
+    }
+
+    /// Touch of Death does NOT fire when the swinging actor lacks the
+    /// tag. Verifies a baseline `MONK_TEMPLATE` (which doesn't ship the
+    /// Long Death Way feature) doesn't accidentally get the temp-HP
+    /// well.
+    #[test]
+    fn touch_of_death_does_not_fire_on_baseline_monk_kill() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        while e.current_turn_actor_id() != Some(m) {
+            e.skip_turn();
+        }
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&m].temp_hp(),
+            0,
+            "baseline Monk (no Long Death Way tag) shouldn't get temp HP on kill"
+        );
+    }
+
+    /// The baseline `MONK_TEMPLATE` doesn't ship any Long Death Way
+    /// features. Confirms the subclass tell rides only on the dedicated
+    /// `LONG_DEATH_MONK_TEMPLATE`. Mirrors the Fiend Warlock /
+    /// baseline Warlock discrimination the sibling
+    /// `dark_ones_own_luck_ships_on_fiend_warlock_template` test does.
+    #[test]
+    fn baseline_monk_does_not_ship_long_death_way_features() {
+        use crate::actions::class_features::TOUCH_OF_DEATH_TAG;
+        use crate::actors::creatures::monks::{LONG_DEATH_MONK_TEMPLATE, MONK_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let long_death = e
+            .instantiate_creature(&LONG_DEATH_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&long_death].has_passive_feature(TOUCH_OF_DEATH_TAG),
+            "Long Death Monk ships TOUCH_OF_DEATH_TAG"
+        );
+        assert!(
+            !e.actors[&base].has_passive_feature(TOUCH_OF_DEATH_TAG),
+            "baseline Monk doesn't ship TOUCH_OF_DEATH_TAG (Way is a subclass pick)"
         );
     }
 

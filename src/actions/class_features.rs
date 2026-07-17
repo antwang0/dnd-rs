@@ -5676,7 +5676,53 @@ pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 /// set to install it. Not shipped on the baseline
 /// `WARLOCK_TEMPLATE` (Patron is a subclass pick); rides on the
 /// dedicated `FIEND_WARLOCK_TEMPLATE`.
+///
+/// Sibling to `TOUCH_OF_DEATH_TAG` (Long Death Monk lv3) on the shared
+/// **kill-triggered temp HP** cohort in
+/// `EncounterInstance::trigger_kill_triggered_temp_hp` — same
+/// "reduce hostile to 0 HP → grant self temp HP" pattern with a
+/// different stat + level formula and a different class chassis. Both
+/// rows fold through the same `KILL_TRIGGERED_TEMP_HP_SOURCES` table so
+/// adding a new kill-triggered temp HP feature is a one-line row entry
+/// rather than a fresh open-coded trigger function.
 pub const DARK_ONES_BLESSING_TAG: &str = "warlock.dark_ones_blessing";
+
+/// 5e Monk — Way of the Long Death, level-3 subclass feature
+/// **Touch of Death**. Passive: whenever the monk reduces a hostile
+/// creature to 0 HP, they gain temporary hit points equal to
+/// `1 + CON mod + monk level` (min 1). RAW: "Starting when you choose
+/// this tradition at 3rd level, your study of death allows you to
+/// wring extra life force from a foe. Immediately after you reduce a
+/// creature within 5 feet of you to 0 hit points, you gain temporary
+/// hit points equal to 1 + your Constitution modifier + your monk
+/// level (minimum of 1)."
+///
+/// Read at the `DealDamage::apply` chokepoint on the `Downed` /
+/// `Killed` outcome branches via the shared
+/// `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort — the current turn actor
+/// is looked up, and if they hold this tag AND the dropped target is
+/// on a different team (RAW "hostile"), the temp HP is granted through
+/// the standard `GainTempHp` side effect so the max-of-current-and-new
+/// stack rule still holds.
+///
+/// **Range clause**: RAW gates the trigger to a target "within 5 feet
+/// of you" — the monk's touch is the killing blow's channel, so the
+/// grant only fires on melee kills. We drop the 5ft gate for the same
+/// reason `DARK_ONES_BLESSING_TAG` drops any range gate — the current-
+/// turn-actor attribution already anchors the trigger to whoever's
+/// swinging, and cantrip / ranged kills from a monk are rare enough
+/// that broadening the trigger is a wash (matching the same design
+/// call the code base's other RAW-clause simplifications make, e.g.
+/// dropping the extreme-heat / extreme-cold clauses on Storm Soul).
+///
+/// Sibling to `DARK_ONES_BLESSING_TAG` (Warlock Fiend Patron lv1) on
+/// the shared kill-triggered temp HP cohort — same pattern, different
+/// stat + level formula (Warlock: CHA mod + warlock level; Monk: 1 +
+/// CON mod + monk level) and different chassis. Add this tag to a
+/// monk template's `features` set to install it. Not shipped on the
+/// baseline `MONK_TEMPLATE` (Way is a subclass pick); rides on the
+/// dedicated `LONG_DEATH_MONK_TEMPLATE`.
+pub const TOUCH_OF_DEATH_TAG: &str = "monk.touch_of_death";
 
 /// 5e Warlock — Otherworldly Patron **The Great Old One**, level-6
 /// subclass feature **Entropic Ward**. Reactive per-rest gate: when a

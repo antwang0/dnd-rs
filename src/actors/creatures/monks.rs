@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
     EMPTY_BODY, EMPTY_BODY_TAG, FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
     STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
-    UNARMORED_MOVEMENT_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
+    TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -150,6 +150,80 @@ pub static OPEN_HAND_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         name: "Open Hand Monk",
         glyph: 'O',
         actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});
+
+/// Long Death Monk — Way of the Long Death subclass build (SCAG).
+/// Identical envelope to the baseline `MONK_TEMPLATE` (unarmored AC
+/// 15, unarmed strike, Stunning Strike + Patient Defense + Flurry of
+/// Blows + Stillness of Mind + Step of the Wind + Empty Body, evasion
+/// + deflect missiles + extra attack, Purity of Body + Diamond Soul +
+/// Unarmored Movement passives) with one subclass passive layered on:
+/// **Touch of Death** (lv3 subclass tell) — whenever the Long Death
+/// monk's damage reduces a hostile creature to 0 HP, the monk gains
+/// `max(1, 1 + CON mod + monk level)` temporary HP.
+///
+/// Pairs naturally with the monk's strike-and-move skirmisher kit:
+/// the Long Death monk chains kills into a self-refilling temp HP
+/// pool without spending an action, complementing the reactive Patient
+/// Defense (bonus-action Dodge) and Wholeness of Body-style hard heal
+/// on the Open Hand cousin. Where Open Hand fills the HP bar once per
+/// fight with a chunky heal, Long Death fills the temp HP absorb
+/// buffer every time an enemy drops — the two subclasses hit the
+/// staying-power lane from different angles.
+///
+/// The signature "kill-triggered temp HP" tell is a chassis-level
+/// cousin of Fiend Warlock's **Dark One's Blessing** (CHA mod + level
+/// on the same trigger). Both share the `KILL_TRIGGERED_TEMP_HP_SOURCES`
+/// cohort in `EncounterInstance::trigger_kill_triggered_temp_hp` — one
+/// shared iteration reads whichever tag the swinger holds and applies
+/// the row's stat + level formula. The two never legally co-occur on
+/// a single build (Warlock Fiend Patron vs. Monk Long Death Way are
+/// distinct classes with distinct subclasses).
+///
+/// RAW's Way of the Long Death picks up other features not shipped on
+/// this template — **Hour of Reaping** (lv6: 30ft self-centered WIS
+/// save vs Frightened burst; needs a per-turn cost surface for the
+/// action), **Mastery of Death** (lv11: on drop to 0 HP, spend 1 ki
+/// point to stay at 1 HP; needs a Downed-outcome intercept keyed off
+/// a ki-point pool this engine doesn't track), and **Touch of the
+/// Long Death** (lv17: cost 5+ ki for a 10d10 necrotic single-target
+/// touch attack). The lv3 Touch of Death passive is the load-bearing
+/// tactical feature with a first-class engine surface today, so we
+/// ship that half and leave the rest as future work — matching the
+/// way `OPEN_HAND_MONK_TEMPLATE` ships only the Wholeness of Body
+/// (lv6) half of its RAW Way of the Open Hand kit.
+///
+/// Ships on the CR-1.5 monk chassis at (or above) its strict RAW lv3
+/// gate for the same reason `OPEN_HAND_MONK_TEMPLATE` ships Wholeness
+/// of Body (RAW lv6) and every other subclass template runs above its
+/// strict RAW gate — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Distinct from `MONK_TEMPLATE` (subclass-less baseline) and
+/// `OPEN_HAND_MONK_TEMPLATE` (Wholeness of Body) so a Long-Death-vs-
+/// baseline / vs-Open-Hand encounter renders unambiguously by name.
+/// Glyph 'D' (for the Long **D**eath way) so the Long Death monk shows
+/// up distinctly on the map next to baseline 'M' and Open Hand 'O'.
+pub static LONG_DEATH_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: mirrors the Open Hand shape above — clone
+    // the baseline Monk envelope wholesale and layer on the subclass
+    // passive tag. No new actions are pushed — Touch of Death is a
+    // purely passive kill-triggered temp HP grant read at the
+    // `DealDamage` chokepoint via the shared
+    // `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort, not a fresh action
+    // surface. Sibling helper users on the "clone base + insert one
+    // tag" cross-class lane: every tag-only Warlock Otherworldly
+    // Patron subclass, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
+    // `LIFE_CLERIC_TEMPLATE`.
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(TOUCH_OF_DEATH_TAG);
+    CreatureTemplate {
+        name: "Long Death Monk",
+        glyph: 'D',
         features,
         ..MONK_TEMPLATE.clone()
     }
