@@ -1257,6 +1257,25 @@ pub enum Condition {
     /// doesn't dangle across rounds when the swing whiffs the reach
     /// window.
     GuidedStriking,
+    /// Marked for the Grave (5e Grave Domain Cleric Channel Divinity,
+    /// lv2 subclass — Path to the Grave, XGtE). The cleric has cursed
+    /// this target for a killing blow — the next attack against the
+    /// holder before the end of the cleric's next turn is made with
+    /// advantage. RAW's clause reads "vulnerability to all of that
+    /// attack's damage, and then the curse ends" — collapsed to the
+    /// attack-advantage grant on the target-side lane so the mechanic
+    /// rides the shared `grants_advantage_to_attackers` chokepoint next
+    /// to `GuidingBoltLit` / `Outlined`; the "curse ends after the
+    /// attack" clause is collapsed to the `UntilStartOfNextTurn` timer
+    /// (matches RAW's "end of your next turn" cadence for the caster).
+    /// Distinct from `GuidingBoltLit` semantically (Cleric CD curse
+    /// vs. spell-mark) even though they overlap on the next-attack-
+    /// advantage mechanic — kept as a separate condition so combat log
+    /// lines identify the curse source and future refinements (RAW's
+    /// vulnerability clause modeled as a damage-doubling target-side
+    /// hook, or a resistance-piercing rider) can attach to this
+    /// condition specifically without disturbing Guiding Bolt's lane.
+    MarkedForGrave,
 }
 
 impl Condition {
@@ -1280,6 +1299,7 @@ impl Condition {
             Condition::DamageResistant => "damage resistant",
             Condition::Outlined => "outlined",
             Condition::GuidingBoltLit => "marked by guiding bolt",
+            Condition::MarkedForGrave => "marked for the grave",
             Condition::Helped => "helped",
             Condition::Hidden => "hidden",
             Condition::Burning => "burning",
@@ -1722,6 +1742,15 @@ impl Condition {
                 | Condition::Outlined
                 | Condition::Petrified
                 | Condition::GuidingBoltLit
+                // 5e Grave Domain Cleric **Path to the Grave** Channel
+                // Divinity (lv2 subclass, XGtE) — cursed target grants
+                // advantage on the next attack. Sibling arm to
+                // `GuidingBoltLit` on the "target-side advantage rider
+                // with short-timer decay" lane; kept as a distinct
+                // condition so the combat-log identity ("marked for the
+                // grave" vs "marked by guiding bolt") disambiguates the
+                // curse source at the log site.
+                | Condition::MarkedForGrave
                 | Condition::Dancing
                 | Condition::MentallyImprisoned
                 | Condition::Sphered

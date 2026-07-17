@@ -151,6 +151,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // lv1) but with an unlimited range (no 30ft cap): the warlock's
     // patron reads the attacker's mind anywhere on the battlefield.
     ENTROPIC_WARD_TAG,
+    // 5e Grave Domain Cleric level-2 subclass Channel Divinity — Path
+    // to the Grave. Single-target curse (`MarkedForGrave`) that grants
+    // advantage to the next attack against the cursed target. RAW:
+    // once per short rest — sibling cadence to every other Cleric CD
+    // (Turn Undead / Preserve Life / Guided Strike / Radiance of the
+    // Dawn / Warding Flare / Wrath of the Storm).
+    PATH_TO_THE_GRAVE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -4795,24 +4802,19 @@ impl Action for CuttingWords {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let Some(actor) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        if !actor.is_combat_active() || !actor.feature_available(CUTTING_WORDS_TAG) {
-            return false;
-        }
-        // Target must be an enemy, combat-active, not already Mocked
-        // (re-applying with a one-shot timer would just refresh — wasted
-        // bonus action if the target hasn't swung yet).
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return false;
-        };
-        target.team() != actor.team()
-            && target.is_combat_active()
-            && !target.has_condition(Condition::Mocked)
+        // Same shared gate as Nature's Wrath / Intimidating Presence /
+        // Abjure Enemy / Path to the Grave — once-per-rest charge +
+        // hostile-target + already-holds-Mocked dedup all fold into
+        // `hostile_target_feature_ready`. Mocked dedup keeps the bard
+        // from burning a bonus action on a target whose disadvantage
+        // rider is still live from an earlier quip.
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            CUTTING_WORDS_TAG,
+            Condition::Mocked,
+        )
     }
     fn side_effects(
         &self,
@@ -8301,3 +8303,154 @@ pub const STORM_SOUL_DESERT_TAG: &str = "barbarian.storm_soul_desert";
 /// — class templates target a balanced playable level, not lockstep PHB
 /// progression.
 pub const STORM_SOUL_TUNDRA_TAG: &str = "barbarian.storm_soul_tundra";
+
+/// 5e Cleric Divine Domain — **Grave Domain** — **Path to the Grave**
+/// Channel Divinity subclass feature tag (level 2 subclass, XGtE). The
+/// cleric spends their once-per-short-rest Channel Divinity charge to
+/// curse one creature within 30 ft; the target holds the
+/// `MarkedForGrave` condition until the start of the cleric's next
+/// turn, and any attack against the target while cursed rolls with
+/// advantage.
+///
+/// RAW's clause reads "the next attack roll made against the target
+/// before the end of your next turn has advantage" AND "if the attack
+/// hits, the target has vulnerability to all of that attack's damage,
+/// and then the curse ends." Collapsed here to the advantage half on
+/// the `grants_advantage_to_attackers` target-side cohort — the
+/// vulnerability half (double damage on the first hit) needs a
+/// target-side incoming-damage multiplier hook that today's engine
+/// doesn't expose, and would slot in later as a `MarkedForGrave`-
+/// gated damage multiplier at the `effective_damage` chokepoint. The
+/// "curse ends after the attack" clause is collapsed to the
+/// `UntilStartOfNextTurn` timer (matches RAW's cadence — the curse
+/// naturally expires the round after install even without the
+/// on-attack consume).
+///
+/// Sits in the same "target-side reactive-flavor curse that fattens
+/// the next attack against the holder" lane as `GuidingBoltLit`
+/// (Cleric Guiding Bolt lv1 install rider) — same
+/// `grants_advantage_to_attackers` chokepoint on the target-side, but
+/// distinguished by combat-log identity ("marked for the grave" vs
+/// "marked by guiding bolt") so the curse source reads unambiguously
+/// at the log site. Distinct from Guiding Bolt's install path
+/// (Guiding Bolt lands only on a hit; Path to the Grave lands with no
+/// attack roll, no save — the cleric spends CD and the curse is on).
+///
+/// Refreshes on a short rest via `SHORT_REST_FEATURES` — sibling
+/// cadence to every other Cleric Channel Divinity charge (Turn Undead
+/// / Preserve Life / Guided Strike / Radiance of the Dawn / Warding
+/// Flare / Wrath of the Storm). Ships on `GRAVE_CLERIC_TEMPLATE`.
+pub const PATH_TO_THE_GRAVE_TAG: &str = "cleric.path_to_the_grave";
+
+/// Channel Divinity: Path to the Grave — Grave Domain Cleric action.
+/// Applies the `MarkedForGrave` curse to a single target within 30 ft
+/// (12 tiles on our 2.5 ft grid). No save, no attack roll — the
+/// curse installs the moment the cleric spends their once-per-short-
+/// rest Channel Divinity charge. The next attack against the cursed
+/// target has advantage via the shared
+/// `Condition::grants_advantage_to_attackers` cohort; the curse
+/// expires at the start of the cleric's next turn via the
+/// `UntilStartOfNextTurn` timer.
+///
+/// Sibling to `GuidingBolt` on the "install a target-side attack-
+/// advantage rider" lane — Guiding Bolt lands the rider AS A HIT
+/// RIDER after a successful spell attack roll (radiant damage plus
+/// the `GuidingBoltLit` install), while Path to the Grave lands the
+/// rider AS THE ACTION'S SOLE EFFECT with no attack roll or save.
+/// Distinct from `GuidedStrike` (War Cleric CD) on the axis: Guided
+/// Strike is a CASTER-side self-prime (+10 to your own next swing),
+/// Path to the Grave is a TARGET-side curse (advantage on the next
+/// attack against the cursed target — the cleric's whole party
+/// benefits, not just the caster).
+pub struct PathToTheGrave {}
+
+impl Action for PathToTheGrave {
+    fn name(&self) -> &str {
+        "path to the grave"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ptg", "grave", "path-grave", "cd-grave"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles on the 2.5ft grid — matches Guiding
+        // Bolt / Guided Strike / Radiance of the Dawn's 30ft envelope.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same shared gate as Intimidating Presence / Nature's Wrath /
+        // Abjure Enemy — once-per-rest charge + hostile-target + not-
+        // already-MarkedForGrave dedup all fold into
+        // `hostile_target_feature_ready`. Dedup keeps the AI from
+        // burning the charge on a target whose curse is still live from
+        // an earlier cast.
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            PATH_TO_THE_GRAVE_TAG,
+            Condition::MarkedForGrave,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(PATH_TO_THE_GRAVE_TAG);
+        }
+        encounter.log(
+            "  path to the grave: cleric curses the target for a killing blow.".to_string(),
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::MarkedForGrave,
+            // RAW: "until the end of your next turn." Our
+            // `UntilStartOfNextTurn` timer clears on the CASTER's next
+            // start-of-turn — slightly shorter than RAW's end-of-next-
+            // turn, but matches the shared short-timer cadence used by
+            // every other one-round rider (Guided Strike prime,
+            // Guiding Bolt Lit, Mocked, Helped) so the curse's decay
+            // reads consistently with the rest of the once-per-round
+            // rider family.
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static PATH_TO_THE_GRAVE: LazyLock<PathToTheGrave> = LazyLock::new(|| PathToTheGrave {});

@@ -188,6 +188,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''''c. Path to the Grave — Grave Domain Cleric Channel
+        //          Divinity, action, once per short rest. Curses one
+        //          in-reach (12 tiles = 30 ft RAW) hostile with
+        //          `MarkedForGrave` so any attack against the cursed
+        //          target has advantage until the cleric's next turn.
+        //          Slots next to Intimidating Presence on the class-
+        //          feature single-target lockdown lane; the setup buff
+        //          benefits the WHOLE party (advantage on every ally
+        //          swing against the cursed target), so we prime the
+        //          curse before spending the turn's spell slot / cantrip.
+        if let Some(aei) = try_path_to_the_grave(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'''''. Guided Strike — War Domain Cleric Channel Divinity,
         //          bonus action, once per short rest. Installs the
         //          `GuidedStriking` prime (+10 to next attack roll) on
@@ -3152,6 +3166,21 @@ fn try_intimidating_presence(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     try_single_target_class_feature_hostile(encounter, actor_id, "intimidating presence", 12)
+}
+
+/// Grave Domain Cleric Path to the Grave — action Channel Divinity,
+/// once per short rest. Curses one in-reach (12 tiles = 30 ft RAW)
+/// hostile creature with `MarkedForGrave` so any attack against that
+/// target has advantage for the rest of the round. Highest-HP
+/// candidate wins per the shared picker — a marked boss soaks
+/// advantage on every party-side swing that lands before the curse
+/// ticks off, so beefy targets that survive multiple attacks yield
+/// the biggest accuracy payoff.
+fn try_path_to_the_grave(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "path to the grave", 12)
 }
 
 /// Ancients Paladin Nature's Wrath — action Channel Divinity, once per

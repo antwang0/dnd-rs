@@ -36742,6 +36742,29 @@ mod tests {
         assert!(bard.feature_available(CUTTING_WORDS_TAG));
     }
 
+    /// Path to the Grave (Grave Domain Cleric CD, XGtE) refreshes on a
+    /// short rest — sibling cadence to Guided Strike / Preserve Life
+    /// / Radiance of the Dawn / Warding Flare / Wrath of the Storm on
+    /// the Cleric Channel Divinity family.
+    #[test]
+    fn short_rest_restores_path_to_the_grave() {
+        use crate::actions::class_features::PATH_TO_THE_GRAVE_TAG;
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut cleric = ActorInstance::from_creature_template(
+            &crate::actors::creatures::clerics::GRAVE_CLERIC_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
+        cleric.spend_feature(PATH_TO_THE_GRAVE_TAG);
+        assert!(!cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
+        cleric.short_rest(&mut roller);
+        assert!(cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
+    }
+
     #[test]
     fn sneak_attack_scales_with_level() {
         assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(1), 1);
@@ -49669,6 +49692,88 @@ mod tests {
         assert!(
             !e.actors[&cleric].feature_available(GUIDED_STRIKE_TAG),
             "baseline cleric must not ship guided strike"
+        );
+    }
+
+    /// 5e Grave Domain Cleric **Path to the Grave** (level 2 subclass
+    /// Channel Divinity, XGtE): action-cost curse install on a single
+    /// hostile target within 30 ft. Spends the once-per-short-rest
+    /// PATH_TO_THE_GRAVE_TAG charge and applies `MarkedForGrave` with
+    /// an `UntilStartOfNextTurn` timer. The cursed target then grants
+    /// advantage on the next attack against them via the shared
+    /// `grants_advantage_to_attackers` cohort.
+    #[test]
+    fn path_to_the_grave_curses_target_and_attacker_gets_advantage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG};
+        use crate::actors::creatures::clerics::GRAVE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&cleric].feature_available(PATH_TO_THE_GRAVE_TAG),
+            "grave cleric should ship the path-to-the-grave charge"
+        );
+        // Cast Path to the Grave on the goblin.
+        let action: &dyn Action = &*PATH_TO_THE_GRAVE;
+        let targets = vec![goblin];
+        assert!(action.custom_validate_input(&e, cleric, Some(&targets), None, None));
+        let effects = action.side_effects(&mut e, cleric, Some(&targets), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Curse installed on target; charge consumed on caster.
+        assert!(
+            e.actors[&goblin].has_condition(Condition::MarkedForGrave),
+            "goblin should be marked after path to the grave lands"
+        );
+        assert!(
+            !e.actors[&cleric].feature_available(PATH_TO_THE_GRAVE_TAG),
+            "grave cleric should have burned the charge"
+        );
+        // A third-party attacker rolling against the cursed goblin
+        // gets advantage via the shared `grants_advantage_to_attackers`
+        // cohort — the party's rogue / fighter benefits, not just
+        // the cleric.
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_attack_mode(attacker, goblin, true),
+            RollMode::Advantage,
+            "marked-for-grave target should grant attackers advantage"
+        );
+        // Re-cast attempt bounces on the "already marked" dedup even
+        // if the charge were refunded — the shared
+        // `hostile_target_feature_ready` gate covers both clauses.
+        assert!(
+            !action.custom_validate_input(&e, cleric, Some(&targets), None, None),
+            "re-cast should bounce on the spent-charge + already-marked dedup"
+        );
+    }
+
+    /// The baseline Cleric template does NOT ship Path to the Grave —
+    /// that feature is Grave Domain subclass-only. Sibling to the
+    /// baseline_cleric_does_not_ship_war_domain_features guard above,
+    /// covering the Grave subclass tag under the same "random Cleric
+    /// spawn stays subclass-agnostic" invariant.
+    #[test]
+    fn baseline_cleric_does_not_ship_grave_domain_features() {
+        use crate::actions::class_features::PATH_TO_THE_GRAVE_TAG;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&cleric].feature_available(PATH_TO_THE_GRAVE_TAG),
+            "baseline cleric must not ship path to the grave"
         );
     }
 

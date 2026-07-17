@@ -1,8 +1,8 @@
 use crate::actions::class_features::{
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE,
-    GUIDED_STRIKE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN,
-    RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG,
-    WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
+    GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG,
+    RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST,
+    WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -462,4 +462,86 @@ pub static LIFE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // WAR / LIGHT / TEMPEST cleric subclasses layer actions plus their
     // subclass tags so they stay on the explicit clone-and-insert body.
     CLERIC_TEMPLATE.with_subclass_tag("Life Cleric", 'V', DISCIPLE_OF_LIFE_TAG)
+});
+
+/// Grave Domain Cleric — subclass build (XGtE). Identical envelope to
+/// the baseline `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame /
+/// Guiding Bolt / Cure Wounds / Bless / Turn Undead / Preserve Life /
+/// Divine Strike, full cleric spell ladder) with one subclass Channel
+/// Divinity feature layered on: **Path to the Grave** (lv2 subclass)
+/// — action-cost single-target curse (`MarkedForGrave`) that grants
+/// advantage to the next attack against the cursed target, once per
+/// short rest.
+///
+/// The Grave Domain's setup-flavored sibling to the offensive
+/// Channel Divinities on the other Cleric subclasses:
+///   - **War** (Guided Strike): CASTER-side self-prime +10 accuracy.
+///   - **Light** (Radiance of the Dawn): 30ft radiant burst.
+///   - **Tempest** (Wrath of the Storm): 5ft reactive lightning zap.
+///   - **Life** (Disciple of Life): amplify healing.
+///   - **Grave** (Path to the Grave): TARGET-side curse — advantage
+///     on the next incoming attack against the marked target.
+///
+/// Where War's Guided Strike helps only the cleric's own next swing,
+/// Path to the Grave helps the WHOLE PARTY's next attack — the
+/// cleric's teammates get advantage against the cursed target too.
+/// Pairs naturally with the Cleric's radiant single-target lane
+/// (Sacred Flame / Guiding Bolt) and with any melee striker on the
+/// same team: the cleric marks the boss with CD, the party's fighter
+/// / paladin / rogue drops advantage on the follow-up swing.
+///
+/// RAW's Path to the Grave clause has a second half — the marked
+/// target has **vulnerability** (double damage) on the attack that
+/// consumes the curse. We ship the advantage-on-next-attack half
+/// (the accuracy multiplier) as the load-bearing tactical effect;
+/// the vulnerability half needs a target-side incoming-damage
+/// multiplier hook that today's engine doesn't expose as a first-
+/// class surface, and would slot in later as a `MarkedForGrave`-
+/// gated damage multiplier at the `effective_damage` chokepoint —
+/// matching the way `CUTTING_WORDS_TAG` ships only the disadvantage
+/// half of RAW's "-die on attack / ability / damage" shape.
+///
+/// RAW's Grave Domain picks up other features not shipped on this
+/// template — **Circle of Mortality** (lv1: leveled heal spells cast
+/// on 0-HP targets restore max HP as if rolled maximum; needs a
+/// max-heal hook at the heal chokepoint), **Eyes of the Grave** (lv1:
+/// per-day passive undead-detection with a divination range;
+/// out-of-combat dialog-gate ribbon), **Sentinel at Death's Door**
+/// (lv6: reaction to turn a crit vs an ally within 30ft into a
+/// normal hit; needs a target-side crit-cancel hook), **Potent
+/// Spellcasting** (lv8: +WIS to cantrip damage; needs a per-cantrip
+/// damage-bonus hook), and **Keeper of Souls** (lv17 capstone).
+/// The lv2 Channel Divinity is the load-bearing tactical feature
+/// with a first-class engine surface today, so we ship that half
+/// and leave the rest as future work — matching the way the War /
+/// Light / Tempest cleric subclass templates each ship only the
+/// Channel Divinity + one passive rider rather than the full RAW
+/// subclass suite.
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
+/// War / Light / Tempest / Life cousins so a Grave-vs-Baseline /
+/// vs-War / vs-Light / vs-Tempest / vs-Life encounter renders
+/// unambiguously by name. Glyph 'G' (for Grave) so the Grave Cleric
+/// shows up distinctly on the map next to baseline 'C', War 'W',
+/// Light 'L', Tempest 'S', and Life 'V'.
+pub static GRAVE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: mirrors the War Cleric / Light Cleric /
+    // Tempest Cleric shape above — clone the baseline Cleric envelope
+    // wholesale and layer on the subclass action + feature tag. The
+    // `..CLERIC_TEMPLATE.clone()` tail picks up the full spell ladder,
+    // save profs, stats, and slots without an N-line field-by-field
+    // copy.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    actions.push(&*PATH_TO_THE_GRAVE);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    // Path to the Grave charge — once per short rest, refreshed via
+    // `SHORT_REST_FEATURES` alongside the War / Light / Tempest CDs.
+    features.insert(PATH_TO_THE_GRAVE_TAG);
+    CreatureTemplate {
+        name: "Grave Cleric",
+        glyph: 'G',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
 });
