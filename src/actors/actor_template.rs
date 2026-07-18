@@ -633,6 +633,36 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Cold],
     },
+    // 5e Cleric Divine Domain **Forge Domain** — **Soul of the Forge**
+    // (level 6, XGtE). RAW grants resistance to fire damage (paired with
+    // a "+1 AC while wearing heavy armor" clause that has no first-class
+    // combat surface today, left as future work). First Cleric-chassis
+    // row on the passive typed-resistance lane — every prior row came
+    // off a racial trait or a Warlock / Sorcerer / Wizard / Barbarian
+    // subclass. Overlaps the Fire axis with four existing rows: Fiendish
+    // Resilience (Warlock Fiend Patron lv10), Draconic Resilience
+    // (Sorcerer Draconic Bloodline lv6), Efreeti Elemental Gift (Warlock
+    // Genie Efreeti lv6), and Storm Soul (Desert) (Barbarian Storm
+    // Herald Desert lv6). The five Fire-resistance rows never legally
+    // co-occur on a single build (Warlock Fiend vs. Warlock Efreeti vs.
+    // Sorcerer Draconic vs. Barbarian Storm Herald Desert vs. Cleric
+    // Forge Domain are five distinct class-subclass slots), and a
+    // hypothetical multiclass carrier caps at a single /2 per Fire hit
+    // under the "one halving per damage instance" rule. Ships on
+    // `FORGE_CLERIC_TEMPLATE` at (or above) its strict RAW lv6 gate for
+    // the same reason `SEA_STORM_HERALD_BARBARIAN_TEMPLATE` /
+    // `DESERT_STORM_HERALD_BARBARIAN_TEMPLATE` /
+    // `TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE` ship Storm Soul (RAW
+    // lv6), `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+    // `DJINNI_WARLOCK_TEMPLATE` / `EFREETI_WARLOCK_TEMPLATE` ship
+    // Elemental Gift (RAW lv6) — class templates target a balanced
+    // playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::SOUL_OF_THE_FORGE_TAG,
+        ),
+        types: &[DamageType::Fire],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive

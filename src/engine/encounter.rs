@@ -56340,11 +56340,13 @@ mod tests {
     fn with_subclass_tag_helper_installs_tag_and_preserves_baseline() {
         use crate::actions::class_features::{
             ARCANE_RECOVERY_TAG, DISCIPLE_OF_LIFE_TAG, FAVORED_BY_THE_GODS_TAG,
-            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, STRENGTH_OF_THE_GRAVE_TAG,
-            TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
+            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, SOUL_OF_THE_FORGE_TAG,
+            STRENGTH_OF_THE_GRAVE_TAG, TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
         };
         use crate::actors::actor_template::CreatureTemplate;
-        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE};
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE,
+        };
         use crate::actors::creatures::sorcerers::{
             ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE,
             SHADOW_MAGIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
@@ -56396,6 +56398,17 @@ mod tests {
                 &SORCERER_TEMPLATE,
                 STRENGTH_OF_THE_GRAVE_TAG,
                 WILD_MAGIC_SURGE_TAG,
+            ),
+            (
+                &FORGE_CLERIC_TEMPLATE,
+                &CLERIC_TEMPLATE,
+                SOUL_OF_THE_FORGE_TAG,
+                // Cleric baseline features: Turn Undead / Destroy Undead
+                // both ride the CLERIC_TEMPLATE features set; a helper
+                // drift that drops the baseline set would strip both.
+                // Matches the LIFE_CLERIC row's baseline pick above so
+                // the two Cleric subclasses lock the same baseline invariant.
+                TURN_UNDEAD_TAG,
             ),
         ];
 
@@ -57753,5 +57766,191 @@ mod tests {
             !sneak_seen,
             "second adjacent enemy should close the Rakish Audacity path"
         );
+    }
+
+    /// Forge Domain Cleric's **Soul of the Forge** (Forge Domain
+    /// subclass lv6, XGtE) halves incoming fire damage — the RAW
+    /// subclass grant folds through the shared
+    /// `PASSIVE_TYPED_RESISTANCES` cohort's `effective_damage` halving
+    /// site. Sibling test to
+    /// `inured_to_undeath_halves_necrotic_damage_on_necromancy_wizard`
+    /// / `storm_soul_desert_halves_fire_damage_on_desert_storm_herald`
+    /// on the "typed resistance from a subclass template" lane — same
+    /// halving-vs-full assertion shape, different subclass chassis
+    /// (Cleric Divine Domain vs. Wizard Arcane Tradition / Barbarian
+    /// Primal Path) and same damage axis (Fire) as the Desert Storm
+    /// Herald / Fiendish Resilience / Draconic Resilience / Efreeti
+    /// Elemental Gift rows (five Fire-resistance rows across five
+    /// distinct subclass chassis).
+    #[test]
+    fn soul_of_the_forge_halves_fire_damage_on_forge_cleric() {
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let forge = e
+            .instantiate_creature(&FORGE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&forge].has_passive_feature(
+            crate::actions::class_features::SOUL_OF_THE_FORGE_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::SOUL_OF_THE_FORGE_TAG,
+        ));
+        // 20 fire → 10 (halved by Soul of the Forge).
+        assert_eq!(
+            e.actors[&forge].effective_damage(20, DamageType::Fire),
+            10,
+            "forge cleric halves fire damage",
+        );
+        // Baseline cleric eats the full 20 fire.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Fire),
+            20,
+            "baseline cleric takes full fire damage",
+        );
+        // Other damage types still take full damage on the Forge Cleric —
+        // the RAW subclass grant is scoped to Fire. Cold, Lightning,
+        // Radiant, Psychic, Necrotic, Thunder, Bludgeoning, Piercing,
+        // Slashing, and Acid all pass through unchanged; the sibling
+        // subclass rows on other chassis cover those damage types on
+        // their respective chassis, not here.
+        for other in [
+            DamageType::Cold,
+            DamageType::Lightning,
+            DamageType::Radiant,
+            DamageType::Psychic,
+            DamageType::Necrotic,
+            DamageType::Thunder,
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+            DamageType::Acid,
+        ] {
+            assert_eq!(
+                e.actors[&forge].effective_damage(20, other),
+                20,
+                "forge cleric takes full {:?} damage — Soul of the Forge is Fire-scoped",
+                other,
+            );
+        }
+    }
+
+    /// Soul of the Forge plugs into `has_own_typed_reduction(Fire)` —
+    /// the "does this actor already scale this type?" gate used by
+    /// Aura of Warding to enforce the "one halving per damage instance"
+    /// rule. Locks the shared read chokepoint so a hypothetical Forge
+    /// Cleric / Ancients Paladin party sees the aura no-op cleanly on
+    /// fire hits (the /2 already fires via Soul of the Forge; the aura
+    /// would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Fiendish / Draconic / Efreeti / Storm Soul Desert registration
+    /// tests on the same helper — five subclass chassis all fold
+    /// through the same Fire-axis registration lane.
+    #[test]
+    fn soul_of_the_forge_registers_own_typed_reduction_for_fire() {
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let forge = e
+            .instantiate_creature(&FORGE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Forge cleric's Soul of the Forge flag registers as an own
+        // typed reduction on the Fire lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&forge].has_own_typed_reduction(DamageType::Fire),
+            "Soul of the Forge registers as own typed reduction on Fire",
+        );
+        // Baseline cleric without the tag has no own reduction on Fire
+        // — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Fire),
+            "baseline cleric has no own fire reduction",
+        );
+    }
+
+    /// Template drift check: only the Forge Domain Cleric ships the
+    /// `SOUL_OF_THE_FORGE_TAG` passive feature. The baseline cleric
+    /// chassis does NOT carry the tag, nor do any of the sibling
+    /// cleric-domain subclass templates (War / Light / Tempest / Life
+    /// / Grave) — keeps the subclass tell scoped to the Forge chassis
+    /// so a future regression (e.g., accidental tag insertion on
+    /// `CLERIC_TEMPLATE` bleeding into every subclass build via the
+    /// `..base.clone()` tail) is caught here. Sibling to
+    /// `inured_to_undeath_lands_only_on_necromancy_wizard` /
+    /// `storm_soul_sea_lands_only_on_sea_storm_herald_barbarian` on
+    /// the same "single-subclass-tag ownership" lock.
+    #[test]
+    fn soul_of_the_forge_lands_only_on_forge_cleric() {
+        use crate::actions::class_features::SOUL_OF_THE_FORGE_TAG;
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, GRAVE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE,
+            LIGHT_CLERIC_TEMPLATE, TEMPEST_CLERIC_TEMPLATE, WAR_CLERIC_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let forge = e
+            .instantiate_creature(&FORGE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let war = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        let light = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        let tempest = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        let life = e
+            .instantiate_creature(&LIFE_CLERIC_TEMPLATE, Coordinate::new(12, 2), 0, 0)
+            .unwrap();
+        let grave = e
+            .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(14, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&forge].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&war].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&light].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&tempest].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&life].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+        assert!(!e.actors[&grave].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
+    }
+
+    /// Sanity: the Forge Cleric inherits the baseline Cleric envelope
+    /// through the `with_subclass_tag` helper — the baseline Turn
+    /// Undead / Preserve Life / Destroy Undead feature tags carry
+    /// through, alongside the subclass-only Soul of the Forge tag.
+    /// Guards against a regression where the helper drops the baseline
+    /// feature set on its way to inserting the new tag. Sibling to
+    /// `necromancy_wizard_inherits_baseline_wizard_features` on the
+    /// same clone-and-layer lock — both route through the shared
+    /// `CreatureTemplate::with_subclass_tag` helper.
+    #[test]
+    fn forge_cleric_inherits_baseline_cleric_features() {
+        use crate::actions::class_features::{
+            DESTROY_UNDEAD_TAG, PRESERVE_LIFE_TAG, SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD_TAG,
+        };
+        use crate::actors::creatures::clerics::FORGE_CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let forge = e
+            .instantiate_creature(&FORGE_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline cleric feature envelope still carries through the
+        // `with_subclass_tag` helper's `..base.clone()` tail.
+        assert!(e.actors[&forge].has_passive_feature(TURN_UNDEAD_TAG));
+        assert!(e.actors[&forge].has_passive_feature(PRESERVE_LIFE_TAG));
+        assert!(e.actors[&forge].has_passive_feature(DESTROY_UNDEAD_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&forge].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
     }
 }

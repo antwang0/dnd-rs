@@ -1,8 +1,9 @@
 use crate::actions::class_features::{
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE,
     GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG,
-    RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST,
-    WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
+    RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD,
+    TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM,
+    WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -544,4 +545,111 @@ pub static GRAVE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         features,
         ..CLERIC_TEMPLATE.clone()
     }
+});
+
+/// Forge Domain Cleric — Divine Domain **Forge Domain** subclass build
+/// (XGtE). Identical envelope to the baseline `CLERIC_TEMPLATE`
+/// (WIS-primary caster, Sacred Flame / Guiding Bolt / Cure Wounds /
+/// Bless / Turn Undead / Preserve Life / Divine Strike, full cleric
+/// spell ladder) with one subclass passive layered on: **Soul of the
+/// Forge** (lv6 subclass tell) — passive **resistance to fire damage**.
+///
+/// The signature "forge-cleric's flesh has been tempered against the
+/// flame" tell — where a baseline Cleric eats a Fire Bolt / Scorching
+/// Ray / Fireball / Burning Hands clean, the Forge Cleric halves the
+/// incoming fire damage. Composes cleanly with the party's front-line
+/// (a Forge Cleric can drop a Sunburst / Flame Strike into a huddle of
+/// enemies without the reflected splash halving their own HP the way
+/// a baseline cleric would).
+///
+/// The Forge Domain's passive-resistance-flavored sibling to the
+/// Channel-Divinity-flavored siblings on the other Cleric subclasses:
+///   - **War** (Guided Strike): CASTER-side self-prime +10 accuracy.
+///   - **Light** (Radiance of the Dawn): 30ft radiant burst.
+///   - **Tempest** (Wrath of the Storm): 5ft reactive lightning zap.
+///   - **Life** (Disciple of Life): amplify healing.
+///   - **Grave** (Path to the Grave): TARGET-side curse — advantage
+///     on the next incoming attack against the marked target.
+///   - **Forge** (Soul of the Forge): passive fire resistance —
+///     always-on damage halving on the Fire axis.
+///
+/// Where the War / Light / Tempest / Grave subclasses each ship a
+/// Channel Divinity action and Life ships a leveled-heal amplifier,
+/// the Forge Domain leans on the pure passive lane — the fire
+/// resistance is always on, no charge to spend, no bonus action to
+/// prime, no target to pick. Sibling on the "passive typed resistance
+/// as the subclass tell" cross-class lane to `INURED_TO_UNDEATH_TAG`
+/// (Necromancy Wizard — Necrotic) and the four Genie Elemental Gifts
+/// (Marid — Cold, Dao — Bludgeoning, Djinni — Thunder, Efreeti — Fire).
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to Fiendish Resilience / Draconic
+/// Resilience / Efreeti Elemental Gift / Storm Soul (Desert) — same
+/// lane, different subclass flavor, same damage axis (Fire). The four
+/// prior Fire-resistance rows (Fiendish / Draconic / Efreeti / Storm
+/// Soul Desert) never legally co-occur with Soul of the Forge on a
+/// single build (five distinct class-subclass slots), and a
+/// hypothetical multiclass carrier caps at a single /2 per Fire hit
+/// under the "one halving per damage instance" rule.
+///
+/// RAW's Forge Domain picks up other features not shipped on this
+/// template — **Blessing of the Forge** (lv1: touch a mundane weapon /
+/// armor, becomes +1 for 24 hours; needs a per-item bonuses-mutation
+/// hook and an out-of-combat "grant on ally" surface), **Channel
+/// Divinity: Artisan's Blessing** (lv2: 1-hour crafting ritual; no
+/// combat surface), **Divine Strike (Fire)** (lv8: +1d8 fire on
+/// weapon hits; would slot in as a per-domain damage-type override on
+/// the shared `DivineStrike` bonus-action prime — the existing
+/// `DIVINE_STRIKE` action ships a Radiant flavor, so future work
+/// would extend the prime to read a per-holder damage-type flag), and
+/// **Saint of Forge and Fire** (lv17 capstone: heavy-armor Fire
+/// immunity + physical resistance while wearing heavy armor; needs a
+/// heavy-armor gate and a full-immunity promotion of the passive
+/// resistance). Only the lv6 Soul of the Forge passive has a
+/// mechanical surface on the CR-0.5 chassis that plugs cleanly into
+/// the shared passive typed-resistance cohort, so we ship that half
+/// and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only the lv10 Inured to Undeath
+/// passive half of its RAW School of Necromancy kit and the four
+/// Genie Warlock templates each ship only the lv6 Elemental Gift
+/// resistance half of their RAW Genie patron kit.
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
+/// War / Light / Tempest / Life / Grave cousins so a Forge-vs-
+/// Baseline / vs-War / vs-Light / vs-Tempest / vs-Life / vs-Grave
+/// encounter renders unambiguously by name. Glyph 'F' (for Forge) so
+/// the Forge Cleric shows up distinctly on the map next to baseline
+/// 'C', War 'W', Light 'L', Tempest 'S', Life 'V', and Grave 'G'.
+/// Collides with the Fighter's 'F' glyph, but the two never legally
+/// co-occur on a single team (a Forge Cleric isn't a Fighter, and
+/// one glyph per team-color-and-team-id combo suffices to
+/// disambiguate them in a mixed encounter).
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW
+/// lv6 gate for the same reason `NECROMANCY_WIZARD_TEMPLATE` ships
+/// Inured to Undeath (RAW lv10) and every other subclass template
+/// runs above its strict RAW gate — class templates target a
+/// balanced playable level, not lockstep PHB progression.
+pub static FORGE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Cleric envelope wholesale
+    // and layers on the Soul of the Forge passive tag. The
+    // `..base.clone()` tail inside the helper picks up every other
+    // field — the full cleric spell ladder, save profs, stats, slots,
+    // and the WAR_PRIEST / GUIDED_STRIKE / RADIANCE_OF_THE_DAWN /
+    // etc. baseline features — without an N-line field-by-field copy.
+    // No new actions are pushed — Soul of the Forge is a purely
+    // passive fire-damage halver read at the shared
+    // `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage`, not a
+    // fresh action surface, so the "tag-only" shape the helper wraps
+    // is a natural fit. Sibling helper users on the "clone base +
+    // insert one tag" cross-class lane: every tag-only Warlock
+    // Otherworldly Patron subclass (via `subclass_warlock_template`),
+    // `LIFE_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`.
+    // Glyph 'F' — for the "Forge" identity; distinct from baseline
+    // cleric 'C', War 'W', Light 'L', Tempest 'S', Life 'V', and
+    // Grave 'G' cousins.
+    CLERIC_TEMPLATE.with_subclass_tag("Forge Cleric", 'F', SOUL_OF_THE_FORGE_TAG)
 });

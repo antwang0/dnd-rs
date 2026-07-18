@@ -3747,26 +3747,25 @@ fn resolve_turn_burst(
         // (non-undead target, above-ceiling CR, cleric without the
         // passive tag) — the two branches are mutually exclusive per
         // target, matching RAW's "instead of turned" clause.
-        if destroy_undead {
-            if let Some(target) = encounter.actors.get(&id)
-                && target.creature_type().is_undead()
-                && target.cr() <= DESTROY_UNDEAD_CR_CEILING
-            {
-                let killing_damage = target.hitpoints();
-                encounter.log(format!(
-                    "  {}: destroys undead ({} radiant, CR {} ≤ {}).",
-                    label,
-                    killing_damage,
-                    target.cr(),
-                    DESTROY_UNDEAD_CR_CEILING
-                ));
-                effects.push(Box::new(crate::engine::side_effects::DealDamage {
-                    actor_id: id,
-                    amount: killing_damage,
-                    damage_type: DamageType::Radiant,
-                }));
-                continue;
-            }
+        if destroy_undead
+            && let Some(target) = encounter.actors.get(&id)
+            && target.creature_type().is_undead()
+            && target.cr() <= DESTROY_UNDEAD_CR_CEILING
+        {
+            let killing_damage = target.hitpoints();
+            encounter.log(format!(
+                "  {}: destroys undead ({} radiant, CR {} ≤ {}).",
+                label,
+                killing_damage,
+                target.cr(),
+                DESTROY_UNDEAD_CR_CEILING
+            ));
+            effects.push(Box::new(crate::engine::side_effects::DealDamage {
+                actor_id: id,
+                amount: killing_damage,
+                damage_type: DamageType::Radiant,
+            }));
+            continue;
         }
         effects.push(Box::new(ApplyCondition {
             actor_id: id,
@@ -8578,3 +8577,66 @@ impl Action for PathToTheGrave {
 }
 
 pub static PATH_TO_THE_GRAVE: LazyLock<PathToTheGrave> = LazyLock::new(|| PathToTheGrave {});
+
+/// 5e Cleric Divine Domain — **Forge Domain** — **Soul of the Forge**
+/// subclass feature tag (level 6 subclass, XGtE). Passive: the forge
+/// cleric's body hardens into the flame's forge — the cleric gains
+/// **resistance to fire damage**.
+///
+/// RAW pairs the fire resistance with a "+1 AC while wearing heavy armor"
+/// clause. The engine doesn't model armor tiers as a first-class combat
+/// surface, so the AC-bump half is left as future work and would slot in
+/// later as a template AC bump on the Forge Cleric chassis; the
+/// resistance clause is the load-bearing defensive half and rides here
+/// alone, matching the way `INURED_TO_UNDEATH_TAG` ships without the
+/// max-HP-can't-be-reduced clause, `RADIANT_SOUL_TAG` ships without the
+/// +CHA-mod damage rider, and every Genie `*_ELEMENTAL_GIFT_TAG` ships
+/// without the RAW's ribbon halves.
+///
+/// First Cleric-chassis row on the passive typed-resistance lane —
+/// every prior row came off a racial trait or a Warlock / Sorcerer /
+/// Wizard / Barbarian subclass. Overlaps the Fire axis with three
+/// existing rows: Fiendish Resilience (Warlock Fiend lv10), Draconic
+/// Resilience (Sorcerer Draconic Bloodline lv6), Efreeti Elemental
+/// Gift (Warlock Genie Efreeti lv6), and Storm Soul (Desert)
+/// (Barbarian Storm Herald Desert lv6). The five Fire-resistance rows
+/// (Fiendish / Draconic / Efreeti / Storm Soul Desert / Soul of the
+/// Forge) never legally co-occur on a single build (Warlock Fiend vs.
+/// Warlock Efreeti vs. Sorcerer Draconic vs. Barbarian Storm Herald
+/// Desert vs. Cleric Forge Domain are five distinct
+/// class-subclass slots), and a hypothetical multiclass carrier caps
+/// at a single /2 per Fire hit under the "one halving per damage
+/// instance" rule. The duplication is a **taxonomic completeness**
+/// grant — the Fire axis now covers all five subclass chassis rather
+/// than just four.
+///
+/// Sibling on the passive typed-resistance subclass lane to:
+///   - **Fiendish Resilience** (Warlock Fiend Patron lv10): Fire.
+///   - **Draconic Resilience** (Draconic Sorcerer lv6): Fire.
+///   - **Efreeti Elemental Gift** (Warlock Genie Efreeti lv6): Fire.
+///   - **Storm Soul (Desert)** (Storm Herald Barbarian lv6): Fire.
+///   - **Marid / Dao / Djinni Elemental Gift** (Genie Warlock lv6):
+///     Cold / Bludgeoning / Thunder.
+///   - **Radiant Soul** (Celestial Warlock lv6): Radiant.
+///   - **Heart of the Storm** (Storm Sorcerer lv6): Lightning + Thunder.
+///   - **Psychic Defenses** (Aberrant Mind Sorcerer lv14): Psychic.
+///   - **Inured to Undeath** (Necromancy Wizard lv10): Necrotic.
+///   - **Storm Soul (Sea)** (Storm Herald Barbarian lv6): Lightning.
+///   - **Storm Soul (Tundra)** (Storm Herald Barbarian lv6): Cold.
+///     All share the "one feature tag drives one cohort row"
+///     declarative-table pattern, different subclass flavor and
+///     different damage axis.
+///
+/// Sibling on the Divine Domain subclass lane to the baseline
+/// `CLERIC_TEMPLATE` (subclass-less baseline) and the existing War /
+/// Light / Tempest / Life / Grave cousins.
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW lv6
+/// gate for the same reason `MARID_WARLOCK_TEMPLATE` /
+/// `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` /
+/// `EFREETI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6),
+/// `NECROMANCY_WIZARD_TEMPLATE` ships Inured to Undeath (RAW lv10), and
+/// `ABERRANT_MIND_SORCERER_TEMPLATE` ships Psychic Defenses (RAW lv14)
+/// — class templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const SOUL_OF_THE_FORGE_TAG: &str = "cleric.soul_of_the_forge";
