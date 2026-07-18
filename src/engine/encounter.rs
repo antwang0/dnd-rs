@@ -12119,6 +12119,103 @@ mod tests {
         assert_eq!(actor.crit_threshold(), 19);
     }
 
+    /// 5e Chromatic Dragonborn: the four sibling ancestry variants of
+    /// the baseline Red Dragonborn each carry a distinct
+    /// `draconic_ancestry` pick and a matching `damage_modifiers`
+    /// resistance row — Black → Acid, Blue → Lightning, Green → Poison,
+    /// White → Cold. Every variant inherits the Champion chassis
+    /// (Improved Critical crit-on-19) and the once-per-short-rest
+    /// Breath Weapon feature charge from the shared
+    /// `dragonborn_champion_template` helper.
+    #[test]
+    fn chromatic_dragonborn_variants_wire_ancestry_resistance_and_breath() {
+        use crate::actions::class_features::BREATH_WEAPON_TAG;
+        use crate::actors::creatures::dragonborn::{
+            BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE, GREEN_DRAGONBORN_TEMPLATE,
+            WHITE_DRAGONBORN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+        use std::sync::LazyLock;
+
+        // (template, expected damage type). Every row asserts identical
+        // envelope behavior with the ancestry damage type swapped.
+        let cases: &[(
+            &LazyLock<crate::actors::actor_template::CreatureTemplate>,
+            DamageType,
+        )] = &[
+            (&BLACK_DRAGONBORN_TEMPLATE, DamageType::Acid),
+            (&BLUE_DRAGONBORN_TEMPLATE, DamageType::Lightning),
+            (&GREEN_DRAGONBORN_TEMPLATE, DamageType::Poison),
+            (&WHITE_DRAGONBORN_TEMPLATE, DamageType::Cold),
+        ];
+        for (template, ancestry) in cases {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let id = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let actor = e.actors.get(&id).unwrap();
+            assert_eq!(
+                actor.draconic_ancestry(),
+                Some(*ancestry),
+                "{}: draconic ancestry wired",
+                template.name,
+            );
+            // Ancestry damage type: /2 via Resistance.
+            assert_eq!(
+                actor.effective_damage(20, *ancestry),
+                10,
+                "{}: {} damage halved",
+                template.name,
+                ancestry,
+            );
+            // Off-type damage passes through untouched. Force is picked
+            // as a canary because no chromatic ancestry covers it.
+            assert_eq!(
+                actor.effective_damage(20, DamageType::Force),
+                20,
+                "{}: Force damage unaffected",
+                template.name,
+            );
+            // Breath weapon charge is fresh on instantiation.
+            assert!(
+                actor.feature_available(BREATH_WEAPON_TAG),
+                "{}: breath weapon is available",
+                template.name,
+            );
+            // Champion Improved Critical rides through the shared helper.
+            assert_eq!(
+                actor.crit_threshold(),
+                19,
+                "{}: Champion crit-on-19 wired",
+                template.name,
+            );
+        }
+    }
+
+    /// Chromatic Dragonborn: each variant carries a distinct glyph so
+    /// the four ancestry siblings render unambiguously alongside the
+    /// baseline Red 'Δ' on the map. Template-drift guard against a
+    /// future ancestry addition accidentally colliding with an
+    /// existing sibling.
+    #[test]
+    fn chromatic_dragonborn_variants_have_distinct_glyphs() {
+        use crate::actors::creatures::dragonborn::{
+            BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE, DRAGONBORN_TEMPLATE,
+            GREEN_DRAGONBORN_TEMPLATE, WHITE_DRAGONBORN_TEMPLATE,
+        };
+        let glyphs = [
+            DRAGONBORN_TEMPLATE.glyph,
+            BLACK_DRAGONBORN_TEMPLATE.glyph,
+            BLUE_DRAGONBORN_TEMPLATE.glyph,
+            GREEN_DRAGONBORN_TEMPLATE.glyph,
+            WHITE_DRAGONBORN_TEMPLATE.glyph,
+        ];
+        let mut sorted = glyphs.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), glyphs.len(), "all glyphs are distinct");
+    }
+
     /// Breath Weapon: once-per-short-rest feature; spending it removes
     /// the feature flag from `features_remaining`. Short rest refreshes
     /// the charge via the `SHORT_REST_FEATURES` registry.
@@ -52260,7 +52357,7 @@ mod tests {
             let charge_burnt = !charge_left;
             let passed = outcome.passed();
             assert!(
-                (passed && !charge_burnt) || charge_burnt,
+                passed || charge_burnt,
                 "seed {}: inconsistent DOOL outcome (passed={} charge_burnt={})",
                 seed,
                 passed,
@@ -52402,7 +52499,7 @@ mod tests {
             let charge_burnt = !charge_left;
             let passed = outcome.passed();
             assert!(
-                (passed && !charge_burnt) || charge_burnt,
+                passed || charge_burnt,
                 "seed {}: inconsistent FBTG outcome (passed={} charge_burnt={})",
                 seed,
                 passed,

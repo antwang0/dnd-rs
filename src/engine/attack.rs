@@ -1,3 +1,4 @@
+use crate::actors::actor_template::ActorInstance;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
@@ -5,6 +6,18 @@ use crate::engine::side_effects::{
     ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
+
+/// Caster-side attack-bump source: a labeled scalar computed from the
+/// caster's template flags / conditions. `u32` because every current
+/// bump is a non-negative magnitude (flat damage bump or extra dice
+/// count) — a future signed bump (a hypothetical debuff-driven -1 to
+/// melee damage) would land as a sibling alias with an `i32` return
+/// rather than widening this one. Both attack-side cohort tables
+/// (`MELEE_CASTER_BUMPS` flat-damage and `CRIT_MELEE_EXTRA_DICE_SOURCES`
+/// extra-dice) share this shape — factoring out the `fn` pointer type
+/// keeps the row literal readable at a glance and drops the two "very
+/// complex type" clippy warnings the raw signature triggered.
+type AttackBumpFn = fn(&ActorInstance) -> u32;
 
 /// Inputs to a single attack roll. Lets callers describe attacks without
 /// repeating the d20 / crit / damage / log dance for every weapon and
@@ -67,7 +80,7 @@ pub struct AttackParams<'a> {
 /// A new melee-side bump (Ancestral Guardians retribution, Rage
 /// tier-scaling to +3/+4, a Warlock's Lifedrinker) drops in here as
 /// a new tuple.
-const MELEE_CASTER_BUMPS: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
+const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
     ("rage", |a| {
         if a.has_condition(Condition::Raging) { 2 } else { 0 }
     }),
@@ -109,7 +122,7 @@ const MELEE_CASTER_BUMPS: &[(&str, fn(&crate::actors::actor_template::ActorInsta
 ///
 /// A new crit-extra-dice source (Piercer feat's +1 die, a hypothetical
 /// Champion "Superior Critical" bonus die) drops in as a new tuple.
-const CRIT_MELEE_EXTRA_DICE_SOURCES: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
+const CRIT_MELEE_EXTRA_DICE_SOURCES: &[(&str, AttackBumpFn)] = &[
     ("brutal critical", |a| a.brutal_critical_dice()),
     ("savage attacks", |a| if a.has_savage_attacks() { 1 } else { 0 }),
 ];
@@ -141,7 +154,7 @@ fn reactive_reducer_eligible(
     encounter: &EncounterInstance,
     target_id: usize,
     attacker_id: usize,
-    passive_ok: fn(&crate::actors::actor_template::ActorInstance) -> bool,
+    passive_ok: fn(&ActorInstance) -> bool,
     feature_tag: Option<&'static str>,
 ) -> bool {
     let Some(target) = encounter.actors.get(&target_id) else {
