@@ -401,21 +401,11 @@ pub fn hostile_target_feature_ready(
     feature_tag: &'static str,
     skip_if_condition: Condition,
 ) -> bool {
-    if !feature_ready(encounter, caster_id, feature_tag) {
-        return false;
-    }
-    let Some(target_id) = first_target_id(target_ids) else {
+    let Some(target) = resolve_hostile_target(encounter, caster_id, target_ids, feature_tag)
+    else {
         return false;
     };
-    let Some(caster) = encounter.actors.get(&caster_id) else {
-        return false;
-    };
-    let Some(target) = encounter.actors.get(&target_id) else {
-        return false;
-    };
-    target.team() != caster.team()
-        && target.is_combat_active()
-        && !target.has_condition(skip_if_condition)
+    !target.has_condition(skip_if_condition)
 }
 
 /// Gating shape for once-per-rest single-target class-feature actions
@@ -433,9 +423,10 @@ pub fn hostile_target_feature_ready(
 /// condition, just damage" lane, so the "skip-if-already-holds-
 /// condition" clause is dropped. The two helpers share the same 4-clause
 /// "check feature ready / resolve target / check hostile / check combat-
-/// active" preamble and differ only by that last dedup clause; keeping
-/// them as siblings lets the caller pick the right shape without
-/// threading an `Option<Condition>` through both call sites.
+/// active" preamble via the shared `resolve_hostile_target` internal
+/// helper and differ only by that last dedup clause; keeping them as
+/// siblings lets the caller pick the right shape without threading an
+/// `Option<Condition>` through both call sites.
 ///
 /// Centralizes the ~10-line "resolve target / check hostile / check
 /// combat-active" chain that Wrath of the Storm / Rebuke the Violent /
@@ -448,19 +439,54 @@ pub fn hostile_target_burst_ready(
     target_ids: Option<&Vec<usize>>,
     feature_tag: &'static str,
 ) -> bool {
+    resolve_hostile_target(encounter, caster_id, target_ids, feature_tag).is_some()
+}
+
+/// Shared preamble for the "hostile target" single-target CD helpers
+/// above (`hostile_target_feature_ready` / `hostile_target_burst_ready`).
+/// Walks the four uniform gates every hostile-single-target CD action
+/// shares:
+///   1. Caster has an unspent `feature_tag` charge (via `feature_ready`
+///      — same `is_combat_active + feature_available` chokepoint every
+///      once-per-rest CD action rides).
+///   2. `target_ids` carries a resolvable first id (via `first_target_id`
+///      — same shape every SingleActor targeting schema uses).
+///   3. Caster resolves to an actor in the encounter (guard against a
+///      caster who vanished between enqueue and execute).
+///   4. Target resolves to a hostile, combat-active actor (team-mismatch
+///      + `is_combat_active` — RAW: no CD on your own ally, no CD on a
+///      corpse).
+///
+/// Returns the target's `&ActorInstance` on all-gates-pass so the two
+/// public helpers can layer their own trailing gate (de-dup condition
+/// check for the debuff-installer variant, no-trailing-check for the
+/// damage-burst variant) with a one-line pattern match at the call
+/// site. Returns `None` on any gate failure, matching the public
+/// helpers' "any gate fail → false" invariant.
+///
+/// Private to this module — the two public sibling helpers are the
+/// intended surface for callers picking between "install a debuff /
+/// deal damage" on the hostile-single-target CD lane; the internal
+/// helper collapses their shared 4-line preamble body into one call
+/// so a future cross-cutting check (e.g. "no CD on a target holding
+/// Sanctuary" — the target-side sanctuary gate) lands in one place
+/// instead of two.
+fn resolve_hostile_target<'e>(
+    encounter: &'e EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    feature_tag: &'static str,
+) -> Option<&'e crate::actors::actor_template::ActorInstance> {
     if !feature_ready(encounter, caster_id, feature_tag) {
-        return false;
+        return None;
     }
-    let Some(target_id) = first_target_id(target_ids) else {
-        return false;
-    };
-    let Some(caster) = encounter.actors.get(&caster_id) else {
-        return false;
-    };
-    let Some(target) = encounter.actors.get(&target_id) else {
-        return false;
-    };
-    target.team() != caster.team() && target.is_combat_active()
+    let target_id = first_target_id(target_ids)?;
+    let caster = encounter.actors.get(&caster_id)?;
+    let target = encounter.actors.get(&target_id)?;
+    if target.team() == caster.team() || !target.is_combat_active() {
+        return None;
+    }
+    Some(target)
 }
 
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
@@ -2962,27 +2988,38 @@ impl Action for VowOfEnmity {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        if !feature_ready(encounter, caster_id, VOW_OF_ENMITY_TAG) {
+        // Shared "feature ready + hostile target" preamble via the
+        // sibling helper the other single-target CD gates ride. The
+        // vow's extra clause (already-sworn-by-us dedup) is layered
+        // on top since it needs the caster_id back-reference on the
+        // Sworn condition — the shared helper only exposes the
+        // target, so we route through `hostile_target_burst_ready`
+        // to drive the preamble and then check the caster-linked
+        // dedup on the resolved target inline.
+        if !hostile_target_burst_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            VOW_OF_ENMITY_TAG,
+        ) {
             return false;
         }
         let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
         let Some(target) = encounter.actors.get(&target_id) else {
             return false;
         };
-        // Hostile-only target — vowing enmity against a teammate is
-        // nonsense and the AI shouldn't pick it. Also skip if the
-        // target is already sworn-by-us: re-applying the vow just
-        // refreshes the timer without granting a new mechanical
-        // benefit, and burns a once-per-rest charge for nothing.
-        target.team() != caster.team()
-            && target.is_combat_active()
-            && !(target.has_condition(Condition::Sworn)
-                && target.sworn_by() == Some(caster_id))
+        // Skip if the target is already sworn-by-us: re-applying the
+        // vow just refreshes the timer without granting a new
+        // mechanical benefit, and burns a once-per-rest charge for
+        // nothing. Distinct from the shared `hostile_target_feature_ready`
+        // helper's `skip_if_condition` gate — that one checks a single
+        // condition without a caster-back-reference, while this one
+        // needs to verify `sworn_by()` points at the same caster (a
+        // different sworn-by-someone-else target should still allow
+        // the vow to install, taking over the "sworn by" back-link).
+        !(target.has_condition(Condition::Sworn) && target.sworn_by() == Some(caster_id))
     }
     fn side_effects(
         &self,
