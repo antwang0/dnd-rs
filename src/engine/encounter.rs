@@ -21786,6 +21786,134 @@ mod tests {
         assert_eq!(actor.hitpoints(), 1);
     }
 
+    /// Strength of the Grave (Sorcerer Shadow Magic lv1, XGtE): the
+    /// Shadow Magic Sorcerer pins their HP at 1 on a killing blow and
+    /// the once-per-long-rest feature is spent. Mirrors the Undying
+    /// Sentinel / Relentless Endurance tests — the RAW mechanic is
+    /// identical (save-vs-DC gate collapsed to a guaranteed proc, see
+    /// the `STRENGTH_OF_THE_GRAVE_TAG` docstring for the rationale),
+    /// and all three flow through the shared
+    /// `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort.
+    #[test]
+    fn strength_of_the_grave_absorbs_killing_blow_and_spends_feature() {
+        use crate::actions::class_features::STRENGTH_OF_THE_GRAVE_TAG;
+        use crate::actors::creatures::sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SHADOW_MAGIC_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.feature_available(STRENGTH_OF_THE_GRAVE_TAG));
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert_eq!(
+            actor.hitpoints(),
+            1,
+            "Strength of the Grave pins HP at 1 on killing blow"
+        );
+        assert!(
+            !actor.feature_available(STRENGTH_OF_THE_GRAVE_TAG),
+            "Strength of the Grave spent after firing"
+        );
+        assert!(actor.is_combat_active(), "shadow sorcerer is still up");
+    }
+
+    /// Strength of the Grave is a long-rest feature, not a short-rest
+    /// one: spent charge stays spent through a short rest, but a long
+    /// rest restores it. Pins the placement outside `SHORT_REST_FEATURES`
+    /// so a future regression that flips the cadence lights up here.
+    /// Sibling to `undying_sentinel_refreshes_on_long_rest_not_short`
+    /// on the same lethal-damage-absorber cohort.
+    #[test]
+    fn strength_of_the_grave_refreshes_on_long_rest_not_short() {
+        use crate::actions::class_features::STRENGTH_OF_THE_GRAVE_TAG;
+        use crate::actors::creatures::sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SHADOW_MAGIC_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert!(!actor.feature_available(STRENGTH_OF_THE_GRAVE_TAG));
+        let mut roller = FastRandRoller::with_seed(0);
+        actor.short_rest(&mut roller);
+        assert!(
+            !actor.feature_available(STRENGTH_OF_THE_GRAVE_TAG),
+            "short rest must NOT refresh Strength of the Grave"
+        );
+        actor.long_rest();
+        assert!(
+            actor.feature_available(STRENGTH_OF_THE_GRAVE_TAG),
+            "long rest must refresh Strength of the Grave"
+        );
+    }
+
+    /// Template drift check: only the Shadow Magic Sorcerer ships the
+    /// `STRENGTH_OF_THE_GRAVE_TAG` passive feature. Every other sorcerer
+    /// subclass (Draconic, Storm, Aberrant Mind, Divine Soul) and the
+    /// Wild-Magic baseline don't — keeps the subclass tell scoped to
+    /// the Shadow Magic chassis so a future regression (e.g., accidental
+    /// tag insertion on `SORCERER_TEMPLATE` bleeding into every subclass
+    /// build via the `..base.clone()` tail) is caught here. Sibling to
+    /// `undying_sentinel_ships_only_on_ancients_paladin_template` and
+    /// `inured_to_undeath_lands_only_on_necromancy_wizard` on the same
+    /// "single-subclass-tag ownership" lock.
+    #[test]
+    fn strength_of_the_grave_ships_only_on_shadow_magic_sorcerer_template() {
+        use crate::actions::class_features::STRENGTH_OF_THE_GRAVE_TAG;
+        use crate::actors::creatures::sorcerers::{
+            ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE,
+            DRACONIC_SORCERER_TEMPLATE, SHADOW_MAGIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+            STORM_SORCERER_TEMPLATE,
+        };
+        assert!(SHADOW_MAGIC_SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+        assert!(!SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+        assert!(!DRACONIC_SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+        assert!(!STORM_SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+        assert!(!ABERRANT_MIND_SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+        assert!(!DIVINE_SOUL_SORCERER_TEMPLATE
+            .features
+            .contains(STRENGTH_OF_THE_GRAVE_TAG));
+    }
+
+    /// The Shadow Magic Sorcerer inherits the baseline Sorcerer envelope
+    /// through the `..SORCERER_TEMPLATE.clone()` tail — the baseline
+    /// Wild Magic Surge feature carries through, alongside the subclass-
+    /// only Strength of the Grave tag. Guards against a regression where
+    /// the shared `with_subclass_tag` helper drops the baseline feature
+    /// set on its way to inserting the new tag. Sibling to
+    /// `necromancy_wizard_inherits_baseline_wizard_features` on the same
+    /// clone-and-layer lock.
+    #[test]
+    fn shadow_magic_sorcerer_inherits_baseline_sorcerer_features() {
+        use crate::actions::class_features::{
+            STRENGTH_OF_THE_GRAVE_TAG, WILD_MAGIC_SURGE_TAG,
+        };
+        use crate::actors::creatures::sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let shadow = e
+            .instantiate_creature(&SHADOW_MAGIC_SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&shadow].has_passive_feature(WILD_MAGIC_SURGE_TAG));
+        assert!(e.actors[&shadow].has_passive_feature(STRENGTH_OF_THE_GRAVE_TAG));
+    }
+
     #[test]
     fn dispel_magic_drops_concentration() {
         use crate::actions::spells::{BLESS, DISPEL_MAGIC};
@@ -56115,12 +56243,14 @@ mod tests {
     fn with_subclass_tag_helper_installs_tag_and_preserves_baseline() {
         use crate::actions::class_features::{
             ARCANE_RECOVERY_TAG, DISCIPLE_OF_LIFE_TAG, FAVORED_BY_THE_GODS_TAG,
-            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
+            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, STRENGTH_OF_THE_GRAVE_TAG,
+            TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
         };
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE};
         use crate::actors::creatures::sorcerers::{
-            ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+            ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE,
+            SHADOW_MAGIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
         };
         use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
         use std::sync::LazyLock;
@@ -56162,6 +56292,12 @@ mod tests {
                 &DIVINE_SOUL_SORCERER_TEMPLATE,
                 &SORCERER_TEMPLATE,
                 FAVORED_BY_THE_GODS_TAG,
+                WILD_MAGIC_SURGE_TAG,
+            ),
+            (
+                &SHADOW_MAGIC_SORCERER_TEMPLATE,
+                &SORCERER_TEMPLATE,
+                STRENGTH_OF_THE_GRAVE_TAG,
                 WILD_MAGIC_SURGE_TAG,
             ),
         ];

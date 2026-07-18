@@ -823,3 +823,104 @@ pub static DIVINE_SOUL_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         crate::actions::class_features::FAVORED_BY_THE_GODS_TAG,
     )
 });
+
+/// Shadow Magic Sorcerer — Sorcerous Origin **Shadow Magic** subclass
+/// build (XGtE). Identical envelope to the baseline `SORCERER_TEMPLATE`
+/// (CHA-primary level-9 full-caster, Empowered / Quickened / Heightened
+/// / Twinned / Careful / Distant / Extended / Seeking / Subtle /
+/// Transmuted metamagic, 6 sorcery points, Wild Magic Surge / Bend Luck
+/// / Tides of Chaos / Sorcerous Restoration) with one subclass feature
+/// layered on: **Strength of the Grave** (Shadow Magic lv1) — passive
+/// once-per-long-rest "drop to 1 HP instead of 0" cheat-death gate.
+///
+/// The signature "the shadow-touched sorcerer refuses to fall to the
+/// grave" tell — where a baseline Sorcerer eats a killing blow and
+/// enters the Dying state (or dies outright if not death-save-eligible),
+/// the Shadow Magic Sorcerer pins their HP at 1 and stays on their
+/// feet for one more round while the once-per-rest charge holds.
+///
+/// Mechanically identical to Half-Orc Relentless Endurance (racial
+/// trait, same "drop to 1 HP" mechanic) and Ancients Paladin Undying
+/// Sentinel (subclass lv15, same mechanic). All three route through
+/// the shared `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort in
+/// `take_typed_damage` so a hypothetical multi-source carrier
+/// (a half-orc Shadow Sorcerer, or a multi-class Shadow Sorcerer /
+/// Ancients Paladin) spends the tags in cohort order — Relentless
+/// Endurance first, then Undying Sentinel, then Strength of the Grave
+/// — rather than double-dipping on the same lethal hit. RAW's XGtE
+/// save-vs-DC gate (DC 5 + damage taken CHA save, fails on radiant
+/// damage or a crit killing blow) collapses to a guaranteed proc for
+/// uniformity with the sibling cohort entries — see the
+/// `STRENGTH_OF_THE_GRAVE_TAG` docstring for the rationale.
+///
+/// Distinct from the Wild Magic baseline (`SORCERER_TEMPLATE`) on
+/// the "Wild Magic Surge / Tides of Chaos / Bend Luck" tell: the
+/// Shadow Magic Sorcerer keeps those but adds a persistent
+/// cheat-death safety net on top. Distinct from
+/// `DRACONIC_SORCERER_TEMPLATE` (fire resistance),
+/// `STORM_SORCERER_TEMPLATE` (lightning + thunder resistance +
+/// eruption), `ABERRANT_MIND_SORCERER_TEMPLATE` (psychic resistance +
+/// Charmed / Frightened immunity), and `DIVINE_SOUL_SORCERER_TEMPLATE`
+/// (failed-save add-die recovery) — none of the four prior subclasses
+/// touch the lethal-damage-absorber lane, so a hypothetical multi-
+/// Origin carrier stacks Shadow Magic's Strength of the Grave cleanly
+/// beside any of the others without overlap.
+///
+/// RAW's Shadow Magic picks up other features not shipped on this
+/// template — **Eyes of the Dark** (lv1: 120ft darkvision +
+/// Darkness spell that pierces the caster's own vision; no combat
+/// surface without a light-level model), **Hound of Ill Omen** (lv6:
+/// spend 3 SP to summon a Dire Wolf variant that dogs a target;
+/// needs an ally-summon action surface and a distinct summon-scale
+/// heuristic), **Shadow Walk** (lv14: teleport between dim / dark
+/// tiles; needs a dim/dark-terrain model), and **Umbral Form** (lv18
+/// capstone: bonus action, 6 SP for resistance to all damage except
+/// force/radiant + move-through-creatures; needs a broad-resistance
+/// spend-side hook). Only the lv1 Strength of the Grave passive has
+/// a mechanical surface on the CR-4 chassis that plugs cleanly into
+/// the shared lethal-damage-absorber cohort, so we ship that half
+/// and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only the lv10 Inured to
+/// Undeath passive half of its RAW School of Necromancy kit.
+///
+/// Ships on the CR-4 sorcerer chassis at (or above) its strict RAW
+/// lv1 gate for the same reason `DIVINE_SOUL_SORCERER_TEMPLATE`
+/// ships Favored by the Gods (RAW lv1) — class templates target a
+/// balanced playable level, not lockstep PHB progression. Glyph 'H'
+/// so the Shadow Magic Sorcerer shows up distinctly on the map next
+/// to the baseline Wild Magic Sorcerer 'S', the Draconic Sorcerer
+/// 'D', the Storm Sorcerer 'Ω', the Aberrant Mind Sorcerer 'Ψ', and
+/// the Divine Soul Sorcerer 'V' — 'H' for the "sHadow" identity
+/// (the sorcerer's Shadowfell-linked lineage manifesting as the
+/// pallor of the grave). Collides with the Storm Herald Barbarian's
+/// 'H' glyph, but the two never legally co-occur on a single team
+/// (a Shadow Sorcerer isn't a Storm Herald Barbarian, and one glyph
+/// per team-color-and-team-id combo suffices to disambiguate them
+/// in a mixed encounter).
+pub static SHADOW_MAGIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Sorcerer envelope
+    // wholesale and layers on the Shadow Magic lv1 feature tag
+    // (`STRENGTH_OF_THE_GRAVE_TAG`: once-per-long-rest "drop to 1 HP
+    // instead of 0" cheat-death gate; NOT registered in
+    // `SHORT_REST_FEATURES` — RAW gates on a long rest per XGtE text,
+    // matching the sibling Relentless Endurance / Undying Sentinel
+    // entries on the same lane; fired at the shared take-damage
+    // chokepoint via the `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort next
+    // to Relentless Endurance and Undying Sentinel). The
+    // `..base.clone()` tail inside the helper picks up every other
+    // field — actions, spell slots, sorcery points, save profs,
+    // features — without an N-line field-by-field copy. Sibling
+    // helper users on the "clone base + insert one tag" cross-class
+    // lane: every tag-only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`. Glyph 'H' — distinct from
+    // baseline sorcerer 'S', Draconic 'D', Storm 'Ω', Aberrant Mind
+    // 'Ψ', and Divine Soul 'V'; 'H' for the "sHadow" identity.
+    SORCERER_TEMPLATE.with_subclass_tag(
+        "Shadow Magic Sorcerer",
+        'H',
+        crate::actions::class_features::STRENGTH_OF_THE_GRAVE_TAG,
+    )
+});

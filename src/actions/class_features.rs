@@ -229,6 +229,46 @@ pub const RELENTLESS_ENDURANCE_TAG: &str = "half_orc.relentless_endurance";
 /// long rest per PHB text.
 pub const UNDYING_SENTINEL_TAG: &str = "paladin.undying_sentinel";
 
+/// Tag for the Sorcerer **Strength of the Grave** feature (Shadow
+/// Magic Sorcerous Origin level 1, XGtE). Passive no-action feature:
+/// once per long rest, when damage would reduce the holder to 0 HP
+/// (and they're not killed outright by Massive Damage), they drop to
+/// 1 HP instead. Mechanically identical to Half-Orc Relentless
+/// Endurance and Ancients Paladin Undying Sentinel — all three route
+/// through the shared `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort in
+/// `take_typed_damage` so a hypothetical multi-source carrier spends
+/// the tags in order rather than double-dipping on the same damage
+/// instance.
+///
+/// RAW's Strength of the Grave gates the drop-to-1 outcome behind a
+/// CHA save (DC 5 + damage taken) that fails on radiant damage or if
+/// the killing hit came from a Critical Hit. We collapse the save-
+/// vs-DC gate to a once-per-long-rest guaranteed proc for uniformity
+/// with the sibling Relentless Endurance / Undying Sentinel entries —
+/// the save-DC branch would fold cleanly into the cohort loop if a
+/// future refactor promotes the per-entry gate into a struct row (see
+/// the `LETHAL_DAMAGE_ABSORBER_FEATURES` docstring for the shape).
+/// The once-per-rest collapse also matches how Strength of the Grave
+/// is played in practice at low CHA-DC seeds — a level-1 Shadow
+/// Sorcerer rolling CHA 16 hits DC 5 + typical 10 damage = DC 15 vs
+/// +3 CHA, so ~40% pass without a boost; ~1-per-day is a fair floor.
+///
+/// Ships on the SHADOW_MAGIC_SORCERER_TEMPLATE feature set (Shadow
+/// Magic level-1 subclass tell) at its RAW gate. Distinct from Half-
+/// Orc Relentless Endurance (racial trait, same mechanic) — the
+/// two never legally co-occur on a single build in D&D 5e's core
+/// races (a half-orc can't also be a sorcerer's Shadow Magic origin
+/// subclass, but a hypothetical mixed-race Shadow Sorcerer could
+/// carry both cohort rows; the shared cohort's "first-charge-only"
+/// consumption keeps the double-dip locked out).
+///
+/// Long-rest refresh: the tag lives on `features_max` for holders,
+/// so `long_rest` restores the charge (features_remaining =
+/// features_max). Not in `SHORT_REST_FEATURES` — RAW gates Strength
+/// of the Grave on a long rest per XGtE text, matching Relentless
+/// Endurance / Undying Sentinel on the same lane.
+pub const STRENGTH_OF_THE_GRAVE_TAG: &str = "sorcerer.strength_of_the_grave";
+
 /// Ordered cohort of feature tags that intercept a lethal HP-to-zero
 /// damage instance and convert it to a "drop to 1 HP instead" outcome.
 /// Read in order by `ActorInstance::take_typed_damage` at the 0-HP
@@ -241,8 +281,8 @@ pub const UNDYING_SENTINEL_TAG: &str = "paladin.undying_sentinel";
 /// Ordering is significant: earlier entries are consumed first, so
 /// a hypothetical Half-Orc / Ancients Paladin multiclass would burn
 /// Relentless Endurance before Undying Sentinel on a single lethal
-/// hit. Both refresh on long rest (both live on `features_max`);
-/// neither refreshes on short rest (neither is in
+/// hit. All entries refresh on long rest (they live on
+/// `features_max`); none refresh on short rest (none are in
 /// `SHORT_REST_FEATURES`).
 ///
 /// Death Ward is checked separately, *before* this cohort — RAW: the
@@ -254,6 +294,7 @@ pub const UNDYING_SENTINEL_TAG: &str = "paladin.undying_sentinel";
 pub const LETHAL_DAMAGE_ABSORBER_FEATURES: &[&str] = &[
     RELENTLESS_ENDURANCE_TAG,
     UNDYING_SENTINEL_TAG,
+    STRENGTH_OF_THE_GRAVE_TAG,
 ];
 
 /// Tag for the Sahuagin Blood Frenzy racial trait. Passive always-on
