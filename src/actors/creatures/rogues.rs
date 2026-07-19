@@ -2,6 +2,7 @@ use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::class_features::{
     ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE,
     CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, STEADY_AIM,
+    SUPERIOR_MOBILITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
@@ -219,6 +220,80 @@ pub static SWASHBUCKLER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         charisma: 14,
         has_rakish_audacity: true,
         has_fancy_footwork: true,
+        ..ROGUE_TEMPLATE.clone()
+    }
+});
+
+/// Scout Rogue — Roguish Archetype **Scout** subclass build (XGtE).
+/// Identical envelope to the baseline `ROGUE_TEMPLATE` (level-7 build,
+/// shortsword + cunning suite, evasion, uncanny dodge, elusive,
+/// slippery mind, blindsense) with one subclass feature layered on:
+/// **Superior Mobility** (level 9, XGtE) — passive +10 ft walking-speed
+/// bump on the scout chassis. RAW also grants matching climbing +
+/// swimming speeds; both fold into the walking `speed()` accessor since
+/// the engine has no 3D terrain to differentiate. Read at the shared
+/// `passive_feature_speed_bonus` chokepoint via `SUPERIOR_MOBILITY_TAG`
+/// — same lane as the barbarian's Fast Movement (+10), the monk's
+/// Unarmored Movement (+10), and the ranger's Roving (+5).
+///
+/// The wilderness-tracker rogue: opens combat at 40 ft walking speed
+/// (30 ft base + 10 ft Superior Mobility) — a full extra move step over
+/// the baseline rogue on the opening round. Composes cleanly with the
+/// rogue's Cunning Dash bonus-action Dash (60 ft one-turn move) and
+/// with Steady Aim's bonus-action advantage prime (no move-cost drag on
+/// the "sniper who moves 40 ft to a rooftop, then Steady Aims" opener).
+///
+/// Distinct from `ROGUE_TEMPLATE` (Thief-equivalent baseline),
+/// `ASSASSIN_ROGUE_TEMPLATE` (Assassinate — advantage on first-turn
+/// swings), and `SWASHBUCKLER_ROGUE_TEMPLATE` (Fancy Footwork + Rakish
+/// Audacity — solo duelist). Four Roguish Archetype lanes converge on
+/// the same "reliable Sneak Attack" identity from different angles:
+/// Assassin via advantage, Swashbuckler via the solo-duelist path,
+/// Scout via superior mobility (repositioning to advantageous angles),
+/// baseline Rogue via Steady Aim's bonus-action advantage prime.
+///
+/// RAW's Scout Rogue picks up other features not shipped on this
+/// template — **Skirmisher** (lv3: reactively move half your speed
+/// when a hostile ends its turn within 5 feet; needs a per-turn
+/// end-of-turn hostile-trigger hook), **Survivalist** (lv3: expertise
+/// in Nature / Survival; skill-check surface, no combat lane),
+/// **Ambush Master** (lv13: advantage on initiative + first-round
+/// attack rider; needs an initiative-time closure), **Sudden Strike**
+/// (lv17 capstone: bonus-action second Attack action + guaranteed
+/// Sneak Attack rider on the follow-up; needs an Attack-action
+/// duplication hook). Only the lv9 Superior Mobility passive has a
+/// mechanical surface on the CR-1 chassis that plugs cleanly into the
+/// shared `PASSIVE_FEATURE_SPEED_BONUSES` cohort, so we ship that half
+/// and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only Inured to Undeath and
+/// `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` each ship only the Elemental Gift
+/// resistance half of their RAW Genie patron kit.
+///
+/// Ships the CR-1 template above the strict RAW level-9 gate for the
+/// same reason `ASSASSIN_ROGUE_TEMPLATE` / `SWASHBUCKLER_ROGUE_TEMPLATE`
+/// ship their lv3 subclass features on the CR-1 baseline chassis:
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Glyph 'K' — 'K' for "scoutinK" / "sneaK ahead" reads as a light-
+/// armored wilderness scout on the map. Distinct from baseline rogue
+/// 'R', Assassin 'A', and Swashbuckler 'S'. Collides with several NPC
+/// creature templates (Death Knight, Killer Whale, Crocodile) but the
+/// team-color-and-team-id combo disambiguates them in a mixed
+/// encounter — same overlap policy as the other PC subclass glyphs
+/// (e.g. Assassin 'A' shares with Ape / Awakened Shrub / etc.).
+pub static SCOUT_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Rogue envelope wholesale
+    // and layer on the one Scout Roguish Archetype subclass feature
+    // (`SUPERIOR_MOBILITY_TAG`). The `..base.clone()` tail picks up
+    // every other field — actions, save profs, evasion, uncanny dodge,
+    // elusive, slippery mind, blindsense — without an N-line
+    // field-by-field copy. Same shape as `ASSASSIN_ROGUE_TEMPLATE`.
+    CreatureTemplate {
+        name: "Scout Rogue",
+        glyph: 'K',
+        features: HashSet::from([SUPERIOR_MOBILITY_TAG]),
         ..ROGUE_TEMPLATE.clone()
     }
 });

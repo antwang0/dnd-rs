@@ -1141,6 +1141,14 @@ struct PassiveFeatureSpeedBonus {
 ///     always-on. The +5 is smaller than Fast Movement / Unarmored
 ///     Movement — rangers kite half a step further, not sprint like
 ///     a raging barbarian or a monk.
+///   - **Superior Mobility** (Scout Rogue lv9, XGtE): +10 ft
+///     always-on. Same magnitude as Fast Movement / Unarmored Movement
+///     — three unrelated class chassis (Barbarian / Monk / Rogue-Scout)
+///     converge on the same +10 lane. Stacks additively with Roving
+///     under the multiclass rule via the same cohort. RAW also grants
+///     matching climbing / swimming speeds; both fold into the walking
+///     `speed()` accessor since the engine has no 3D terrain to
+///     differentiate.
 ///   - **Wolverine Totem Spirit** (Barbarian Path of the Wild Heart
 ///     2024 lv3): +10 ft **while raging** — same compound gate as
 ///     Tiger / Elk and same +10 magnitude as Tiger, but a distinct
@@ -1192,6 +1200,23 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
     PassiveFeatureSpeedBonus {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
         bonus_ft: crate::actions::class_features::ROVING_SPEED_BONUS,
+    },
+    // 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE) —
+    // passive +10 ft walking-speed bump on the scout rogue chassis. RAW
+    // also grants matching climbing / swimming speeds; both fold into
+    // the walking `speed()` accessor since the engine has no 3D terrain
+    // to differentiate. Same magnitude as Fast Movement (Barbarian +10)
+    // and Unarmored Movement (Monk +10) — three unrelated class chassis
+    // converge on the same +10 always-on lane; stacks additively with
+    // Roving (+5) under the multiclass rule via the same cohort. Ships
+    // on `SCOUT_ROGUE_TEMPLATE` above its strict RAW lv9 gate for the
+    // same reason `ASSASSIN_ROGUE_TEMPLATE` / `SWASHBUCKLER_ROGUE_TEMPLATE`
+    // ship their lv3 subclass features on the CR-1 baseline chassis —
+    // class templates target a balanced playable level, not lockstep
+    // PHB progression.
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::SUPERIOR_MOBILITY_TAG),
+        bonus_ft: crate::actions::class_features::SUPERIOR_MOBILITY_SPEED_BONUS,
     },
 ];
 

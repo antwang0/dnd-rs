@@ -7884,6 +7884,48 @@ pub const ROVING_TAG: &str = "ranger.roving";
 /// scattering magic numbers into the accessor.
 pub const ROVING_SPEED_BONUS: f32 = 5.0;
 
+/// 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE).
+/// Passive: the scout's walking speed increases by 10 feet, and they
+/// also gain climbing and swimming speeds matching that walking speed.
+/// In this engine only the flat +10 ft walking-speed bump has a combat
+/// surface — climbing / swimming speeds fold into the same `speed()`
+/// accessor (no 3D terrain to differentiate). Read at the shared
+/// `passive_feature_speed_bonus` chokepoint in `condition_speed_bonus`
+/// next to the barbarian's Fast Movement (+10 ft), the ranger's Roving
+/// (+5 ft), and the monk's Unarmored Movement (+10 ft) — one lookup
+/// table, one source of truth.
+///
+/// Sibling to `FAST_MOVEMENT_TAG` / `UNARMORED_MOVEMENT_TAG` on the
+/// always-on passive-speed-bump lane at the same magnitude (+10 ft) —
+/// three unrelated class chassis converge on the same "mid-level +10
+/// walking-speed capstone" identity. Distinct from Roving (+5 ft) by
+/// the higher magnitude and the different subclass source (Scout Rogue
+/// vs. baseline Ranger optional feature); the two never legally
+/// co-occur on a single build (Scout is a Rogue subclass, Roving is a
+/// Ranger class feature) but a hypothetical multiclass carrier would
+/// stack both under the additive-cohort rule.
+///
+/// Ships on `SCOUT_ROGUE_TEMPLATE` (subclass build on the CR-1 rogue
+/// chassis) above its strict RAW lv9 gate for the same reason
+/// `ASSASSIN_ROGUE_TEMPLATE` / `SWASHBUCKLER_ROGUE_TEMPLATE` ship their
+/// lv3 subclass features on the CR-1 baseline chassis — class templates
+/// target a balanced playable level, not lockstep PHB progression.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it.
+pub const SUPERIOR_MOBILITY_TAG: &str = "rogue.superior_mobility";
+
+/// Flat walking-speed bonus in feet granted by Scout Rogue's Superior
+/// Mobility passive. Pinned to +10 ft per RAW; exposed as a constant so
+/// the `passive_feature_speed_bonus` table stays declarative rather
+/// than scattering magic numbers into the accessor. Sibling to
+/// `FAST_MOVEMENT_SPEED_BONUS` (+10) / `UNARMORED_MOVEMENT_SPEED_BONUS`
+/// (+10) at the same magnitude; sibling to `ROVING_SPEED_BONUS` (+5) at
+/// half magnitude.
+pub const SUPERIOR_MOBILITY_SPEED_BONUS: f32 = 10.0;
+
 /// 5e Life Domain Cleric **Disciple of Life** (level 1 subclass feature).
 /// Passive: whenever the cleric uses a spell of level 1 or higher to
 /// restore hit points to a creature, that creature regains an additional

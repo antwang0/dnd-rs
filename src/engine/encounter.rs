@@ -54437,6 +54437,119 @@ mod tests {
         );
     }
 
+    /// 5e Scout Rogue Superior Mobility (XGtE lv9) — passive +10 ft
+    /// walking speed via the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// table. The Scout Rogue template ships the
+    /// `SUPERIOR_MOBILITY_TAG` feature; the shared
+    /// `passive_feature_speed_bonus` helper adds +10 ft. Baseline rogue
+    /// stays at 30 ft (no speed passives on the chassis), so the gap
+    /// between baseline rogue and Scout Rogue is the load-bearing
+    /// signal.
+    #[test]
+    fn superior_mobility_grants_scout_rogue_flat_speed_bump() {
+        use crate::actions::class_features::SUPERIOR_MOBILITY_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, SCOUT_ROGUE_TEMPLATE};
+        let baseline = ActorInstance::from_creature_template(
+            &ROGUE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let scout = ActorInstance::from_creature_template(
+            &SCOUT_ROGUE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !baseline.has_passive_feature(SUPERIOR_MOBILITY_TAG),
+            "baseline Rogue must NOT ship the Superior Mobility tag — that's the Scout subclass tell"
+        );
+        assert!(
+            scout.has_passive_feature(SUPERIOR_MOBILITY_TAG),
+            "Scout Rogue subclass must ship the Superior Mobility feature tag"
+        );
+        assert_eq!(
+            baseline.speed(),
+            30.0,
+            "baseline Rogue reads 30 ft (default humanoid, no speed passives)"
+        );
+        assert_eq!(
+            scout.speed(),
+            40.0,
+            "Scout Rogue with Superior Mobility reads 30 ft (base) + 10 ft (Superior Mobility) = 40 ft"
+        );
+    }
+
+    /// Superior Mobility stacks additively with the barbarian's Fast
+    /// Movement lane on the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// chokepoint — verified by dialing both tags onto one actor and
+    /// checking the +20 ft delta over the base speed. A hypothetical
+    /// multiclass rogue-scout / barbarian would compose cleanly under
+    /// the table. Same shape as `unarmored_movement_stacks_with_fast_movement`,
+    /// just a different +10 source tag.
+    #[test]
+    fn superior_mobility_stacks_with_fast_movement() {
+        use crate::actions::class_features::{FAST_MOVEMENT_TAG, SUPERIOR_MOBILITY_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(SUPERIOR_MOBILITY_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "adding SUPERIOR_MOBILITY_TAG bumps speed by +10 ft"
+        );
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 20.0,
+            "Superior Mobility + Fast Movement stack additively for +20 ft"
+        );
+    }
+
+    /// Superior Mobility stacks additively with the ranger's Roving
+    /// lane on the shared `PASSIVE_FEATURE_SPEED_BONUSES` chokepoint —
+    /// verified by dialing both tags onto one actor and checking the
+    /// +15 ft delta over the base speed. A hypothetical multiclass
+    /// rogue-scout / ranger would compose cleanly under the table
+    /// (Scout +10 + Roving +5 = +15 always-on).
+    #[test]
+    fn superior_mobility_stacks_with_roving() {
+        use crate::actions::class_features::{ROVING_TAG, SUPERIOR_MOBILITY_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(SUPERIOR_MOBILITY_TAG);
+        probe.grant_feature_for_test(ROVING_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 15.0,
+            "Superior Mobility (+10) + Roving (+5) stack additively for +15 ft"
+        );
+    }
+
     /// Roving stacks additively with the barbarian's Fast Movement lane
     /// on the shared `passive_feature_speed_bonus` chokepoint —
     /// verified by dialing both tags onto one actor and checking the
