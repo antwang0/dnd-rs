@@ -1637,6 +1637,37 @@ const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
     },
 ];
 
+/// Flag-driven initiative-advantage cohort read by
+/// `ActorInstance::rolls_initiative_with_advantage`. Every row is a
+/// predicate on the actor; any row that fires flips the initiative
+/// d20-roll shape from flat to advantage (two d20s, higher kept).
+/// Adding a future initiative-advantage source (Alert feat's pre-2024
+/// variant, a hypothetical Guardian Armor set bonus, another class
+/// subclass tell) lands here as a one-line entry rather than another
+/// `|| new_flag` join in `rolls_initiative_with_advantage`.
+///
+/// Sibling to `ABILITY_MOD_INITIATIVE_BONUSES` on the "passive
+/// initiative augment" lane — that cohort stacks a flat number on the
+/// result, this one drops the advantage die. Both cohorts fire on the
+/// same initiative-roll chokepoint (`roll_initiative`), so a carrier of
+/// entries on both lanes rolls with advantage AND picks up whichever
+/// flat bumps apply.
+///
+/// Entries (in order):
+///   - **Feral Instinct** (Barbarian lv7): struct-field flag on the
+///     baseline `BARBARIAN_TEMPLATE` chassis (and every barbarian
+///     subclass that inherits it — Totem / Storm Herald / Berserker /
+///     Zealot).
+///   - **Vigilant Blessing** (Twilight Cleric lv1, TCE): subclass-tag
+///     lookup on `TWILIGHT_CLERIC_TEMPLATE` — the same collapse RAW's
+///     "advantage on the next initiative" one-shot ribbon into a
+///     passive template flag that every other subclass template on
+///     this cohort uses (Feral Instinct is RAW-strictly always-on).
+const INITIATIVE_ADVANTAGE_SOURCES: &[fn(&ActorInstance) -> bool] = &[
+    |a| a.has_feral_instinct,
+    |a| a.has_passive_feature(crate::actions::class_features::VIGILANT_BLESSING_TAG),
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -5513,15 +5544,16 @@ impl ActorInstance {
     }
 
     /// True if the actor rolls the initiative d20 with advantage. Read by
-    /// `roll_initiative` — currently only Feral Instinct (Barbarian lv7)
-    /// flips this, but adding a future advantage source (Alert feat's
-    /// pre-2024 variant, Guardian Armor set bonus, etc.) lands here as a
-    /// one-line `|| new_flag` join without touching the roll-body. Sibling
-    /// to `initiative_flat_bonus` on the "passive initiative augment" lane
-    /// — that helper stacks a flat number on the result, this one drops
-    /// the advantage die.
+    /// `roll_initiative`. Walks the shared `INITIATIVE_ADVANTAGE_SOURCES`
+    /// cohort — any row whose predicate fires flips the roll shape to
+    /// advantage. Adding a future advantage source (Alert feat's
+    /// pre-2024 variant, Guardian Armor set bonus, etc.) lands as a
+    /// one-line entry in that cohort rather than another `|| new_flag`
+    /// join here. Sibling to `initiative_flat_bonus` on the "passive
+    /// initiative augment" lane — that helper stacks a flat number on
+    /// the result, this one drops the advantage die.
     pub fn rolls_initiative_with_advantage(&self) -> bool {
-        self.has_feral_instinct
+        INITIATIVE_ADVANTAGE_SOURCES.iter().any(|f| f(self))
     }
 
     /// Flat bonus added to the initiative result *after* the d20 roll and

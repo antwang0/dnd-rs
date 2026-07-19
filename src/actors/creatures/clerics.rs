@@ -2,8 +2,8 @@ use crate::actions::class_features::{
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE,
     GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG,
     RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD,
-    TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM,
-    WRATH_OF_THE_STORM_TAG,
+    TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG,
+    WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -652,4 +652,107 @@ pub static FORGE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     // cleric 'C', War 'W', Light 'L', Tempest 'S', Life 'V', and
     // Grave 'G' cousins.
     CLERIC_TEMPLATE.with_subclass_tag("Forge Cleric", 'F', SOUL_OF_THE_FORGE_TAG)
+});
+
+/// Twilight Domain Cleric — Divine Domain **Twilight Domain** subclass
+/// build (TCE). Identical envelope to the baseline `CLERIC_TEMPLATE`
+/// (WIS-primary caster, Sacred Flame / Guiding Bolt / Cure Wounds /
+/// Bless / Turn Undead / Preserve Life / Divine Strike, full cleric
+/// spell ladder) with one subclass passive layered on: **Vigilant
+/// Blessing** (lv1 subclass tell) — passive **advantage on initiative
+/// rolls**.
+///
+/// The signature "twilight-cleric sees the ambush before it arrives"
+/// tell — where a baseline Cleric relies on a middling DEX 10 initiative
+/// mod, the Twilight Cleric rolls the initiative d20 twice and keeps
+/// the higher, reliably opening the round with a pre-fight Bless prime
+/// or a Guiding Bolt at a soft target. Composes cleanly with the
+/// baseline cleric's high-value opener kit — a Twilight Cleric who wins
+/// initiative reliably lands Bless / Bane / Spirit Guardians / Guiding
+/// Bolt / Sanctuary before the first enemy swing.
+///
+/// The Twilight Domain's initiative-flavored sibling to the other
+/// Cleric subclasses:
+///   - **War** (Guided Strike): CASTER-side self-prime +10 accuracy.
+///   - **Light** (Radiance of the Dawn): 30ft radiant burst.
+///   - **Tempest** (Wrath of the Storm): 5ft reactive lightning zap.
+///   - **Life** (Disciple of Life): amplify healing.
+///   - **Grave** (Path to the Grave): TARGET-side curse — advantage
+///     on the next incoming attack against the marked target.
+///   - **Forge** (Soul of the Forge): passive fire resistance.
+///   - **Twilight** (Vigilant Blessing): passive initiative advantage.
+///
+/// Where War / Light / Tempest / Grave subclasses each ship a Channel
+/// Divinity action, Life ships a leveled-heal amplifier, and Forge
+/// leans on the passive typed-resistance lane, the Twilight Domain
+/// leans on the initiative-advantage lane — the buff fires once per
+/// encounter at initiative-roll time with no charge to spend, no bonus
+/// action to prime, no target to pick. Sibling on the "passive
+/// initiative advantage as a subclass tell" cross-class lane to
+/// `has_feral_instinct` (Barbarian Feral Instinct lv7) — same roll
+/// shape (d20 twice, higher kept), different class chassis, different
+/// tag surface (Cleric passive tag via `has_passive_feature` vs.
+/// Barbarian struct-field flag).
+///
+/// Read at the shared `rolls_initiative_with_advantage` chokepoint in
+/// `actor_template.rs` next to `has_feral_instinct` — same lane,
+/// different source. The two never legally co-occur on a single build
+/// (Twilight Cleric vs. Barbarian Feral Instinct are distinct subclass
+/// / class chassis), and a hypothetical multiclass carrier still just
+/// gets advantage (not "double advantage") since the roll shape floors
+/// at "higher of two d20s".
+///
+/// RAW's Twilight Domain picks up other features not shipped on this
+/// template — Eyes of Night (lv1: 300ft ally-shareable darkvision),
+/// Channel Divinity: Twilight Sanctuary (lv2: mobile 30ft temp-HP /
+/// condition-cleanse aura), Steps of Night (lv6: fly speed while in
+/// dim light or darkness), Divine Strike (Radiant) (lv8 — the baseline
+/// cleric already ships this via the shared `DIVINE_STRIKE_TAG`), and
+/// Twilight Shroud (lv17: allies in the sanctuary aura get half cover).
+/// Only the lv1 Vigilant Blessing passive has a mechanical surface on
+/// the CR-0.5 chassis that plugs cleanly into the shared
+/// `rolls_initiative_with_advantage` chokepoint, so we ship that half
+/// and leave the rest as future work — matching the way the other
+/// subclass templates each ship only their load-bearing tactical
+/// feature (Necromancy Wizard ships only Inured to Undeath, Forge
+/// Cleric ships only Soul of the Forge, etc.).
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
+/// War / Light / Tempest / Life / Grave / Forge cousins so a Twilight-
+/// vs-Baseline / vs-War / vs-Light / vs-Tempest / vs-Life / vs-Grave /
+/// vs-Forge encounter renders unambiguously by name.
+///
+/// Glyph 'X' (for the Twili**X**ht identity — the 'T' letter is already
+/// taken by the Tempest Cleric's 'S' near-neighbor and other 'T'-glyph
+/// templates; 'X' reads as a stylized crossroads-of-day-and-night
+/// symbol) so the Twilight Cleric shows up distinctly on the map next
+/// to baseline 'C', War 'W', Light 'L', Tempest 'S', Life 'V', Grave
+/// 'G', and Forge 'F'. Collides with no other current PC subclass
+/// template glyph.
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW lv1
+/// gate for the same reason `FORGE_CLERIC_TEMPLATE` ships Soul of the
+/// Forge (RAW lv6), `NECROMANCY_WIZARD_TEMPLATE` ships Inured to
+/// Undeath (RAW lv10), and every other subclass template runs above
+/// its strict RAW gate — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+pub static TWILIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Cleric envelope wholesale
+    // and layers on the Vigilant Blessing passive tag. The
+    // `..base.clone()` tail inside the helper picks up every other
+    // field — the full cleric spell ladder, save profs, stats, slots,
+    // and the WAR_PRIEST / GUIDED_STRIKE / RADIANCE_OF_THE_DAWN /
+    // TURN_UNDEAD / etc. baseline features — without an N-line
+    // field-by-field copy. No new actions are pushed — Vigilant Blessing
+    // is a purely passive initiative-advantage grant read at
+    // `rolls_initiative_with_advantage`, not a fresh action surface, so
+    // the "tag-only" shape the helper wraps is a natural fit. Sibling
+    // helper users on the "clone base + insert one tag" cross-class
+    // lane: every tag-only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`.
+    CLERIC_TEMPLATE.with_subclass_tag("Twilight Cleric", 'X', VIGILANT_BLESSING_TAG)
 });

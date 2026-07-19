@@ -49019,6 +49019,62 @@ mod tests {
         );
     }
 
+    /// 5e Twilight Cleric Vigilant Blessing (lv1): advantage on
+    /// initiative rolls. Twilight cleric rolls the d20 twice and keeps
+    /// the higher — statistical bias shows up after enough samples
+    /// against the baseline cleric who rolls once. Sibling test to
+    /// `feral_instinct_boosts_initiative` on the same shape (Barbarian
+    /// Feral Instinct is the other initiative-advantage source in the
+    /// engine); this test covers the Twilight-Cleric-flavored branch on
+    /// `rolls_initiative_with_advantage`.
+    #[test]
+    fn vigilant_blessing_boosts_initiative() {
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, TWILIGHT_CLERIC_TEMPLATE,
+        };
+        let mut roller = FastRandRoller::with_seed(54321);
+        let mut twilight_total = 0i64;
+        let mut baseline_total = 0i64;
+        let samples = 400;
+        for _ in 0..samples {
+            let mut twilight = ActorInstance::from_creature_template(
+                &TWILIGHT_CLERIC_TEMPLATE,
+                Coordinate::new(0, 0),
+                0,
+                &mut roller,
+                0,
+            )
+            .unwrap();
+            let mut baseline = ActorInstance::from_creature_template(
+                &CLERIC_TEMPLATE,
+                Coordinate::new(0, 0),
+                0,
+                &mut roller,
+                0,
+            )
+            .unwrap();
+            twilight.roll_initiative(&mut roller);
+            baseline.roll_initiative(&mut roller);
+            // Both templates share DEX 10 (initiative_mod = 0) so the
+            // subtraction just isolates the d20 half. Baseline rolls a
+            // flat d20; twilight rolls with advantage.
+            twilight_total +=
+                (twilight.initiative().unwrap() - twilight.initiative_mod()) as i64;
+            baseline_total +=
+                (baseline.initiative().unwrap() - baseline.initiative_mod()) as i64;
+        }
+        let twilight_avg = twilight_total as f64 / samples as f64;
+        let baseline_avg = baseline_total as f64 / samples as f64;
+        // Advantage 2d20-kh1 mean ≈ 13.83; flat d20 mean ≈ 10.5. Give
+        // some sampling slack: twilight should beat baseline by at least 1.5.
+        assert!(
+            twilight_avg > baseline_avg + 1.5,
+            "twilight advantage init (avg {:.2}) should beat baseline flat (avg {:.2})",
+            twilight_avg,
+            baseline_avg
+        );
+    }
+
     /// 5e Monk Diamond Soul (lv14): proficient in every saving throw.
     /// A Purity-of-Body monk template already carries STR and DEX
     /// prof; Diamond Soul should extend that to every ability.

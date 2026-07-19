@@ -8682,3 +8682,58 @@ pub static PATH_TO_THE_GRAVE: LazyLock<PathToTheGrave> = LazyLock::new(|| PathTo
 /// — class templates target a balanced playable level, not lockstep PHB
 /// progression.
 pub const SOUL_OF_THE_FORGE_TAG: &str = "cleric.soul_of_the_forge";
+
+/// 5e Cleric Divine Domain — **Twilight Domain** — **Vigilant Blessing**
+/// subclass feature tag (level 1 subclass, TCE). Passive: the twilight
+/// cleric's senses stay attuned to the encroaching dark — advantage on
+/// **initiative rolls**.
+///
+/// RAW's Vigilant Blessing is an action that grants advantage on the
+/// **next** initiative roll made by one target before the end of the
+/// cleric's next long rest — a per-encounter setup ribbon. We collapse
+/// the RAW's out-of-combat prime + one-shot expiry into an always-on
+/// self-buff on the same "class templates target a balanced playable
+/// level, not lockstep PHB progression" grounds every other subclass
+/// template ships at (Feral Instinct / Remarkable Athlete / Rakish
+/// Audacity / Dread Ambusher already ride the initiative-augment lane
+/// as always-on template flags). The collapse keeps the tag a purely
+/// declarative one-line entry — no per-encounter action-slot expenditure,
+/// no ally-target picker, no rest-timer to drive expiry.
+///
+/// Read at `ActorInstance::rolls_initiative_with_advantage` alongside
+/// `has_feral_instinct` (Barbarian Feral Instinct — the only prior
+/// initiative-advantage source) as a one-line `|| self.has_passive_feature(TAG)`
+/// join. Sibling on the "passive initiative advantage from a class
+/// subclass" lane to `has_feral_instinct` — same roll shape (d20 rolled
+/// twice, higher kept), different class chassis (Cleric vs. Barbarian).
+/// Stacks composably with the ability-mod initiative-bump cohort
+/// (Rakish Audacity / Dread Ambusher on `ABILITY_MOD_INITIATIVE_BONUSES`)
+/// and Remarkable Athlete's `+ceil(prof / 2)`: a hypothetical Twilight
+/// Cleric multiclass carrier rolls the initiative d20 twice AND adds
+/// whichever flat bumps apply.
+///
+/// RAW's Twilight Domain picks up other features not shipped on this
+/// template — **Eyes of Night** (lv1: 300ft darkvision that can be
+/// shared with allies; the sense-radius surface exists on
+/// `SpecialSense::Darkvision(u32)` but the ally-share half needs a
+/// per-encounter buff-distribution hook), **Channel Divinity: Twilight
+/// Sanctuary** (lv2: bonus-action 30ft aura that either grants d6 + level
+/// temp HP or ends Charmed / Frightened on allies entering; needs a
+/// mobile per-turn aura-tick hook), **Steps of Night** (lv6: fly speed
+/// while in dim light or darkness; needs a flying-movement surface),
+/// **Divine Strike (Radiant)** (lv8: +1d8 radiant on weapon hits; the
+/// baseline cleric already ships a Radiant Divine Strike via
+/// `DIVINE_STRIKE_TAG`, so this half is already covered on the shared
+/// baseline), and **Twilight Shroud** (lv17 capstone: allies in the
+/// sanctuary aura get half cover; needs a cover-modifier hook). Only the
+/// lv1 Vigilant Blessing passive has a mechanical surface on the CR-0.5
+/// chassis that plugs cleanly into the shared
+/// `rolls_initiative_with_advantage` chokepoint, so we ship that half
+/// and leave the rest as future work — matching the way
+/// `FORGE_CLERIC_TEMPLATE` ships only the lv6 Soul of the Forge passive
+/// half of its RAW Forge Domain kit and `NECROMANCY_WIZARD_TEMPLATE`
+/// ships only the lv10 Inured to Undeath passive half of its RAW School
+/// of Necromancy kit.
+///
+/// Ships on `TWILIGHT_CLERIC_TEMPLATE` at (or above) its RAW lv1 gate.
+pub const VIGILANT_BLESSING_TAG: &str = "cleric.vigilant_blessing";
