@@ -270,3 +270,58 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ..RANGER_TEMPLATE.clone()
     }
 });
+
+/// Gloom Stalker Ranger — XGtE subclass build. Identical envelope to the
+/// baseline `RANGER_TEMPLATE` (level-9 half-caster, longbow + scimitar,
+/// 4/3/3/1/1 slot ladder, same kiter spell list) with two subclass
+/// features layered on:
+///
+/// - **Dread Ambusher** (level 3): passive +WIS-mod to initiative rolls.
+///   The Gloom Stalker's headline "always strikes first" tell — folded
+///   into the shared `initiative_flat_bonus` lane next to Rakish
+///   Audacity's CHA-mod bump and Remarkable Athlete's `+ceil(prof / 2)`
+///   so a hypothetical multiclass stacks every bump cleanly. Ships on
+///   this template above its strict RAW lv3 gate — the whole template is
+///   pinned at a level-9 loadout, matching the baseline ranger. RAW's
+///   companion first-turn extra-attack + `+1d8` bonus damage half is
+///   left as future work; the initiative bump alone is the load-bearing
+///   Gloom Stalker tell for combat pacing.
+/// - **Iron Mind** (level 7, XGtE): passive proficiency in Wisdom
+///   saves. Added to `proficient_saves` on top of the baseline ranger's
+///   `Strength` / `Dexterity` set — the Gloom Stalker's mental-defense
+///   augment reads through the shared save-modifier chokepoint. Ships
+///   above its strict RAW lv7 gate for the same reason Dread Ambusher
+///   does — class templates target a balanced playable level, not
+///   lockstep PHB progression.
+///
+/// Distinct from `RANGER_TEMPLATE` (baseline) and `HUNTER_RANGER_TEMPLATE`
+/// (Hunter subclass) so a Gloom-vs-Hunter or Gloom-vs-baseline encounter
+/// renders unambiguously by name. Glyph 'G' so the Gloom Stalker shows
+/// up distinctly on the map next to the baseline 'R' and the Hunter 'H'.
+pub static GLOOM_STALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Ranger envelope wholesale
+    // and overwrite only the per-subclass differences. The `..base.clone()`
+    // tail picks up every other field — actions, spell slots, extra-
+    // attack, Feral Senses, Foe Slayer, Vanish, Roving, Archery Style —
+    // without an N-line field-by-field copy.
+    CreatureTemplate {
+        name: "Gloom Stalker Ranger",
+        glyph: 'G',
+        // 5e Gloom Stalker Ranger Dread Ambusher (level 3) — passive
+        // +WIS-mod initiative bump. Read at `initiative_flat_bonus`.
+        has_dread_ambusher: true,
+        // 5e Gloom Stalker Ranger Iron Mind (level 7, XGtE) — passive
+        // proficiency in Wisdom saves. Added to the baseline ranger's
+        // STR / DEX save-proficiency set so the ranger's saving-throw
+        // chokepoint picks up the extra proficiency bonus on WIS saves
+        // (against Charm Person, Hold Person, Suggestion, and similar
+        // mind-affecting effects that thematically target the Gloom
+        // Stalker's shadow-touched mind).
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Wisdom,
+        ]),
+        ..RANGER_TEMPLATE.clone()
+    }
+});

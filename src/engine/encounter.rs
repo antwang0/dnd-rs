@@ -57953,4 +57953,135 @@ mod tests {
         // Subclass tag lands on top.
         assert!(e.actors[&forge].has_passive_feature(SOUL_OF_THE_FORGE_TAG));
     }
+
+    /// 5e Gloom Stalker Ranger Dread Ambusher (subclass level 3) — the
+    /// WIS-mod initiative bump surfaces in `initiative_flat_bonus`
+    /// alongside Rakish Audacity's CHA-mod bump. The template ships
+    /// WIS 14 (+2 mod) so the delta is a nonzero +2 vs the baseline
+    /// ranger's flat-bonus.
+    ///
+    /// Sibling test to `rakish_audacity_bumps_initiative_flat_bonus_by_cha_mod`
+    /// on the shared "template flag stacks an ability-mod scalar onto
+    /// initiative" lane — same shape, different ability axis (WIS here
+    /// vs. CHA for Rakish Audacity) and different subclass chassis.
+    #[test]
+    fn dread_ambusher_bumps_initiative_flat_bonus_by_wis_mod() {
+        use crate::actors::creatures::rangers::{
+            GLOOM_STALKER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let gloom = e
+            .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let baseline_bonus = e.actors[&baseline].initiative_flat_bonus();
+        let gloom_bonus = e.actors[&gloom].initiative_flat_bonus();
+        let gloom_wis_mod = e.actors[&gloom]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Wisdom);
+        // Sanity: the gloom template inherits the ranger's WIS 14 (+2
+        // mod, WIS-caster stat spread) so the Dread Ambusher bump is
+        // meaningful. If a future template tweak drops WIS back to 10,
+        // this assertion catches the regression before it silently
+        // zeros out the feature's tell.
+        assert!(
+            gloom_wis_mod >= 2,
+            "gloom stalker template should ship a positive WIS mod for Dread Ambusher to matter"
+        );
+        assert_eq!(gloom_bonus, baseline_bonus + gloom_wis_mod);
+    }
+
+    /// 5e Gloom Stalker Ranger template ships the Dread Ambusher passive
+    /// flag while the baseline / Hunter siblings do not. Pins the
+    /// template-flag placement so a future refactor that promotes the
+    /// flag onto baseline ranger (or drops it silently from the Gloom
+    /// Stalker) trips this assertion before the initiative bump goes
+    /// wrong on the wrong chassis.
+    #[test]
+    fn only_gloom_stalker_ships_dread_ambusher_flag() {
+        use crate::actors::creatures::rangers::{
+            GLOOM_STALKER_RANGER_TEMPLATE, HUNTER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let gloom = e
+            .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+            .unwrap();
+        assert!(!e.actors[&baseline].has_dread_ambusher());
+        assert!(!e.actors[&hunter].has_dread_ambusher());
+        assert!(e.actors[&gloom].has_dread_ambusher());
+    }
+
+    /// The shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort is designed
+    /// to stack additively — a hypothetical Swashbuckler-Rogue /
+    /// Gloom-Stalker-Ranger multiclass should carry both CHA-mod and
+    /// WIS-mod bumps on top of the DEX-mod baseline. We can't build a
+    /// real multiclass creature template mid-test, so this test
+    /// manually toggles both flags on a Swashbuckler baseline (which
+    /// already ships Rakish Audacity) and asserts the WIS-mod row
+    /// adds on top rather than short-circuiting or replacing the
+    /// CHA-mod row. Pins the "any row hit is sufficient; all hitting
+    /// rows sum" cohort semantic so a future refactor to a first-hit
+    /// short-circuit trips this assertion.
+    #[test]
+    fn ability_mod_initiative_bonuses_cohort_sums_multiple_hits() {
+        use crate::actors::creatures::rogues::SWASHBUCKLER_ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Baseline swashbuckler: Rakish Audacity → CHA-mod only.
+        let cha_mod = e.actors[&id]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+        let baseline_bonus = e.actors[&id].initiative_flat_bonus();
+        // Force the Dread Ambusher flag on; the WIS-mod row should stack
+        // additively on top of the existing CHA-mod row without
+        // suppressing or overwriting it.
+        e.actors.get_mut(&id).unwrap().set_dread_ambusher(true);
+        let wis_mod = e.actors[&id]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Wisdom);
+        let combined_bonus = e.actors[&id].initiative_flat_bonus();
+        assert_eq!(
+            combined_bonus,
+            baseline_bonus + wis_mod,
+            "Dread Ambusher's WIS-mod bump should stack on top of Rakish Audacity's CHA-mod bump, not replace it (baseline had CHA-mod {}, combined should keep it and add WIS-mod {})",
+            cha_mod,
+            wis_mod,
+        );
+    }
+
+    /// 5e Gloom Stalker Ranger Iron Mind (subclass level 7, XGtE) —
+    /// adds WIS to the ranger's baseline STR / DEX save-proficiency
+    /// set. Pins the placement so a future refactor that drops WIS
+    /// from the Gloom Stalker's `proficient_saves` (or promotes it
+    /// onto baseline ranger) trips this assertion before the
+    /// save-proficiency chokepoint reads it back on the wrong chassis.
+    #[test]
+    fn gloom_stalker_iron_mind_grants_wis_save_proficiency() {
+        use crate::actors::creatures::rangers::{
+            GLOOM_STALKER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let gloom = e
+            .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        // Baseline ranger has STR / DEX save proficiency but NOT WIS.
+        assert!(e.actors[&baseline].is_save_proficient(AbilityScoreType::Strength));
+        assert!(e.actors[&baseline].is_save_proficient(AbilityScoreType::Dexterity));
+        assert!(!e.actors[&baseline].is_save_proficient(AbilityScoreType::Wisdom));
+        // Gloom Stalker keeps STR / DEX and adds WIS.
+        assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Strength));
+        assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Dexterity));
+        assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Wisdom));
+    }
 }

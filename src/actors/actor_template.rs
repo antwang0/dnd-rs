@@ -1569,6 +1569,49 @@ const CONDITION_ATTACK_BONUSES: &[ConditionAttackBonus] = &[
     },
 ];
 
+/// One row in the `ABILITY_MOD_INITIATIVE_BONUSES` cohort — a single
+/// passive-feature flag that adds the holder's modifier for a specific
+/// ability to the initiative-roll total. Held as a `(flag_fn, ability)`
+/// pair so a new row can point to any predicate on the actor
+/// (`|a| a.has_some_flag`) and target any of the six abilities without
+/// widening a central enum. Sibling to `FlagDrivenSaveProficiency` on
+/// the "passive-feature flag → single-ability engine surface" pattern —
+/// same closure shape, different roll axis (initiative-total scalar
+/// here vs. save-throw proficiency-bonus contribution there).
+struct AbilityModInitiativeBonus {
+    flag: fn(&ActorInstance) -> bool,
+    ability: AbilityScoreType,
+}
+
+/// Flag-driven ability-mod initiative-bump cohort read by
+/// `ActorInstance::initiative_flat_bonus`. Every row is summed with the
+/// other bumps (Remarkable Athlete's `+ceil(prof / 2)` stays as its own
+/// non-ability-mod row on the same helper); any row whose flag fires
+/// adds the target ability's modifier to the initiative total. Adding
+/// a future ability-mod initiative bump (a hypothetical Alert / Chef /
+/// Watcher class feature that keys off a distinct ability) lands as a
+/// one-line entry here rather than another `if self.has_XXX { bonus +=
+/// self.ability_modifier(...); }` branch in `initiative_flat_bonus`.
+///
+/// Sibling to `FLAG_DRIVEN_SAVE_PROFICIENCIES` on the "one flag,
+/// one ability" declarative cohort pattern — same shape, different
+/// engine surface (initiative-total scalar vs. save proficiency-bonus
+/// contribution).
+///
+/// Entries (in order):
+///   - **Rakish Audacity** (Swashbuckler Rogue, XGtE lv3): +CHA-mod.
+///   - **Dread Ambusher** (Gloom Stalker Ranger, XGtE lv3): +WIS-mod.
+const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
+    AbilityModInitiativeBonus {
+        flag: |a| a.has_rakish_audacity,
+        ability: AbilityScoreType::Charisma,
+    },
+    AbilityModInitiativeBonus {
+        flag: |a| a.has_dread_ambusher,
+        ability: AbilityScoreType::Wisdom,
+    },
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -2319,9 +2362,9 @@ pub struct CreatureTemplate {
     /// flag only opens the second, no-ally path.
     ///
     /// Read at two chokepoints:
-    ///   - `initiative_flat_bonus` — the CHA-mod bump joins the same
-    ///     "flat number added to initiative total" lane as Remarkable
-    ///     Athlete's `+ceil(prof / 2)`. Composes cleanly with
+    ///   - `initiative_flat_bonus` — the CHA-mod bump rides the
+    ///     shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort alongside
+    ///     Dread Ambusher's WIS-mod bump. Composes cleanly with
     ///     `rolls_initiative_with_advantage` (Feral Instinct) so a
     ///     hypothetical Barbarian / Swashbuckler multiclass rolls with
     ///     advantage AND stacks CHA-mod on top.
@@ -2370,6 +2413,24 @@ pub struct CreatureTemplate {
     /// the swash's chosen melee targets, freeing the swash's bonus
     /// action for Cunning Strike primes rather than Cunning Disengage.
     pub has_fancy_footwork: bool,
+    /// 5e Gloom Stalker Ranger (XGtE) level-3 subclass feature —
+    /// **Dread Ambusher**. The load-bearing half we model is the
+    /// initiative bump: RAW "You have a bonus to your initiative rolls
+    /// equal to your Wisdom modifier." (The RAW first-turn extra attack
+    /// + bonus damage half is left as future work; the initiative bump
+    /// is the tell that anchors the Gloom Stalker's "always strikes
+    /// first" identity.) Read by `initiative_flat_bonus` through the
+    /// shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort alongside Rakish
+    /// Audacity's CHA-mod bump; Remarkable Athlete's `+ceil(prof / 2)`
+    /// stays as its own if-branch on the same helper. Ships on
+    /// `GLOOM_STALKER_RANGER_TEMPLATE`; no other current template
+    /// carries the flag. Sibling on the "template flag → one-ability-
+    /// mod initiative-bump" cohort lane — the cohort now covers two
+    /// distinct ability modifiers (Rakish Audacity → CHA, Dread
+    /// Ambusher → WIS), each additive so a hypothetical Gloom Stalker
+    /// Ranger / Swashbuckler Rogue multiclass carries both bumps
+    /// cleanly.
+    pub has_dread_ambusher: bool,
     /// 5e Dragonborn Draconic Ancestry: damage type matching the chosen
     /// ancestor (Red / Gold = Fire, Blue / Bronze = Lightning, etc.).
     /// Read by `BreathWeapon` to type its 5-tile cone and consumed by
@@ -2587,6 +2648,7 @@ impl CreatureTemplate {
             has_gnome_cunning: false,
             has_rakish_audacity: false,
             has_fancy_footwork: false,
+            has_dread_ambusher: false,
             draconic_ancestry: None,
             sorcery_points: 0,
             death_burst: None,
@@ -3021,6 +3083,10 @@ pub struct ActorInstance {
     /// 5e Swashbuckler Rogue Fancy Footwork (level 3). See
     /// `CreatureTemplate` docs.
     has_fancy_footwork: bool,
+    /// 5e Gloom Stalker Ranger Dread Ambusher (level 3). See
+    /// `CreatureTemplate` docs — passive +WIS-mod initiative bump on
+    /// the shared `initiative_flat_bonus` lane.
+    has_dread_ambusher: bool,
     /// 5e Swashbuckler Rogue Fancy Footwork ledger: targets this actor
     /// has made a melee attack against during their current turn. Read
     /// in `EncounterInstance::dispatch_opportunity_attacks` — a target
@@ -3205,6 +3271,7 @@ impl ActorInstance {
             has_gnome_cunning: ct.has_gnome_cunning,
             has_rakish_audacity: ct.has_rakish_audacity,
             has_fancy_footwork: ct.has_fancy_footwork,
+            has_dread_ambusher: ct.has_dread_ambusher,
             melee_attack_targets_this_turn: HashSet::new(),
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
@@ -3741,6 +3808,27 @@ impl ActorInstance {
     /// `EncounterInstance::dispatch_opportunity_attacks`.
     pub fn has_fancy_footwork(&self) -> bool {
         self.has_fancy_footwork
+    }
+
+    /// 5e Gloom Stalker Ranger Dread Ambusher (level 3) — passive
+    /// class feature: +WIS-mod to initiative rolls. Read by
+    /// `initiative_flat_bonus` alongside Rakish Audacity's CHA-mod
+    /// bump and Remarkable Athlete's `+ceil(prof / 2)`.
+    pub fn has_dread_ambusher(&self) -> bool {
+        self.has_dread_ambusher
+    }
+
+    /// Test-only setter for the Dread Ambusher flag. Mirrors
+    /// `set_blindsense` / `set_blind_fighting_style` — enables the
+    /// `ability_mod_initiative_bonuses_cohort_sums_multiple_hits` test
+    /// to toggle the flag on a Swashbuckler baseline (which already
+    /// ships Rakish Audacity) to prove the cohort sums both bumps
+    /// rather than short-circuiting. No non-test callsite; a real
+    /// runtime setup would install the flag at template-instantiation
+    /// time via `has_dread_ambusher: true` on the template.
+    #[cfg(test)]
+    pub fn set_dread_ambusher(&mut self, value: bool) {
+        self.has_dread_ambusher = value;
     }
 
     /// 5e Swashbuckler Rogue Fancy Footwork ledger read: has this actor
@@ -5413,17 +5501,22 @@ impl ActorInstance {
 
     /// Flat bonus added to the initiative result *after* the d20 roll and
     /// DEX modifier. Read by `roll_initiative` alongside
-    /// `rolls_initiative_with_advantage`. Currently sourced from Champion
-    /// Fighter Remarkable Athlete (lv7): +ceil(proficiency_bonus / 2)
-    /// per RAW's "add half your proficiency bonus, rounded up". Adding a
-    /// future flat initiative bonus (Alert feat +5, Rakish Audacity's
-    /// CHA-mod bump, Chef +INT-mod on downtime meals, etc.) lands here
-    /// as an additive one-liner alongside the Remarkable Athlete row,
-    /// keeping the roll-body a two-line compose (advantage die + flat
-    /// bump). Sibling to `rolls_initiative_with_advantage` on the
-    /// "passive initiative augment" lane — that helper flips the roll
-    /// shape (advantage vs. normal), this one stacks a scalar on the
-    /// total.
+    /// `rolls_initiative_with_advantage`. Composes two source lanes:
+    ///
+    /// - **Remarkable Athlete** (Champion Fighter lv7): +ceil(prof / 2).
+    ///   The only source that reads proficiency bonus rather than an
+    ///   ability modifier, so it stays as its own if-branch below.
+    /// - **Ability-mod cohort** — rows in `ABILITY_MOD_INITIATIVE_BONUSES`
+    ///   (Rakish Audacity → CHA-mod, Dread Ambusher → WIS-mod). Each row
+    ///   is a `(flag_fn, ability)` pair; rows whose flag fires stack
+    ///   additively. Adding a new ability-mod initiative bump (Alert
+    ///   feat's INT-mod variant, a hypothetical Chef/Watcher class
+    ///   feature, etc.) lands as one row in that cohort rather than
+    ///   another if-branch here.
+    ///
+    /// Sibling to `rolls_initiative_with_advantage` on the "passive
+    /// initiative augment" lane — that helper flips the roll shape
+    /// (advantage vs. normal), this one stacks a scalar on the total.
     pub fn initiative_flat_bonus(&self) -> i32 {
         let mut bonus = 0;
         if self.has_remarkable_athlete {
@@ -5434,18 +5527,28 @@ impl ActorInstance {
             // the initiative roll (a DEX check). `(prof + 1) / 2` is
             // integer ceil(prof/2) — matches PHB Table: prof 2→+1,
             // prof 3→+2, prof 4→+2, prof 5→+3, prof 6→+3.
+            //
+            // Kept as its own if-branch (not folded into the
+            // `ABILITY_MOD_INITIATIVE_BONUSES` cohort) because the
+            // formula reads proficiency bonus rather than an ability
+            // modifier — the cohort table's rows all map through
+            // `ability_modifier(...)` so mixing this row in would
+            // widen the row shape and lose the "one flag, one ability"
+            // read.
             bonus += (self.proficiency_bonus() + 1) / 2;
         }
-        if self.has_rakish_audacity {
-            // 5e Swashbuckler Rogue Rakish Audacity (level 3, XGtE):
-            // add the holder's Charisma modifier to initiative rolls.
-            // Composes additively with Remarkable Athlete's
-            // `+ceil(prof / 2)` on a hypothetical Champion Fighter /
-            // Swashbuckler Rogue multiclass — both bumps join the same
-            // total. Sibling to `rolls_initiative_with_advantage`
-            // (Feral Instinct) — this helper stacks a scalar, that one
-            // flips the roll shape.
-            bonus += self.ability_modifier(AbilityScoreType::Charisma);
+        // 5e ability-mod-based initiative bumps (Rakish Audacity's
+        // CHA-mod, Dread Ambusher's WIS-mod, any future single-ability
+        // bump). Each cohort row is a `(flag_fn, ability)` pair; rows
+        // whose flag fires stack additively so a hypothetical Gloom
+        // Stalker Ranger / Swashbuckler Rogue multiclass would carry
+        // both bumps at once. Adding a new ability-mod initiative
+        // bump lands as one row in the cohort table above rather than
+        // another if-branch here.
+        for entry in ABILITY_MOD_INITIATIVE_BONUSES {
+            if (entry.flag)(self) {
+                bonus += self.ability_modifier(entry.ability);
+            }
         }
         bonus
     }
