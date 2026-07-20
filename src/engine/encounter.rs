@@ -12324,18 +12324,18 @@ mod tests {
     /// carries a distinct glyph so the ten ancestry siblings render
     /// unambiguously on the map. Template-drift guard against a future
     /// ancestry addition accidentally colliding with an existing
-    /// Chromatic or Gem sibling. Complements
+    /// Chromatic, Gem, or Metallic sibling. Complements
     /// `chromatic_dragonborn_variants_have_distinct_glyphs` — that
     /// test guards the Chromatic half (5 glyphs) in isolation, this
-    /// one guards the full 10-glyph roster (5 Chromatic + 5 Gem)
-    /// against cross-taxa collisions.
+    /// one guards the full 11-glyph roster (5 Chromatic + 5 Gem + 1
+    /// Metallic — Silver) against cross-taxa collisions.
     #[test]
     fn all_dragonborn_variants_have_distinct_glyphs() {
         use crate::actors::creatures::dragonborn::{
             AMETHYST_DRAGONBORN_TEMPLATE, BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE,
             CRYSTAL_DRAGONBORN_TEMPLATE, DRAGONBORN_TEMPLATE, EMERALD_DRAGONBORN_TEMPLATE,
-            GREEN_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE, TOPAZ_DRAGONBORN_TEMPLATE,
-            WHITE_DRAGONBORN_TEMPLATE,
+            GREEN_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE, SILVER_DRAGONBORN_TEMPLATE,
+            TOPAZ_DRAGONBORN_TEMPLATE, WHITE_DRAGONBORN_TEMPLATE,
         };
         let glyphs = [
             DRAGONBORN_TEMPLATE.glyph,
@@ -12348,11 +12348,51 @@ mod tests {
             EMERALD_DRAGONBORN_TEMPLATE.glyph,
             SAPPHIRE_DRAGONBORN_TEMPLATE.glyph,
             TOPAZ_DRAGONBORN_TEMPLATE.glyph,
+            SILVER_DRAGONBORN_TEMPLATE.glyph,
         ];
         let mut sorted = glyphs.to_vec();
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), glyphs.len(), "all glyphs are distinct");
+    }
+
+    /// 5e Metallic Dragonborn (PHB / Fizban's Treasury of Dragons): the
+    /// first Metallic ancestry variant on the shared
+    /// `dragonborn_champion_template` helper — Silver → Cold. Rides the
+    /// same Champion chassis (Improved Critical crit-on-19) and the
+    /// once-per-short-rest Breath Weapon feature charge as the ten
+    /// Chromatic + Gem siblings. The Cold axis is a semantic duplicate
+    /// of the White Chromatic Dragonborn's Cold row on the dragonborn
+    /// chassis (same "one halving per damage instance" cap), so this
+    /// test pins the ancestry wire-up on the new Metallic slot without
+    /// re-asserting the passive-resistance cohort behavior — the
+    /// Chromatic White test already covers the shared resistance
+    /// pipeline for Cold.
+    #[test]
+    fn silver_dragonborn_wires_ancestry_resistance_and_breath() {
+        use crate::actions::class_features::BREATH_WEAPON_TAG;
+        use crate::actors::creatures::dragonborn::SILVER_DRAGONBORN_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SILVER_DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        assert_eq!(actor.draconic_ancestry(), Some(DamageType::Cold));
+        // Cold damage: /2 via Resistance.
+        assert_eq!(actor.effective_damage(20, DamageType::Cold), 10);
+        // Off-type canary: Fire passes through untouched (no Fire row
+        // on the Silver Metallic ancestry, and no other passive
+        // resistance on the baseline Champion chassis).
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+        // Breath weapon charge is fresh on instantiation.
+        assert!(
+            actor.feature_available(BREATH_WEAPON_TAG),
+            "breath weapon is available",
+        );
+        // Champion Improved Critical rides through the shared helper.
+        assert_eq!(actor.crit_threshold(), 19);
     }
 
     /// Breath Weapon: once-per-short-rest feature; spending it removes

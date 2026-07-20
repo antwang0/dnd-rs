@@ -2596,16 +2596,19 @@ impl CreatureTemplate {
     /// repeated once per subclass) into a single method call per
     /// subclass template.
     ///
-    /// Users (11+ callsites across five class chassis today):
-    ///   - **Warlock** (7 tag-only Otherworldly Patron subclass templates
+    /// Users (16+ callsites across six class chassis today):
+    ///   - **Warlock** (8 tag-only Otherworldly Patron subclass templates
     ///     via the class-scoped `subclass_warlock_template` helper —
     ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
     ///     Djinni / Efreeti).
-    ///   - **Sorcerer** (2 tag-only Sorcerous Origin subclass templates —
-    ///     Aberrant Mind, Divine Soul).
-    ///   - **Wizard** (1 tag-only Arcane Tradition subclass template —
-    ///     Necromancy).
-    ///   - **Cleric** (1 tag-only Divine Domain subclass template — Life).
+    ///   - **Sorcerer** (3 tag-only Sorcerous Origin subclass templates —
+    ///     Aberrant Mind, Divine Soul, Shadow Magic).
+    ///   - **Wizard** (2 tag-only Arcane Tradition subclass templates —
+    ///     Necromancy, War Magic).
+    ///   - **Cleric** (3 tag-only Divine Domain subclass templates —
+    ///     Life, Forge, Twilight).
+    ///   - **Monk** (1 tag-only Monastic Tradition subclass template —
+    ///     Way of the Long Death).
     ///
     /// Distinct from `subclass_barbarian_template` (barbarian family
     /// helper): that helper builds the shared level-9 envelope from

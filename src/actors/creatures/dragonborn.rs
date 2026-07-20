@@ -319,3 +319,61 @@ pub static SAPPHIRE_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 pub static TOPAZ_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     dragonborn_champion_template("Topaz Dragonborn Champion", '❖', DamageType::Necrotic)
 });
+
+/// Silver Dragonborn Champion — Metallic ancestry: **Silver** (cold).
+/// Third draconic-ancestry taxa on the dragonborn chassis, opening the
+/// **Metallic** family beyond the classic five-flavor Chromatic set
+/// (Red / Black / Blue / Green / White) that hangs off
+/// `DRAGONBORN_TEMPLATE` and its four immediate siblings, and the
+/// five-flavor Gem set (Amethyst / Crystal / Emerald / Sapphire /
+/// Topaz) that hangs off `AMETHYST_DRAGONBORN_TEMPLATE` and its four
+/// cousins. Metallic Dragonborn (PHB / Fizban's Treasury of Dragons)
+/// share the Chromatic / Gem Champion chassis wholesale — same AC / HP
+/// / stat block / Second Wind + Action Surge / Breath Weapon short-
+/// rest charge — with the ancestry damage type swapped to reflect the
+/// metallic dragon's exhale. The Silver variant covers **cold** — the
+/// silver dragon's breath is a paralyzing frost cone, the most
+/// mechanically pure Cold breath weapon on the metallic side.
+///
+/// Sibling of `DRAGONBORN_TEMPLATE` (Red / Fire), `BLACK_DRAGONBORN_TEMPLATE`
+/// (Black / Acid), `BLUE_DRAGONBORN_TEMPLATE` (Blue / Lightning),
+/// `GREEN_DRAGONBORN_TEMPLATE` (Green / Poison), `WHITE_DRAGONBORN_TEMPLATE`
+/// (White / Cold), and every Gem cousin on the shared
+/// `dragonborn_champion_template` helper — same Champion chassis,
+/// ancestry swapped to Cold.
+///
+/// Overlaps the Cold axis with **White Dragonborn** (Chromatic — Cold),
+/// **Marid's Elemental Gift** (Warlock Genie Marid Patron lv6, TCE), and
+/// **Storm Soul (Tundra)** (Barbarian Path of the Storm Herald lv6,
+/// XGtE) on different chassis — the four never legally co-occur on a
+/// single build (Dragonborn is a race; White is a distinct ancestry
+/// pick on the same race; Marid Warlock / Tundra Storm Herald are
+/// subclass picks on different classes), and a hypothetical multiclass
+/// carrier caps at a single /2 per Cold hit via the "one halving per
+/// damage instance" rule. This variant is the second **dragonborn**-
+/// chassis row on the Cold axis (White Dragonborn shipped first) — the
+/// duplication is a **taxonomic completeness** grant, not a mechanical-
+/// coverage grant, matching the way the Efreeti Warlock's Fire
+/// resistance duplicates the Fiendish / Draconic Resilience Fire rows
+/// for the sake of the "four Genie kinds" quadrant coverage. Here the
+/// duplication anchors the "Silver as the flagship Metallic entry"
+/// slot — the first Metallic dragonborn on the roster.
+///
+/// Glyph 'Υ' (uppercase Greek upsilon) — distinct from every Chromatic
+/// Greek-capital glyph (Δ / Θ / Λ / Γ / Χ) and every Gem cousin (Φ / ✧
+/// / ⬢ / ◆ / ❖). Υ was picked for its stalactite-like vertical stem
+/// widening into a two-pronged crown, evoking a silver dragon's frost-
+/// horns or the icy stalagmite silhouette a silver dragon's Cold breath
+/// leaves in its wake. Collides with no other current PC template glyph
+/// (no baseline creature or subclass uses uppercase upsilon today).
+///
+/// Ships on the same CR-2 Champion chassis as the Chromatic / Gem
+/// siblings above — class templates target a balanced playable level,
+/// not lockstep PHB progression. Rounds out the dragonborn-family
+/// taxonomic coverage: Chromatic (5 variants — Fire / Acid / Lightning
+/// / Poison / Cold) + Gem (5 variants — Force / Radiant / Psychic /
+/// Thunder / Necrotic) + Metallic (this variant, first of the flavor)
+/// = 11 total ancestry picks off the shared helper.
+pub static SILVER_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Silver Dragonborn Champion", 'Υ', DamageType::Cold)
+});

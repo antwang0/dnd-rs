@@ -208,23 +208,25 @@ pub static OPEN_HAND_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// Glyph 'D' (for the Long **D**eath way) so the Long Death monk shows
 /// up distinctly on the map next to baseline 'M' and Open Hand 'O'.
 pub static LONG_DEATH_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: mirrors the Open Hand shape above — clone
-    // the baseline Monk envelope wholesale and layer on the subclass
-    // passive tag. No new actions are pushed — Touch of Death is a
-    // purely passive kill-triggered temp HP grant read at the
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Monk envelope wholesale
+    // and layers on the Way of the Long Death lv3 feature tag
+    // (`TOUCH_OF_DEATH_TAG`: kill-triggered temp HP grant read at the
     // `DealDamage` chokepoint via the shared
-    // `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort, not a fresh action
-    // surface. Sibling helper users on the "clone base + insert one
-    // tag" cross-class lane: every tag-only Warlock Otherworldly
-    // Patron subclass, `NECROMANCY_WIZARD_TEMPLATE`,
-    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
-    // `LIFE_CLERIC_TEMPLATE`.
-    let mut features = MONK_TEMPLATE.features.clone();
-    features.insert(TOUCH_OF_DEATH_TAG);
-    CreatureTemplate {
-        name: "Long Death Monk",
-        glyph: 'D',
-        features,
-        ..MONK_TEMPLATE.clone()
-    }
+    // `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort next to Fiend Warlock's
+    // Dark One's Blessing). The `..base.clone()` tail inside the helper
+    // picks up every other field — actions, stats, save profs,
+    // evasion / deflect missiles / extra-attack, Purity of Body /
+    // Diamond Soul / Unarmored Movement passives — without an N-line
+    // field-by-field copy. No new actions are pushed — Touch of Death
+    // is a purely passive kill-triggered temp HP grant, not a fresh
+    // action surface, so the "tag-only" shape the helper wraps is a
+    // natural fit (mirrors `FORGE_CLERIC_TEMPLATE` /
+    // `TWILIGHT_CLERIC_TEMPLATE` / `NECROMANCY_WIZARD_TEMPLATE` /
+    // `WAR_MAGIC_WIZARD_TEMPLATE` / `LIFE_CLERIC_TEMPLATE` /
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE` / `ABERRANT_MIND_SORCERER_TEMPLATE`
+    // / `DIVINE_SOUL_SORCERER_TEMPLATE` on the same cross-class
+    // helper). Glyph 'D' — for the Long **D**eath way; distinct from
+    // baseline monk 'M' and Open Hand 'O'.
+    MONK_TEMPLATE.with_subclass_tag("Long Death Monk", 'D', TOUCH_OF_DEATH_TAG)
 });
