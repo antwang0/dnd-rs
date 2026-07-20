@@ -715,3 +715,103 @@ pub static NECROMANCY_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         crate::actions::class_features::INURED_TO_UNDEATH_TAG,
     )
 });
+
+/// War Magic Wizard — Arcane Tradition **School of War Magic** subclass
+/// build (XGtE). Identical envelope to the baseline `WIZARD_TEMPLATE`
+/// (INT-primary full-caster with the archmage-tier spell loadout,
+/// Arcane Recovery for mid-encounter slot regen) with one subclass
+/// feature layered on: **Tactical Wit** (War Magic subclass level 2,
+/// XGtE) — passive **+INT-modifier to initiative rolls**.
+///
+/// The signature "the war mage arrives with a plan already in motion"
+/// tell — where a baseline Wizard rolls initiative on a middling DEX
+/// mod, the War Magic Wizard folds their high INT modifier (16-20 on
+/// a level-9 archmage-tier build) into the roll. Composes cleanly with
+/// the wizard's high-value opening cast: a War Magic Wizard who wins
+/// initiative reliably lands Shield / Mirror Image / Fireball /
+/// Hypnotic Pattern / Slow / Counterspell before the first enemy swing.
+///
+/// Read at the shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort in
+/// `actor_template.rs` next to Rakish Audacity (Swashbuckler Rogue,
+/// +CHA-mod) and Dread Ambusher (Gloom Stalker Ranger, +WIS-mod) as
+/// the third `AbilityModInitiativeBonus { flag, ability }` row — same
+/// declarative shape, different ability axis (INT here vs. CHA / WIS
+/// on the sibling rows) and different subclass chassis (Wizard vs.
+/// Rogue / Ranger). Stacks additively per the cohort's "any row hit
+/// is sufficient; all hitting rows sum" semantic.
+///
+/// Distinct from `WIZARD_TEMPLATE` (subclass-less baseline) and
+/// `NECROMANCY_WIZARD_TEMPLATE` (School of Necromancy — passive
+/// necrotic resistance via `INURED_TO_UNDEATH_TAG`). The three
+/// wizard-chassis templates cover distinct axes: baseline has just
+/// Arcane Recovery, Necromancy layers a passive damage-halver, War
+/// Magic layers a passive initiative-augment. A War-Magic-vs-Necromancy
+/// or War-Magic-vs-baseline encounter renders unambiguously by name
+/// AND subclass features don't stack RAW-illegally on a single PC
+/// build (RAW: one Arcane Tradition pick per wizard).
+///
+/// Sibling on the "one feature tag drives one ABILITY_MOD_INITIATIVE_BONUSES
+/// cohort row" declarative-table pattern to `SWASHBUCKLER_ROGUE_TEMPLATE`
+/// (Rakish Audacity, CHA) and `GLOOM_STALKER_RANGER_TEMPLATE` (Dread
+/// Ambusher, WIS) — three ability axes covered across three class
+/// chassis. INT was uncovered on the initiative-mod cohort until this
+/// template landed; the wizard-chassis INT-primary stat spread makes
+/// it the natural fit.
+///
+/// RAW's School of War Magic picks up other features not shipped on
+/// this template — **Arcane Deflection** (lv2 reaction: +2 AC vs one
+/// attack roll or +4 to a saving throw, but forfeit non-cantrip casts
+/// until end of next turn; needs a reactive AC/save-modifier hook with
+/// a next-turn cast lockout), **Power Surge** (lv6: store magical
+/// energy from spent counterspells / dispels, add half-wizard-level
+/// force damage to one spell per turn; needs a per-cast damage-boost
+/// hook and a counterspell / dispel side-channel), **Durable Magic**
+/// (lv10: +2 AC and +2 to saves while concentrating; needs a compound
+/// AC/save modifier gated on the Concentrating condition), and
+/// **Deflecting Shroud** (lv14 capstone: Arcane Deflection now radiates
+/// force damage to up to three enemies within 60ft; needs the base
+/// reaction plus a burst hook). Only the lv2 Tactical Wit passive has
+/// a mechanical surface on the CR-0.5 chassis that plugs cleanly into
+/// the shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort, so we ship that
+/// half and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only the lv10 Inured to Undeath
+/// passive half of its RAW School of Necromancy kit and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit.
+///
+/// Ships on the CR-0.5 wizard chassis above the strict RAW lv2 gate
+/// for the same reason `NECROMANCY_WIZARD_TEMPLATE` ships Inured to
+/// Undeath (RAW lv10): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'Σ' (uppercase Greek sigma) — evokes the war mage's tactical
+/// summation / calculus that folds into the initiative math. Distinct
+/// from baseline wizard 'M' (mage) and Necromancy 'N'; collides with
+/// no other current PC template glyph.
+pub static WAR_MAGIC_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Wizard envelope wholesale
+    // and layers on the one War Magic Arcane Tradition subclass feature
+    // (`TACTICAL_WIT_TAG`: passive +INT-mod initiative bump; NOT
+    // registered in `SHORT_REST_FEATURES` — RAW gates on a permanent
+    // passive per XGtE text, matching the sibling Rakish Audacity /
+    // Dread Ambusher entries on the `ABILITY_MOD_INITIATIVE_BONUSES`
+    // cohort). The `..base.clone()` tail inside the helper picks up
+    // every other field — stats, spell slots, save profs, the full
+    // wizard cantrip / lv1-9 spell loadout, and the Arcane Recovery
+    // feature — without an N-line field-by-field copy. Sibling helper
+    // users on the "clone base + insert one tag" cross-class lane:
+    // every tag-only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `TWILIGHT_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `SHADOW_MAGIC_SORCERER_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
+    // `LONG_DEATH_MONK_TEMPLATE`. Glyph 'Σ' — for the war mage's
+    // tactical summation identity; distinct from baseline wizard 'M'
+    // (mage) and Necromancy 'N'.
+    WIZARD_TEMPLATE.with_subclass_tag(
+        "War Magic Wizard",
+        'Σ',
+        crate::actions::class_features::TACTICAL_WIT_TAG,
+    )
+});

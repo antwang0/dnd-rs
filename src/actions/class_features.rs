@@ -8737,3 +8737,65 @@ pub const SOUL_OF_THE_FORGE_TAG: &str = "cleric.soul_of_the_forge";
 ///
 /// Ships on `TWILIGHT_CLERIC_TEMPLATE` at (or above) its RAW lv1 gate.
 pub const VIGILANT_BLESSING_TAG: &str = "cleric.vigilant_blessing";
+
+/// 5e Wizard Arcane Tradition — **School of War Magic** — **Tactical
+/// Wit** subclass feature tag (level 2 subclass, XGtE). Passive: the
+/// war mage's honed battlefield calculus sharpens their opening move —
+/// they add their **Intelligence modifier** to their **initiative
+/// rolls**.
+///
+/// The signature "the war mage arrives with a plan already in motion"
+/// tell — where a baseline Wizard rolls initiative with a middling DEX
+/// mod, the War Magic Wizard folds their high INT modifier (16-20 for
+/// a level-9 archmage-tier build) directly into the roll. Composes
+/// cleanly with the wizard's high-value opening cast: a War Magic
+/// Wizard who wins initiative reliably lands Shield / Mirror Image /
+/// Fireball / Hypnotic Pattern / Slow / Counterspell before the first
+/// enemy swing.
+///
+/// Read at the shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort in
+/// `actor_template.rs` next to Rakish Audacity (Swashbuckler Rogue,
+/// +CHA-mod) and Dread Ambusher (Gloom Stalker Ranger, +WIS-mod) as a
+/// third `AbilityModInitiativeBonus { flag, ability }` row — same
+/// declarative shape, different ability axis (INT here vs. CHA /
+/// WIS on the sibling rows) and different subclass chassis (Wizard
+/// vs. Rogue / Ranger). Stacks additively per the cohort's "any row
+/// hit is sufficient; all hitting rows sum" semantic: a hypothetical
+/// War-Magic-Wizard / Swashbuckler-Rogue / Gloom-Stalker-Ranger
+/// multi-classer rolls the initiative d20 flat and adds CHA-mod +
+/// WIS-mod + INT-mod on top of the DEX-mod baseline.
+///
+/// Composes cleanly with `has_passive_feature(VIGILANT_BLESSING_TAG)`
+/// (Twilight Cleric initiative advantage) and `has_feral_instinct`
+/// (Barbarian Feral Instinct initiative advantage) on the sibling
+/// `INITIATIVE_ADVANTAGE_SOURCES` cohort — a hypothetical carrier of
+/// both a Tactical-Wit tag and one of the advantage flags rolls the
+/// initiative d20 twice AND adds their INT modifier.
+///
+/// RAW's School of War Magic picks up other features not shipped on
+/// this template — **Arcane Deflection** (lv2 reaction: +2 AC vs one
+/// attack roll or +4 to a saving throw, but forfeit non-cantrip casts
+/// until end of next turn; needs a reactive AC/save-modifier hook with
+/// a next-turn cast lockout), **Power Surge** (lv6: store magical
+/// energy from spent counterspells / dispels, add half-wizard-level
+/// force damage to one spell per turn; needs a per-cast damage-boost
+/// hook and a counterspell / dispel side-channel), **Durable Magic**
+/// (lv10: +2 AC and +2 to saves while concentrating; needs a compound
+/// AC/save modifier gated on the Concentrating condition), and
+/// **Deflecting Shroud** (lv14 capstone: Arcane Deflection now radiates
+/// force damage to up to three enemies within 60ft; needs the base
+/// reaction plus a burst hook). Only the lv2 Tactical Wit passive has
+/// a mechanical surface on the CR-0.5 chassis that plugs cleanly into
+/// the shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort, so we ship that
+/// half and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only the lv10 Inured to Undeath
+/// passive half of its RAW School of Necromancy kit and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit.
+///
+/// Ships on `WAR_MAGIC_WIZARD_TEMPLATE` at (or above) its strict RAW
+/// lv2 gate for the same reason `NECROMANCY_WIZARD_TEMPLATE` ships
+/// Inured to Undeath (RAW lv10) and `TWILIGHT_CLERIC_TEMPLATE` ships
+/// Vigilant Blessing (RAW lv1) — class templates target a balanced
+/// playable level, not lockstep PHB progression.
+pub const TACTICAL_WIT_TAG: &str = "wizard.tactical_wit";

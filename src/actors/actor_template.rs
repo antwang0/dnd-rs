@@ -1626,6 +1626,14 @@ struct AbilityModInitiativeBonus {
 /// Entries (in order):
 ///   - **Rakish Audacity** (Swashbuckler Rogue, XGtE lv3): +CHA-mod.
 ///   - **Dread Ambusher** (Gloom Stalker Ranger, XGtE lv3): +WIS-mod.
+///   - **Tactical Wit** (War Magic Wizard, XGtE lv2): +INT-mod.
+///     Subclass-tag lookup on `WAR_MAGIC_WIZARD_TEMPLATE` via
+///     `has_passive_feature(TACTICAL_WIT_TAG)` — same declarative row
+///     shape as the struct-field-flag siblings above, but the closure
+///     reads a passive-feature tag rather than a dedicated
+///     `has_tactical_wit` field, matching the "tag-only cross-class
+///     helper" pattern (`with_subclass_tag`) the wizard chassis already
+///     uses for `NECROMANCY_WIZARD_TEMPLATE`.
 const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
     AbilityModInitiativeBonus {
         flag: |a| a.has_rakish_audacity,
@@ -1634,6 +1642,10 @@ const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
     AbilityModInitiativeBonus {
         flag: |a| a.has_dread_ambusher,
         ability: AbilityScoreType::Wisdom,
+    },
+    AbilityModInitiativeBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::TACTICAL_WIT_TAG),
+        ability: AbilityScoreType::Intelligence,
     },
 ];
 
@@ -4649,13 +4661,13 @@ impl ActorInstance {
         // any hit is sufficient. Sibling to `FLAG_DRIVEN_IMMUNITIES`
         // — adding a future single-ability save-proficiency feature
         // lands as one row in the cohort table above rather than a
-        // new if-branch here.
-        for entry in FLAG_DRIVEN_SAVE_PROFICIENCIES {
-            if entry.ability == ability && (entry.flag)(self) {
-                return true;
-            }
-        }
-        self.proficient_saves.contains(&ability)
+        // new if-branch here. Same `iter().any()` shape as the sibling
+        // `has_flag_driven_save_advantage` cohort walk so the two
+        // save-side cohort readers stay uniform.
+        FLAG_DRIVEN_SAVE_PROFICIENCIES
+            .iter()
+            .any(|entry| entry.ability == ability && (entry.flag)(self))
+            || self.proficient_saves.contains(&ability)
     }
 
     /// True if any passive-feature-driven save-advantage row in the
@@ -5564,61 +5576,71 @@ impl ActorInstance {
     ///   The only source that reads proficiency bonus rather than an
     ///   ability modifier, so it stays as its own if-branch below.
     /// - **Ability-mod cohort** — rows in `ABILITY_MOD_INITIATIVE_BONUSES`
-    ///   (Rakish Audacity → CHA-mod, Dread Ambusher → WIS-mod). Each row
-    ///   is a `(flag_fn, ability)` pair; rows whose flag fires stack
-    ///   additively. Adding a new ability-mod initiative bump (Alert
-    ///   feat's INT-mod variant, a hypothetical Chef/Watcher class
-    ///   feature, etc.) lands as one row in that cohort rather than
-    ///   another if-branch here.
+    ///   (Rakish Audacity → CHA-mod, Dread Ambusher → WIS-mod, Tactical
+    ///   Wit → INT-mod). Each row is a `(flag_fn, ability)` pair; rows
+    ///   whose flag fires stack additively. Adding a new ability-mod
+    ///   initiative bump (Alert feat's pre-2024 CON-mod variant, a
+    ///   hypothetical Chef/Watcher class feature, etc.) lands as one row
+    ///   in that cohort rather than another if-branch here.
     ///
     /// Sibling to `rolls_initiative_with_advantage` on the "passive
     /// initiative augment" lane — that helper flips the roll shape
     /// (advantage vs. normal), this one stacks a scalar on the total.
     pub fn initiative_flat_bonus(&self) -> i32 {
-        let mut bonus = 0;
-        if self.has_remarkable_athlete {
-            // RAW: "add half your proficiency bonus (rounded up) to
-            // any Strength, Dexterity, or Constitution check you make
-            // that doesn't already use your proficiency bonus." The
-            // engine's only STR/DEX/CON check with a combat surface is
-            // the initiative roll (a DEX check). `(prof + 1) / 2` is
-            // integer ceil(prof/2) — matches PHB Table: prof 2→+1,
-            // prof 3→+2, prof 4→+2, prof 5→+3, prof 6→+3.
-            //
-            // Kept as its own if-branch (not folded into the
-            // `ABILITY_MOD_INITIATIVE_BONUSES` cohort) because the
-            // formula reads proficiency bonus rather than an ability
-            // modifier — the cohort table's rows all map through
-            // `ability_modifier(...)` so mixing this row in would
-            // widen the row shape and lose the "one flag, one ability"
-            // read.
-            bonus += (self.proficiency_bonus() + 1) / 2;
-        }
+        // 5e Champion Fighter Remarkable Athlete (lv7). RAW: "add half
+        // your proficiency bonus (rounded up) to any Strength,
+        // Dexterity, or Constitution check you make that doesn't
+        // already use your proficiency bonus." The engine's only
+        // STR/DEX/CON check with a combat surface is the initiative
+        // roll (a DEX check). `(prof + 1) / 2` is integer ceil(prof/2)
+        // — matches PHB Table: prof 2→+1, prof 3→+2, prof 4→+2,
+        // prof 5→+3, prof 6→+3.
+        //
+        // Kept as its own if-branch (not folded into the
+        // `ABILITY_MOD_INITIATIVE_BONUSES` cohort) because the formula
+        // reads proficiency bonus rather than an ability modifier —
+        // the cohort table's rows all map through
+        // `ability_modifier(...)` so mixing this row in would widen
+        // the row shape and lose the "one flag, one ability" read.
+        let remarkable_athlete = if self.has_remarkable_athlete {
+            (self.proficiency_bonus() + 1) / 2
+        } else {
+            0
+        };
         // 5e ability-mod-based initiative bumps (Rakish Audacity's
-        // CHA-mod, Dread Ambusher's WIS-mod, any future single-ability
-        // bump). Each cohort row is a `(flag_fn, ability)` pair; rows
-        // whose flag fires stack additively so a hypothetical Gloom
-        // Stalker Ranger / Swashbuckler Rogue multiclass would carry
-        // both bumps at once. Adding a new ability-mod initiative
+        // CHA-mod, Dread Ambusher's WIS-mod, Tactical Wit's INT-mod,
+        // any future single-ability bump). Each cohort row is a
+        // `(flag_fn, ability)` pair; rows whose flag fires stack
+        // additively so a hypothetical Gloom Stalker Ranger /
+        // Swashbuckler Rogue / War Magic Wizard multiclass would carry
+        // all three bumps at once. Adding a new ability-mod initiative
         // bump lands as one row in the cohort table above rather than
-        // another if-branch here.
-        for entry in ABILITY_MOD_INITIATIVE_BONUSES {
-            if (entry.flag)(self) {
-                bonus += self.ability_modifier(entry.ability);
-            }
-        }
-        bonus
+        // another if-branch here. Same filter-map-sum shape as the
+        // sibling `condition_attack_bonus` / `condition_save_bonus`
+        // / `condition_ac_bonus` cohort walks so the ability-mod
+        // initiative cohort reader stays uniform with them.
+        let ability_mod_sum: i32 = ABILITY_MOD_INITIATIVE_BONUSES
+            .iter()
+            .filter(|entry| (entry.flag)(self))
+            .map(|entry| self.ability_modifier(entry.ability))
+            .sum();
+        remarkable_athlete + ability_mod_sum
     }
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
         // Two passive-initiative-augment sources compose on the same
         // roll: `rolls_initiative_with_advantage` picks the higher of
-        // two d20s (Feral Instinct — Barbarian lv7); then
+        // two d20s (Feral Instinct — Barbarian lv7 struct-field flag,
+        // Vigilant Blessing — Twilight Cleric lv1 subclass-tag lookup;
+        // any row on `INITIATIVE_ADVANTAGE_SOURCES` suffices); then
         // `initiative_flat_bonus` stacks a scalar bump on top
-        // (Remarkable Athlete — Champion Fighter lv7:
-        // +ceil(prof / 2)). Adding a new source of either shape lands
-        // in the matching helper as a one-line entry without touching
-        // this body.
+        // (Remarkable Athlete — Champion Fighter lv7: +ceil(prof / 2);
+        // Rakish Audacity — Swashbuckler Rogue lv3: +CHA-mod; Dread
+        // Ambusher — Gloom Stalker Ranger lv3: +WIS-mod; Tactical Wit
+        // — War Magic Wizard lv2: +INT-mod; every ability-mod row
+        // sums additively via `ABILITY_MOD_INITIATIVE_BONUSES`).
+        // Adding a new source of either shape lands in the matching
+        // helper as a one-line entry without touching this body.
         let rolled = if self.rolls_initiative_with_advantage() {
             let a = roller.roll_d20() as i32;
             let b = roller.roll_d20() as i32;

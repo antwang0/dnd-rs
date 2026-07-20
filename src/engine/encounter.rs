@@ -58225,6 +58225,76 @@ mod tests {
         );
     }
 
+    /// 5e War Magic Wizard Tactical Wit (subclass level 2, XGtE) — the
+    /// INT-mod initiative bump surfaces in `initiative_flat_bonus`
+    /// alongside Rakish Audacity's CHA-mod bump (Swashbuckler Rogue)
+    /// and Dread Ambusher's WIS-mod bump (Gloom Stalker Ranger). The
+    /// wizard baseline ships INT 18 (+4 mod) so the delta is a nonzero
+    /// +4 vs the plain wizard's flat-bonus.
+    ///
+    /// Sibling test to `rakish_audacity_bumps_initiative_flat_bonus_by_cha_mod`
+    /// and `dread_ambusher_bumps_initiative_flat_bonus_by_wis_mod` on
+    /// the shared "template flag / tag stacks an ability-mod scalar
+    /// onto initiative" lane — same shape, different ability axis
+    /// (INT here vs. CHA / WIS on the sibling rows) and different
+    /// subclass chassis (Wizard vs. Rogue / Ranger). Covers the
+    /// tag-lookup variant on `ABILITY_MOD_INITIATIVE_BONUSES` (via
+    /// `has_passive_feature(TACTICAL_WIT_TAG)`) — the two sibling
+    /// rows above read struct-field flags directly, this row reads a
+    /// passive-feature tag on the same closure surface.
+    #[test]
+    fn tactical_wit_bumps_initiative_flat_bonus_by_int_mod() {
+        use crate::actors::creatures::wizards::{WAR_MAGIC_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let war_mage = e
+            .instantiate_creature(&WAR_MAGIC_WIZARD_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let baseline_bonus = e.actors[&baseline].initiative_flat_bonus();
+        let war_mage_bonus = e.actors[&war_mage].initiative_flat_bonus();
+        let war_mage_int_mod = e.actors[&war_mage]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Intelligence);
+        // Sanity: the wizard template ships INT 18 (+4 mod, INT-caster
+        // stat spread) so the Tactical Wit bump is meaningful. If a
+        // future template tweak drops INT back to 10, this assertion
+        // catches the regression before it silently zeros out the
+        // feature's tell.
+        assert!(
+            war_mage_int_mod >= 2,
+            "war magic wizard template should ship a positive INT mod for Tactical Wit to matter"
+        );
+        assert_eq!(war_mage_bonus, baseline_bonus + war_mage_int_mod);
+    }
+
+    /// 5e War Magic Wizard template ships the Tactical Wit passive tag
+    /// while the baseline / Necromancy siblings do not. Pins the
+    /// template-tag placement so a future refactor that promotes the
+    /// tag onto baseline wizard (or drops it silently from the War
+    /// Magic Wizard) trips this assertion before the initiative bump
+    /// goes wrong on the wrong chassis.
+    #[test]
+    fn only_war_magic_wizard_ships_tactical_wit_tag() {
+        use crate::actions::class_features::TACTICAL_WIT_TAG;
+        use crate::actors::creatures::wizards::{
+            NECROMANCY_WIZARD_TEMPLATE, WAR_MAGIC_WIZARD_TEMPLATE, WIZARD_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let necromancy = e
+            .instantiate_creature(&NECROMANCY_WIZARD_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let war_mage = e
+            .instantiate_creature(&WAR_MAGIC_WIZARD_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+            .unwrap();
+        assert!(!e.actors[&baseline].has_passive_feature(TACTICAL_WIT_TAG));
+        assert!(!e.actors[&necromancy].has_passive_feature(TACTICAL_WIT_TAG));
+        assert!(e.actors[&war_mage].has_passive_feature(TACTICAL_WIT_TAG));
+    }
+
     /// 5e Gloom Stalker Ranger Iron Mind (subclass level 7, XGtE) —
     /// adds WIS to the ranger's baseline STR / DEX save-proficiency
     /// set. Pins the placement so a future refactor that drops WIS
