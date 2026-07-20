@@ -12216,6 +12216,145 @@ mod tests {
         assert_eq!(sorted.len(), glyphs.len(), "all glyphs are distinct");
     }
 
+    /// 5e Gem Dragonborn (Fizban's Treasury of Dragons): the five
+    /// sibling ancestry variants of the second dragonborn taxa each
+    /// carry a distinct `draconic_ancestry` pick and a matching
+    /// `damage_modifiers` resistance row — Amethyst → Force, Crystal →
+    /// Radiant, Emerald → Psychic, Sapphire → Thunder, Topaz →
+    /// Necrotic. Every variant inherits the Champion chassis (Improved
+    /// Critical crit-on-19) and the once-per-short-rest Breath Weapon
+    /// feature charge from the shared `dragonborn_champion_template`
+    /// helper — the exact same envelope as the Chromatic variants
+    /// tested above, with the ancestry damage type swapped. Amethyst's
+    /// Force resistance is the first Force-resistance row on any
+    /// chassis in the engine.
+    #[test]
+    fn gem_dragonborn_variants_wire_ancestry_resistance_and_breath() {
+        use crate::actions::class_features::BREATH_WEAPON_TAG;
+        use crate::actors::creatures::dragonborn::{
+            AMETHYST_DRAGONBORN_TEMPLATE, CRYSTAL_DRAGONBORN_TEMPLATE,
+            EMERALD_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE,
+            TOPAZ_DRAGONBORN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+        use std::sync::LazyLock;
+
+        // (template, ancestry damage type, off-type canary). The canary
+        // for each row is a damage type NOT covered by that ancestry AND
+        // NOT covered by any other passive resistance row on the
+        // baseline champion chassis — so a stray resistance regression
+        // shows up as `20 != 20`, not as a coincidental /2 from an
+        // unrelated cohort row.
+        let cases: &[(
+            &LazyLock<crate::actors::actor_template::CreatureTemplate>,
+            DamageType,
+            DamageType,
+        )] = &[
+            (
+                &AMETHYST_DRAGONBORN_TEMPLATE,
+                DamageType::Force,
+                DamageType::Fire,
+            ),
+            (
+                &CRYSTAL_DRAGONBORN_TEMPLATE,
+                DamageType::Radiant,
+                DamageType::Fire,
+            ),
+            (
+                &EMERALD_DRAGONBORN_TEMPLATE,
+                DamageType::Psychic,
+                DamageType::Fire,
+            ),
+            (
+                &SAPPHIRE_DRAGONBORN_TEMPLATE,
+                DamageType::Thunder,
+                DamageType::Fire,
+            ),
+            (
+                &TOPAZ_DRAGONBORN_TEMPLATE,
+                DamageType::Necrotic,
+                DamageType::Fire,
+            ),
+        ];
+        for (template, ancestry, off_type) in cases {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let id = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let actor = e.actors.get(&id).unwrap();
+            assert_eq!(
+                actor.draconic_ancestry(),
+                Some(*ancestry),
+                "{}: draconic ancestry wired",
+                template.name,
+            );
+            // Ancestry damage type: /2 via Resistance.
+            assert_eq!(
+                actor.effective_damage(20, *ancestry),
+                10,
+                "{}: {} damage halved",
+                template.name,
+                ancestry,
+            );
+            // Off-type damage passes through untouched.
+            assert_eq!(
+                actor.effective_damage(20, *off_type),
+                20,
+                "{}: {} damage unaffected",
+                template.name,
+                off_type,
+            );
+            // Breath weapon charge is fresh on instantiation.
+            assert!(
+                actor.feature_available(BREATH_WEAPON_TAG),
+                "{}: breath weapon is available",
+                template.name,
+            );
+            // Champion Improved Critical rides through the shared helper.
+            assert_eq!(
+                actor.crit_threshold(),
+                19,
+                "{}: Champion crit-on-19 wired",
+                template.name,
+            );
+        }
+    }
+
+    /// Dragonborn (all ancestries): every Chromatic + Gem variant
+    /// carries a distinct glyph so the ten ancestry siblings render
+    /// unambiguously on the map. Template-drift guard against a future
+    /// ancestry addition accidentally colliding with an existing
+    /// Chromatic or Gem sibling. Complements
+    /// `chromatic_dragonborn_variants_have_distinct_glyphs` — that
+    /// test guards the Chromatic half (5 glyphs) in isolation, this
+    /// one guards the full 10-glyph roster (5 Chromatic + 5 Gem)
+    /// against cross-taxa collisions.
+    #[test]
+    fn all_dragonborn_variants_have_distinct_glyphs() {
+        use crate::actors::creatures::dragonborn::{
+            AMETHYST_DRAGONBORN_TEMPLATE, BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE,
+            CRYSTAL_DRAGONBORN_TEMPLATE, DRAGONBORN_TEMPLATE, EMERALD_DRAGONBORN_TEMPLATE,
+            GREEN_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE, TOPAZ_DRAGONBORN_TEMPLATE,
+            WHITE_DRAGONBORN_TEMPLATE,
+        };
+        let glyphs = [
+            DRAGONBORN_TEMPLATE.glyph,
+            BLACK_DRAGONBORN_TEMPLATE.glyph,
+            BLUE_DRAGONBORN_TEMPLATE.glyph,
+            GREEN_DRAGONBORN_TEMPLATE.glyph,
+            WHITE_DRAGONBORN_TEMPLATE.glyph,
+            AMETHYST_DRAGONBORN_TEMPLATE.glyph,
+            CRYSTAL_DRAGONBORN_TEMPLATE.glyph,
+            EMERALD_DRAGONBORN_TEMPLATE.glyph,
+            SAPPHIRE_DRAGONBORN_TEMPLATE.glyph,
+            TOPAZ_DRAGONBORN_TEMPLATE.glyph,
+        ];
+        let mut sorted = glyphs.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), glyphs.len(), "all glyphs are distinct");
+    }
+
     /// Breath Weapon: once-per-short-rest feature; spending it removes
     /// the feature flag from `features_remaining`. Short rest refreshes
     /// the charge via the `SHORT_REST_FEATURES` registry.

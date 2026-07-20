@@ -187,3 +187,135 @@ pub static GREEN_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 pub static WHITE_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     dragonborn_champion_template("White Dragonborn Champion", 'Χ', DamageType::Cold)
 });
+
+/// Amethyst Dragonborn Champion — Gem ancestry: **Amethyst** (force).
+/// Second draconic ancestry taxa on the dragonborn chassis, extending
+/// the roster beyond the classic five-flavor Chromatic set (Red /
+/// Black / Blue / Green / White) that hangs off `DRAGONBORN_TEMPLATE`
+/// and its four immediate siblings. Gem Dragonborn (Fizban's Treasury
+/// of Dragons) share the Chromatic's Champion chassis wholesale — same
+/// AC / HP / stat block / Second Wind + Action Surge / Breath Weapon
+/// short-rest charge — with the ancestry damage type swapped to reflect
+/// the gem dragon's exhale. The Amethyst variant covers **force** —
+/// the first user of the **Force** slot on both the `draconic_ancestry`
+/// accessor AND the entire passive typed-resistance / damage-modifier
+/// lane. Force is the signature damage type of Force-anchored spells
+/// (Magic Missile, Bigby's Hand, Disintegrate, Eldritch Blast); prior
+/// to this variant, no PC race, no class subclass, and no monster
+/// template carried a resistance row on the Force axis — the Amethyst
+/// Dragonborn is the first Force-resistant chassis anywhere in the
+/// engine.
+///
+/// Sibling of `DRAGONBORN_TEMPLATE` (Red / Fire), `BLACK_DRAGONBORN_TEMPLATE`
+/// (Black / Acid), `BLUE_DRAGONBORN_TEMPLATE` (Blue / Lightning),
+/// `GREEN_DRAGONBORN_TEMPLATE` (Green / Poison), and
+/// `WHITE_DRAGONBORN_TEMPLATE` (White / Cold) on the shared
+/// `dragonborn_champion_template` helper — same Champion chassis,
+/// ancestry swapped to Force. Also sibling of the four Gem cousins
+/// below (Crystal / Emerald / Sapphire / Topaz) on the "Gem ancestry
+/// taxa" sub-family; the Chromatic + Gem set collectively covers 5
+/// new damage axes (Force / Radiant / Psychic / Thunder / Necrotic)
+/// on the dragonborn chassis beyond the 5 Chromatic slots (Fire /
+/// Acid / Lightning / Poison / Cold).
+///
+/// Glyph 'Φ' (uppercase phi) — distinct from the baseline Red
+/// dragonborn 'Δ' and every Chromatic sibling (Black 'Θ' / Blue 'Λ' /
+/// Green 'Γ' / White 'Χ'), and distinct from the four Gem cousins
+/// below ('✧' / '⬢' / '◆' / '❖'). Φ was picked for its rounded-vertical
+/// shape, evoking a faceted amethyst gemstone standing upright.
+pub static AMETHYST_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Amethyst Dragonborn Champion", 'Φ', DamageType::Force)
+});
+
+/// Crystal Dragonborn Champion — Gem ancestry: **Crystal** (radiant).
+/// Sibling of the four Chromatic dragonborn variants and the four Gem
+/// cousins on the shared `dragonborn_champion_template` helper — same
+/// Champion chassis, ancestry swapped to Radiant. Overlaps the Radiant
+/// axis with Radiant Soul (Warlock Celestial Patron lv6, XGtE) on a
+/// different chassis; the two never legally co-occur on a single build
+/// (Dragonborn is a race; Celestial Warlock is a subclass pick on the
+/// warlock class), and a hypothetical multiclass carrier caps at a
+/// single /2 per Radiant hit via the "one halving per damage instance"
+/// rule. First dragonborn-chassis row on the Radiant axis — prior to
+/// this variant, only the Celestial Warlock covered Radiant resistance.
+///
+/// Glyph '✧' (WHITE FOUR POINTED STAR, U+2727) — distinct from every
+/// Chromatic Greek-capital glyph (Δ / Θ / Λ / Γ / Χ), the sibling
+/// Amethyst 'Φ', and the three Gem cousins below (⬢ / ◆ / ❖). ✧ was
+/// picked for its sparkling four-pointed shape, evoking a facet of
+/// clear crystal catching the light — the crystal dragon's radiant
+/// breath weaponized. Distinct from the Deva's '✦' (BLACK FOUR POINTED
+/// STAR, U+2726): filled vs. outline forms of the same shape.
+pub static CRYSTAL_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Crystal Dragonborn Champion", '✧', DamageType::Radiant)
+});
+
+/// Emerald Dragonborn Champion — Gem ancestry: **Emerald** (psychic).
+/// Sibling of the four Chromatic dragonborn variants and the four Gem
+/// cousins on the shared `dragonborn_champion_template` helper — same
+/// Champion chassis, ancestry swapped to Psychic. Overlaps the Psychic
+/// axis with Psychic Defenses (Sorcerer Aberrant Mind lv14, TCE) on a
+/// different chassis; the two never legally co-occur on a single build
+/// (Dragonborn is a race; Aberrant Mind Sorcerer is a subclass pick on
+/// the sorcerer class), and a hypothetical multiclass carrier caps at
+/// a single /2 per Psychic hit via the "one halving per damage
+/// instance" rule. First dragonborn-chassis row on the Psychic axis —
+/// prior to this variant, only the Aberrant Mind Sorcerer covered
+/// Psychic resistance.
+///
+/// Glyph '⬢' (BLACK HEXAGON, U+2B22) — distinct from every Chromatic
+/// Greek-capital glyph (Δ / Θ / Λ / Γ / Χ) and every other Gem cousin
+/// (Φ / ✧ / ◆ / ❖). ⬢ was picked for its faceted six-sided shape,
+/// evoking the emerald-cut hexagonal profile a jeweler carves into
+/// green beryl. The hexagon-face read anchors the emerald dragon's
+/// crystalline body-plate identity in Fizban's illustrations.
+pub static EMERALD_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Emerald Dragonborn Champion", '⬢', DamageType::Psychic)
+});
+
+/// Sapphire Dragonborn Champion — Gem ancestry: **Sapphire** (thunder).
+/// Sibling of the four Chromatic dragonborn variants and the four Gem
+/// cousins on the shared `dragonborn_champion_template` helper — same
+/// Champion chassis, ancestry swapped to Thunder. Overlaps the Thunder
+/// axis with Heart of the Storm (Storm Sorcerer lv6) and Djinni's
+/// Elemental Gift (Warlock Genie Djinni Patron lv6, TCE) on different
+/// chassis — the three never legally co-occur on a single build
+/// (Dragonborn is a race; Storm Sorcerer / Djinni Warlock are subclass
+/// picks on different classes), and a hypothetical multiclass carrier
+/// caps at a single /2 per Thunder hit via the "one halving per damage
+/// instance" rule. First dragonborn-chassis row on the Thunder axis —
+/// prior to this variant, only Heart of the Storm and Djinni's
+/// Elemental Gift covered Thunder resistance.
+///
+/// Glyph '◆' (BLACK DIAMOND, U+25C6) — distinct from every Chromatic
+/// Greek-capital glyph (Δ / Θ / Λ / Γ / Χ) and every other Gem cousin
+/// (Φ / ✧ / ⬢ / ❖). ◆ was picked for its solid brilliant-cut diamond
+/// silhouette, evoking a rich blue sapphire held to the light — the
+/// signature stone of the sapphire dragon's boulder-scaled hide.
+pub static SAPPHIRE_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Sapphire Dragonborn Champion", '◆', DamageType::Thunder)
+});
+
+/// Topaz Dragonborn Champion — Gem ancestry: **Topaz** (necrotic).
+/// Sibling of the four Chromatic dragonborn variants and the four Gem
+/// cousins on the shared `dragonborn_champion_template` helper — same
+/// Champion chassis, ancestry swapped to Necrotic. Overlaps the
+/// Necrotic axis with Inured to Undeath (Wizard School of Necromancy
+/// lv10, PHB) on a different chassis; the two never legally co-occur
+/// on a single build (Dragonborn is a race; Necromancy Wizard is a
+/// subclass pick on the wizard class), and a hypothetical multiclass
+/// carrier caps at a single /2 per Necrotic hit via the "one halving
+/// per damage instance" rule. First dragonborn-chassis row on the
+/// Necrotic axis — prior to this variant, only the Necromancy Wizard
+/// covered Necrotic resistance.
+///
+/// Glyph '❖' (BLACK DIAMOND MINUS WHITE X, U+2756) — distinct from
+/// every Chromatic Greek-capital glyph (Δ / Θ / Λ / Γ / Χ) and every
+/// other Gem cousin (Φ / ✧ / ⬢ / ◆). ❖ was picked for its four-petal
+/// diamond-flower shape, evoking a topaz gemstone's tapered faceted
+/// crown. Fizban's topaz dragon breathes desiccating necrotic energy;
+/// the sunburnt yellow-orange hue of a topaz gem doubles as the
+/// weathered pallor of a necromantic breath's wake.
+pub static TOPAZ_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Topaz Dragonborn Champion", '❖', DamageType::Necrotic)
+});
