@@ -1629,13 +1629,14 @@ struct AbilityModInitiativeBonus {
 
 /// Flag-driven ability-mod initiative-bump cohort read by
 /// `ActorInstance::initiative_flat_bonus`. Every row is summed with the
-/// other bumps (Remarkable Athlete's `+ceil(prof / 2)` stays as its own
-/// non-ability-mod row on the same helper); any row whose flag fires
-/// adds the target ability's modifier to the initiative total. Adding
-/// a future ability-mod initiative bump (a hypothetical Alert / Chef /
-/// Watcher class feature that keys off a distinct ability) lands as a
-/// one-line entry here rather than another `if self.has_XXX { bonus +=
-/// self.ability_modifier(...); }` branch in `initiative_flat_bonus`.
+/// sibling `PROFICIENCY_INITIATIVE_BONUSES` cohort (Remarkable Athlete's
+/// half-prof-rounded-up, Aura of the Sentinel's full prof); any row
+/// whose flag fires here adds the target ability's modifier to the
+/// initiative total. Adding a future ability-mod initiative bump (a
+/// hypothetical Alert / Chef / Watcher class feature that keys off a
+/// distinct ability) lands as a one-line entry here rather than another
+/// `if self.has_XXX { bonus += self.ability_modifier(...); }` branch in
+/// `initiative_flat_bonus`.
 ///
 /// Sibling to `FLAG_DRIVEN_SAVE_PROFICIENCIES` on the "one flag,
 /// one ability" declarative cohort pattern — same shape, different
@@ -1697,6 +1698,100 @@ const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
 const INITIATIVE_ADVANTAGE_SOURCES: &[fn(&ActorInstance) -> bool] = &[
     |a| a.has_feral_instinct,
     |a| a.has_passive_feature(crate::actions::class_features::VIGILANT_BLESSING_TAG),
+];
+
+/// Proficiency-bonus fraction applied to the initiative-roll total by a
+/// row in the `PROFICIENCY_INITIATIVE_BONUSES` cohort. Held as a small
+/// enum rather than a `(numerator, denominator)` pair (or a raw closure)
+/// so the two RAW callouts read at the row site: **Full** is the
+/// prof-bonus-as-is Watchers Paladin lane; **HalfRoundUp** is the
+/// `ceil(prof / 2)` Champion Fighter lane.
+///
+/// A future half-rounded-DOWN prof lane, third-prof lane, or any other
+/// fixed RAW fraction lands as a fresh variant here rather than a
+/// bespoke inline formula on the cohort row.
+#[derive(Clone, Copy)]
+enum PbFraction {
+    /// Full proficiency bonus. Watchers Paladin Aura of the Sentinel
+    /// lane — RAW: "a bonus to initiative equal to your proficiency
+    /// bonus".
+    Full,
+    /// Half proficiency bonus rounded up. Champion Fighter Remarkable
+    /// Athlete lane — RAW: "add half your proficiency bonus (rounded
+    /// up) to any Strength, Dexterity, or Constitution check". The
+    /// `(prof + 1) / 2` integer formula matches the PHB table:
+    /// prof 2→+1, prof 3→+2, prof 4→+2, prof 5→+3, prof 6→+3.
+    HalfRoundUp,
+}
+
+impl PbFraction {
+    fn apply(self, prof_bonus: i32) -> i32 {
+        match self {
+            PbFraction::Full => prof_bonus,
+            PbFraction::HalfRoundUp => (prof_bonus + 1) / 2,
+        }
+    }
+}
+
+/// One row in the `PROFICIENCY_INITIATIVE_BONUSES` cohort — a single
+/// passive-feature flag that adds a fraction of the holder's proficiency
+/// bonus to the initiative-roll total. Held as a `(flag_fn, fraction)`
+/// pair so a row can point to any predicate on the actor (struct-field
+/// flag for Remarkable Athlete, subclass-tag lookup for Aura of the
+/// Sentinel) and pick between full / half prof without widening the row
+/// shape.
+///
+/// Sibling to `AbilityModInitiativeBonus` on the "flag → single
+/// initiative bump" lane — same closure shape, different scalar source
+/// (proficiency-bonus fraction here vs. ability modifier there). The
+/// split by scalar source keeps each cohort's row shape tight — mixing
+/// prof-bonus rows into the ability-mod cohort would need a discriminant
+/// enum on the scalar side that half the rows would ignore.
+struct ProficiencyInitiativeBonus {
+    flag: fn(&ActorInstance) -> bool,
+    fraction: PbFraction,
+}
+
+/// Flag-driven proficiency-bonus initiative-bump cohort read by
+/// `ActorInstance::initiative_flat_bonus`. Every row is summed with the
+/// sibling `ABILITY_MOD_INITIATIVE_BONUSES` cohort on the same accessor;
+/// any row whose flag fires adds `fraction.apply(prof_bonus)` to the
+/// initiative total. Adding a future prof-bonus-based initiative bump
+/// (a hypothetical Alert-style feat, a new subclass with a third-prof
+/// or half-prof-rounded-down bump, etc.) lands as a one-line entry
+/// here rather than another `if self.has_XXX { bonus += prof / N; }`
+/// branch in `initiative_flat_bonus`.
+///
+/// Sibling to `ABILITY_MOD_INITIATIVE_BONUSES` on the "one flag, one
+/// initiative bump" declarative cohort pattern — same shape, different
+/// scalar source (proficiency-bonus fraction here vs. ability modifier
+/// there). Both cohorts fire on the same initiative-roll chokepoint;
+/// carriers of rows on both lanes stack additively.
+///
+/// Entries (in order):
+///   - **Remarkable Athlete** (Champion Fighter, RAW lv7): half prof
+///     bonus rounded up. Struct-field-flag closure via
+///     `has_remarkable_athlete` — the CHAMPION_TEMPLATE's dedicated
+///     boolean flag rather than a subclass tag. RAW clause is "STR /
+///     DEX / CON check that doesn't already use proficiency"; the
+///     initiative roll (a DEX check) is the only combat surface that
+///     hits the check-not-prof gate, so the cohort row collapses to
+///     the initiative-total lane cleanly.
+///   - **Aura of the Sentinel** (Watchers Paladin, RAW lv7, TCE): full
+///     prof bonus. Subclass-tag closure via
+///     `has_passive_feature(AURA_OF_THE_SENTINEL_TAG)` — the same
+///     "one feature tag drives one initiative-cohort row" declarative
+///     shape the sibling `TACTICAL_WIT_TAG` row on the ability-mod
+///     cohort uses.
+const PROFICIENCY_INITIATIVE_BONUSES: &[ProficiencyInitiativeBonus] = &[
+    ProficiencyInitiativeBonus {
+        flag: |a| a.has_remarkable_athlete,
+        fraction: PbFraction::HalfRoundUp,
+    },
+    ProficiencyInitiativeBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::AURA_OF_THE_SENTINEL_TAG),
+        fraction: PbFraction::Full,
+    },
 ];
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
@@ -2064,15 +2159,17 @@ pub struct CreatureTemplate {
     /// proficiency bonus. In our engine the only STR/DEX/CON check with
     /// combat surface is the initiative roll (DEX check RAW), so the
     /// grant collapses to "+ceil(prof / 2) on initiative rolls" — read
-    /// at `ActorInstance::roll_initiative` next to `has_feral_instinct`
-    /// (which grants advantage on the same roll). The two composers
+    /// at the shared `PROFICIENCY_INITIATIVE_BONUSES` cohort in
+    /// `initiative_flat_bonus`, next to Watchers Paladin's Aura of the
+    /// Sentinel (full prof). Distinct from `has_feral_instinct`
+    /// (advantage on the initiative roll shape) — the two composers
     /// stack cleanly: a hypothetical Barbarian-multiclass Champion
     /// would roll with advantage AND pick up the flat bump on the
     /// higher of the two rolls. Ships on the CR-3 Champion template
     /// above its strict RAW level gate for the same reason Survivor
     /// (lv18) ships there — class templates target a balanced playable
     /// level, not lockstep PHB progression. Sibling to `has_feral_instinct`
-    /// on the passive-initiative-bonus lane.
+    /// on the passive-initiative-augment lane.
     pub has_remarkable_athlete: bool,
     /// 5e Champion Fighter **Superior Critical** (subclass level 15):
     /// critical hits trigger on a d20 result of 18, 19, or 20 instead
@@ -2615,7 +2712,7 @@ impl CreatureTemplate {
     /// repeated once per subclass) into a single method call per
     /// subclass template.
     ///
-    /// Users (17+ callsites across seven class chassis today):
+    /// Users (18+ callsites across seven class chassis today):
     ///   - **Warlock** (8 tag-only Otherworldly Patron subclass templates
     ///     via the class-scoped `subclass_warlock_template` helper —
     ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
@@ -2628,8 +2725,8 @@ impl CreatureTemplate {
     ///     Life, Forge, Twilight).
     ///   - **Monk** (1 tag-only Monastic Tradition subclass template —
     ///     Way of the Long Death).
-    ///   - **Paladin** (1 tag-only Sacred Oath subclass template —
-    ///     Oath of Glory).
+    ///   - **Paladin** (2 tag-only Sacred Oath subclass templates —
+    ///     Oath of Glory, Oath of the Watchers).
     ///
     /// Distinct from `subclass_barbarian_template` (barbarian family
     /// helper): that helper builds the shared level-9 envelope from
@@ -5594,43 +5691,44 @@ impl ActorInstance {
 
     /// Flat bonus added to the initiative result *after* the d20 roll and
     /// DEX modifier. Read by `roll_initiative` alongside
-    /// `rolls_initiative_with_advantage`. Composes two source lanes:
+    /// `rolls_initiative_with_advantage`. Composes two cohort lanes,
+    /// split by scalar source:
     ///
-    /// - **Remarkable Athlete** (Champion Fighter lv7): +ceil(prof / 2).
-    ///   The only source that reads proficiency bonus rather than an
-    ///   ability modifier, so it stays as its own if-branch below.
+    /// - **Proficiency-bonus cohort** — rows in
+    ///   `PROFICIENCY_INITIATIVE_BONUSES` (Remarkable Athlete → half
+    ///   prof rounded up, Aura of the Sentinel → full prof). Each row
+    ///   is a `(flag_fn, fraction)` pair; rows whose flag fires stack
+    ///   additively. Adding a new prof-bonus-based initiative bump
+    ///   (a hypothetical Alert-style feat, a new subclass with a
+    ///   third-prof or half-prof-rounded-down bump, etc.) lands as one
+    ///   row in that cohort rather than another if-branch here.
     /// - **Ability-mod cohort** — rows in `ABILITY_MOD_INITIATIVE_BONUSES`
     ///   (Rakish Audacity → CHA-mod, Dread Ambusher → WIS-mod, Tactical
     ///   Wit → INT-mod). Each row is a `(flag_fn, ability)` pair; rows
     ///   whose flag fires stack additively. Adding a new ability-mod
-    ///   initiative bump (Alert feat's pre-2024 CON-mod variant, a
-    ///   hypothetical Chef/Watcher class feature, etc.) lands as one row
-    ///   in that cohort rather than another if-branch here.
+    ///   initiative bump (Alert feat's pre-2024 CON-mod variant, etc.)
+    ///   lands as one row in that cohort rather than another if-branch
+    ///   here.
     ///
     /// Sibling to `rolls_initiative_with_advantage` on the "passive
     /// initiative augment" lane — that helper flips the roll shape
     /// (advantage vs. normal), this one stacks a scalar on the total.
     pub fn initiative_flat_bonus(&self) -> i32 {
-        // 5e Champion Fighter Remarkable Athlete (lv7). RAW: "add half
-        // your proficiency bonus (rounded up) to any Strength,
-        // Dexterity, or Constitution check you make that doesn't
-        // already use your proficiency bonus." The engine's only
-        // STR/DEX/CON check with a combat surface is the initiative
-        // roll (a DEX check). `(prof + 1) / 2` is integer ceil(prof/2)
-        // — matches PHB Table: prof 2→+1, prof 3→+2, prof 4→+2,
-        // prof 5→+3, prof 6→+3.
-        //
-        // Kept as its own if-branch (not folded into the
-        // `ABILITY_MOD_INITIATIVE_BONUSES` cohort) because the formula
-        // reads proficiency bonus rather than an ability modifier —
-        // the cohort table's rows all map through
-        // `ability_modifier(...)` so mixing this row in would widen
-        // the row shape and lose the "one flag, one ability" read.
-        let remarkable_athlete = if self.has_remarkable_athlete {
-            (self.proficiency_bonus() + 1) / 2
-        } else {
-            0
-        };
+        // 5e proficiency-bonus-based initiative bumps (Remarkable
+        // Athlete's half-prof rounded up on the Champion Fighter,
+        // Aura of the Sentinel's full prof on the Watchers Paladin,
+        // any future prof-bonus bump). Each cohort row is a
+        // `(flag_fn, fraction)` pair; rows whose flag fires stack
+        // additively so a hypothetical Champion-Fighter / Watchers-
+        // Paladin multiclass carries both bumps at once. Same
+        // filter-map-sum shape as the sibling ability-mod cohort walk
+        // below so the two initiative-cohort readers stay uniform.
+        let prof_bonus = self.proficiency_bonus();
+        let prof_bonus_sum: i32 = PROFICIENCY_INITIATIVE_BONUSES
+            .iter()
+            .filter(|entry| (entry.flag)(self))
+            .map(|entry| entry.fraction.apply(prof_bonus))
+            .sum();
         // 5e ability-mod-based initiative bumps (Rakish Audacity's
         // CHA-mod, Dread Ambusher's WIS-mod, Tactical Wit's INT-mod,
         // any future single-ability bump). Each cohort row is a
@@ -5640,15 +5738,14 @@ impl ActorInstance {
         // all three bumps at once. Adding a new ability-mod initiative
         // bump lands as one row in the cohort table above rather than
         // another if-branch here. Same filter-map-sum shape as the
-        // sibling `condition_attack_bonus` / `condition_save_bonus`
-        // / `condition_ac_bonus` cohort walks so the ability-mod
-        // initiative cohort reader stays uniform with them.
+        // sibling proficiency-bonus cohort walk above so the two
+        // initiative-cohort readers stay uniform with each other.
         let ability_mod_sum: i32 = ABILITY_MOD_INITIATIVE_BONUSES
             .iter()
             .filter(|entry| (entry.flag)(self))
             .map(|entry| self.ability_modifier(entry.ability))
             .sum();
-        remarkable_athlete + ability_mod_sum
+        prof_bonus_sum + ability_mod_sum
     }
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
@@ -5657,13 +5754,16 @@ impl ActorInstance {
         // two d20s (Feral Instinct — Barbarian lv7 struct-field flag,
         // Vigilant Blessing — Twilight Cleric lv1 subclass-tag lookup;
         // any row on `INITIATIVE_ADVANTAGE_SOURCES` suffices); then
-        // `initiative_flat_bonus` stacks a scalar bump on top
-        // (Remarkable Athlete — Champion Fighter lv7: +ceil(prof / 2);
-        // Rakish Audacity — Swashbuckler Rogue lv3: +CHA-mod; Dread
+        // `initiative_flat_bonus` stacks a scalar bump on top —
+        // proficiency-bonus cohort (Remarkable Athlete — Champion
+        // Fighter lv7: half-prof rounded up; Aura of the Sentinel —
+        // Watchers Paladin lv7: full prof; every row sums additively
+        // via `PROFICIENCY_INITIATIVE_BONUSES`) plus ability-mod cohort
+        // (Rakish Audacity — Swashbuckler Rogue lv3: +CHA-mod; Dread
         // Ambusher — Gloom Stalker Ranger lv3: +WIS-mod; Tactical Wit
         // — War Magic Wizard lv2: +INT-mod; every ability-mod row
         // sums additively via `ABILITY_MOD_INITIATIVE_BONUSES`).
-        // Adding a new source of either shape lands in the matching
+        // Adding a new source of any shape lands in the matching
         // helper as a one-line entry without touching this body.
         let rolled = if self.rolls_initiative_with_advantage() {
             let a = roller.roll_d20() as i32;

@@ -1,8 +1,8 @@
 use crate::actions::class_features::{
-    ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG,
-    DIVINE_SMITE, DREADFUL_ASPECT, DREADFUL_ASPECT_TAG, FANATICAL_FOCUS_TAG,
-    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG,
-    REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, AURA_OF_THE_SENTINEL_TAG,
+    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, DREADFUL_ASPECT, DREADFUL_ASPECT_TAG,
+    FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH,
+    NATURES_WRATH_TAG, REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
     TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
     VOW_OF_ENMITY_TAG,
 };
@@ -594,4 +594,128 @@ pub static GLORY_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
     // `LONG_DEATH_MONK_TEMPLATE`.
     PALADIN_TEMPLATE.with_subclass_tag("Glory Paladin", 'Y', AURA_OF_ALACRITY_TAG)
+});
+
+/// Watchers Paladin — Oath of the **Watchers** subclass build (TCE).
+/// Identical envelope to the baseline `PALADIN_TEMPLATE` (greatsword +
+/// smite suite, half-caster slot ladder, Lay on Hands / Sacred Weapon /
+/// Cleansing Touch, Improved Divine Smite passive, Aura of Protection /
+/// Aura of Courage) with one subclass passive layered on: **Aura of the
+/// Sentinel** (Watchers subclass level 7, TCE) — passive **+proficiency-
+/// bonus** initiative-roll bump.
+///
+/// The signature "the watchers paladin acts first" tell — where a
+/// baseline paladin rolls initiative at flat `d20 + DEX-mod`, the
+/// Watchers paladin adds `d20 + DEX-mod + prof-bonus` (a +2 bump at
+/// CR 1.5, scaling to +6 at the highest tier). Composes cleanly with
+/// the paladin's smite-and-melee kit — a Watchers paladin who wins
+/// initiative reliably opens the round with the enemy line's saves
+/// eaten by a smite prime one round earlier — and with the aura suite
+/// the class already leans on (Aura of Protection at lv6 for +CHA-mod
+/// saves, Aura of Courage at lv10 for Frightened suppression, and now
+/// Aura of the Sentinel at lv7 for the initiative-roll chokepoint —
+/// three overlapping self-aura effects that all fire on the same
+/// adjacent-ally scan).
+///
+/// The Watchers Oath's initiative-flavored sibling to the other
+/// Paladin oaths:
+///   - **Devotion** (Aura of Devotion): ally-side Charmed suppression.
+///   - **Ancients** (Nature's Ward + Undying Sentinel + Aura of
+///     Warding): self-side Charmed / Frightened immunity plus spell-
+///     damage-halving aura plus cheat-death.
+///   - **Vengeance** (Vow of Enmity + Abjure Enemy): target-side attack
+///     prime plus Frighten burst.
+///   - **Oathbreaker** (Aura of Hate + Fanatical Focus + Dreadful
+///     Aspect): melee damage aura plus failed-save reroll plus mass-
+///     Frighten CD.
+///   - **Glory** (Aura of Alacrity): passive +10 ft walking speed —
+///     always-on mobility on the paladin's own chassis.
+///   - **Watchers** (Aura of the Sentinel): passive +prof-bonus
+///     initiative bump — always-on initiative-roll augment on the
+///     paladin's own chassis.
+///
+/// Where Glory projects through the movement chokepoint (+10 ft
+/// walking speed on `PASSIVE_FEATURE_SPEED_BONUSES`), the Watchers
+/// Oath projects through the initiative-roll chokepoint on the sibling
+/// `PROFICIENCY_INITIATIVE_BONUSES` cohort — same "always-on passive
+/// that fires on a specific engine chokepoint" pattern, different
+/// axis. Sibling on the "one feature tag drives one initiative-roll
+/// cohort row" declarative-table pattern to
+/// `SWASHBUCKLER_ROGUE_TEMPLATE` (Rakish Audacity +CHA-mod),
+/// `GLOOM_STALKER_RANGER_TEMPLATE` (Dread Ambusher +WIS-mod), and
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (Tactical Wit +INT-mod) on the
+/// `ABILITY_MOD_INITIATIVE_BONUSES` cohort — four class chassis
+/// converge on the same "passive initiative bump keyed off a subclass
+/// tag" identity from different angles (CHA / WIS / INT ability mods
+/// there, proficiency bonus here).
+///
+/// Stacks additively with the sibling Remarkable Athlete row (Champion
+/// Fighter lv7, half-prof) on the same `PROFICIENCY_INITIATIVE_BONUSES`
+/// cohort — a hypothetical Champion-Fighter / Watchers-Paladin multi-
+/// classer stacks a +3 (full prof) + +1 (half-prof, rounded up) = +4
+/// initiative bump at CR 1.5. Distinct from the sibling
+/// `INITIATIVE_ADVANTAGE_SOURCES` cohort (Feral Instinct, Vigilant
+/// Blessing) which flips the roll SHAPE to advantage — the two cohorts
+/// stack cleanly: a hypothetical Watchers-Paladin / Twilight-Cleric
+/// multiclass would roll 2d20 keep-high AND stack the prof bonus on
+/// top.
+///
+/// RAW's Oath of the Watchers picks up other features not shipped on
+/// this template — **Watcher's Will** (lv3 Channel Divinity: grant
+/// allies within 30ft advantage on INT / WIS / CHA saves for 1 minute;
+/// needs a per-save-check ally scan surface), **Abjure the Extraplanar**
+/// (lv3 CD: 30ft WIS-save Turned on Aberrations / Celestials / Elementals
+/// / Fey / Fiends; needs a creature-type-gated turn surface),
+/// **Vigilant Rebuke** (lv15: reaction to grant +CHA-mod damage on a
+/// creature that forced an ally within 30ft to make an INT / WIS / CHA
+/// save; needs a save-time reaction hook plus counter-damage), and
+/// **Mortal Bulwark** (lv20 capstone: 1-minute self-buff granting truesight,
+/// advantage vs. Aberrations / Celestials / Elementals / Fey / Fiends,
+/// and forced-banish on hit; complex multi-effect self-buff). Only the
+/// lv7 Aura of the Sentinel passive has a mechanical surface on the
+/// CR-1.5 chassis that plugs cleanly into the shared
+/// `PROFICIENCY_INITIATIVE_BONUSES` cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `GLORY_PALADIN_TEMPLATE` ships only the lv7 Aura of Alacrity
+/// passive half of its RAW Oath of Glory kit and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit.
+///
+/// Ships on the CR-1.5 paladin chassis at (or above) its strict RAW
+/// lv7 gate for the same reason `GLORY_PALADIN_TEMPLATE` ships Aura of
+/// Alacrity (RAW lv7), `WAR_MAGIC_WIZARD_TEMPLATE` ships Tactical Wit
+/// (RAW lv2), and `TWILIGHT_CLERIC_TEMPLATE` ships Vigilant Blessing
+/// (RAW lv1) — class templates target a balanced playable level, not
+/// lockstep PHB progression.
+///
+/// Distinct from `PALADIN_TEMPLATE` (subclass-less baseline) and the
+/// Devotion / Ancients / Vengeance / Oathbreaker / Glory cousins so a
+/// Watchers-vs-Devotion / vs-Ancients / vs-Vengeance / vs-Oathbreaker /
+/// vs-Glory / vs-baseline encounter renders unambiguously by name.
+/// Glyph 'H' (for watc**H**ers — 'W' collides with War Cleric on the
+/// humanoid roster) — distinct from baseline paladin 'P', Devotion 'D',
+/// Ancients 'A', Vengeance 'V', Oathbreaker 'O', and Glory 'Y'.
+pub static WATCHERS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Paladin envelope wholesale
+    // and layers on the one Watchers Oath subclass feature
+    // (`AURA_OF_THE_SENTINEL_TAG`: passive +prof-bonus initiative-roll
+    // bump read at the shared `PROFICIENCY_INITIATIVE_BONUSES` cohort
+    // in `actor_template.rs`). The `..base.clone()` tail inside the
+    // helper picks up every other field — greatsword + smite suite,
+    // half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
+    // Touch, Improved Divine Smite passive, Defense / Great Weapon
+    // Fighting fighting styles, Aura of Protection / Aura of Courage —
+    // without an N-line field-by-field copy. No new actions are pushed
+    // — Aura of the Sentinel is a purely passive initiative-roll bump,
+    // not a fresh action surface, so the "tag-only" shape the helper
+    // wraps is a natural fit. Sibling helper users on the "clone base
+    // + insert one tag" cross-class lane: every tag-only Warlock
+    // Otherworldly Patron subclass (via `subclass_warlock_template`),
+    // `LIFE_CLERIC_TEMPLATE`, `FORGE_CLERIC_TEMPLATE`,
+    // `TWILIGHT_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `WAR_MAGIC_WIZARD_TEMPLATE`, `SHADOW_MAGIC_SORCERER_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
+    // `LONG_DEATH_MONK_TEMPLATE`, `GLORY_PALADIN_TEMPLATE`.
+    PALADIN_TEMPLATE.with_subclass_tag("Watchers Paladin", 'H', AURA_OF_THE_SENTINEL_TAG)
 });

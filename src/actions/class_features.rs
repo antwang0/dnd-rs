@@ -8878,3 +8878,106 @@ pub const AURA_OF_ALACRITY_TAG: &str = "paladin.aura_of_alacrity";
 /// (+10) / `SUPERIOR_MOBILITY_SPEED_BONUS` (+10) at the same magnitude;
 /// sibling to `ROVING_SPEED_BONUS` (+5) at half magnitude.
 pub const AURA_OF_ALACRITY_SPEED_BONUS: f32 = 10.0;
+
+/// 5e Paladin Oath of the Watchers — **Aura of the Sentinel** subclass
+/// feature tag (Watchers subclass level 7, TCE). Passive: the Watchers
+/// paladin's alertness aura grants a bonus to their initiative roll
+/// equal to their proficiency bonus (RAW also extends the bump to any
+/// creature of the paladin's choice within 10 ft, but that ally-side
+/// half needs a per-initiative-roll aura-of-choice scan surface this
+/// engine doesn't expose as a first-class hook today; the self-side
+/// prof-bonus bump is the load-bearing tactical piece and is what this
+/// tag wires up).
+///
+/// The signature "the watchers paladin acts first" tell — where a
+/// baseline paladin rolls initiative at flat `d20 + DEX-mod`, the
+/// Watchers paladin adds `d20 + DEX-mod + prof-bonus` (a +2 bump at
+/// CR 1.5, scaling to +6 at the highest tier). Composes cleanly with
+/// the paladin's smite-and-melee kit (a Watchers paladin who wins
+/// initiative reliably opens the round with the enemy line's saves
+/// eaten by a smite prime one round earlier) and with the aura suite
+/// the class already leans on (Aura of Protection at lv6 for saves,
+/// Aura of Courage at lv10 for Frightened suppression, and now Aura
+/// of the Sentinel at lv7 for the initiative-roll chokepoint) — three
+/// overlapping self-aura effects that all fire on the same adjacent-
+/// ally scan.
+///
+/// The Watchers Oath's initiative-flavored sibling to the other
+/// Paladin oaths:
+///   - **Devotion** (Aura of Devotion): ally-side Charmed suppression.
+///   - **Ancients** (Nature's Ward + Undying Sentinel + Aura of
+///     Warding): self-side Charmed / Frightened immunity plus spell-
+///     damage-halving aura plus cheat-death.
+///   - **Vengeance** (Vow of Enmity + Abjure Enemy): target-side attack
+///     prime plus Frighten burst.
+///   - **Oathbreaker** (Aura of Hate + Fanatical Focus + Dreadful
+///     Aspect): melee damage aura plus failed-save reroll plus mass-
+///     Frighten CD.
+///   - **Glory** (Aura of Alacrity): passive +10 ft walking speed —
+///     always-on mobility on the paladin's own chassis.
+///   - **Watchers** (Aura of the Sentinel): passive proficiency-bonus
+///     initiative bump — always-on initiative-roll augment on the
+///     paladin's own chassis.
+///
+/// Where Glory projects through the movement chokepoint (+10 ft
+/// walking speed on `PASSIVE_FEATURE_SPEED_BONUSES`), the Watchers
+/// Oath projects through the initiative-roll chokepoint — same
+/// "always-on passive that fires on a specific engine chokepoint"
+/// pattern, different axis. Distinct from the sibling
+/// `INITIATIVE_ADVANTAGE_SOURCES` cohort (Feral Instinct, Vigilant
+/// Blessing) which flips the roll SHAPE to advantage — the two
+/// cohorts stack cleanly: a hypothetical Watchers-Paladin / Twilight-
+/// Cleric multiclass would roll 2d20 keep-high AND stack the prof
+/// bonus on top.
+///
+/// Read at the shared `PROFICIENCY_INITIATIVE_BONUSES` cohort in
+/// `actor_template.rs` next to Remarkable Athlete (Champion Fighter
+/// half-prof) — one lookup table, one source of truth. Full prof
+/// magnitude (a +2 → +6 scale on a level-3 → level-20 chassis) puts
+/// this row on a larger scale than Remarkable Athlete's half-prof
+/// row (a +1 → +3 scale on the same chassis span); a hypothetical
+/// Champion-Fighter / Watchers-Paladin multiclass carrier would carry
+/// both rows and stack the full + half prof bumps additively (per the
+/// cohort's "any row hit is sufficient; all hitting rows sum"
+/// semantic).
+///
+/// Sibling on the "one feature tag drives one initiative-roll cohort
+/// row" declarative-table pattern to `SWASHBUCKLER_ROGUE_TEMPLATE`
+/// (Rakish Audacity +CHA-mod), `GLOOM_STALKER_RANGER_TEMPLATE` (Dread
+/// Ambusher +WIS-mod), and `WAR_MAGIC_WIZARD_TEMPLATE` (Tactical Wit
+/// +INT-mod) on the `ABILITY_MOD_INITIATIVE_BONUSES` cohort — four
+/// class chassis converge on the same "passive initiative bump keyed
+/// off a subclass tag" identity from different angles (CHA / WIS /
+/// INT ability mods there, proficiency bonus here).
+///
+/// RAW's Oath of the Watchers picks up other features not shipped on
+/// this template — **Watcher's Will** (lv3 Channel Divinity: grant
+/// allies within 30ft advantage on INT / WIS / CHA saves for 1 minute;
+/// needs a per-save-check ally scan surface), **Abjure the Extraplanar**
+/// (lv3 CD: 30ft WIS-save Turned on Aberrations / Celestials / Elementals
+/// / Fey / Fiends; needs a creature-type-gated turn surface),
+/// **Vigilant Rebuke** (lv15: reaction to grant +CHA-mod damage on a
+/// creature that forced an ally within 30ft to make an INT / WIS / CHA
+/// save; needs a save-time reaction hook plus counter-damage), and
+/// **Mortal Bulwark** (lv20 capstone: 1-minute self-buff granting truesight,
+/// advantage vs. Aberrations / Celestials / Elementals / Fey / Fiends,
+/// and forced-banish on hit; complex multi-effect self-buff). Only the
+/// lv7 Aura of the Sentinel passive has a mechanical surface on the
+/// CR-1.5 chassis that plugs cleanly into the shared
+/// `PROFICIENCY_INITIATIVE_BONUSES` cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `GLORY_PALADIN_TEMPLATE` ships only the lv7 Aura of Alacrity
+/// passive half of its RAW Oath of Glory kit and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it. Ships on `WATCHERS_PALADIN_TEMPLATE` at (or
+/// above) its strict RAW lv7 gate for the same reason
+/// `GLORY_PALADIN_TEMPLATE` ships Aura of Alacrity (RAW lv7) and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships Vigilant Blessing (RAW lv1) —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const AURA_OF_THE_SENTINEL_TAG: &str = "paladin.aura_of_the_sentinel";

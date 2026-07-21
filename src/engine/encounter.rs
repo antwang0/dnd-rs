@@ -54984,6 +54984,158 @@ mod tests {
         );
     }
 
+    /// 5e Watchers Paladin Aura of the Sentinel (TCE lv7) — passive
+    /// +proficiency-bonus initiative bump via the shared
+    /// `PROFICIENCY_INITIATIVE_BONUSES` cohort. The Watchers Paladin
+    /// template ships the `AURA_OF_THE_SENTINEL_TAG` feature; the
+    /// `initiative_flat_bonus` accessor adds prof-bonus (2 at CR 1.5)
+    /// on top of the baseline paladin's 0. Baseline paladin ships no
+    /// initiative augment on the chassis, so the gap between baseline
+    /// and Watchers is the load-bearing signal. Sibling test to
+    /// `aura_of_alacrity_grants_glory_paladin_flat_speed_bump` on the
+    /// Glory Paladin chassis — one tag, one +prof, verified end-to-end
+    /// through the same cohort read the Champion Fighter's Remarkable
+    /// Athlete row already uses.
+    #[test]
+    fn aura_of_the_sentinel_grants_watchers_paladin_flat_prof_bonus() {
+        use crate::actions::class_features::AURA_OF_THE_SENTINEL_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::paladins::{PALADIN_TEMPLATE, WATCHERS_PALADIN_TEMPLATE};
+        let baseline = ActorInstance::from_creature_template(
+            &PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let watchers = ActorInstance::from_creature_template(
+            &WATCHERS_PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !baseline.has_passive_feature(AURA_OF_THE_SENTINEL_TAG),
+            "baseline Paladin must NOT ship the Aura of the Sentinel tag — that's the Watchers subclass tell"
+        );
+        assert!(
+            watchers.has_passive_feature(AURA_OF_THE_SENTINEL_TAG),
+            "Watchers Paladin subclass must ship the Aura of the Sentinel feature tag"
+        );
+        assert_eq!(
+            baseline.initiative_flat_bonus(),
+            0,
+            "baseline Paladin reads +0 initiative bump (no prof / no ability-mod cohort rows fire)",
+        );
+        let expected = watchers.proficiency_bonus();
+        assert_eq!(expected, 2, "CR 1.5 paladin sits at prof-bonus 2 (level 1 tier)");
+        assert_eq!(
+            watchers.initiative_flat_bonus(),
+            expected,
+            "Watchers Paladin with Aura of the Sentinel reads +prof-bonus initiative = +{expected}",
+        );
+    }
+
+    /// Aura of the Sentinel stacks additively with the Champion
+    /// Fighter's Remarkable Athlete row on the shared
+    /// `PROFICIENCY_INITIATIVE_BONUSES` chokepoint — verified by
+    /// dialing both flags onto a single probe actor and checking the
+    /// combined `initiative_flat_bonus` matches `full_prof +
+    /// ceil(prof / 2)`. A hypothetical Champion-Fighter / Watchers-
+    /// Paladin multiclass composes cleanly under the table. Sibling
+    /// shape to `aura_of_alacrity_stacks_with_superior_mobility` on
+    /// the sibling `PASSIVE_FEATURE_SPEED_BONUSES` cohort — one flag
+    /// on the sibling row plus one flag on this row, additive sum
+    /// asserted end-to-end.
+    #[test]
+    fn aura_of_the_sentinel_stacks_with_remarkable_athlete() {
+        use crate::actions::class_features::AURA_OF_THE_SENTINEL_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &CHAMPION_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            probe.has_remarkable_athlete(),
+            "Champion baseline probe must ship Remarkable Athlete"
+        );
+        let prof = probe.proficiency_bonus();
+        let half_prof = (prof + 1) / 2;
+        assert_eq!(
+            probe.initiative_flat_bonus(),
+            half_prof,
+            "Champion probe with Remarkable Athlete only reads +ceil(prof / 2) = +{half_prof}",
+        );
+        probe.grant_feature_for_test(AURA_OF_THE_SENTINEL_TAG);
+        assert_eq!(
+            probe.initiative_flat_bonus(),
+            half_prof + prof,
+            "Remarkable Athlete + Aura of the Sentinel stack additively for +ceil(prof/2) + prof",
+        );
+    }
+
+    /// Pins the tag placement for Watchers Paladin — the baseline
+    /// paladin and the five other oath subclasses (Devotion / Ancients
+    /// / Vengeance / Oathbreaker / Glory) must NOT ship
+    /// `AURA_OF_THE_SENTINEL_TAG`, only the Watchers Paladin does. A
+    /// future refactor that promotes the tag onto baseline paladin (or
+    /// drops it silently from the Watchers Paladin) trips here before
+    /// the initiative bump goes wrong on the wrong chassis. Mirrors the
+    /// shape of the `only_glory_paladin_ships_aura_of_alacrity_tag` pin
+    /// on the sibling Glory Oath — same "one tag, one chassis" drift
+    /// lock.
+    #[test]
+    fn only_watchers_paladin_ships_aura_of_the_sentinel_tag() {
+        use crate::actions::class_features::AURA_OF_THE_SENTINEL_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, GLORY_PALADIN_TEMPLATE,
+            OATHBREAKER_PALADIN_TEMPLATE, PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+            WATCHERS_PALADIN_TEMPLATE,
+        };
+        for (name, template) in [
+            ("baseline Paladin", &*PALADIN_TEMPLATE),
+            ("Devotion Paladin", &*DEVOTION_PALADIN_TEMPLATE),
+            ("Ancients Paladin", &*ANCIENTS_PALADIN_TEMPLATE),
+            ("Vengeance Paladin", &*VENGEANCE_PALADIN_TEMPLATE),
+            ("Oathbreaker Paladin", &*OATHBREAKER_PALADIN_TEMPLATE),
+            ("Glory Paladin", &*GLORY_PALADIN_TEMPLATE),
+        ] {
+            let actor = ActorInstance::from_creature_template(
+                template,
+                Coordinate::new(0, 0),
+                0,
+                &mut FastRandRoller::with_seed(0),
+                0,
+            )
+            .unwrap();
+            assert!(
+                !actor.has_passive_feature(AURA_OF_THE_SENTINEL_TAG),
+                "{name} must NOT ship AURA_OF_THE_SENTINEL_TAG — Aura of the Sentinel is the Watchers subclass tell",
+            );
+        }
+        let watchers = ActorInstance::from_creature_template(
+            &WATCHERS_PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            watchers.has_passive_feature(AURA_OF_THE_SENTINEL_TAG),
+            "Watchers Paladin must ship AURA_OF_THE_SENTINEL_TAG",
+        );
+    }
+
     /// 5e Monk Unarmored Movement (level 2) — passive +10 ft walking
     /// speed via the shared `PASSIVE_FEATURE_SPEED_BONUSES` table. The
     /// MONK_TEMPLATE `speed` field is now the default humanoid 30 ft
@@ -56842,7 +56994,8 @@ mod tests {
     /// + FAVORED_BY_THE_GODS_TAG), SHADOW_MAGIC_SORCERER (SORCERER
     /// baseline + STRENGTH_OF_THE_GRAVE_TAG), LONG_DEATH_MONK (MONK
     /// baseline + TOUCH_OF_DEATH_TAG), GLORY_PALADIN (PALADIN baseline
-    /// + AURA_OF_ALACRITY_TAG). Locks the shared helper against a
+    /// + AURA_OF_ALACRITY_TAG), WATCHERS_PALADIN (PALADIN baseline
+    /// + AURA_OF_THE_SENTINEL_TAG). Locks the shared helper against a
     /// regression where a future edit to its body drops the baseline
     /// feature set OR silently omits the subclass tag insertion.
     ///
@@ -56859,18 +57012,20 @@ mod tests {
     #[test]
     fn with_subclass_tag_helper_installs_tag_and_preserves_baseline() {
         use crate::actions::class_features::{
-            ARCANE_RECOVERY_TAG, AURA_OF_ALACRITY_TAG, DISCIPLE_OF_LIFE_TAG,
-            FAVORED_BY_THE_GODS_TAG, INURED_TO_UNDEATH_TAG, LAY_ON_HANDS_TAG, PSYCHIC_DEFENSES_TAG,
-            SOUL_OF_THE_FORGE_TAG, STRENGTH_OF_THE_GRAVE_TAG, STUNNING_STRIKE_TAG,
-            TACTICAL_WIT_TAG, TOUCH_OF_DEATH_TAG, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG,
-            WILD_MAGIC_SURGE_TAG,
+            ARCANE_RECOVERY_TAG, AURA_OF_ALACRITY_TAG, AURA_OF_THE_SENTINEL_TAG,
+            DISCIPLE_OF_LIFE_TAG, FAVORED_BY_THE_GODS_TAG, INURED_TO_UNDEATH_TAG, LAY_ON_HANDS_TAG,
+            PSYCHIC_DEFENSES_TAG, SOUL_OF_THE_FORGE_TAG, STRENGTH_OF_THE_GRAVE_TAG,
+            STUNNING_STRIKE_TAG, TACTICAL_WIT_TAG, TOUCH_OF_DEATH_TAG, TURN_UNDEAD_TAG,
+            VIGILANT_BLESSING_TAG, WILD_MAGIC_SURGE_TAG,
         };
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{
             CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE, TWILIGHT_CLERIC_TEMPLATE,
         };
         use crate::actors::creatures::monks::{LONG_DEATH_MONK_TEMPLATE, MONK_TEMPLATE};
-        use crate::actors::creatures::paladins::{GLORY_PALADIN_TEMPLATE, PALADIN_TEMPLATE};
+        use crate::actors::creatures::paladins::{
+            GLORY_PALADIN_TEMPLATE, PALADIN_TEMPLATE, WATCHERS_PALADIN_TEMPLATE,
+        };
         use crate::actors::creatures::sorcerers::{
             ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE,
             SHADOW_MAGIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
@@ -56981,6 +57136,19 @@ mod tests {
                 // strip all four from the Glory paladin. Lay on Hands
                 // is the load-bearing lv1 chassis feature so it's the
                 // natural pick for the baseline invariant.
+                LAY_ON_HANDS_TAG,
+            ),
+            (
+                &WATCHERS_PALADIN_TEMPLATE,
+                &PALADIN_TEMPLATE,
+                AURA_OF_THE_SENTINEL_TAG,
+                // Same Paladin baseline invariant as the Glory row —
+                // Lay on Hands rides the PALADIN_TEMPLATE features set
+                // and must carry through the helper's clone-and-insert
+                // tail on the Watchers Oath subclass. The two Paladin
+                // rows lock the same baseline invariant so a helper
+                // body drift lights up on both subclass templates in
+                // one sweep.
                 LAY_ON_HANDS_TAG,
             ),
         ];
