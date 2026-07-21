@@ -377,3 +377,143 @@ pub static TOPAZ_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 pub static SILVER_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     dragonborn_champion_template("Silver Dragonborn Champion", 'Υ', DamageType::Cold)
 });
+
+/// Brass Dragonborn Champion — Metallic ancestry: **Brass** (fire).
+/// Second Metallic ancestry variant on the shared
+/// `dragonborn_champion_template` helper — the desert-dwelling talker
+/// of the Metallic set, riding the same Champion chassis (Improved
+/// Critical crit-on-19) and once-per-short-rest Breath Weapon feature
+/// charge as the eleven Chromatic / Gem / Silver siblings. The Brass
+/// variant covers **fire** — the brass dragon's signature exhale, a
+/// scorching line of desert heat.
+///
+/// Overlaps the Fire axis with **Red Dragonborn** (the baseline
+/// Chromatic ancestry — Fire), **Efreeti Warlock's Elemental Gift**
+/// (Warlock Genie Efreeti Patron lv6, TCE), **Storm Soul (Desert)**
+/// (Barbarian Path of the Storm Herald lv6, XGtE), **Soul of the Forge**
+/// (Cleric Forge Domain lv6, XGtE), and **Fire Genasi** and **Tiefling
+/// Hellish Resistance** on different chassis — the seven never legally
+/// co-occur on a single build (Dragonborn is a race, distinct from
+/// Genasi / Tiefling races and from Warlock / Barbarian / Cleric class
+/// subclass picks), and a hypothetical multiclass carrier caps at a
+/// single /2 per Fire hit via the "one halving per damage instance"
+/// rule. This variant is the second **dragonborn**-chassis row on the
+/// Fire axis (Red Dragonborn shipped first) — the duplication is a
+/// **taxonomic completeness** grant, not a mechanical-coverage grant,
+/// mirroring the Silver / White Cold-axis duplication on the same
+/// chassis. The brass-fire pairing anchors the "brass = talkative
+/// desert dragon" flavor slot on the Metallic taxa.
+///
+/// Glyph '⚒' (HAMMER AND PICK, U+2692) — distinct from every Chromatic
+/// Greek-capital glyph (Δ / Θ / Λ / Γ / Χ), every Gem cousin (Φ / ✧ /
+/// ⬢ / ◆ / ❖), the flagship Silver Metallic (Υ), and every other
+/// Metallic sibling below (⚡ / ⚗ / ☼). ⚒ was picked for its
+/// smith-tool silhouette, evoking the brass-forge hammer-and-pick of a
+/// desert brass dragon's smoky, industrious kiln.
+pub static BRASS_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Brass Dragonborn Champion", '⚒', DamageType::Fire)
+});
+
+/// Bronze Dragonborn Champion — Metallic ancestry: **Bronze** (lightning).
+/// Third Metallic ancestry variant on the shared
+/// `dragonborn_champion_template` helper — the coastal storm-patroller
+/// of the Metallic set, riding the same Champion chassis and Breath
+/// Weapon short-rest charge as the twelve Chromatic / Gem / Silver /
+/// Brass siblings. The Bronze variant covers **lightning** — the bronze
+/// dragon's signature exhale, a rolling coastal thunder-line.
+///
+/// Overlaps the Lightning axis with **Blue Dragonborn** (Chromatic —
+/// Lightning), **Heart of the Storm** (Storm Sorcerer lv6, XGtE), and
+/// **Storm Soul (Sea)** (Barbarian Path of the Storm Herald lv6, XGtE)
+/// on different chassis — the four never legally co-occur on a single
+/// build (Dragonborn is a race; Blue is a distinct ancestry pick on the
+/// same race; Storm Sorcerer / Sea Storm Herald are subclass picks on
+/// different classes), and a hypothetical multiclass carrier caps at a
+/// single /2 per Lightning hit via the "one halving per damage instance"
+/// rule. Second **dragonborn**-chassis row on the Lightning axis (Blue
+/// Dragonborn shipped first) — same "taxonomic completeness" grant
+/// pattern as the Silver / White Cold duplication and the Brass / Red
+/// Fire duplication.
+///
+/// Glyph '⚡' (HIGH VOLTAGE SIGN, U+26A1) — distinct from every
+/// Chromatic Greek-capital glyph (Δ / Θ / Λ / Γ / Χ), every Gem cousin
+/// (Φ / ✧ / ⬢ / ◆ / ❖), the Metallic siblings (Υ / ⚒ / ⚗ / ☼). ⚡ was
+/// picked for its lightning-bolt silhouette, mapping directly to the
+/// bronze dragon's electric line-breath.
+pub static BRONZE_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Bronze Dragonborn Champion", '⚡', DamageType::Lightning)
+});
+
+/// Copper Dragonborn Champion — Metallic ancestry: **Copper** (acid).
+/// Fourth Metallic ancestry variant on the shared
+/// `dragonborn_champion_template` helper — the trickster hillside dragon
+/// of the Metallic set, riding the same Champion chassis and Breath
+/// Weapon short-rest charge as the thirteen Chromatic / Gem / Silver /
+/// Brass / Bronze siblings. The Copper variant covers **acid** — the
+/// copper dragon's signature exhale, a corrosive stream that dissolves
+/// through stone and steel alike.
+///
+/// Overlaps the Acid axis with **Black Dragonborn** (Chromatic — Acid)
+/// on the same dragonborn chassis — the two never legally co-occur on a
+/// single build (Copper and Black are distinct ancestry picks on the
+/// same race), and a hypothetical multiclass carrier caps at a single
+/// /2 per Acid hit via the "one halving per damage instance" rule.
+/// Second **dragonborn**-chassis row on the Acid axis (Black
+/// Dragonborn shipped first) — same "taxonomic completeness" grant
+/// pattern as the other duplicated Metallic / Chromatic pairings.
+///
+/// Glyph '⚗' (ALEMBIC, U+2697) — distinct from every Chromatic
+/// Greek-capital glyph (Δ / Θ / Λ / Γ / Χ), every Gem cousin (Φ / ✧ /
+/// ⬢ / ◆ / ❖), and every Metallic sibling (Υ / ⚒ / ⚡ / ☼). ⚗ was
+/// picked for its alchemist's-distillation-vessel silhouette, evoking
+/// the corrosive acid brew the copper dragon spits from its narrow
+/// gullet — the alchemy sigil doubles as the copper wire coil an
+/// alembic's condenser rides.
+pub static COPPER_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Copper Dragonborn Champion", '⚗', DamageType::Acid)
+});
+
+/// Gold Dragonborn Champion — Metallic ancestry: **Gold** (fire).
+/// Fifth and final Metallic ancestry variant on the shared
+/// `dragonborn_champion_template` helper, closing out the classic
+/// five-flavor Metallic set (Brass / Bronze / Copper / Gold / Silver)
+/// alongside the five-flavor Chromatic (Red / Black / Blue / Green /
+/// White) and five-flavor Gem (Amethyst / Crystal / Emerald / Sapphire /
+/// Topaz) taxa. The Gold variant covers **fire** — the gold dragon's
+/// signature exhale, the wise sun-anointed breath of the most powerful
+/// Metallic dragon.
+///
+/// Overlaps the Fire axis with **Red Dragonborn** (Chromatic — Fire) and
+/// **Brass Dragonborn** (Metallic — Fire) on the same dragonborn chassis
+/// — the three never legally co-occur on a single build (Red / Brass /
+/// Gold are distinct ancestry picks on the same race), and a
+/// hypothetical multiclass carrier caps at a single /2 per Fire hit via
+/// the "one halving per damage instance" rule. Third **dragonborn**-
+/// chassis row on the Fire axis (Red shipped first, Brass second) —
+/// mirroring the Silver / White Cold duplication, extended to a triple.
+/// The gold-fire pairing anchors the "gold as the flagship Metallic
+/// entry" slot: the wisest, most powerful Metallic dragon of D&D
+/// canonical lore lands on the same signature damage type as its
+/// Chromatic counterpart Red, reflecting the parallel evolutionary
+/// niche that Chromatic and Metallic families occupy in draconic
+/// biology.
+///
+/// This variant completes the 15-ancestry roster on the shared
+/// `dragonborn_champion_template` helper: 5 Chromatic + 5 Gem + 5
+/// Metallic = 15 total. Damage axis coverage on the dragonborn chassis:
+/// Fire (Red / Brass / Gold), Cold (White / Silver), Acid (Black /
+/// Copper), Lightning (Blue / Bronze), Poison (Green), Force (Amethyst),
+/// Radiant (Crystal), Psychic (Emerald), Thunder (Sapphire), Necrotic
+/// (Topaz) — 10 damage axes covered by 15 ancestry variants.
+///
+/// Glyph '☼' (WHITE SUN WITH RAYS, U+263C) — distinct from every
+/// Chromatic Greek-capital glyph (Δ / Θ / Λ / Γ / Χ), every Gem cousin
+/// (Φ / ✧ / ⬢ / ◆ / ❖), and every other Metallic sibling (Υ / ⚒ / ⚡ /
+/// ⚗). ☼ was picked for its radiant-sun silhouette, evoking the gold
+/// dragon's sun-anointed hide and the divine-golden warmth of its
+/// signature fire breath — the sun-with-rays reads as both the gold-
+/// leaf lustre of a gold dragon's scales and the ember-glow of the
+/// fire it exhales.
+pub static GOLD_DRAGONBORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    dragonborn_champion_template("Gold Dragonborn Champion", '☼', DamageType::Fire)
+});

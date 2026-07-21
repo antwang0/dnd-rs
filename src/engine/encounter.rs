@@ -12119,36 +12119,42 @@ mod tests {
         assert_eq!(actor.crit_threshold(), 19);
     }
 
-    /// 5e Chromatic Dragonborn: the four sibling ancestry variants of
-    /// the baseline Red Dragonborn each carry a distinct
-    /// `draconic_ancestry` pick and a matching `damage_modifiers`
-    /// resistance row — Black → Acid, Blue → Lightning, Green → Poison,
-    /// White → Cold. Every variant inherits the Champion chassis
-    /// (Improved Critical crit-on-19) and the once-per-short-rest
-    /// Breath Weapon feature charge from the shared
-    /// `dragonborn_champion_template` helper.
-    #[test]
-    fn chromatic_dragonborn_variants_wire_ancestry_resistance_and_breath() {
+    /// Shared body for the three dragonborn-taxa variant tests
+    /// (Chromatic / Gem / Metallic below). Each row on the shared
+    /// `dragonborn_champion_template` helper (i.e. every non-baseline
+    /// ancestry sibling) must wire the same five invariants:
+    ///
+    ///   1. `draconic_ancestry()` returns the ancestry damage type.
+    ///   2. That damage type is halved via a Resistance row (20 → 10).
+    ///   3. An off-type canary damage passes through untouched
+    ///      (20 → 20) — pins that no stray resistance row snuck onto
+    ///      the shared Champion chassis via cohort-registry drift.
+    ///   4. The once-per-short-rest Breath Weapon feature charge is
+    ///      fresh on instantiation.
+    ///   5. Champion Improved Critical (crit-on-19) rides through.
+    ///
+    /// Callers supply the per-taxa case list `(template, ancestry,
+    /// off_type)`. The `off_type` canary must be a damage type NOT
+    /// covered by that ancestry AND NOT covered by any other passive
+    /// resistance row on the baseline Champion chassis, so a stray
+    /// resistance regression surfaces as `20 != 20` instead of as a
+    /// coincidental /2 from an unrelated cohort row.
+    ///
+    /// This helper mirrors the source-side `dragonborn_champion_template`
+    /// extraction pattern (one shared envelope, per-variant swap in the
+    /// ancestry parameter) — collapses three ~55-line iteration bodies
+    /// into three ~10-line case-list literals, and guarantees every
+    /// future ancestry addition asserts the same invariant set.
+    fn assert_dragonborn_variants_wire_ancestry_and_breath(
+        cases: &[(
+            &'static crate::actors::actor_template::CreatureTemplate,
+            crate::engine::types::DamageType,
+            crate::engine::types::DamageType,
+        )],
+    ) {
         use crate::actions::class_features::BREATH_WEAPON_TAG;
-        use crate::actors::creatures::dragonborn::{
-            BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE, GREEN_DRAGONBORN_TEMPLATE,
-            WHITE_DRAGONBORN_TEMPLATE,
-        };
-        use crate::engine::types::DamageType;
-        use std::sync::LazyLock;
 
-        // (template, expected damage type). Every row asserts identical
-        // envelope behavior with the ancestry damage type swapped.
-        let cases: &[(
-            &LazyLock<crate::actors::actor_template::CreatureTemplate>,
-            DamageType,
-        )] = &[
-            (&BLACK_DRAGONBORN_TEMPLATE, DamageType::Acid),
-            (&BLUE_DRAGONBORN_TEMPLATE, DamageType::Lightning),
-            (&GREEN_DRAGONBORN_TEMPLATE, DamageType::Poison),
-            (&WHITE_DRAGONBORN_TEMPLATE, DamageType::Cold),
-        ];
-        for (template, ancestry) in cases {
+        for (template, ancestry, off_type) in cases {
             let mut e = ei_with_terrain(15, 15, &[]);
             let id = e
                 .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
@@ -12168,13 +12174,13 @@ mod tests {
                 template.name,
                 ancestry,
             );
-            // Off-type damage passes through untouched. Force is picked
-            // as a canary because no chromatic ancestry covers it.
+            // Off-type canary passes through untouched.
             assert_eq!(
-                actor.effective_damage(20, DamageType::Force),
+                actor.effective_damage(20, *off_type),
                 20,
-                "{}: Force damage unaffected",
+                "{}: {} damage unaffected",
                 template.name,
+                off_type,
             );
             // Breath weapon charge is fresh on instantiation.
             assert!(
@@ -12190,6 +12196,51 @@ mod tests {
                 template.name,
             );
         }
+    }
+
+    /// 5e Chromatic Dragonborn: the four sibling ancestry variants of
+    /// the baseline Red Dragonborn each carry a distinct
+    /// `draconic_ancestry` pick and a matching `damage_modifiers`
+    /// resistance row — Black → Acid, Blue → Lightning, Green → Poison,
+    /// White → Cold. Every variant inherits the Champion chassis
+    /// (Improved Critical crit-on-19) and the once-per-short-rest
+    /// Breath Weapon feature charge from the shared
+    /// `dragonborn_champion_template` helper. The five shared invariants
+    /// are asserted by `assert_dragonborn_variants_wire_ancestry_and_breath`
+    /// — this test carries only the per-taxa case list.
+    #[test]
+    fn chromatic_dragonborn_variants_wire_ancestry_resistance_and_breath() {
+        use crate::actors::creatures::dragonborn::{
+            BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE, GREEN_DRAGONBORN_TEMPLATE,
+            WHITE_DRAGONBORN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        // Force is picked as the off-type canary because no Chromatic
+        // ancestry covers it (Force is a Gem-taxa slot on the Amethyst
+        // variant).
+        assert_dragonborn_variants_wire_ancestry_and_breath(&[
+            (
+                &BLACK_DRAGONBORN_TEMPLATE,
+                DamageType::Acid,
+                DamageType::Force,
+            ),
+            (
+                &BLUE_DRAGONBORN_TEMPLATE,
+                DamageType::Lightning,
+                DamageType::Force,
+            ),
+            (
+                &GREEN_DRAGONBORN_TEMPLATE,
+                DamageType::Poison,
+                DamageType::Force,
+            ),
+            (
+                &WHITE_DRAGONBORN_TEMPLATE,
+                DamageType::Cold,
+                DamageType::Force,
+            ),
+        ]);
     }
 
     /// Chromatic Dragonborn: each variant carries a distinct glyph so
@@ -12227,29 +12278,22 @@ mod tests {
     /// helper — the exact same envelope as the Chromatic variants
     /// tested above, with the ancestry damage type swapped. Amethyst's
     /// Force resistance is the first Force-resistance row on any
-    /// chassis in the engine.
+    /// chassis in the engine. The five shared invariants are asserted
+    /// by `assert_dragonborn_variants_wire_ancestry_and_breath` — this
+    /// test carries only the per-taxa case list.
     #[test]
     fn gem_dragonborn_variants_wire_ancestry_resistance_and_breath() {
-        use crate::actions::class_features::BREATH_WEAPON_TAG;
         use crate::actors::creatures::dragonborn::{
             AMETHYST_DRAGONBORN_TEMPLATE, CRYSTAL_DRAGONBORN_TEMPLATE,
             EMERALD_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE,
             TOPAZ_DRAGONBORN_TEMPLATE,
         };
         use crate::engine::types::DamageType;
-        use std::sync::LazyLock;
 
-        // (template, ancestry damage type, off-type canary). The canary
-        // for each row is a damage type NOT covered by that ancestry AND
-        // NOT covered by any other passive resistance row on the
-        // baseline champion chassis — so a stray resistance regression
-        // shows up as `20 != 20`, not as a coincidental /2 from an
-        // unrelated cohort row.
-        let cases: &[(
-            &LazyLock<crate::actors::actor_template::CreatureTemplate>,
-            DamageType,
-            DamageType,
-        )] = &[
+        // Fire is picked as the off-type canary — no Gem ancestry
+        // covers it (Fire is a Chromatic Red / Metallic Brass+Gold
+        // slot).
+        assert_dragonborn_variants_wire_ancestry_and_breath(&[
             (
                 &AMETHYST_DRAGONBORN_TEMPLATE,
                 DamageType::Force,
@@ -12275,67 +12319,26 @@ mod tests {
                 DamageType::Necrotic,
                 DamageType::Fire,
             ),
-        ];
-        for (template, ancestry, off_type) in cases {
-            let mut e = ei_with_terrain(15, 15, &[]);
-            let id = e
-                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
-                .unwrap();
-            let actor = e.actors.get(&id).unwrap();
-            assert_eq!(
-                actor.draconic_ancestry(),
-                Some(*ancestry),
-                "{}: draconic ancestry wired",
-                template.name,
-            );
-            // Ancestry damage type: /2 via Resistance.
-            assert_eq!(
-                actor.effective_damage(20, *ancestry),
-                10,
-                "{}: {} damage halved",
-                template.name,
-                ancestry,
-            );
-            // Off-type damage passes through untouched.
-            assert_eq!(
-                actor.effective_damage(20, *off_type),
-                20,
-                "{}: {} damage unaffected",
-                template.name,
-                off_type,
-            );
-            // Breath weapon charge is fresh on instantiation.
-            assert!(
-                actor.feature_available(BREATH_WEAPON_TAG),
-                "{}: breath weapon is available",
-                template.name,
-            );
-            // Champion Improved Critical rides through the shared helper.
-            assert_eq!(
-                actor.crit_threshold(),
-                19,
-                "{}: Champion crit-on-19 wired",
-                template.name,
-            );
-        }
+        ]);
     }
 
-    /// Dragonborn (all ancestries): every Chromatic + Gem variant
-    /// carries a distinct glyph so the ten ancestry siblings render
-    /// unambiguously on the map. Template-drift guard against a future
-    /// ancestry addition accidentally colliding with an existing
-    /// Chromatic, Gem, or Metallic sibling. Complements
+    /// Dragonborn (all ancestries): every Chromatic + Gem + Metallic
+    /// variant carries a distinct glyph so the fifteen ancestry
+    /// siblings render unambiguously on the map. Template-drift guard
+    /// against a future ancestry addition accidentally colliding with
+    /// an existing Chromatic, Gem, or Metallic sibling. Complements
     /// `chromatic_dragonborn_variants_have_distinct_glyphs` — that
     /// test guards the Chromatic half (5 glyphs) in isolation, this
-    /// one guards the full 11-glyph roster (5 Chromatic + 5 Gem + 1
-    /// Metallic — Silver) against cross-taxa collisions.
+    /// one guards the full 15-glyph roster (5 Chromatic + 5 Gem + 5
+    /// Metallic) against cross-taxa collisions.
     #[test]
     fn all_dragonborn_variants_have_distinct_glyphs() {
         use crate::actors::creatures::dragonborn::{
             AMETHYST_DRAGONBORN_TEMPLATE, BLACK_DRAGONBORN_TEMPLATE, BLUE_DRAGONBORN_TEMPLATE,
+            BRASS_DRAGONBORN_TEMPLATE, BRONZE_DRAGONBORN_TEMPLATE, COPPER_DRAGONBORN_TEMPLATE,
             CRYSTAL_DRAGONBORN_TEMPLATE, DRAGONBORN_TEMPLATE, EMERALD_DRAGONBORN_TEMPLATE,
-            GREEN_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE, SILVER_DRAGONBORN_TEMPLATE,
-            TOPAZ_DRAGONBORN_TEMPLATE, WHITE_DRAGONBORN_TEMPLATE,
+            GOLD_DRAGONBORN_TEMPLATE, GREEN_DRAGONBORN_TEMPLATE, SAPPHIRE_DRAGONBORN_TEMPLATE,
+            SILVER_DRAGONBORN_TEMPLATE, TOPAZ_DRAGONBORN_TEMPLATE, WHITE_DRAGONBORN_TEMPLATE,
         };
         let glyphs = [
             DRAGONBORN_TEMPLATE.glyph,
@@ -12348,6 +12351,10 @@ mod tests {
             EMERALD_DRAGONBORN_TEMPLATE.glyph,
             SAPPHIRE_DRAGONBORN_TEMPLATE.glyph,
             TOPAZ_DRAGONBORN_TEMPLATE.glyph,
+            BRASS_DRAGONBORN_TEMPLATE.glyph,
+            BRONZE_DRAGONBORN_TEMPLATE.glyph,
+            COPPER_DRAGONBORN_TEMPLATE.glyph,
+            GOLD_DRAGONBORN_TEMPLATE.glyph,
             SILVER_DRAGONBORN_TEMPLATE.glyph,
         ];
         let mut sorted = glyphs.to_vec();
@@ -12357,42 +12364,63 @@ mod tests {
     }
 
     /// 5e Metallic Dragonborn (PHB / Fizban's Treasury of Dragons): the
-    /// first Metallic ancestry variant on the shared
-    /// `dragonborn_champion_template` helper — Silver → Cold. Rides the
-    /// same Champion chassis (Improved Critical crit-on-19) and the
-    /// once-per-short-rest Breath Weapon feature charge as the ten
-    /// Chromatic + Gem siblings. The Cold axis is a semantic duplicate
-    /// of the White Chromatic Dragonborn's Cold row on the dragonborn
-    /// chassis (same "one halving per damage instance" cap), so this
-    /// test pins the ancestry wire-up on the new Metallic slot without
-    /// re-asserting the passive-resistance cohort behavior — the
-    /// Chromatic White test already covers the shared resistance
-    /// pipeline for Cold.
+    /// five sibling ancestry variants of the Metallic taxa each carry a
+    /// distinct `draconic_ancestry` pick and a matching
+    /// `damage_modifiers` resistance row — Brass → Fire, Bronze →
+    /// Lightning, Copper → Acid, Gold → Fire, Silver → Cold. Every
+    /// variant inherits the Champion chassis (Improved Critical
+    /// crit-on-19) and the once-per-short-rest Breath Weapon feature
+    /// charge from the shared `dragonborn_champion_template` helper —
+    /// the exact same envelope as the Chromatic and Gem variants tested
+    /// above, with the ancestry damage type swapped. Rounds out the
+    /// full 15-ancestry roster: 5 Chromatic + 5 Gem + 5 Metallic. The
+    /// five shared invariants are asserted by
+    /// `assert_dragonborn_variants_wire_ancestry_and_breath` — this
+    /// test carries only the per-taxa case list.
+    ///
+    /// Every Metallic row semantically overlaps a prior Chromatic /
+    /// Gem row on the same damage axis (Brass / Gold → Red, Bronze →
+    /// Blue, Copper → Black, Silver → White) — the duplication is a
+    /// "taxonomic completeness" grant, not a mechanical-coverage grant
+    /// (the "one halving per damage instance" cap zeros out any
+    /// stacking).
     #[test]
-    fn silver_dragonborn_wires_ancestry_resistance_and_breath() {
-        use crate::actions::class_features::BREATH_WEAPON_TAG;
-        use crate::actors::creatures::dragonborn::SILVER_DRAGONBORN_TEMPLATE;
+    fn metallic_dragonborn_variants_wire_ancestry_resistance_and_breath() {
+        use crate::actors::creatures::dragonborn::{
+            BRASS_DRAGONBORN_TEMPLATE, BRONZE_DRAGONBORN_TEMPLATE, COPPER_DRAGONBORN_TEMPLATE,
+            GOLD_DRAGONBORN_TEMPLATE, SILVER_DRAGONBORN_TEMPLATE,
+        };
         use crate::engine::types::DamageType;
 
-        let mut e = ei_with_terrain(15, 15, &[]);
-        let id = e
-            .instantiate_creature(&SILVER_DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let actor = e.actors.get(&id).unwrap();
-        assert_eq!(actor.draconic_ancestry(), Some(DamageType::Cold));
-        // Cold damage: /2 via Resistance.
-        assert_eq!(actor.effective_damage(20, DamageType::Cold), 10);
-        // Off-type canary: Fire passes through untouched (no Fire row
-        // on the Silver Metallic ancestry, and no other passive
-        // resistance on the baseline Champion chassis).
-        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
-        // Breath weapon charge is fresh on instantiation.
-        assert!(
-            actor.feature_available(BREATH_WEAPON_TAG),
-            "breath weapon is available",
-        );
-        // Champion Improved Critical rides through the shared helper.
-        assert_eq!(actor.crit_threshold(), 19);
+        // Force is picked as the off-type canary — no Metallic ancestry
+        // covers it (Force is a Gem-taxa slot on the Amethyst variant).
+        assert_dragonborn_variants_wire_ancestry_and_breath(&[
+            (
+                &BRASS_DRAGONBORN_TEMPLATE,
+                DamageType::Fire,
+                DamageType::Force,
+            ),
+            (
+                &BRONZE_DRAGONBORN_TEMPLATE,
+                DamageType::Lightning,
+                DamageType::Force,
+            ),
+            (
+                &COPPER_DRAGONBORN_TEMPLATE,
+                DamageType::Acid,
+                DamageType::Force,
+            ),
+            (
+                &GOLD_DRAGONBORN_TEMPLATE,
+                DamageType::Fire,
+                DamageType::Force,
+            ),
+            (
+                &SILVER_DRAGONBORN_TEMPLATE,
+                DamageType::Cold,
+                DamageType::Force,
+            ),
+        ]);
     }
 
     /// Breath Weapon: once-per-short-rest feature; spending it removes
