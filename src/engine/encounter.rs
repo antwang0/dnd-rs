@@ -54846,6 +54846,144 @@ mod tests {
         );
     }
 
+    /// 5e Glory Paladin Aura of Alacrity (TCE lv7) — passive +10 ft
+    /// walking speed via the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// table. The Glory Paladin template ships the
+    /// `AURA_OF_ALACRITY_TAG` feature; the shared
+    /// `passive_feature_speed_bonus` helper adds +10 ft. Baseline
+    /// paladin stays at 30 ft (no speed passives on the chassis), so
+    /// the gap between baseline paladin and Glory Paladin is the
+    /// load-bearing signal. Same shape as
+    /// `superior_mobility_grants_scout_rogue_flat_speed_bump` on the
+    /// Scout Rogue chassis — one flag, one +10, verified end-to-end.
+    #[test]
+    fn aura_of_alacrity_grants_glory_paladin_flat_speed_bump() {
+        use crate::actions::class_features::AURA_OF_ALACRITY_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::paladins::{GLORY_PALADIN_TEMPLATE, PALADIN_TEMPLATE};
+        let baseline = ActorInstance::from_creature_template(
+            &PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let glory = ActorInstance::from_creature_template(
+            &GLORY_PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !baseline.has_passive_feature(AURA_OF_ALACRITY_TAG),
+            "baseline Paladin must NOT ship the Aura of Alacrity tag — that's the Glory subclass tell"
+        );
+        assert!(
+            glory.has_passive_feature(AURA_OF_ALACRITY_TAG),
+            "Glory Paladin subclass must ship the Aura of Alacrity feature tag"
+        );
+        assert_eq!(
+            baseline.speed(),
+            30.0,
+            "baseline Paladin reads 30 ft (default humanoid, no speed passives)"
+        );
+        assert_eq!(
+            glory.speed(),
+            40.0,
+            "Glory Paladin with Aura of Alacrity reads 30 ft (base) + 10 ft (Aura of Alacrity) = 40 ft"
+        );
+    }
+
+    /// Aura of Alacrity stacks additively with the Scout Rogue's
+    /// Superior Mobility lane on the shared
+    /// `PASSIVE_FEATURE_SPEED_BONUSES` chokepoint — verified by dialing
+    /// both tags onto one actor and checking the +20 ft delta over the
+    /// base speed. A hypothetical multiclass glory-paladin / scout-rogue
+    /// would compose cleanly under the table. Same shape as
+    /// `superior_mobility_stacks_with_fast_movement`, just a different
+    /// +10 source tag on the same cohort.
+    #[test]
+    fn aura_of_alacrity_stacks_with_superior_mobility() {
+        use crate::actions::class_features::{AURA_OF_ALACRITY_TAG, SUPERIOR_MOBILITY_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(AURA_OF_ALACRITY_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "adding AURA_OF_ALACRITY_TAG bumps speed by +10 ft"
+        );
+        probe.grant_feature_for_test(SUPERIOR_MOBILITY_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 20.0,
+            "Aura of Alacrity + Superior Mobility stack additively for +20 ft"
+        );
+    }
+
+    /// Pins the tag placement for Glory Paladin — the baseline paladin
+    /// and the four other oath subclasses (Devotion / Ancients /
+    /// Vengeance / Oathbreaker) must NOT ship `AURA_OF_ALACRITY_TAG`,
+    /// only the Glory Paladin does. A future refactor that promotes
+    /// the tag onto baseline paladin (or drops it silently from the
+    /// Glory Paladin) trips here before the speed bump goes wrong on
+    /// the wrong chassis. Mirrors the shape of the
+    /// `only_war_magic_wizard_ships_tactical_wit_tag` pin on the
+    /// wizard chassis.
+    #[test]
+    fn only_glory_paladin_ships_aura_of_alacrity_tag() {
+        use crate::actions::class_features::AURA_OF_ALACRITY_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, GLORY_PALADIN_TEMPLATE,
+            OATHBREAKER_PALADIN_TEMPLATE, PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        };
+        for (name, template) in [
+            ("baseline Paladin", &*PALADIN_TEMPLATE),
+            ("Devotion Paladin", &*DEVOTION_PALADIN_TEMPLATE),
+            ("Ancients Paladin", &*ANCIENTS_PALADIN_TEMPLATE),
+            ("Vengeance Paladin", &*VENGEANCE_PALADIN_TEMPLATE),
+            ("Oathbreaker Paladin", &*OATHBREAKER_PALADIN_TEMPLATE),
+        ] {
+            let actor = ActorInstance::from_creature_template(
+                template,
+                Coordinate::new(0, 0),
+                0,
+                &mut FastRandRoller::with_seed(0),
+                0,
+            )
+            .unwrap();
+            assert!(
+                !actor.has_passive_feature(AURA_OF_ALACRITY_TAG),
+                "{name} must NOT ship AURA_OF_ALACRITY_TAG — Aura of Alacrity is the Glory subclass tell",
+            );
+        }
+        let glory = ActorInstance::from_creature_template(
+            &GLORY_PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            glory.has_passive_feature(AURA_OF_ALACRITY_TAG),
+            "Glory Paladin must ship AURA_OF_ALACRITY_TAG",
+        );
+    }
+
     /// 5e Monk Unarmored Movement (level 2) — passive +10 ft walking
     /// speed via the shared `PASSIVE_FEATURE_SPEED_BONUSES` table. The
     /// MONK_TEMPLATE `speed` field is now the default humanoid 30 ft
@@ -56695,10 +56833,16 @@ mod tests {
     /// feature tag" helper) preserves the baseline features set AND
     /// installs the new tag on every tag-only subclass template that
     /// routes through it — LIFE_CLERIC (CLERIC baseline +
-    /// DISCIPLE_OF_LIFE_TAG), NECROMANCY_WIZARD (WIZARD baseline +
-    /// INURED_TO_UNDEATH_TAG), ABERRANT_MIND_SORCERER (SORCERER baseline
+    /// DISCIPLE_OF_LIFE_TAG), FORGE_CLERIC (CLERIC baseline +
+    /// SOUL_OF_THE_FORGE_TAG), TWILIGHT_CLERIC (CLERIC baseline +
+    /// VIGILANT_BLESSING_TAG), NECROMANCY_WIZARD (WIZARD baseline +
+    /// INURED_TO_UNDEATH_TAG), WAR_MAGIC_WIZARD (WIZARD baseline +
+    /// TACTICAL_WIT_TAG), ABERRANT_MIND_SORCERER (SORCERER baseline
     /// + PSYCHIC_DEFENSES_TAG), DIVINE_SOUL_SORCERER (SORCERER baseline
-    /// + FAVORED_BY_THE_GODS_TAG). Locks the shared helper against a
+    /// + FAVORED_BY_THE_GODS_TAG), SHADOW_MAGIC_SORCERER (SORCERER
+    /// baseline + STRENGTH_OF_THE_GRAVE_TAG), LONG_DEATH_MONK (MONK
+    /// baseline + TOUCH_OF_DEATH_TAG), GLORY_PALADIN (PALADIN baseline
+    /// + AURA_OF_ALACRITY_TAG). Locks the shared helper against a
     /// regression where a future edit to its body drops the baseline
     /// feature set OR silently omits the subclass tag insertion.
     ///
@@ -56715,19 +56859,25 @@ mod tests {
     #[test]
     fn with_subclass_tag_helper_installs_tag_and_preserves_baseline() {
         use crate::actions::class_features::{
-            ARCANE_RECOVERY_TAG, DISCIPLE_OF_LIFE_TAG, FAVORED_BY_THE_GODS_TAG,
-            INURED_TO_UNDEATH_TAG, PSYCHIC_DEFENSES_TAG, SOUL_OF_THE_FORGE_TAG,
-            STRENGTH_OF_THE_GRAVE_TAG, TURN_UNDEAD_TAG, WILD_MAGIC_SURGE_TAG,
+            ARCANE_RECOVERY_TAG, AURA_OF_ALACRITY_TAG, DISCIPLE_OF_LIFE_TAG,
+            FAVORED_BY_THE_GODS_TAG, INURED_TO_UNDEATH_TAG, LAY_ON_HANDS_TAG, PSYCHIC_DEFENSES_TAG,
+            SOUL_OF_THE_FORGE_TAG, STRENGTH_OF_THE_GRAVE_TAG, STUNNING_STRIKE_TAG,
+            TACTICAL_WIT_TAG, TOUCH_OF_DEATH_TAG, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG,
+            WILD_MAGIC_SURGE_TAG,
         };
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{
-            CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE,
+            CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE, TWILIGHT_CLERIC_TEMPLATE,
         };
+        use crate::actors::creatures::monks::{LONG_DEATH_MONK_TEMPLATE, MONK_TEMPLATE};
+        use crate::actors::creatures::paladins::{GLORY_PALADIN_TEMPLATE, PALADIN_TEMPLATE};
         use crate::actors::creatures::sorcerers::{
             ABERRANT_MIND_SORCERER_TEMPLATE, DIVINE_SOUL_SORCERER_TEMPLATE,
             SHADOW_MAGIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
         };
-        use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::actors::creatures::wizards::{
+            NECROMANCY_WIZARD_TEMPLATE, WAR_MAGIC_WIZARD_TEMPLATE, WIZARD_TEMPLATE,
+        };
         use std::sync::LazyLock;
 
         // Each tuple: (subclass template, base template, expected
@@ -56785,6 +56935,53 @@ mod tests {
                 // Matches the LIFE_CLERIC row's baseline pick above so
                 // the two Cleric subclasses lock the same baseline invariant.
                 TURN_UNDEAD_TAG,
+            ),
+            (
+                &TWILIGHT_CLERIC_TEMPLATE,
+                &CLERIC_TEMPLATE,
+                VIGILANT_BLESSING_TAG,
+                // Same Cleric baseline invariant as the Life / Forge
+                // rows — Turn Undead rides the CLERIC_TEMPLATE
+                // features set and must carry through the helper's
+                // clone-and-insert tail on the Twilight subclass.
+                TURN_UNDEAD_TAG,
+            ),
+            (
+                &WAR_MAGIC_WIZARD_TEMPLATE,
+                &WIZARD_TEMPLATE,
+                TACTICAL_WIT_TAG,
+                // Same Wizard baseline invariant as the Necromancy row
+                // — Arcane Recovery rides the WIZARD_TEMPLATE
+                // features set and must carry through the helper's
+                // clone-and-insert tail on the War Magic subclass.
+                ARCANE_RECOVERY_TAG,
+            ),
+            (
+                &LONG_DEATH_MONK_TEMPLATE,
+                &MONK_TEMPLATE,
+                TOUCH_OF_DEATH_TAG,
+                // Monk baseline invariant: Stunning Strike / Purity of
+                // Body / Empty Body / Unarmored Movement all ride the
+                // MONK_TEMPLATE features set; a helper drift that
+                // drops the baseline set would strip Stunning Strike
+                // from the Long Death monk. Purity of Body would
+                // survive since it's a duplicate check, but Stunning
+                // Strike is the load-bearing single-target CD prime
+                // so it's the natural pick for the baseline invariant.
+                STUNNING_STRIKE_TAG,
+            ),
+            (
+                &GLORY_PALADIN_TEMPLATE,
+                &PALADIN_TEMPLATE,
+                AURA_OF_ALACRITY_TAG,
+                // Paladin baseline invariant: Lay on Hands / Sacred
+                // Weapon / Cleansing Touch / Improved Divine Smite
+                // all ride the PALADIN_TEMPLATE features set; a
+                // helper drift that drops the baseline set would
+                // strip all four from the Glory paladin. Lay on Hands
+                // is the load-bearing lv1 chassis feature so it's the
+                // natural pick for the baseline invariant.
+                LAY_ON_HANDS_TAG,
             ),
         ];
 

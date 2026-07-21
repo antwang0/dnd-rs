@@ -1218,6 +1218,25 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
         flag: |a| a.has_passive_feature(crate::actions::class_features::SUPERIOR_MOBILITY_TAG),
         bonus_ft: crate::actions::class_features::SUPERIOR_MOBILITY_SPEED_BONUS,
     },
+    // 5e Glory Paladin **Aura of Alacrity** (subclass level 7, TCE) —
+    // passive +10 ft walking-speed bump on the paladin chassis. The
+    // RAW aura-extends-to-adjacent-allies half needs a per-turn-start
+    // aura scan surface this engine doesn't expose as a first-class
+    // hook today; the self-side +10 ft is the load-bearing tactical
+    // piece and folds here through the same table every other
+    // passive-speed-bump row already uses. Same magnitude as Fast
+    // Movement (Barbarian +10) / Unarmored Movement (Monk +10) /
+    // Superior Mobility (Scout Rogue +10) — a fifth class chassis
+    // converges on the same +10 always-on lane; stacks additively
+    // with the +5 Roving row under the multiclass rule via the same
+    // cohort. Ships on `GLORY_PALADIN_TEMPLATE` at (or above) its
+    // strict RAW lv7 gate for the same reason `SCOUT_ROGUE_TEMPLATE`
+    // ships Superior Mobility (RAW lv9) — class templates target a
+    // balanced playable level, not lockstep PHB progression.
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::AURA_OF_ALACRITY_TAG),
+        bonus_ft: crate::actions::class_features::AURA_OF_ALACRITY_SPEED_BONUS,
+    },
 ];
 
 /// One row in the `CONDITION_SPEED_BONUSES` cohort — a single
@@ -2596,7 +2615,7 @@ impl CreatureTemplate {
     /// repeated once per subclass) into a single method call per
     /// subclass template.
     ///
-    /// Users (16+ callsites across six class chassis today):
+    /// Users (17+ callsites across seven class chassis today):
     ///   - **Warlock** (8 tag-only Otherworldly Patron subclass templates
     ///     via the class-scoped `subclass_warlock_template` helper —
     ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
@@ -2609,6 +2628,8 @@ impl CreatureTemplate {
     ///     Life, Forge, Twilight).
     ///   - **Monk** (1 tag-only Monastic Tradition subclass template —
     ///     Way of the Long Death).
+    ///   - **Paladin** (1 tag-only Sacred Oath subclass template —
+    ///     Oath of Glory).
     ///
     /// Distinct from `subclass_barbarian_template` (barbarian family
     /// helper): that helper builds the shared level-9 envelope from

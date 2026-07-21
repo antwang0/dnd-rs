@@ -1,9 +1,10 @@
 use crate::actions::class_features::{
-    ABJURE_ENEMY, ABJURE_ENEMY_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE,
-    DREADFUL_ASPECT, DREADFUL_ASPECT_TAG, FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG,
-    LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG, REBUKE_THE_VIOLENT,
-    REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, TURN_THE_FAITHLESS,
-    TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
+    ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG,
+    DIVINE_SMITE, DREADFUL_ASPECT, DREADFUL_ASPECT_TAG, FANATICAL_FOCUS_TAG,
+    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG,
+    REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
+    VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -463,4 +464,134 @@ pub static OATHBREAKER_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         features,
         ..PALADIN_TEMPLATE.clone()
     }
+});
+
+/// Glory Paladin — Oath of **Glory** subclass build (TCE). Identical
+/// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
+/// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
+/// Touch, Improved Divine Smite passive, Aura of Protection / Aura of
+/// Courage) with one subclass passive layered on: **Aura of Alacrity**
+/// (Glory subclass level 7, TCE) — passive **+10 ft walking-speed
+/// bump**.
+///
+/// The signature "the glory paladin is always one step ahead of the
+/// enemy line" tell — where a baseline Paladin walks at the default
+/// humanoid 30 ft, the Glory Paladin opens combat at 40 ft. Composes
+/// cleanly with the paladin's smite-and-melee kit — a Glory paladin
+/// who's one tile deeper into the enemy line lands Divine Smite /
+/// Sacred Weapon primes one round earlier — and with the aura suite
+/// the class already leans on (Aura of Protection at lv6 for +CHA-mod
+/// saves, Aura of Courage at lv10 for Frightened suppression, and
+/// now Aura of Alacrity at lv7 for movement — three overlapping self-
+/// aura effects that all fire on the same adjacent-ally scan).
+///
+/// The Glory Oath's passive-mobility-flavored sibling to the other
+/// Paladin oaths:
+///   - **Devotion** (Aura of Devotion): ally-side Charmed suppression.
+///   - **Ancients** (Nature's Ward + Undying Sentinel + Aura of
+///     Warding): self-side Charmed / Frightened immunity plus spell-
+///     damage-halving aura plus cheat-death.
+///   - **Vengeance** (Vow of Enmity + Abjure Enemy): target-side attack
+///     prime plus Frighten burst.
+///   - **Oathbreaker** (Aura of Hate + Fanatical Focus + Dreadful
+///     Aspect): melee damage aura plus failed-save reroll plus mass-
+///     Frighten CD.
+///   - **Glory** (Aura of Alacrity): passive +10 ft walking speed —
+///     always-on mobility on the paladin's own chassis.
+///
+/// Where Devotion / Ancients / Vengeance / Oathbreaker each project
+/// their oath through condition installs / damage bumps / reactive
+/// re-rolls, the Glory oath leans on the pure passive-mobility lane —
+/// no charge to spend, no target to pick, no bonus action to prime.
+/// Sibling on the "one feature tag drives one PASSIVE_FEATURE_SPEED_BONUSES
+/// cohort row" declarative-table pattern to `SCOUT_ROGUE_TEMPLATE`
+/// (Superior Mobility +10, XGtE lv9), the baseline `MONK_TEMPLATE` /
+/// `OPEN_HAND_MONK_TEMPLATE` / `LONG_DEATH_MONK_TEMPLATE` (Unarmored
+/// Movement +10, PHB lv2), the baseline `BARBARIAN_TEMPLATE` and its
+/// subclasses (Fast Movement +10, PHB lv5), and the baseline
+/// `RANGER_TEMPLATE` / `HUNTER_RANGER_TEMPLATE` / `GLOOM_STALKER_RANGER_TEMPLATE`
+/// (Roving +5, 2024 PHB lv6) — five class chassis converge on the
+/// same "passive walking-speed bump keyed off a subclass tag"
+/// identity from different angles. Paladin was uncovered on the
+/// passive-speed-bump cohort until this template landed; the +10 ft
+/// magnitude matches the sibling +10 rows on the Barbarian / Monk /
+/// Rogue chassis.
+///
+/// Read at the shared `PASSIVE_FEATURE_SPEED_BONUSES` cohort in
+/// `actor_template.rs`. Stacks additively with the other rows per the
+/// cohort's "any row hit is sufficient; all hitting rows sum" semantic:
+/// a hypothetical Glory-Paladin / Scout-Rogue / Barbarian multi-classer
+/// walks at +30 ft over the humanoid 30-ft baseline (three +10 rows
+/// firing at once). Distinct from `INITIATIVE_ADVANTAGE_SOURCES` /
+/// `ABILITY_MOD_INITIATIVE_BONUSES` cohorts (initiative-time roll
+/// modifiers) — Aura of Alacrity fires on the movement chokepoint,
+/// not the initiative-roll chokepoint, so a Glory Paladin who wins
+/// initiative reliably (via a hypothetical multiclass) can then
+/// close the extra 10 ft to the enemy line before their first smite
+/// lands.
+///
+/// RAW's Oath of Glory picks up other features not shipped on this
+/// template — **Peerless Athlete** (lv3 Channel Divinity: advantage
+/// on Athletics / Acrobatics checks + carrying capacity doubles;
+/// skills-only, no combat surface), **Inspiring Smite** (lv3 CD:
+/// after landing Divine Smite, distribute `2d8 + paladin level` temp
+/// HP among allies within 30ft; needs a per-smite-hit trigger + a
+/// temp-HP distribution helper), **Glorious Defense** (lv15: reaction
+/// to grant an ally within 10ft a +CHA-mod bonus to a failed save,
+/// and if the save then succeeds the paladin can make one weapon
+/// attack against the source; needs a save-time reaction hook plus a
+/// conditional counter-attack), and **Living Legend** (lv20 capstone:
+/// 1-minute self-buff — advantage on CHA checks + reroll one failed
+/// save per turn + weapon crits on 19 or 20; complex multi-effect
+/// self-buff). Only the lv7 Aura of Alacrity passive has a mechanical
+/// surface on the CR-1.5 chassis that plugs cleanly into the shared
+/// `PASSIVE_FEATURE_SPEED_BONUSES` cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit and
+/// `WAR_MAGIC_WIZARD_TEMPLATE` ships only the lv2 Tactical Wit passive
+/// half of its RAW School of War Magic kit.
+///
+/// Ships on the CR-1.5 paladin chassis at (or above) its strict RAW
+/// lv7 gate for the same reason `WAR_MAGIC_WIZARD_TEMPLATE` ships
+/// Tactical Wit (RAW lv2), `TWILIGHT_CLERIC_TEMPLATE` ships Vigilant
+/// Blessing (RAW lv1), and `SCOUT_ROGUE_TEMPLATE` ships Superior
+/// Mobility (RAW lv9) — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Distinct from `PALADIN_TEMPLATE` (subclass-less baseline) and the
+/// Devotion / Ancients / Vengeance / Oathbreaker cousins so a
+/// Glory-vs-Devotion / vs-Ancients / vs-Vengeance / vs-Oathbreaker /
+/// vs-baseline encounter renders unambiguously by name. Glyph 'Y'
+/// (for the Glor**Y** identity) — distinct from baseline paladin 'P',
+/// Devotion 'D', Ancients 'A', Vengeance 'V', and Oathbreaker 'O'.
+/// Collides with the Upsilon-glyph Silver Dragonborn ('Υ' vs the
+/// Latin 'Y') visually, but the two never legally co-occur on a
+/// single team (Silver Dragonborn is a Chromatic-family PC race
+/// template, Glory Paladin is a Paladin subclass), and one glyph per
+/// team-color-and-team-id combo suffices to disambiguate them in a
+/// mixed encounter.
+pub static GLORY_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Paladin envelope wholesale
+    // and layers on the one Glory Oath subclass feature
+    // (`AURA_OF_ALACRITY_TAG`: passive +10 ft walking-speed bump read
+    // at the shared `PASSIVE_FEATURE_SPEED_BONUSES` cohort in
+    // `actor_template.rs`). The `..base.clone()` tail inside the helper
+    // picks up every other field — greatsword + smite suite, half-caster
+    // slot ladder, Lay on Hands / Sacred Weapon / Cleansing Touch,
+    // Improved Divine Smite passive, Defense / Great Weapon Fighting
+    // fighting styles, Aura of Protection / Aura of Courage — without
+    // an N-line field-by-field copy. No new actions are pushed — Aura
+    // of Alacrity is a purely passive walking-speed bump, not a fresh
+    // action surface, so the "tag-only" shape the helper wraps is a
+    // natural fit. Sibling helper users on the "clone base + insert
+    // one tag" cross-class lane: every tag-only Warlock Otherworldly
+    // Patron subclass (via `subclass_warlock_template`),
+    // `LIFE_CLERIC_TEMPLATE`, `FORGE_CLERIC_TEMPLATE`,
+    // `TWILIGHT_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `WAR_MAGIC_WIZARD_TEMPLATE`, `SHADOW_MAGIC_SORCERER_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
+    // `LONG_DEATH_MONK_TEMPLATE`.
+    PALADIN_TEMPLATE.with_subclass_tag("Glory Paladin", 'Y', AURA_OF_ALACRITY_TAG)
 });

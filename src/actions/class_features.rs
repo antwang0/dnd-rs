@@ -8799,3 +8799,82 @@ pub const VIGILANT_BLESSING_TAG: &str = "cleric.vigilant_blessing";
 /// Vigilant Blessing (RAW lv1) — class templates target a balanced
 /// playable level, not lockstep PHB progression.
 pub const TACTICAL_WIT_TAG: &str = "wizard.tactical_wit";
+
+/// 5e Paladin Oath of Glory — **Aura of Alacrity** subclass feature tag
+/// (Glory subclass level 7, TCE). Passive: the Glory paladin emanates
+/// a swiftness aura — their own walking speed increases by 10 feet
+/// (RAW also extends the bump to any ally who starts a turn within 5 ft
+/// of them, but that ally-aura half needs a per-turn-start aura scan
+/// this engine doesn't expose as a first-class surface today; the
+/// self-side +10 ft is the load-bearing tactical piece and is what
+/// this tag wires up).
+///
+/// The signature "the glory paladin is always one step ahead" tell —
+/// where a baseline paladin walks at 30 ft (default humanoid), the
+/// Glory paladin opens combat at 40 ft. Composes cleanly with the
+/// paladin's smite-and-melee kit (a Glory paladin who's one tile
+/// further into the enemy line lands a Divine Smite one round earlier)
+/// and with the aura suite the class already leans on (Aura of
+/// Protection at lv6 for saves, Aura of Courage at lv10 for Frightened
+/// suppression, Aura of Alacrity at lv7 for movement) — three
+/// overlapping self-aura effects that all fire on the same
+/// adjacent-ally scan.
+///
+/// Read at the shared `PASSIVE_FEATURE_SPEED_BONUSES` cohort in
+/// `actor_template.rs` next to Fast Movement (Barbarian +10), Unarmored
+/// Movement (Monk +10), Superior Mobility (Scout Rogue +10), Roving
+/// (Ranger +5) — one lookup table, one source of truth. Same magnitude
+/// as the barbarian / monk / scout rows (+10 ft) and a different
+/// subclass chassis from all three (Paladin vs. Barbarian / Monk /
+/// Rogue), so a hypothetical multiclass carrier stacks additively per
+/// the cohort's "any row hit is sufficient; all hitting rows sum"
+/// semantic — a Glory-Paladin / Scout-Rogue multi-classer walks at
+/// +20 over baseline.
+///
+/// Sibling on the "one feature tag drives one PASSIVE_FEATURE_SPEED_BONUSES
+/// cohort row" declarative-table pattern to `SCOUT_ROGUE_TEMPLATE`
+/// (Superior Mobility +10), `MONK_TEMPLATE` / `OPEN_HAND_MONK_TEMPLATE`
+/// / `LONG_DEATH_MONK_TEMPLATE` (Unarmored Movement +10), the four
+/// barbarian totem paths that stack rage-gated speed bumps, and the
+/// baseline ranger's `ROVING_TAG` (+5) — six class chassis converge on
+/// the same "passive walking-speed bump keyed off a subclass tag"
+/// identity from different angles.
+///
+/// RAW's Oath of Glory picks up other features not shipped on this
+/// template — **Peerless Athlete** (lv3 Channel Divinity: advantage on
+/// Athletics / Acrobatics + carrying capacity double; skills-only, no
+/// combat surface), **Inspiring Smite** (lv3 CD: after Divine Smite,
+/// distribute temp HP to allies within 30ft; needs a per-smite-hit
+/// trigger + temp-HP distribution helper), **Glorious Defense** (lv15:
+/// reaction to grant CHA-mod bonus to an ally's failed save + strike
+/// the attacker; needs a save-time reaction hook), and **Living Legend**
+/// (lv20 capstone: 1-minute self-buff granting Charmed / Frightened
+/// immunity + weapon crits on 19-20 + reroll failed save; complex
+/// multi-effect self-buff). Only the lv7 Aura of Alacrity passive has
+/// a mechanical surface on the CR-1.5 chassis that plugs cleanly into
+/// the shared `PASSIVE_FEATURE_SPEED_BONUSES` cohort, so we ship that
+/// half and leave the rest as future work — matching the way
+/// `TWILIGHT_CLERIC_TEMPLATE` ships only the lv1 Vigilant Blessing
+/// passive half of its RAW Twilight Domain kit and
+/// `WAR_MAGIC_WIZARD_TEMPLATE` ships only the lv2 Tactical Wit passive
+/// half of its RAW School of War Magic kit.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it. Ships on `GLORY_PALADIN_TEMPLATE` at (or
+/// above) its strict RAW lv7 gate for the same reason
+/// `WAR_MAGIC_WIZARD_TEMPLATE` ships Tactical Wit (RAW lv2) and
+/// `TWILIGHT_CLERIC_TEMPLATE` ships Vigilant Blessing (RAW lv1) —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const AURA_OF_ALACRITY_TAG: &str = "paladin.aura_of_alacrity";
+
+/// Flat walking-speed bonus in feet granted by Glory Paladin's Aura of
+/// Alacrity passive. Pinned to +10 ft per RAW; exposed as a constant
+/// so the `PASSIVE_FEATURE_SPEED_BONUSES` table stays declarative
+/// rather than scattering magic numbers into the accessor. Sibling to
+/// `FAST_MOVEMENT_SPEED_BONUS` (+10) / `UNARMORED_MOVEMENT_SPEED_BONUS`
+/// (+10) / `SUPERIOR_MOBILITY_SPEED_BONUS` (+10) at the same magnitude;
+/// sibling to `ROVING_SPEED_BONUS` (+5) at half magnitude.
+pub const AURA_OF_ALACRITY_SPEED_BONUS: f32 = 10.0;
