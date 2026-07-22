@@ -963,85 +963,53 @@ pub fn resolve_attack_outcome(
     }
     // 5e Hunter Ranger **Colossus Slayer** (level 3) — passive once-per-
     // turn rider. On a weapon hit against a wounded target, lay an extra
-    // 1d8 of the weapon's damage type. Three gates:
-    //   1. Caster has the COLOSSUS_SLAYER_TAG passive feature flag.
-    //   2. Caster hasn't already fired Colossus Slayer this turn
-    //      (`colossus_slayer_used` — cleared at turn-start by
-    //      `reset_for_new_round`).
-    //   3. Target is wounded (`is_wounded()` — current HP below max).
-    // No melee gate (RAW: "When you hit a creature with a weapon attack"
-    // — covers ranger longbow shots too). Crit doubles the die via
-    // `roll_rider`. Damage type matches the weapon so a fire-imbued bow
-    // shot still reads as fire on the Colossus Slayer line.
-    if !p.is_spell
-        && encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| {
-                a.has_passive_feature(
-                    crate::actions::class_features::COLOSSUS_SLAYER_TAG,
-                ) && !a.colossus_slayer_used()
-            })
-        && encounter
-            .actors
-            .get(&p.target_id)
-            .is_some_and(|t| t.is_wounded())
-    {
-        push_die_rider(
-            encounter,
-            &mut effects,
-            p.target_id,
-            Dice::new(1, 8),
-            is_crit,
-            p.damage_type,
-            "colossus slayer",
-        );
-        if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
-            caster.mark_colossus_slayer_used();
-        }
-    }
+    // 1d8 of the weapon's damage type. Routes through the shared
+    // `try_fire_once_per_turn_weapon_die_rider` helper on the same "one
+    // die + one damage type + one target gate" corner Dreadful Strikes
+    // sits at below; the helper folds the caster-flag / ledger / target-
+    // gate / push / mark bookends the two riders share. Damage type
+    // matches the weapon (via `p.damage_type`) so a fire-imbued bow
+    // shot still reads as fire on the Colossus Slayer log line. Target
+    // gate: `is_wounded()` — the RAW "current HP < max" clause. Crit
+    // doubles the die via the shared `push_die_rider` chokepoint.
+    try_fire_once_per_turn_weapon_die_rider(
+        encounter,
+        &mut effects,
+        &p,
+        is_crit,
+        &OncePerTurnWeaponRiderSpec {
+            tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
+            dice: Dice::new(1, 8),
+            damage_type: p.damage_type,
+            label: "colossus slayer",
+            target_gate: |t| t.is_wounded(),
+        },
+    );
     // 5e Fey Wanderer Ranger **Dreadful Strikes** (level 3, TCE) — passive
     // once-per-turn weapon-hit rider. On any weapon hit, lay +1d4 Psychic
-    // damage on the target. Two gates:
-    //   1. Not a spell attack (RAW: "with a weapon attack").
-    //   2. Caster has the DREADFUL_STRIKES_TAG passive feature flag AND
-    //      hasn't already fired Dreadful Strikes this turn
-    //      (`once_per_turn_used(DREADFUL_STRIKES_TAG)` — cleared at
-    //      turn-start by `reset_for_new_round` on the shared
-    //      `ONCE_PER_TURN_RIDER_TAGS` ledger).
-    // No wounded-target gate (unlike Colossus Slayer's `is_wounded()`
-    // sibling — RAW's Dreadful Strikes fires against any target). No
-    // melee gate (RAW covers ranged weapon hits too). Damage is always
-    // typed Psychic — RAW fixes the type at Psychic regardless of the
-    // weapon's base type, distinct from Colossus Slayer's weapon-typed
-    // die (`p.damage_type`). Crits double the die per `roll_rider` RAW.
-    if !p.is_spell
-        && encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| {
-                a.has_passive_feature(
-                    crate::actions::class_features::DREADFUL_STRIKES_TAG,
-                ) && !a.once_per_turn_used(
-                    crate::actions::class_features::DREADFUL_STRIKES_TAG,
-                )
-            })
-    {
-        push_die_rider(
-            encounter,
-            &mut effects,
-            p.target_id,
-            Dice::new(1, 4),
-            is_crit,
-            DamageType::Psychic,
-            "dreadful strikes",
-        );
-        if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
-            caster.mark_once_per_turn_used(
-                crate::actions::class_features::DREADFUL_STRIKES_TAG,
-            );
-        }
-    }
+    // damage on the target. Routes through the shared
+    // `try_fire_once_per_turn_weapon_die_rider` helper alongside Colossus
+    // Slayer above — same "one die + one damage type + optional target
+    // gate" corner. Distinctions from Colossus Slayer wired at the spec
+    // fields: no target gate (`|_| true` — RAW fires against any target,
+    // wounded or not), fixed Psychic damage type (`DamageType::Psychic`
+    // — RAW's "your weapon strikes whisper dread" tell fixes the type
+    // regardless of the weapon's base type), and 1d4 (vs. the weapon-
+    // typed 1d8 sibling). Crit doubles the die via the shared
+    // `push_die_rider` chokepoint.
+    try_fire_once_per_turn_weapon_die_rider(
+        encounter,
+        &mut effects,
+        &p,
+        is_crit,
+        &OncePerTurnWeaponRiderSpec {
+            tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
+            dice: Dice::new(1, 4),
+            damage_type: DamageType::Psychic,
+            label: "dreadful strikes",
+            target_gate: |_| true,
+        },
+    );
     // 5e Ranger **Foe Slayer** (level 20 capstone) — passive once-per-
     // turn rider. On any weapon hit, add the ranger's Wisdom modifier
     // as flat damage of the weapon's damage type. Two gates:
@@ -1344,6 +1312,117 @@ pub fn push_die_rider(
         damage_type,
     }));
     extra
+}
+
+/// Spec for a once-per-turn weapon-hit +XdY typed die rider, consumed by
+/// `try_fire_once_per_turn_weapon_die_rider`. Bundles the four per-
+/// feature axes (tag / dice / damage type / label) plus the optional
+/// target-side gate into a single struct so a callsite drops from the
+/// nine-arg raw signature (encounter + effects + params + is_crit +
+/// tag + dice + damage_type + label + target_gate) down to a clean
+/// five-arg call whose per-feature configuration reads as a labeled
+/// struct literal — matching the "spec struct per shared engine
+/// chokepoint" shape the sibling `AttackParams`, `MeleeReflectRider`,
+/// and `OnHitRider` shapes already use in this module.
+pub struct OncePerTurnWeaponRiderSpec {
+    /// Passive-feature tag the rider keys off — both the "does the
+    /// caster carry this rider" check (`has_passive_feature(tag)`) and
+    /// the "has the caster already fired it this turn" ledger key
+    /// (`once_per_turn_used(tag)` / `mark_once_per_turn_used(tag)`) —
+    /// both read/write through the shared `ONCE_PER_TURN_RIDER_TAGS`
+    /// cohort on `ActorInstance`.
+    pub tag: &'static str,
+    /// Die to roll for the rider (Colossus Slayer 1d8, Dreadful
+    /// Strikes 1d4). Crits double the die via the shared
+    /// `push_die_rider` chokepoint per 5e RAW.
+    pub dice: Dice,
+    /// Damage type stamped on the rider log line and the queued
+    /// `DealDamage` payload. Colossus Slayer passes `p.damage_type`
+    /// (weapon-typed — the rider inherits the swing's damage type);
+    /// Dreadful Strikes passes a fixed `DamageType::Psychic` — RAW's
+    /// "your weapon strikes whisper dread" tell fixes the type
+    /// regardless of the weapon's base type.
+    pub damage_type: DamageType,
+    /// Log label — "colossus slayer", "dreadful strikes". Formatted by
+    /// `push_die_rider` as `"  {label}: +{extra} {damage_type:?}"` so
+    /// the log shape stays uniform across every once-per-turn rider
+    /// routed through this helper.
+    pub label: &'static str,
+    /// Per-feature target-side gate. Colossus Slayer passes
+    /// `|t| t.is_wounded()` — RAW gates on the target's current HP
+    /// being below max; Dreadful Strikes passes `|_| true` — RAW fires
+    /// against any target, wounded or not. A future rider with a
+    /// target-condition gate (a hypothetical "extra damage vs Prone /
+    /// Frightened targets" subclass rider) lands as another closure
+    /// here without widening the helper.
+    pub target_gate: fn(&ActorInstance) -> bool,
+}
+
+/// Fire a once-per-turn weapon-hit +XdY typed die rider — the shared shape
+/// behind Colossus Slayer (Hunter Ranger lv3, +1d8 weapon-typed, wounded-
+/// target gate) and Dreadful Strikes (Fey Wanderer Ranger lv3, +1d4
+/// Psychic, no target gate). Both features live at the "no flat bonus, no
+/// compound log line, one die + one damage type + one optional target
+/// gate" corner of the once-per-turn rider design space; folding both
+/// through this helper drops the recurring 4-line "check flag → check
+/// ledger → check target gate → push_die_rider → mark used" scaffolding
+/// per feature down to a single call site.
+///
+/// Returns `true` if the rider fired (log + `DealDamage` queued + ledger
+/// flipped), `false` otherwise. Six short-circuit gates:
+///   1. `p.is_spell` — rider is weapon-only (RAW: "with a weapon attack").
+///   2. Caster missing → dead / removed attacker, no-op.
+///   3. Caster lacks the passive-feature `spec.tag`.
+///   4. Caster already fired this `spec.tag` this turn (per the shared
+///      `once_per_turn_used(tag)` ledger cleared at `reset_for_new_round`).
+///   5. Target missing → wildcard target lookup failed, no-op.
+///   6. `spec.target_gate(target)` returns false — the per-rider RAW-side
+///      constraint (Colossus Slayer's `is_wounded()`; Dreadful Strikes'
+///      always-true).
+///
+/// Distinct from `push_die_rider` (the standalone log + push chokepoint)
+/// — this wrapper adds the two lookup-gate + one ledger-write bookends
+/// that every once-per-turn rider shares. Distinct from the Foe Slayer /
+/// Divine Fury blocks in `resolve_attack_outcome` — those two riders
+/// have flat-bonus / compound-log shapes that don't fit this helper's
+/// "die only, uniform log" corner and stay open-coded on their own
+/// gates for now.
+pub fn try_fire_once_per_turn_weapon_die_rider(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    p: &AttackParams,
+    is_crit: bool,
+    spec: &OncePerTurnWeaponRiderSpec,
+) -> bool {
+    if p.is_spell {
+        return false;
+    }
+    let caster_ok = encounter.actors.get(&p.caster_id).is_some_and(|a| {
+        a.has_passive_feature(spec.tag) && !a.once_per_turn_used(spec.tag)
+    });
+    if !caster_ok {
+        return false;
+    }
+    let target_ok = encounter
+        .actors
+        .get(&p.target_id)
+        .is_some_and(spec.target_gate);
+    if !target_ok {
+        return false;
+    }
+    push_die_rider(
+        encounter,
+        effects,
+        p.target_id,
+        spec.dice,
+        is_crit,
+        spec.damage_type,
+        spec.label,
+    );
+    if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
+        caster.mark_once_per_turn_used(spec.tag);
+    }
+    true
 }
 
 /// A "+Xdy damage on hit" rider sourced from one of the caster's active
