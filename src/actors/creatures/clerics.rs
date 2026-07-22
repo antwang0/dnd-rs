@@ -1,9 +1,9 @@
 use crate::actions::class_features::{
-    DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE,
-    GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG,
-    RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD,
-    TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG,
-    WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
+    CIRCLE_OF_MORTALITY_TAG, DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
+    DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
+    PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
+    SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
+    WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -502,22 +502,32 @@ pub static LIFE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// matching the way `CUTTING_WORDS_TAG` ships only the disadvantage
 /// half of RAW's "-die on attack / ability / damage" shape.
 ///
+/// The Grave Domain's `CIRCLE_OF_MORTALITY_TAG` (lv1) rides alongside
+/// the Channel Divinity — passive: leveled heal spells cast on a
+/// creature at 0 hit points substitute the max face-value of every
+/// die (dropping variance from every downed-ally clutch heal). Read
+/// at the shared `HealSpell` chokepoint (Cure Wounds / Healing Word)
+/// via `should_use_max_heal_dice(caster, target)`; the gate folds
+/// "caster has the tag AND target is at 0 HP" so a Grave Cleric
+/// healing a healthy ally rolls normally. Sibling to Life Cleric's
+/// `DISCIPLE_OF_LIFE_TAG` on the "cleric domain heal-amplifier" lane
+/// — Disciple adds a flat `2 + slot_level`, Circle of Mortality
+/// replaces the dice roll with its max on the "target at 0 HP" gate.
+///
 /// RAW's Grave Domain picks up other features not shipped on this
-/// template — **Circle of Mortality** (lv1: leveled heal spells cast
-/// on 0-HP targets restore max HP as if rolled maximum; needs a
-/// max-heal hook at the heal chokepoint), **Eyes of the Grave** (lv1:
-/// per-day passive undead-detection with a divination range;
-/// out-of-combat dialog-gate ribbon), **Sentinel at Death's Door**
-/// (lv6: reaction to turn a crit vs an ally within 30ft into a
-/// normal hit; needs a target-side crit-cancel hook), **Potent
-/// Spellcasting** (lv8: +WIS to cantrip damage; needs a per-cantrip
-/// damage-bonus hook), and **Keeper of Souls** (lv17 capstone).
-/// The lv2 Channel Divinity is the load-bearing tactical feature
-/// with a first-class engine surface today, so we ship that half
-/// and leave the rest as future work — matching the way the War /
-/// Light / Tempest cleric subclass templates each ship only the
-/// Channel Divinity + one passive rider rather than the full RAW
-/// subclass suite.
+/// template — **Eyes of the Grave** (lv1: per-day passive undead-
+/// detection with a divination range; out-of-combat dialog-gate
+/// ribbon), **Sentinel at Death's Door** (lv6: reaction to turn a
+/// crit vs an ally within 30ft into a normal hit; needs a target-side
+/// crit-cancel hook), **Potent Spellcasting** (lv8: +WIS to cantrip
+/// damage; needs a per-cantrip damage-bonus hook), and **Keeper of
+/// Souls** (lv17 capstone). The two lv1-lv2 always-on features
+/// (Circle of Mortality + Path to the Grave) are the load-bearing
+/// tactical features with first-class engine surfaces today, so we
+/// ship both halves and leave the rest as future work — matching the
+/// way the War / Light / Tempest cleric subclass templates each ship
+/// their Channel Divinity + one passive rider rather than the full
+/// RAW subclass suite.
 ///
 /// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
 /// War / Light / Tempest / Life cousins so a Grave-vs-Baseline /
@@ -538,6 +548,13 @@ pub static GRAVE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     // Path to the Grave charge — once per short rest, refreshed via
     // `SHORT_REST_FEATURES` alongside the War / Light / Tempest CDs.
     features.insert(PATH_TO_THE_GRAVE_TAG);
+    // Circle of Mortality — always-on passive read at the shared
+    // `HealSpell` chokepoint via `should_use_max_heal_dice(caster,
+    // target)`. Not in `SHORT_REST_FEATURES` / long-rest tables —
+    // nothing consumes it, so the tag stays on the template's
+    // features set permanently. Sibling to `DISCIPLE_OF_LIFE_TAG`
+    // on the "cleric domain heal-amplifier" passive lane.
+    features.insert(CIRCLE_OF_MORTALITY_TAG);
     CreatureTemplate {
         name: "Grave Cleric",
         glyph: 'G',

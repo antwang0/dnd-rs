@@ -10384,6 +10384,275 @@ mod tests {
         );
     }
 
+    /// Pin the Circle of Mortality max-dice substitution: a Grave Cleric
+    /// casting Cure Wounds on a dying (0 HP) ally must always heal for
+    /// exactly `max(dice) + WIS-mod` HP, replacing the normal `1d8 + WIS`
+    /// variance floor with the max face-value (8) floor. The test loops
+    /// several times so a run that happens to naturally roll an 8 doesn't
+    /// hide a broken substitution — every iteration must land on exactly
+    /// `8 + 2 = 10` HP for the Grave Cleric's WIS 14 (+2 mod).
+    #[test]
+    fn circle_of_mortality_maxes_cure_wounds_dice_on_zero_hp_target() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::GRAVE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        // Iterate over several seeds — Circle of Mortality is a
+        // deterministic substitution (max dice on 0 HP), so every seed
+        // must land on the exact same healed amount regardless of the
+        // stock 1d8 result the roller would have produced.
+        for seed in 0..8 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 15,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                TerrainInfo {
+                    terrain_type: TerrainType::Floor,
+                };
+                15 * 15
+            ];
+            let cleric = e
+                .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+                .unwrap();
+            // Drop the fighter to 0 HP: they enter Dying state (fighter
+            // is a PC — `rolls_death_saves: true`). Cure Wounds on a
+            // dying ally revives them, and the healed amount is the
+            // clean signal we're pinning.
+            let max = e.actors[&ally].max_hitpoints();
+            e.actors.get_mut(&ally).unwrap().take_damage(max);
+            assert!(
+                e.actors[&ally].is_dying(),
+                "fighter must be dying (0 HP) before the Cure Wounds cast"
+            );
+            assert_eq!(e.actors[&ally].hitpoints(), 0);
+            e.pop_prompt();
+            let aei =
+                ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+            assert!(aei.validate(&e), "cure wounds should validate at touch range");
+            e.push_action(aei);
+            e.process_stack();
+            // 8 (max 1d8) + 2 (WIS-mod for cleric WIS 14) = 10 HP.
+            // Circle of Mortality must fire every time — no dice-roll
+            // variance because the substitution replaces the roll.
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                10,
+                "seed {}: Circle of Mortality must heal for exactly 8+2 = 10 HP on a 0 HP target",
+                seed
+            );
+        }
+    }
+
+    /// Ensure the Circle of Mortality substitution only fires when the
+    /// target is at 0 HP. A Grave Cleric casting Cure Wounds on a
+    /// healthy-but-wounded ally must roll normally (variance in [1, 8])
+    /// — the max-dice floor doesn't extend to non-0-HP targets. The
+    /// test loops enough runs that a below-max roll must appear if the
+    /// substitution gate is honored; a broken gate that always maxes
+    /// would fail the "some roll < 8" invariant.
+    #[test]
+    fn circle_of_mortality_gate_healthy_target_rolls_normally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::GRAVE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        // WIS mod is +2 for cleric WIS 14, so heal amount = raw + 2
+        // where raw ∈ [1, 8]. If Circle of Mortality mistakenly fires
+        // on a healthy target, raw is pinned to 8 and every seed lands
+        // on 10. A working gate must produce at least one below-max
+        // roll across the sampled seeds.
+        let mut saw_below_max = false;
+        for seed in 0..64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 15,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                TerrainInfo {
+                    terrain_type: TerrainType::Floor,
+                };
+                15 * 15
+            ];
+            let cleric = e
+                .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+                .unwrap();
+            // Deal enough damage that the heal can never clamp against
+            // max HP — heal amount ∈ [3, 10] and the fighter has room.
+            let max = e.actors[&ally].max_hitpoints();
+            e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+            let before = e.actors[&ally].hitpoints();
+            assert!(e.actors[&ally].is_combat_active());
+            e.pop_prompt();
+            let aei =
+                ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            let healed = e.actors[&ally].hitpoints() - before;
+            assert!(
+                (3..=10).contains(&healed),
+                "seed {}: healed {} HP outside 1d8+2 range [3, 10]",
+                seed,
+                healed
+            );
+            if healed < 10 {
+                saw_below_max = true;
+            }
+        }
+        assert!(
+            saw_below_max,
+            "Circle of Mortality must NOT fire on healthy targets — at least one seed in 64 must roll below the 8+2 = 10 max"
+        );
+    }
+
+    /// Pin the Circle of Mortality burst max-dice substitution on Mass
+    /// Healing Word: if the Grave Cleric's mass burst catches at least
+    /// one 0-HP ally, the shared 1d4 roll floors at the max face-value
+    /// (4) — so every reached ally heals for `4 + WIS = 6` HP. The
+    /// wounded-but-not-downed ally in the same burst also benefits from
+    /// the shared-roll max under the "any downed target maxes the
+    /// shared dice" interpretation the mass-heal call site documents.
+    #[test]
+    fn circle_of_mortality_maxes_mass_healing_word_when_any_target_at_zero() {
+        use crate::actions::spells::MASS_HEALING_WORD;
+        use crate::actors::creatures::clerics::GRAVE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        // Every seed must land on 4 (max 1d4) + 2 (WIS-mod for cleric
+        // WIS 14) = 6 HP per healed target — no roll variance because
+        // the substitution replaces the roll. Loop several seeds so a
+        // naturally-rolled 4 doesn't hide a broken substitution.
+        for seed in 0..8 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 15,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                TerrainInfo {
+                    terrain_type: TerrainType::Floor,
+                };
+                15 * 15
+            ];
+            let cleric = e
+                .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let downed = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+                .unwrap();
+            let wounded = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+                .unwrap();
+            // Downed fighter → 0 HP (Dying). Wounded fighter → 1 HP
+            // (still Active). Both allies within 60 ft of the caster.
+            let downed_max = e.actors[&downed].max_hitpoints();
+            let wounded_max = e.actors[&wounded].max_hitpoints();
+            e.actors.get_mut(&downed).unwrap().take_damage(downed_max);
+            e.actors
+                .get_mut(&wounded)
+                .unwrap()
+                .take_damage(wounded_max - 1);
+            assert!(e.actors[&downed].is_dying());
+            assert_eq!(e.actors[&downed].hitpoints(), 0);
+            assert!(e.actors[&wounded].is_combat_active());
+            assert_eq!(e.actors[&wounded].hitpoints(), 1);
+            e.pop_prompt();
+            let aei =
+                ActionExecutionInfo::new(&*MASS_HEALING_WORD, cleric, None, None, None);
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            // Both allies picked up by the shared max-roll: 4 + 2 = 6 HP.
+            assert_eq!(
+                e.actors[&downed].hitpoints(),
+                6,
+                "seed {}: downed ally must heal for exactly 4+2 = 6 HP via Circle of Mortality's max-1d4 substitution",
+                seed
+            );
+            assert_eq!(
+                e.actors[&wounded].hitpoints(),
+                1 + 6,
+                "seed {}: wounded ally (also in the burst) must pick up the same shared max-roll = 6 HP",
+                seed
+            );
+        }
+    }
+
+    /// Pin the Circle of Mortality tag placement across the six Cleric
+    /// subclass templates: only the Grave Cleric carries the tag; the
+    /// baseline Cleric and the other five subclass templates (War /
+    /// Light / Tempest / Life / Forge / Twilight) must NOT. Locks in
+    /// the "one domain, one heal-amplifier" invariant so a future
+    /// refactor that promotes the tag onto the baseline (or drops it
+    /// silently from the Grave Cleric) trips before Circle of Mortality
+    /// goes wrong on the wrong chassis. Sibling to the
+    /// `only_watchers_paladin_ships_aura_of_the_sentinel_tag` template-
+    /// placement test on the paladin chassis.
+    #[test]
+    fn only_grave_cleric_ships_circle_of_mortality_tag() {
+        use crate::actions::class_features::CIRCLE_OF_MORTALITY_TAG;
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE, GRAVE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE,
+            LIGHT_CLERIC_TEMPLATE, TEMPEST_CLERIC_TEMPLATE, TWILIGHT_CLERIC_TEMPLATE,
+            WAR_CLERIC_TEMPLATE,
+        };
+
+        assert!(
+            GRAVE_CLERIC_TEMPLATE
+                .features
+                .contains(CIRCLE_OF_MORTALITY_TAG),
+            "GRAVE_CLERIC_TEMPLATE must carry CIRCLE_OF_MORTALITY_TAG"
+        );
+        for (name, template) in [
+            ("CLERIC_TEMPLATE", &*CLERIC_TEMPLATE),
+            ("WAR_CLERIC_TEMPLATE", &*WAR_CLERIC_TEMPLATE),
+            ("LIGHT_CLERIC_TEMPLATE", &*LIGHT_CLERIC_TEMPLATE),
+            ("TEMPEST_CLERIC_TEMPLATE", &*TEMPEST_CLERIC_TEMPLATE),
+            ("LIFE_CLERIC_TEMPLATE", &*LIFE_CLERIC_TEMPLATE),
+            ("FORGE_CLERIC_TEMPLATE", &*FORGE_CLERIC_TEMPLATE),
+            ("TWILIGHT_CLERIC_TEMPLATE", &*TWILIGHT_CLERIC_TEMPLATE),
+        ] {
+            assert!(
+                !template.features.contains(CIRCLE_OF_MORTALITY_TAG),
+                "{} must NOT carry CIRCLE_OF_MORTALITY_TAG (Grave Cleric only)",
+                name
+            );
+        }
+    }
+
     #[test]
     fn fire_bolt_can_hit_and_damage() {
         use crate::actions::spells::FIRE_BOLT;

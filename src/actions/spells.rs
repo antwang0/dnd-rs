@@ -1213,14 +1213,30 @@ impl Action for HealSpell {
         // stock heal formula lands unchanged. Snapshot before the
         // (mutable) roll so the borrow checker is happy.
         let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, lvl);
-        let raw = encounter.roll(&dice) as i32;
+        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
+        // rolled dice for the max face-value when the target is at 0 HP.
+        // Snapshot before the (mutable) roll so both immutable borrows
+        // (`caster` from `.get(&caster_id)`, target from `.get(&target_id)`)
+        // are dropped before `encounter.roll(&dice)` takes `&mut self`.
+        let use_max = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|target| {
+                crate::actions::class_features::should_use_max_heal_dice(caster, target)
+            });
+        let raw = if use_max {
+            dice.max_roll() as i32
+        } else {
+            encounter.roll(&dice) as i32
+        };
         let base = (raw + ability_mod).max(1) as u32;
         let amount = base + bonus;
         encounter.log(format!(
-            "  {}: {}({}){:+}{} = {} HP",
+            "  {}: {}({}){}{:+}{} = {} HP",
             self.display_name,
             dice,
             raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
             ability_mod,
             crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
@@ -3727,16 +3743,6 @@ impl Action for MassHealingWord {
         // Life bonus so a Life Cleric adds +5 per target on top of the
         // shared roll. Snapshot before the (mutable) roll.
         let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 3);
-        let raw = encounter.roll(&Dice::new(1, 4)) as i32;
-        let base = (raw + wis_mod).max(1) as u32;
-        let amount = base + bonus;
-        encounter.log(format!(
-            "  mass healing word: 1d4({}){:+}{} = {} HP each",
-            raw,
-            wis_mod,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
-            amount
-        ));
         // RAW: pick up to 6 creatures. We snap to the closest 6 eligible
         // allies (combat-active OR dying — heals revive both).
         const RANGE_TILES: isize = 24;
@@ -3765,6 +3771,37 @@ impl Action for MassHealingWord {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
+        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
+        // shared 1d4 roll for its max face-value (4) if the caster
+        // holds the tag AND any picked target is at 0 HP. The RAW
+        // clause is per-die not per-target; on a shared-roll mass
+        // heal the coherent read is "if any die is being applied to
+        // a 0-HP target, that die maxes — and since all dice are
+        // shared, all dice max". A downed-ally-included Mass Healing
+        // Word burst floors the whole burst at max; a fully-healthy
+        // burst rolls normally. Snapshot before the (mutable) roll.
+        let dice = Dice::new(1, 4);
+        let use_max = caster
+            .has_passive_feature(crate::actions::class_features::CIRCLE_OF_MORTALITY_TAG)
+            && candidates
+                .iter()
+                .any(|(_, id)| encounter.actors.get(id).is_some_and(|a| a.hitpoints() == 0));
+        let raw = if use_max {
+            dice.max_roll() as i32
+        } else {
+            encounter.roll(&dice) as i32
+        };
+        let base = (raw + wis_mod).max(1) as u32;
+        let amount = base + bonus;
+        encounter.log(format!(
+            "  mass healing word: {}({}){}{:+}{} = {} HP each",
+            dice,
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            wis_mod,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            amount
+        ));
         candidates
             .into_iter()
             .map(|(_, id)| {
@@ -5868,16 +5905,6 @@ impl Action for MassCureWounds {
         // +7 per target on top of the shared roll. Snapshot before the
         // (mutable) roll.
         let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 5);
-        let raw = encounter.roll(&Dice::new(3, 8)) as i32;
-        let base = (raw + wis_mod).max(1) as u32;
-        let amount = base + bonus;
-        encounter.log(format!(
-            "  mass cure wounds: 3d8({}){:+}{} = {} HP each",
-            raw,
-            wis_mod,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
-            amount
-        ));
         const RADIUS: isize = 3;
         const MAX_TARGETS: usize = 6;
         // Pick allies inside the burst, sorted by current HP ascending so
@@ -5906,6 +5933,35 @@ impl Action for MassCureWounds {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
+        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
+        // shared 3d8 roll for its max face-value (24) if the caster
+        // holds the tag AND any picked target is at 0 HP. Same
+        // shared-roll-max coalescing shape the sibling Mass Healing
+        // Word site uses — see that call site for the per-die
+        // interpretation on a shared-dice mass heal. Snapshot before
+        // the (mutable) roll so the burst-selection borrow drops.
+        let dice = Dice::new(3, 8);
+        let use_max = caster
+            .has_passive_feature(crate::actions::class_features::CIRCLE_OF_MORTALITY_TAG)
+            && candidates
+                .iter()
+                .any(|(hp, _)| *hp == 0);
+        let raw = if use_max {
+            dice.max_roll() as i32
+        } else {
+            encounter.roll(&dice) as i32
+        };
+        let base = (raw + wis_mod).max(1) as u32;
+        let amount = base + bonus;
+        encounter.log(format!(
+            "  mass cure wounds: {}({}){}{:+}{} = {} HP each",
+            dice,
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            wis_mod,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            amount
+        ));
         candidates
             .into_iter()
             .map(|(_, id)| {

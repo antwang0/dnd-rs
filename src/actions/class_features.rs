@@ -7987,6 +7987,88 @@ pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
     }
 }
 
+/// 5e Grave Domain Cleric — **Circle of Mortality** subclass feature tag
+/// (Grave subclass level 1, XGtE). Passive: whenever the cleric would
+/// normally roll one or more dice to restore hit points with a spell to
+/// a creature at 0 hit points, they instead use the highest number
+/// possible for each die.
+///
+/// The signature "the grave cleric drags allies back from the edge with
+/// perfect precision" tell — where a baseline Cleric casts Cure Wounds
+/// on a downed ally and rolls `1d8 + WIS`, the Grave Cleric picks up the
+/// same slot and guarantees `8 + WIS` HP through the max-dice floor.
+/// Pairs naturally with the cleric's heal kit (Cure Wounds, Healing
+/// Word, Mass Cure Wounds, Mass Healing Word) — the Grave Cleric's
+/// clutch-heal on a dying party member trades variance for reliability
+/// exactly when it matters most (a bad 1d8 roll leaves the ally at
+/// `1 + WIS` HP and still one hit from the ground).
+///
+/// The "at 0 hit points" gate covers both Dying (rolling death saves)
+/// AND Stable (stabilized at 0 HP) actors — both share the same
+/// `hitpoints() == 0` predicate. Downed monsters (which don't roll
+/// death saves) never reach the gate: they're removed from the encounter
+/// on the killing blow, so the tag's gate is de-facto ally-facing on the
+/// PC-vs-monster axis this engine models.
+///
+/// Read at every leveled cleric-heal chokepoint (`HealSpell` for Cure
+/// Wounds / Healing Word, plus the ad-hoc `MassHealingWord` /
+/// `MassCureWounds` sites) via `should_use_max_heal_dice(caster,
+/// target)`. The helper folds the "caster must hold the tag AND target
+/// must be at 0 HP" compound gate — a Grave Cleric casting on a healthy
+/// ally returns false and the stock roll fires unchanged. The
+/// fixed-70-HP `HealSpellHigh` (Heal spell) never rolls dice, so the tag
+/// has no effect there (already at maximum by construction).
+///
+/// Sibling to `DISCIPLE_OF_LIFE_TAG` (Life Cleric) on the "cleric domain
+/// heal-amplifier" lane — Disciple of Life adds `2 + slot_level` to
+/// every leveled heal, Circle of Mortality replaces the dice roll with
+/// its max when the target is at 0 HP. The two never legally co-occur
+/// on a single PC build (RAW: one Divine Domain pick per cleric), but
+/// under the multiclass rule via the same heal chokepoint they'd stack
+/// additively — a hypothetical Life-Grave multi-domain cleric would get
+/// both max-rolled dice AND the flat Disciple bonus on a downed ally.
+///
+/// Ships on `GRAVE_CLERIC_TEMPLATE` (the RAW gate is the domain pick at
+/// character creation — no RAW level gate to compare against). Sibling
+/// Channel Divinity `PATH_TO_THE_GRAVE_TAG` already rides on the same
+/// chassis; this tag completes the two RAW lv1-lv2 always-on Grave
+/// Domain features on the template.
+pub const CIRCLE_OF_MORTALITY_TAG: &str = "cleric.circle_of_mortality";
+
+/// True when the caster's Circle of Mortality gate fires: caster holds
+/// the `CIRCLE_OF_MORTALITY_TAG` AND the target is at 0 hit points
+/// (Dying or Stable). Callers use this to decide whether to substitute
+/// max-die-face totals for the rolled heal dice — a `true` return means
+/// "use `dice.max_roll()` for the raw", a `false` return means "roll
+/// normally".
+///
+/// Single chokepoint so future changes (e.g. RAW-tightening to
+/// spells the cleric prepared as a Grave Domain spell, or extending the
+/// gate to short-of-max-HP allies for a hypothetical variant) land in
+/// one place instead of across the ~4-5 heal-spell impls that call it.
+pub fn should_use_max_heal_dice(
+    caster: &crate::actors::actor_template::ActorInstance,
+    target: &crate::actors::actor_template::ActorInstance,
+) -> bool {
+    caster.has_passive_feature(CIRCLE_OF_MORTALITY_TAG) && target.hitpoints() == 0
+}
+
+/// Companion to `should_use_max_heal_dice`: format the log-line suffix
+/// callers splice into their existing heal-log format string right
+/// before the ` = <amount> HP` tail. Returns `""` when the gate didn't
+/// fire so the base log stays untouched, or `"(circle of mortality)"`
+/// when the substitution fired. Keeps every heal call site to a single
+/// `format!` with a stitched-in `{}` rather than a branchy `if used`
+/// duplicated at each site — same shape the sibling
+/// `disciple_of_life_log_suffix` uses on the same heal chokepoints.
+pub fn circle_of_mortality_log_suffix(used: bool) -> &'static str {
+    if used {
+        "(circle of mortality)"
+    } else {
+        ""
+    }
+}
+
 /// 5e Warlock Otherworldly Patron — **The Genie (Djinni)** — **Elemental
 /// Gift** subclass feature tag (level 6, TCE). Passive: the Djinni-pact
 /// warlock gains **resistance to thunder damage** — the djinni's sky-

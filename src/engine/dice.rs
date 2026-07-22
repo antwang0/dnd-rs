@@ -14,6 +14,20 @@ impl Dice {
     pub const fn new(count: u32, faces: u32) -> Self {
         Self { count, faces }
     }
+
+    /// The maximum possible sum of this dice pool: every die comes up on
+    /// its top face. Used at "maximize the roll" chokepoints — the Grave
+    /// Cleric's Circle of Mortality substitution (max dice on a 0-HP
+    /// healing target) is the current caller; any future "no roll,
+    /// take max" surface (Empowered Evocation crits, a hypothetical
+    /// Assassinate max-damage variant, etc.) lands on the same accessor.
+    /// Saturating multiplication keeps the accessor safe against a
+    /// pathological `u32` overflow (`count * faces >= 2^32`); real dice
+    /// pools clear that bound by orders of magnitude but the guard is
+    /// cheap.
+    pub const fn max_roll(&self) -> u32 {
+        self.count.saturating_mul(self.faces)
+    }
 }
 
 impl fmt::Display for Dice {
@@ -346,5 +360,39 @@ mod tests {
         let mut r = FastRandRoller::with_seed(1);
         assert_eq!(r.roll(&Dice::new(0, 20)), 0);
         assert_eq!(r.roll(&Dice::new(3, 0)), 0);
+    }
+
+    #[test]
+    fn max_roll_is_count_times_faces() {
+        // Canonical shapes: 1d8 → 8, 3d8 → 24, 1d4 → 4, 10d6 → 60.
+        // Zero-count or zero-faces degenerate to 0 the same way the
+        // sibling `roll` accessor treats them, so a caller substituting
+        // `dice.max_roll()` for a live roll doesn't accidentally overshoot
+        // on a degenerate pool.
+        assert_eq!(Dice::new(1, 8).max_roll(), 8);
+        assert_eq!(Dice::new(3, 8).max_roll(), 24);
+        assert_eq!(Dice::new(1, 4).max_roll(), 4);
+        assert_eq!(Dice::new(10, 6).max_roll(), 60);
+        assert_eq!(Dice::new(0, 20).max_roll(), 0);
+        assert_eq!(Dice::new(3, 0).max_roll(), 0);
+    }
+
+    #[test]
+    fn max_roll_dominates_random_roll() {
+        // A random roll of the pool must never exceed the max-roll
+        // ceiling. Loop enough seeds to cover the tail of the roller.
+        let dice = Dice::new(5, 20);
+        let ceiling = dice.max_roll();
+        for seed in 0..64 {
+            let mut r = FastRandRoller::with_seed(seed);
+            let rolled = r.roll(&dice);
+            assert!(
+                rolled <= ceiling,
+                "seed {}: rolled {} > max_roll {}",
+                seed,
+                rolled,
+                ceiling
+            );
+        }
     }
 }
