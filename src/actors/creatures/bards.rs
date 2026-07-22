@@ -194,3 +194,79 @@ pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..BARD_TEMPLATE.clone()
     }
 });
+
+/// College of Swords Bard — subclass build (XGtE). Identical envelope to
+/// the baseline `BARD_TEMPLATE` (level-7 build, CHA-primary full caster,
+/// Bardic Inspiration / Cutting Words / Font of Inspiration, Compulsion
+/// capstone slot) with two subclass features layered on:
+///
+/// - **Fighting Style: Dueling** (Swords subclass lv3 pick): passive +2
+///   to melee weapon damage rolls. RAW's "wielding a one-handed weapon
+///   and no other weapon" gate collapses to "melee weapon attack" since
+///   the engine doesn't track weapon-hand-usage — same gate collapse the
+///   baseline Fighter's Dueling style uses on the scimitar chassis. Read
+///   at the shared `MELEE_CASTER_BUMPS` chokepoint in `engine::attack`
+///   via `has_dueling_style()`. The Swords bard picks up the +2 on every
+///   scimitar swing (the baseline bard's one-handed melee weapon), so
+///   the subclass's per-swing damage floor lifts one notch above the
+///   Valor bard's un-styled scimitar.
+///
+/// - **Extra Attack** (Swords subclass lv6): an Action-cost scimitar
+///   swing chains a second scimitar swing on the same Action via the
+///   shared `maybe_chain_extra_attack` helper. Same flag flip as the
+///   Valor bard's Extra Attack — both combat-bard subclasses converge
+///   on the same "twice per Action" cadence at lv6.
+///
+/// Pairs naturally with the bard's existing support kit: the Swords bard
+/// sits in melee range with a scimitar between spell casts (twice per
+/// Action, each swing +2 damage) while Bardic Inspiration primes an
+/// ally's next roll — the RAW "blade dancer" tell. Distinct from
+/// `VALOR_BARD_TEMPLATE` (Extra Attack only — no Dueling style, no
+/// per-swing damage floor lift) and from `BARD_TEMPLATE` (the baseline
+/// support-flavored one-shot swinger). Three bard lanes now converge on
+/// the same "combat bard" identity from different angles: Valor via a
+/// second Action-cost swing, Swords via a second swing PLUS a per-swing
+/// damage floor, baseline Bard via the CC-heavy support kit.
+///
+/// Ships the CR-2 template above the strict RAW level-6 gate for the
+/// same reason `VALOR_BARD_TEMPLATE` ships Extra Attack (RAW lv6):
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Glyph 'W' — 'W' for "sWords" reads as a blade-flourishing duelist.
+/// Distinct from baseline bard 'B' and Valor Bard 'V'. Collides with
+/// several other creature templates on the map (Werewolf / Wight /
+/// Warhorse / Wraith etc.) but the team-color-and-team-id combo
+/// disambiguates in a mixed encounter — same overlap policy as the other
+/// PC subclass glyphs (Assassin 'A' shares with Ape, Scout Rogue 'K'
+/// shares with Killer Whale, etc.).
+///
+/// RAW's Swords Bard picks up other features not shipped on this
+/// template — **Blade Flourishes** (Defensive / Slashing / Mobile
+/// Flourish riders on the scimitar swing, spending a Bardic Inspiration
+/// die per flourish), **Bonus Proficiencies** (medium armor + scimitar
+/// as a martial weapon — ribbon-only surface here), and **Master's
+/// Flourish** (lv14: flourish riders roll a d6 instead of the BI die).
+/// Only the two RAW-passive halves (Dueling style + Extra Attack) have a
+/// mechanical surface on the CR-2 chassis that plugs cleanly into the
+/// existing flag lanes, so we ship those and leave the flourish riders
+/// as future work — matching the way `NECROMANCY_WIZARD_TEMPLATE` ships
+/// only Inured to Undeath and `SCOUT_ROGUE_TEMPLATE` ships only Superior
+/// Mobility from the RAW subclass kit.
+pub static SWORDS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Bard envelope wholesale
+    // and flip the two subclass template flags. The `..BARD_TEMPLATE.clone()`
+    // tail picks up every other field — spell slots, stats, actions,
+    // Bardic Inspiration / Cutting Words / Font of Inspiration features
+    // — without an N-line field-by-field copy. Same shape as
+    // `VALOR_BARD_TEMPLATE`, and the same "flip two boolean flags on the
+    // clone" shape `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its
+    // Rakish Audacity + Fancy Footwork pair.
+    CreatureTemplate {
+        name: "Swords Bard",
+        glyph: 'W',
+        has_extra_attack: true,
+        has_dueling_style: true,
+        ..BARD_TEMPLATE.clone()
+    }
+});
