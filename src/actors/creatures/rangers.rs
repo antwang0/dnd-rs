@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, ROVING_TAG, VANISH, VANISH_TAG,
+    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, ROVING_TAG,
+    VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -324,4 +325,109 @@ pub static GLOOM_STALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         ]),
         ..RANGER_TEMPLATE.clone()
     }
+});
+
+/// Fey Wanderer Ranger — Ranger Conclave **Fey Wanderer** subclass build
+/// (TCE). Identical envelope to the baseline `RANGER_TEMPLATE` (level-9
+/// half-caster, longbow + scimitar, 4/3/3/1/1 slot ladder, same kiter
+/// spell list, Feral Senses / Foe Slayer / Vanish / Roving / Archery
+/// Style inherited via `..base.clone()`) with one subclass feature
+/// layered on: **Dreadful Strikes** (lv3 subclass tell) — passive
+/// once-per-turn +1d4 Psychic damage rider on any weapon hit.
+///
+/// The Fey Wanderer's signature "the fey-touched ranger's weapons whisper
+/// dread with every strike" tell — where the baseline ranger relies on
+/// their weapon's base damage type, the Fey Wanderer's swings carry a
+/// small psychic aftershock that punches through most creatures' typed
+/// resistances (Psychic is a rarely-resisted damage type — only a
+/// handful of aberrations / undead / constructs shrug it off, vs. the
+/// broad Fire / Cold / Necrotic resistance lanes on many monster
+/// chassis). Composes cleanly with the ranger's kiter kit: the +1d4 fires
+/// on the opening longbow shot (or the follow-up scimitar swing when a
+/// melee threat closes through the kite) at no action / concentration
+/// cost.
+///
+/// Sibling on the "once-per-turn +XdN weapon-hit rider" cross-class lane
+/// to `COLOSSUS_SLAYER_TAG` (Hunter Ranger lv3 — +1d8 weapon-typed with
+/// a wounded-target gate), `FOE_SLAYER_TAG` (Ranger lv20 capstone —
+/// flat +WIS-mod on any weapon hit), `DIVINE_FURY_TAG` (Zealot
+/// Barbarian lv3 — +1d6 + level/2 Radiant while raging), and
+/// `SNEAK_ATTACK_TAG` (Rogue once-per-turn +Nd6 with the qualifying-
+/// attack gate). The four rider tags share the `ONCE_PER_TURN_RIDER_TAGS`
+/// ledger on `ActorInstance` — each fires at most once per turn on the
+/// shared per-actor gate, and a hypothetical multiclass carrier stacks
+/// every distinct tag's die cleanly on the opening shot (Hunter Ranger
+/// with Fey Wanderer multiclass: Colossus Slayer + Dreadful Strikes +
+/// Foe Slayer all fire on the first wounded-target hit).
+///
+/// Distinct from the sibling `COLOSSUS_SLAYER_TAG` on three axes:
+///   1. **No target gate** — Dreadful Strikes fires against any target;
+///      Colossus Slayer requires `is_wounded()`. Fey Wanderer opens on
+///      full-HP targets where Hunter opens only on softened ones.
+///   2. **Fixed damage type** — Dreadful Strikes always deals Psychic;
+///      Colossus Slayer inherits the weapon's damage type.
+///   3. **Smaller die** — 1d4 vs. Colossus Slayer's 1d8; the Fey
+///      Wanderer trades die size for the always-fires-any-target gate.
+///
+/// RAW's Fey Wanderer picks up other features not shipped on this
+/// template — **Otherworldly Glamour** (lv3: +WIS-mod to CHA checks +
+/// one CHA-skill proficiency; ribbon on this engine's combat surface),
+/// **Fey Reinforcements** (lv7: cast Summon Fey once per long rest
+/// without a spell slot; needs a summon action surface), **Beguiling
+/// Twist** (lv11: reaction to redirect a Charmed / Frightened save; needs
+/// a per-target save-redirect hook), and **Misty Wanderer** (lv15:
+/// cast Misty Step at will; needs an at-will spell-cast surface). Only
+/// the lv3 Dreadful Strikes passive has a mechanical surface on the CR-1
+/// (level-9) chassis that plugs cleanly into the shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger, so we ship that half and leave
+/// the rest as future work — matching the way `HUNTER_RANGER_TEMPLATE`
+/// ships only Colossus Slayer + Multiattack Defense + Superior Hunter's
+/// Defense (Evasion) from the RAW Hunter Conclave kit and every other
+/// subclass template runs above its strict RAW gate.
+///
+/// Ships on the CR-1 (level-9) ranger chassis at (or above) its strict
+/// RAW lv3 gate for the same reason `HUNTER_RANGER_TEMPLATE` and
+/// `GLOOM_STALKER_RANGER_TEMPLATE` ship their Conclave features above
+/// their strict RAW gates — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Distinct from `RANGER_TEMPLATE` (Conclave-less baseline),
+/// `HUNTER_RANGER_TEMPLATE` (Hunter Conclave), and
+/// `GLOOM_STALKER_RANGER_TEMPLATE` (Gloom Stalker Conclave) so a
+/// Fey-vs-Hunter / Fey-vs-Gloom / Fey-vs-baseline encounter renders
+/// unambiguously by name.
+///
+/// Glyph 'Y' — 'Y' for "fae**Y**" reads as a fey-touched wanderer, and
+/// the letter's forked shape suggests a divining rod / dowsing branch
+/// (fey iconography). Distinct from baseline ranger 'R', Hunter 'H',
+/// and Gloom Stalker 'G'. Collides with a handful of NPC creature
+/// templates (Yugoloth-adjacent monsters) but the team-color-and-team-
+/// id combo disambiguates them in a mixed encounter — same overlap
+/// policy the other PC subclass glyphs already follow.
+pub static FEY_WANDERER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Ranger envelope wholesale
+    // and layers on the Dreadful Strikes passive tag. The `..base.clone()`
+    // tail inside the helper picks up every other field — the full
+    // ranger spell list, save profs, stats, slots, Feral Senses / Foe
+    // Slayer / Vanish / Roving / Archery Style — without an N-line
+    // field-by-field copy. No new actions are pushed — Dreadful Strikes
+    // is a purely passive once-per-turn weapon-hit rider read at
+    // `resolve_attack_outcome` via the shared `ONCE_PER_TURN_RIDER_TAGS`
+    // ledger, not a fresh action surface, so the "tag-only" shape the
+    // helper wraps is a natural fit. First ranger-chassis user of the
+    // `with_subclass_tag` cross-class helper — every prior ranger
+    // subclass (Hunter, Gloom Stalker) layers more than a single feature
+    // tag on top of the baseline (Hunter: Colossus Slayer + Multiattack
+    // Defense + Evasion; Gloom Stalker: Dread Ambusher + Iron Mind) so
+    // they stay on the explicit clone-and-insert body. Sibling helper
+    // users on the "clone base + insert one tag" cross-class lane: every
+    // tag-only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `TWILIGHT_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `WAR_MAGIC_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
+    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`.
+    RANGER_TEMPLATE.with_subclass_tag("Fey Wanderer Ranger", 'Y', DREADFUL_STRIKES_TAG)
 });

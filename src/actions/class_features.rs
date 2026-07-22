@@ -2406,6 +2406,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     COLOSSUS_SLAYER_TAG,
     FOE_SLAYER_TAG,
     DIVINE_FURY_TAG,
+    DREADFUL_STRIKES_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2476,6 +2477,52 @@ pub const MULTIATTACK_DEFENSE_TAG: &str = "ranger.multiattack_defense";
 /// crits don't double the flat mod (RAW: the crit-doubling rule
 /// applies to damage dice, not flat modifiers).
 pub const FOE_SLAYER_TAG: &str = "ranger.foe_slayer";
+
+/// 5e Ranger **Fey Wanderer** subclass — **Dreadful Strikes** (level 3,
+/// TCE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
+/// +1d4 Psychic damage on the target. RAW gates on "a creature that
+/// isn't already affected by your Dreadful Strikes this turn" — we
+/// collapse the per-target gate to the once-per-turn ledger (any
+/// target), matching the shape Colossus Slayer / Foe Slayer / Divine
+/// Fury already use on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort.
+/// The collapse trades away the RAW ability to fire the rider a second
+/// time this turn against a distinct target — a small approximation
+/// since the typical two-swing Extra Attack chain lands both hits on
+/// the same primary target where RAW would also collapse to a single
+/// fire — in exchange for slotting into the existing once-per-turn
+/// ledger without a per-target hit-map surface.
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited to one trigger per turn) and read at the
+/// attack-resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// right after the Colossus Slayer block. The "once per turn" gate is
+/// the `once_per_turn_used(DREADFUL_STRIKES_TAG)` ledger on the actor,
+/// cleared at turn-start by `reset_for_new_round` (mirrors Colossus
+/// Slayer / Foe Slayer / Divine Fury on the same ledger).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider
+/// fires on melee AND ranged weapon hits (RAW: "When you hit a
+/// creature with a weapon attack") — no melee-only gate. Damage is
+/// always typed Psychic — RAW's "your association with the Feywild
+/// has infused your weapon strikes with dread" fixes the type at
+/// Psychic regardless of the weapon's base type, distinct from
+/// Colossus Slayer's `weapon-typed` die which mirrors the weapon.
+///
+/// RAW's Dreadful Strikes die scales from 1d4 → 1d6 at ranger level
+/// 11. We ship the lv3 1d4 base die on the FEY_WANDERER_RANGER_TEMPLATE
+/// — class templates target a balanced playable level, not lockstep
+/// PHB progression; the lv11 die bump is left as future work behind a
+/// per-caster level gate (same shape Divine Fury's `+ level / 2` flat
+/// mod already uses on the Zealot chassis).
+///
+/// Sibling on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort to
+/// COLOSSUS_SLAYER_TAG (Hunter Ranger lv3 — +1d8 weapon-typed with a
+/// wounded-target gate), FOE_SLAYER_TAG (Ranger lv20 capstone — flat
+/// +WIS-mod on any weapon hit), DIVINE_FURY_TAG (Zealot Barbarian lv3
+/// — +1d6 + level/2 Radiant while raging), and SNEAK_ATTACK_TAG (Rogue
+/// once-per-turn +Nd6 with the qualifying-attack gate).
+pub const DREADFUL_STRIKES_TAG: &str = "ranger.dreadful_strikes";
 
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's

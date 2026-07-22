@@ -26554,6 +26554,202 @@ mod tests {
         );
     }
 
+    /// Dreadful Strikes (Fey Wanderer Ranger lv3, TCE): passive once-
+    /// per-turn +1d4 Psychic damage rider on any weapon hit. Distinct
+    /// from Colossus Slayer's wounded-target gate — Dreadful Strikes
+    /// fires against a full-HP target too, so we probe with an unwounded
+    /// goblin across a seed loop and expect a "dreadful strikes" log
+    /// line on at least one connecting swing plus the once-per-turn
+    /// ledger flipping to used.
+    #[test]
+    fn dreadful_strikes_fires_on_weapon_hit_and_marks_used() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::DREADFUL_STRIKES_TAG;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::FEY_WANDERER_RANGER_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            // Full-HP goblin — the Colossus Slayer wounded gate would
+            // reject; Dreadful Strikes must still fire.
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("dreadful strikes")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&r].once_per_turn_used(DREADFUL_STRIKES_TAG),
+                    "once-per-turn ledger should flip after the rider fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'dreadful strikes' log line on at least one connecting swing"
+        );
+    }
+
+    /// Dreadful Strikes is once-per-turn. Once the shared ledger is set,
+    /// subsequent swings on the same turn must not fire the rider — the
+    /// sibling shape to the Colossus Slayer / Foe Slayer / Divine Fury
+    /// once-per-turn assertions on the shared `ONCE_PER_TURN_RIDER_TAGS`
+    /// cohort.
+    #[test]
+    fn dreadful_strikes_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::DREADFUL_STRIKES_TAG;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::FEY_WANDERER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let r = e
+            .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&r)
+            .unwrap()
+            .mark_once_per_turn_used(DREADFUL_STRIKES_TAG);
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("dreadful strikes"));
+        assert!(
+            !any_rider,
+            "dreadful strikes must not fire while the once-per-turn ledger is set"
+        );
+    }
+
+    /// Baseline / Hunter / Gloom Stalker rangers must NOT ship Dreadful
+    /// Strikes — the tag is Fey Wanderer-only. Locks the subclass tag
+    /// composition against a template drift (e.g. accidentally promoting
+    /// Dreadful Strikes to the baseline `RANGER_TEMPLATE` features set
+    /// and having the +1d4 psychic rider fire on every ranger weapon hit).
+    #[test]
+    fn dreadful_strikes_tag_is_fey_wanderer_only() {
+        use crate::actions::class_features::DREADFUL_STRIKES_TAG;
+        use crate::actors::creatures::rangers::{
+            FEY_WANDERER_RANGER_TEMPLATE, GLOOM_STALKER_RANGER_TEMPLATE, HUNTER_RANGER_TEMPLATE,
+            RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let gloom = e
+            .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let fey = e
+            .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].has_passive_feature(DREADFUL_STRIKES_TAG),
+            "baseline Ranger must NOT carry Dreadful Strikes"
+        );
+        assert!(
+            !e.actors[&hunter].has_passive_feature(DREADFUL_STRIKES_TAG),
+            "Hunter Ranger must NOT carry Dreadful Strikes"
+        );
+        assert!(
+            !e.actors[&gloom].has_passive_feature(DREADFUL_STRIKES_TAG),
+            "Gloom Stalker Ranger must NOT carry Dreadful Strikes"
+        );
+        assert!(
+            e.actors[&fey].has_passive_feature(DREADFUL_STRIKES_TAG),
+            "Fey Wanderer Ranger MUST carry Dreadful Strikes"
+        );
+    }
+
+    /// The Fey Wanderer subclass template inherits every other baseline
+    /// ranger feature via the shared `with_subclass_tag` helper —
+    /// verifies Foe Slayer / Vanish / Roving all still ride on the
+    /// clone so a future refactor of the helper can't silently drop
+    /// baseline features.
+    #[test]
+    fn fey_wanderer_ranger_inherits_baseline_features() {
+        use crate::actions::class_features::{FOE_SLAYER_TAG, ROVING_TAG, VANISH_TAG};
+        use crate::actors::creatures::rangers::FEY_WANDERER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fey = e
+            .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&fey].has_passive_feature(FOE_SLAYER_TAG),
+            "Fey Wanderer Ranger should inherit Foe Slayer from baseline"
+        );
+        assert!(
+            e.actors[&fey].has_passive_feature(VANISH_TAG),
+            "Fey Wanderer Ranger should inherit Vanish from baseline"
+        );
+        assert!(
+            e.actors[&fey].has_passive_feature(ROVING_TAG),
+            "Fey Wanderer Ranger should inherit Roving from baseline"
+        );
+    }
+
+    /// A Fey Wanderer Ranger stacks Dreadful Strikes AND Foe Slayer on
+    /// the same connecting swing — both are once-per-turn riders on the
+    /// shared `ONCE_PER_TURN_RIDER_TAGS` cohort, keyed off distinct tag
+    /// ledgers so they don't cross-lock. Sibling test to the Hunter
+    /// Ranger's Colossus-Slayer + Foe-Slayer stacking assertion.
+    #[test]
+    fn fey_wanderer_stacks_dreadful_strikes_and_foe_slayer() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::FEY_WANDERER_RANGER_TEMPLATE;
+        let mut both_fired = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            let saw_dreadful = log_lines.iter().any(|s| s.contains("dreadful strikes"));
+            let saw_foe = log_lines.iter().any(|s| s.contains("foe slayer"));
+            if saw_dreadful && saw_foe {
+                both_fired = true;
+                break;
+            }
+        }
+        assert!(
+            both_fired,
+            "expected a single hit to fire both Dreadful Strikes AND Foe Slayer riders"
+        );
+    }
+
     /// Foe Slayer (Ranger lv20 capstone): passive once-per-turn +WIS-
     /// mod flat damage rider on weapon hits. Since the RANGER_TEMPLATE
     /// ships with WIS 14 (+2 modifier), a connecting weapon swing
@@ -52509,28 +52705,30 @@ mod tests {
     }
 
     /// The shared once-per-turn rider ledger cleanly separates its
-    /// four registered tags — a Sneak Attack mark doesn't accidentally
-    /// suppress a Colossus Slayer / Foe Slayer / Divine Fury swing
-    /// (and vice versa). Locks the HashSet-backed decoupling that the
-    /// pre-refactor bool cohort trivially had by construction.
+    /// five registered tags — a Sneak Attack mark doesn't accidentally
+    /// suppress a Colossus Slayer / Foe Slayer / Divine Fury / Dreadful
+    /// Strikes swing (and vice versa). Locks the HashSet-backed
+    /// decoupling that the pre-refactor bool cohort trivially had by
+    /// construction.
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
-            COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, FOE_SLAYER_TAG, ONCE_PER_TURN_RIDER_TAGS,
-            SNEAK_ATTACK_TAG,
+            COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG,
+            ONCE_PER_TURN_RIDER_TAGS, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            4,
+            5,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DIVINE_FURY_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DREADFUL_STRIKES_TAG));
 
         let mut e = ei_with_terrain(15, 15, &[]);
         let g = e

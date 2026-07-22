@@ -1000,6 +1000,48 @@ pub fn resolve_attack_outcome(
             caster.mark_colossus_slayer_used();
         }
     }
+    // 5e Fey Wanderer Ranger **Dreadful Strikes** (level 3, TCE) — passive
+    // once-per-turn weapon-hit rider. On any weapon hit, lay +1d4 Psychic
+    // damage on the target. Two gates:
+    //   1. Not a spell attack (RAW: "with a weapon attack").
+    //   2. Caster has the DREADFUL_STRIKES_TAG passive feature flag AND
+    //      hasn't already fired Dreadful Strikes this turn
+    //      (`once_per_turn_used(DREADFUL_STRIKES_TAG)` — cleared at
+    //      turn-start by `reset_for_new_round` on the shared
+    //      `ONCE_PER_TURN_RIDER_TAGS` ledger).
+    // No wounded-target gate (unlike Colossus Slayer's `is_wounded()`
+    // sibling — RAW's Dreadful Strikes fires against any target). No
+    // melee gate (RAW covers ranged weapon hits too). Damage is always
+    // typed Psychic — RAW fixes the type at Psychic regardless of the
+    // weapon's base type, distinct from Colossus Slayer's weapon-typed
+    // die (`p.damage_type`). Crits double the die per `roll_rider` RAW.
+    if !p.is_spell
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(
+                    crate::actions::class_features::DREADFUL_STRIKES_TAG,
+                ) && !a.once_per_turn_used(
+                    crate::actions::class_features::DREADFUL_STRIKES_TAG,
+                )
+            })
+    {
+        push_die_rider(
+            encounter,
+            &mut effects,
+            p.target_id,
+            Dice::new(1, 4),
+            is_crit,
+            DamageType::Psychic,
+            "dreadful strikes",
+        );
+        if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
+            caster.mark_once_per_turn_used(
+                crate::actions::class_features::DREADFUL_STRIKES_TAG,
+            );
+        }
+    }
     // 5e Ranger **Foe Slayer** (level 20 capstone) — passive once-per-
     // turn rider. On any weapon hit, add the ranger's Wisdom modifier
     // as flat damage of the weapon's damage type. Two gates:
