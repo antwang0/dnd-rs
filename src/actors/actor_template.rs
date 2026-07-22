@@ -969,6 +969,22 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
         flag: |a| a.has_iron_mind,
         ability: AbilityScoreType::Wisdom,
     },
+    // 5e Samurai Fighter Elegant Courtier (subclass lv7, XGtE):
+    // proficiency in Wisdom saves. Third row on the WIS-save-
+    // proficiency axis alongside Slippery Mind / Iron Mind — same
+    // mechanical grant, distinct source (subclass tag closure via
+    // `has_passive_feature(ELEGANT_COURTIER_TAG)` rather than a
+    // dedicated struct-field flag, matching the "tag-only cross-class
+    // helper" pattern the wizard `with_subclass_tag` chassis uses for
+    // `NECROMANCY_WIZARD_TEMPLATE` / `WAR_MAGIC_WIZARD_TEMPLATE`). The
+    // three never legally co-occur on a single build (Rogue vs. Ranger
+    // vs. Barbarian vs. Fighter subclass slots), and a hypothetical
+    // multiclass carrier picks up the proficiency via any single row
+    // under the "any row hit is sufficient" OR semantic.
+    FlagDrivenSaveProficiency {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::ELEGANT_COURTIER_TAG),
+        ability: AbilityScoreType::Wisdom,
+    },
 ];
 
 /// One row in the `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort — a single

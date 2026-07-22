@@ -9110,3 +9110,76 @@ pub const AURA_OF_ALACRITY_SPEED_BONUS: f32 = 10.0;
 /// class templates target a balanced playable level, not lockstep PHB
 /// progression.
 pub const AURA_OF_THE_SENTINEL_TAG: &str = "paladin.aura_of_the_sentinel";
+
+/// 5e Fighter **Samurai** Martial Archetype (XGtE) — **Elegant Courtier**
+/// (level 7 subclass passive tell). RAW: "your discipline and rigorous
+/// training allow you to conduct yourself with poise. You gain proficiency
+/// in Wisdom saving throws. If you already have this proficiency, you
+/// instead gain proficiency in one of the following skills of your
+/// choice: Insight, Performance, or Persuasion."
+///
+/// The load-bearing combat surface for Elegant Courtier is the WIS-save
+/// proficiency half — the "if you already have WIS prof, pick a CHA/WIS
+/// skill" fallback is a ribbon on non-combat social checks with no
+/// engine surface. We ship the WIS-save-proficiency half and leave the
+/// fallback as future work; a hypothetical Samurai carrier that
+/// already picks up WIS prof from a multiclass chassis (Cleric,
+/// Druid, Warlock, Wizard baseline) simply gets the WIS prof twice
+/// via the OR-of-cohort-hits shape, which is a no-op since save
+/// proficiency isn't an additive scalar.
+///
+/// Read at the shared `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort in
+/// `actor_template.rs` next to `has_slippery_mind` (Rogue lv15) and
+/// `has_iron_mind` (Gloom Stalker / Zealot Barbarian lv7) — three
+/// existing rows on the "class feature grants WIS save proficiency"
+/// lane, all promoting the same ability to "proficient". The Samurai
+/// row uses a subclass-tag closure (`has_passive_feature(ELEGANT_COURTIER_TAG)`)
+/// rather than a dedicated `has_elegant_courtier` struct-field flag,
+/// matching the "tag-only cross-class helper" pattern
+/// (`with_subclass_tag`) the wizard chassis already uses for
+/// `NECROMANCY_WIZARD_TEMPLATE` / `WAR_MAGIC_WIZARD_TEMPLATE`.
+///
+/// Sibling on the "one feature tag drives one save-proficiency cohort
+/// row" declarative-table pattern to Slippery Mind (Rogue struct-field
+/// flag `has_slippery_mind`) and Iron Mind (Gloom Stalker / Zealot
+/// Barbarian struct-field flag `has_iron_mind`) — three existing rows
+/// on the shared WIS-save-proficiency axis, keyed off distinct sources
+/// (subclass tag here vs. struct-field flag for the sibling rows).
+/// The three never legally co-occur on a single build (Rogue vs. Ranger
+/// vs. Barbarian vs. Fighter subclass slots), and a hypothetical
+/// multiclass carrier picks up the proficiency via any single row
+/// under the "any row hit is sufficient" OR semantic.
+///
+/// RAW's Samurai Fighter picks up other features not shipped on this
+/// template — **Bonus Proficiency** (lv3: one skill or language;
+/// ribbon on out-of-combat social checks with no engine surface),
+/// **Fighting Spirit** (lv3: 3-per-long-rest bonus action for +5/10/15
+/// temp HP AND advantage on weapon attacks until end of turn; needs a
+/// per-turn advantage-marker plus a temp HP grant chained to a bonus-
+/// action prime — future work behind a `FightingSpirit` action
+/// surface), **Tireless Spirit** (lv10: refresh Fighting Spirit at
+/// initiative-roll time if none left; needs a per-encounter refresh
+/// tick), **Rapid Strike** (lv15: trade advantage for extra attack;
+/// needs an advantage-consumption + bonus-attack hook), and
+/// **Strength Before Death** (lv18 capstone: reaction to take a full
+/// turn on being reduced to 0 HP; needs a dying-transition reaction
+/// hook). Only the lv7 Elegant Courtier passive has a mechanical
+/// surface on the CR-1 chassis that plugs cleanly into the shared
+/// `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only Inured to Undeath,
+/// `FORGE_CLERIC_TEMPLATE` ships only Soul of the Forge, and every
+/// other tag-only subclass template pares down to the load-bearing
+/// passive half of its RAW subclass kit.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it. Ships on `SAMURAI_FIGHTER_TEMPLATE` at (or
+/// above) its strict RAW lv7 gate for the same reason
+/// `WATCHERS_PALADIN_TEMPLATE` ships Aura of the Sentinel (RAW lv7),
+/// `GLORY_PALADIN_TEMPLATE` ships Aura of Alacrity (RAW lv7), and
+/// every other subclass template runs above its strict RAW gate —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const ELEGANT_COURTIER_TAG: &str = "fighter.elegant_courtier";

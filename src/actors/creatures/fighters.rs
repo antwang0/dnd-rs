@@ -1,11 +1,11 @@
 use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
-    DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, FEINTING_ATTACK,
-    FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
-    LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PARRY_TAG,
-    PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG,
-    RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
-    TRIP_ATTACK, TRIP_ATTACK_TAG,
+    DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELEGANT_COURTIER_TAG,
+    FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE,
+    INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG,
+    PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY,
+    RALLY_TAG, RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK,
+    SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -257,4 +257,144 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_dueling_style: true,
         ..CreatureTemplate::defaults()
     }
+});
+
+/// Samurai Fighter — Martial Archetype **Samurai** subclass build (XGtE).
+/// Identical envelope to the baseline `FIGHTER_TEMPLATE` (level-3 build,
+/// STR-primary martial, scimitar + Second Wind / Action Surge /
+/// Indomitable / the full Battle Master maneuver suite, chain-mail AC 16,
+/// Dueling fighting style) with one subclass feature layered on:
+/// **Elegant Courtier** (lv7 subclass tell) — passive **proficiency in
+/// Wisdom saving throws**.
+///
+/// The Samurai's signature "the disciplined warrior's poise steadies the
+/// mind against mind-affecting magic" tell — where a baseline Fighter's
+/// WIS save relies on the WIS 11 mod alone plus no proficiency, the
+/// Samurai adds the proficiency bonus on every WIS-save chokepoint
+/// (against Charm Person, Hold Person, Dominate Person, Suggestion,
+/// Fear, Command, Sanctuary — every mind-affecting effect that
+/// thematically targets the Samurai's steel-focused mind). Composes
+/// cleanly with the fighter chassis's baseline STR / CON proficiency
+/// set — the Samurai now covers three of the six save axes at
+/// proficient (STR / CON / WIS), leaving only DEX / INT / CHA
+/// unimproved for the shared level-3 Fighter build.
+///
+/// The Samurai's WIS-save-proficiency-flavored sibling to the other
+/// Fighter subclasses:
+///   - **Champion** (`CHAMPION_TEMPLATE`): Improved Critical (crit-on-19)
+///     + Superior Critical (crit-on-18) + Remarkable Athlete (half-prof
+///     initiative bump) + Defense / Dueling Fighting Styles + Survivor.
+///     The "spike-damage / durable" archetype.
+///   - **Baseline Fighter** (`FIGHTER_TEMPLATE`): all Battle Master
+///     maneuvers (Trip / Menacing / Disarming / Pushing / Goading /
+///     Precision / Sweeping / Feinting / Lunging / Rally /
+///     Commander's Strike / Distracting) + Parry + Riposte + Dueling
+///     Style. The "tactical / versatile" archetype.
+///   - **Samurai** (`SAMURAI_FIGHTER_TEMPLATE`): Elegant Courtier
+///     WIS-save proficiency. The "disciplined / mind-hardened"
+///     archetype — inherits the baseline Fighter's Battle Master
+///     maneuvers via `..FIGHTER_TEMPLATE.clone()` through the shared
+///     `with_subclass_tag` helper so the Samurai still has a full
+///     tactical toolkit but leans additionally into the WIS-save
+///     defensive lane.
+///
+/// Where the Champion leans on crit-threshold spikes and always-on
+/// Survivor regen, the Samurai leans on the always-on WIS-save
+/// proficiency — no charge to spend, no bonus action to prime, no
+/// target to pick. Sibling on the "passive WIS-save proficiency as a
+/// subclass tell" cross-class lane to `has_slippery_mind` (Rogue lv15
+/// class capstone) and `has_iron_mind` (Gloom Stalker Ranger lv7 /
+/// Zealot Barbarian lv7 subclass features) — three prior sources on
+/// the same save-proficiency axis, all distinct build slots, all
+/// promoting the same ability to "proficient". The four never legally
+/// co-occur on a single build (Rogue vs. Ranger vs. Barbarian vs.
+/// Fighter subclass slots), and a hypothetical multiclass carrier
+/// picks up the proficiency via any single row under the shared
+/// `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort's "any row hit is
+/// sufficient" OR semantic.
+///
+/// Read at the shared `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort in
+/// `actor_template.rs` next to Slippery Mind / Iron Mind — one lookup
+/// table, one source of truth. The tag-closure row shape
+/// (`|a| a.has_passive_feature(ELEGANT_COURTIER_TAG)`) matches the
+/// two struct-field-flag sibling rows on the same cohort by promoting
+/// the same ability to proficient without adding a new
+/// `has_elegant_courtier` field to `ActorInstance` — the "tag-only
+/// cross-class helper" pattern (`with_subclass_tag`) keeps the
+/// subclass template one-line and the cohort row one-liner.
+///
+/// RAW's Samurai Fighter picks up other features not shipped on this
+/// template — **Bonus Proficiency** (lv3: one skill or language;
+/// ribbon on out-of-combat social checks with no engine surface),
+/// **Fighting Spirit** (lv3: 3-per-long-rest bonus action for
+/// +5/10/15 temp HP AND advantage on weapon attacks until end of
+/// turn; needs a per-turn advantage-marker plus a temp HP grant
+/// chained to a bonus-action prime — future work behind a
+/// `FightingSpirit` action surface), **Tireless Spirit** (lv10:
+/// refresh Fighting Spirit at initiative-roll time if none left;
+/// needs a per-encounter refresh tick), **Rapid Strike** (lv15:
+/// trade advantage for extra attack; needs an advantage-consumption
+/// + bonus-attack hook), and **Strength Before Death** (lv18
+/// capstone: reaction to take a full turn on being reduced to 0 HP;
+/// needs a dying-transition reaction hook). Only the lv7 Elegant
+/// Courtier passive has a mechanical surface on the CR-1 chassis
+/// that plugs cleanly into the shared `FLAG_DRIVEN_SAVE_PROFICIENCIES`
+/// cohort, so we ship that half and leave the rest as future work —
+/// matching the way `CHAMPION_TEMPLATE` ships the lv3 / lv7 / lv15
+/// / lv18 passive Champion features but leaves the reactive Battle
+/// Master lane on the baseline `FIGHTER_TEMPLATE` and the way every
+/// other tag-only subclass template pares down to the load-bearing
+/// passive half of its RAW subclass kit.
+///
+/// Ships on the CR-1 (level-3) fighter chassis at (or above) its
+/// strict RAW lv7 gate for the same reason `WATCHERS_PALADIN_TEMPLATE`
+/// ships Aura of the Sentinel (RAW lv7), `GLORY_PALADIN_TEMPLATE`
+/// ships Aura of Alacrity (RAW lv7), `NECROMANCY_WIZARD_TEMPLATE`
+/// ships Inured to Undeath (RAW lv10), and every other subclass
+/// template runs above its strict RAW gate — class templates target
+/// a balanced playable level, not lockstep PHB progression.
+///
+/// Distinct from `FIGHTER_TEMPLATE` (Archetype-less baseline —
+/// Battle Master maneuvers only) and `CHAMPION_TEMPLATE` (Champion
+/// Archetype — Improved / Superior Critical spike lane) so a
+/// Samurai-vs-Champion / Samurai-vs-Fighter encounter renders
+/// unambiguously by name.
+///
+/// Glyph 'S' — for "Samurai" and evokes the katana's curved blade
+/// silhouette. Distinct from baseline Fighter 'F' and Champion 'C'.
+/// Collides with several NPC creature templates (Sphinx / Satyr /
+/// Specter / Skeleton / Stirge / Swarm) but the team-color-and-team-
+/// id combo disambiguates them in a mixed encounter — same overlap
+/// policy the other PC subclass glyphs already follow (Scout Rogue
+/// 'K' shares with Killer Whale, Assassin 'A' shares with Ape /
+/// Awakened Shrub, etc.). Also distinct from Tempest Cleric 'S' —
+/// the two never legally co-occur on a single team-color-and-team-id
+/// combo (different classes).
+pub static SAMURAI_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Fighter envelope wholesale
+    // and layers on the Elegant Courtier passive tag. The `..base.clone()`
+    // tail inside the helper picks up every other field — chain-mail AC
+    // 16, HP 24 (3d10+6), STR 16, all Battle Master maneuvers (Trip /
+    // Menacing / Disarming / Pushing / Goading / Precision / Sweeping /
+    // Feinting / Lunging / Rally / Commander's Strike / Distracting) +
+    // Parry + Riposte + Dueling Style — without an N-line field-by-
+    // field copy. No new actions are pushed — Elegant Courtier is a
+    // purely passive WIS-save-proficiency grant read at the shared
+    // `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort, not a fresh action
+    // surface, so the "tag-only" shape the helper wraps is a natural
+    // fit. First fighter-chassis user of the `with_subclass_tag` cross-
+    // class helper — Champion is a from-scratch template rather than a
+    // subclass-of clone (it swaps AC / HP / weapon / features
+    // significantly from the baseline Fighter). Sibling helper users on
+    // the "clone base + insert one tag" cross-class lane: every tag-
+    // only Warlock Otherworldly Patron subclass (via
+    // `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `TWILIGHT_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `WAR_MAGIC_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
+    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
+    // `FEY_WANDERER_RANGER_TEMPLATE`.
+    FIGHTER_TEMPLATE.with_subclass_tag("Samurai Fighter", 'S', ELEGANT_COURTIER_TAG)
 });

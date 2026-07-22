@@ -49884,6 +49884,121 @@ mod tests {
         assert!(plain.is_save_proficient(AbilityScoreType::Constitution));
     }
 
+    /// 5e Samurai Fighter Elegant Courtier (subclass lv7, XGtE): passive
+    /// proficiency in Wisdom saves — the third row on the shared
+    /// `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort next to Slippery Mind
+    /// (Rogue lv15) and Iron Mind (Zealot Barbarian lv7). Verifies the
+    /// tag-closure row shape fires identically to the sibling struct-
+    /// field-flag rows: WIS becomes proficient, the baseline Fighter's
+    /// STR / CON proficiencies still hold, and the cohort correctly
+    /// short-circuits DEX / INT / CHA to non-proficient. Control:
+    /// baseline Fighter (no Elegant Courtier tag) does NOT get the
+    /// WIS proficiency — proves the gate keys off the tag, not the
+    /// fighter chassis.
+    #[test]
+    fn elegant_courtier_grants_wisdom_save_proficiency() {
+        use crate::actions::class_features::ELEGANT_COURTIER_TAG;
+        use crate::actors::creatures::fighters::{FIGHTER_TEMPLATE, SAMURAI_FIGHTER_TEMPLATE};
+        use crate::engine::types::AbilityScoreType;
+        let samurai = ActorInstance::from_creature_template(
+            &SAMURAI_FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(
+            samurai.has_passive_feature(ELEGANT_COURTIER_TAG),
+            "Samurai Fighter should ship with Elegant Courtier"
+        );
+        // WIS: Elegant Courtier lane (subclass-tag closure via
+        // FLAG_DRIVEN_SAVE_PROFICIENCIES).
+        assert!(samurai.is_save_proficient(AbilityScoreType::Wisdom));
+        // STR / CON: baseline Fighter save profs — Elegant Courtier
+        // stacks on top; both should still be proficient.
+        assert!(samurai.is_save_proficient(AbilityScoreType::Strength));
+        assert!(samurai.is_save_proficient(AbilityScoreType::Constitution));
+        // DEX / INT / CHA: neither baseline Fighter nor Elegant Courtier
+        // — NOT proficient. Distinct from Diamond Soul (all six).
+        assert!(!samurai.is_save_proficient(AbilityScoreType::Dexterity));
+        assert!(!samurai.is_save_proficient(AbilityScoreType::Intelligence));
+        assert!(!samurai.is_save_proficient(AbilityScoreType::Charisma));
+
+        // Control: baseline Fighter (no Elegant Courtier tag) fails the
+        // WIS check. Same baseline STR / CON pass. Locks the tag gate
+        // against a chassis-only shortcut.
+        let plain = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(!plain.has_passive_feature(ELEGANT_COURTIER_TAG));
+        assert!(!plain.is_save_proficient(AbilityScoreType::Wisdom));
+        assert!(plain.is_save_proficient(AbilityScoreType::Strength));
+        assert!(plain.is_save_proficient(AbilityScoreType::Constitution));
+    }
+
+    /// Samurai Fighter subclass template inherits every baseline Fighter
+    /// action + feature via the shared `with_subclass_tag` helper. Locks
+    /// the Battle Master maneuver suite (Trip / Menacing / Disarming /
+    /// Pushing / Goading / Precision / Sweeping / Feinting / Lunging /
+    /// Rally / Commander's Strike / Distracting) plus Parry + Riposte
+    /// + Second Wind / Action Surge / Indomitable against a template
+    /// drift on the helper's clone tail.
+    #[test]
+    fn samurai_fighter_inherits_baseline_features() {
+        use crate::actions::class_features::{
+            ACTION_SURGE_TAG, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK_TAG, DISTRACTING_ATTACK_TAG,
+            ELEGANT_COURTIER_TAG, FEINTING_ATTACK_TAG, GOADING_ATTACK_TAG, INDOMITABLE_TAG,
+            LUNGING_ATTACK_TAG, MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK_TAG,
+            PUSHING_ATTACK_TAG, RALLY_TAG, RIPOSTE_TAG, SECOND_WIND_TAG, SWEEPING_ATTACK_TAG,
+            TRIP_ATTACK_TAG,
+        };
+        use crate::actors::creatures::fighters::SAMURAI_FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let samurai = e
+            .instantiate_creature(&SAMURAI_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Elegant Courtier (the subclass tell — the whole reason this
+        // template exists).
+        assert!(e.actors[&samurai].has_passive_feature(ELEGANT_COURTIER_TAG));
+        // Baseline Fighter passives — all preserved by the
+        // `with_subclass_tag` clone tail.
+        for tag in [
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            INDOMITABLE_TAG,
+            PARRY_TAG,
+            RIPOSTE_TAG,
+            TRIP_ATTACK_TAG,
+            MENACING_ATTACK_TAG,
+            DISARMING_ATTACK_TAG,
+            PUSHING_ATTACK_TAG,
+            GOADING_ATTACK_TAG,
+            PRECISION_ATTACK_TAG,
+            SWEEPING_ATTACK_TAG,
+            FEINTING_ATTACK_TAG,
+            LUNGING_ATTACK_TAG,
+            RALLY_TAG,
+            COMMANDERS_STRIKE_TAG,
+            DISTRACTING_ATTACK_TAG,
+        ] {
+            assert!(
+                e.actors[&samurai].has_passive_feature(tag),
+                "Samurai Fighter should inherit baseline Fighter tag {}",
+                tag
+            );
+        }
+        // Baseline Fighter struct-field flags — Extra Attack, Parry /
+        // Riposte reactive maneuvers, Dueling Fighting Style — all
+        // still ride via the clone tail.
+        assert!(e.actors[&samurai].has_extra_attack());
+    }
+
     /// 5e Paladin Oath of the Ancients Nature's Ward (lv15): passive
     /// self-immunity to Charmed AND Frightened installs. Baseline
     /// paladin doesn't get it — a plain paladin still takes both.
