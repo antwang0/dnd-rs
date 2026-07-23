@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
     COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG,
-    PLANAR_WARRIOR_TAG, ROVING_TAG, VANISH, VANISH_TAG,
+    PLANAR_WARRIOR_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -566,3 +566,122 @@ pub static HORIZON_WALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `FEY_WANDERER_RANGER_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Horizon Walker Ranger", 'Z', PLANAR_WARRIOR_TAG)
 });
+
+/// Monster Slayer Ranger — Ranger Conclave **Monster Slayer** subclass
+/// build (XGtE). Identical envelope to the baseline `RANGER_TEMPLATE`
+/// (level-9 half-caster, longbow + scimitar, 4/3/3/1/1 slot ladder,
+/// same kiter spell list, Feral Senses / Foe Slayer / Vanish / Roving /
+/// Archery Style inherited via `..base.clone()`) with one subclass
+/// feature layered on: **Slayer's Prey** (lv3 subclass tell) — passive
+/// once-per-turn +1d6 weapon-typed damage rider on any weapon hit.
+///
+/// The Monster Slayer's signature "the marked prey takes an extra bite
+/// on every blow" tell — where the baseline ranger relies purely on
+/// their weapon's base damage, the Monster Slayer's first swing each
+/// turn carries a small typed aftershock that inherits the weapon's
+/// base type. Composes cleanly with the ranger's kiter kit: the +1d6
+/// fires on the opening longbow shot (or the follow-up scimitar swing
+/// when a melee threat closes through the kite) at no action /
+/// concentration cost.
+///
+/// Sibling on the "once-per-turn +XdN weapon-hit rider" cross-class
+/// lane to `COLOSSUS_SLAYER_TAG` (Hunter Ranger lv3 — +1d8 weapon-typed
+/// with a wounded-target gate — same weapon-typed damage lane as
+/// Slayer's Prey, one die size larger, with a gated fire),
+/// `DREADFUL_STRIKES_TAG` (Fey Wanderer Ranger lv3 — +1d4 Psychic on
+/// any weapon hit), `PSYCHIC_BLADES_TAG` (Whispers Bard lv3 — +1d6
+/// Psychic on any weapon hit — same die size but fixed Psychic type),
+/// `PLANAR_WARRIOR_TAG` (Horizon Walker Ranger lv3 — +1d8 Force on any
+/// weapon hit), `FOE_SLAYER_TAG` (Ranger lv20 capstone — flat +WIS-mod
+/// on any weapon hit), `DIVINE_FURY_TAG` (Zealot Barbarian lv3 — +1d6
+/// + level/2 Radiant while raging), and `SNEAK_ATTACK_TAG` (Rogue
+/// once-per-turn +Nd6 with the qualifying-attack gate). The eight
+/// rider tags share the `ONCE_PER_TURN_RIDER_TAGS` ledger on
+/// `ActorInstance` — each fires at most once per turn on the shared
+/// per-actor gate, and a hypothetical multiclass carrier stacks every
+/// distinct tag's die cleanly on the opening shot.
+///
+/// Distinct from the sibling `COLOSSUS_SLAYER_TAG` on two axes:
+///   1. **No target gate** — Slayer's Prey fires against any target;
+///      Colossus Slayer requires `is_wounded()`. Monster Slayer opens
+///      on full-HP targets where Hunter opens only on softened ones.
+///   2. **Smaller die** — 1d6 vs. Colossus Slayer's 1d8; the Monster
+///      Slayer trades die size for the always-fires-any-target gate.
+///
+/// Distinct from the sibling `PSYCHIC_BLADES_TAG` on one axis:
+///   - **Damage type** — Slayer's Prey inherits the weapon's damage
+///     type; Psychic Blades locks to Psychic. On a fire-imbued bow the
+///     Monster Slayer's rider reads fire on the log line while the
+///     Whispers bard's rider still reads Psychic.
+///
+/// RAW-strict Slayer's Prey costs a bonus action to mark a specific
+/// creature within 60 ft; the first weapon hit against that marked
+/// target *this turn* deals the +1d6 weapon-typed damage. We collapse
+/// both the bonus-action-mark and the per-target gate down to a plain
+/// "once-per-turn +1d6 weapon-typed on any target" rider on the shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger — matching the same collapse
+/// Planar Warrior / Dreadful Strikes / Psychic Blades apply to their
+/// own RAW per-target gates (all four trade the per-target lookup for
+/// slotting cleanly into the once-per-turn ledger). Trades away the
+/// RAW "mark first, hit second" two-step for slotting into the
+/// existing rider chokepoint without a separate bonus-action-mark
+/// action surface plus a per-target-mark ledger.
+///
+/// RAW's Monster Slayer picks up other features not shipped on this
+/// template — **Hunter's Sense** (lv3: bonus action to sense a
+/// creature's resistances / immunities / vulnerabilities within 60 ft;
+/// ribbon on this engine's combat surface — the AI already reads the
+/// resistance table directly), **Supernatural Defense** (lv7: +1d6 on
+/// any save the marked creature forces you to make; needs a per-target-
+/// mark save-time hook), **Magic-User's Nemesis** (lv11: reaction to
+/// force a save on a spellcaster mid-cast; needs a per-cast reaction
+/// hook), and **Slayer's Counter** (lv15: reaction to attack a marked
+/// creature that forces you to make a save; needs a save-time reaction
+/// hook). Only the lv3 Slayer's Prey passive has a mechanical surface
+/// on the CR-1 (level-9) chassis that plugs cleanly into the shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger, so we ship that half and leave
+/// the rest as future work — matching the way
+/// `HORIZON_WALKER_RANGER_TEMPLATE` ships only Planar Warrior and
+/// `FEY_WANDERER_RANGER_TEMPLATE` ships only Dreadful Strikes from
+/// their respective RAW Conclave kits.
+///
+/// Ships on the CR-1 (level-9) ranger chassis at (or above) its strict
+/// RAW lv3 gate for the same reason `FEY_WANDERER_RANGER_TEMPLATE`,
+/// `HUNTER_RANGER_TEMPLATE`, `GLOOM_STALKER_RANGER_TEMPLATE`, and
+/// `HORIZON_WALKER_RANGER_TEMPLATE` ship their Conclave features above
+/// their strict RAW gates — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Distinct from `RANGER_TEMPLATE` (Conclave-less baseline),
+/// `HUNTER_RANGER_TEMPLATE` (Hunter Conclave),
+/// `GLOOM_STALKER_RANGER_TEMPLATE` (Gloom Stalker Conclave),
+/// `FEY_WANDERER_RANGER_TEMPLATE` (Fey Wanderer Conclave), and
+/// `HORIZON_WALKER_RANGER_TEMPLATE` (Horizon Walker Conclave) so a
+/// Monster-vs-Hunter / vs-Gloom / vs-Fey / vs-Horizon / vs-baseline
+/// encounter renders unambiguously by name.
+///
+/// Glyph 'M' — 'M' for "**M**onster" reads as a monster-slayer's
+/// silhouette on the map. Distinct from baseline ranger 'R', Hunter
+/// 'H', Gloom Stalker 'G', Fey Wanderer 'Y', and Horizon Walker 'Z'.
+/// Collides with a handful of NPC creature templates (Mummies, Manes,
+/// Merfolk-adjacent) but the team-color-and-team-id combo disambiguates
+/// them in a mixed encounter — same overlap policy the other PC
+/// subclass glyphs already follow.
+pub static MONSTER_SLAYER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Ranger envelope wholesale
+    // and layers on the Slayer's Prey passive tag. Third ranger-chassis
+    // user of the `with_subclass_tag` cross-class helper (after
+    // `FEY_WANDERER_RANGER_TEMPLATE` and `HORIZON_WALKER_RANGER_TEMPLATE`).
+    // Sibling helper users on the "clone base + insert one tag" cross-
+    // class lane: every tag-only Warlock Otherworldly Patron subclass
+    // (via `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `TWILIGHT_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `WAR_MAGIC_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
+    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
+    // `FEY_WANDERER_RANGER_TEMPLATE`, `HORIZON_WALKER_RANGER_TEMPLATE`.
+    RANGER_TEMPLATE.with_subclass_tag("Monster Slayer Ranger", 'M', SLAYERS_PREY_TAG)
+});
+

@@ -2409,6 +2409,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     DREADFUL_STRIKES_TAG,
     PSYCHIC_BLADES_TAG,
     PLANAR_WARRIOR_TAG,
+    SLAYERS_PREY_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2630,6 +2631,56 @@ pub const PSYCHIC_BLADES_TAG: &str = "bard.psychic_blades";
 /// from different angles (Hunter's wounded-target gate + weapon-typed
 /// vs. Horizon Walker's no-gate + Force-typed).
 pub const PLANAR_WARRIOR_TAG: &str = "ranger.planar_warrior";
+
+/// 5e Ranger **Monster Slayer** subclass — **Slayer's Prey** (level 3,
+/// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
+/// +1d6 damage of the weapon's damage type on the target. RAW-strict
+/// Slayer's Prey costs a bonus action to mark a specific creature; the
+/// first weapon hit against the marked target *this turn* deals the
+/// +1d6. We collapse both the bonus-action-mark and the per-target gate
+/// down to a plain "once-per-turn +1d6 weapon-typed on any target"
+/// rider on the shared `ONCE_PER_TURN_RIDER_TAGS` ledger — matching the
+/// same collapse Planar Warrior / Dreadful Strikes / Psychic Blades
+/// apply to their own RAW per-target gates (all four trade the per-
+/// target lookup for slotting cleanly into the once-per-turn ledger).
+/// Trades away the RAW "mark first, hit second" two-step for slotting
+/// into the existing rider chokepoint without a separate bonus-action-
+/// mark action surface plus a per-target-mark ledger.
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited to one trigger per turn) and read at the
+/// attack-resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// via the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort alongside
+/// the sibling once-per-turn weapon-die riders. The "once per turn"
+/// gate is the `once_per_turn_used(SLAYERS_PREY_TAG)` ledger on the
+/// actor, cleared at turn-start by `reset_for_new_round` (mirrors
+/// Colossus Slayer / Dreadful Strikes / Psychic Blades / Planar
+/// Warrior / Foe Slayer / Divine Fury on the same ledger).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider
+/// fires on melee AND ranged weapon hits (RAW: "the first time you hit
+/// that target with a weapon attack") — no melee-only gate. Damage
+/// type matches the weapon (via `p.damage_type`) so a fire-imbued bow
+/// shot still reads as fire on the Slayer's Prey log line — sibling to
+/// Colossus Slayer's weapon-typed damage and distinct from Dreadful
+/// Strikes' / Psychic Blades' Psychic-fixed damage or Planar Warrior's
+/// Force-fixed damage.
+///
+/// Sibling on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort to
+/// COLOSSUS_SLAYER_TAG (Hunter Ranger lv3 — +1d8 weapon-typed with a
+/// wounded-target gate), DREADFUL_STRIKES_TAG (Fey Wanderer Ranger lv3
+/// — +1d4 Psychic on any weapon hit), PSYCHIC_BLADES_TAG (Whispers
+/// Bard lv3 — +1d6 Psychic on any weapon hit), PLANAR_WARRIOR_TAG
+/// (Horizon Walker Ranger lv3 — +1d8 Force on any weapon hit),
+/// FOE_SLAYER_TAG (Ranger lv20 capstone — flat +WIS-mod on any weapon
+/// hit), DIVINE_FURY_TAG (Zealot Barbarian lv3 — +1d6 + level/2
+/// Radiant while raging), and SNEAK_ATTACK_TAG (Rogue once-per-turn
+/// +Nd6 with the qualifying-attack gate). Slayer's Prey lands at the
+/// same die size as Psychic Blades (1d6) — the two lv3 subclass riders
+/// converge on the same magnitude from different angles (Whispers'
+/// Psychic-fixed damage vs. Monster Slayer's weapon-typed damage).
+pub const SLAYERS_PREY_TAG: &str = "ranger.slayers_prey";
 
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's

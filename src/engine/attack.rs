@@ -1427,6 +1427,13 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///     Force, no target gate. Force is one of the rarest-resisted
 ///     damage types in the engine — the Horizon Walker's rider punches
 ///     through nearly every typed-defense lane cleanly.
+///   - **Slayer's Prey** (Monster Slayer Ranger lv3, XGtE): +1d6
+///     weapon-typed, no target gate. Sibling in shape to Colossus
+///     Slayer (weapon-typed damage) but with the no-target-gate
+///     collapse of Planar Warrior / Dreadful Strikes / Psychic Blades
+///     — the RAW "mark target with bonus action, hit for +1d6" two-
+///     step collapses to a plain once-per-turn +1d6 rider without a
+///     per-target-mark ledger.
 const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
@@ -1454,6 +1461,13 @@ const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         dice: Dice::new(1, 8),
         damage_type: |_| DamageType::Force,
         label: "planar warrior",
+        target_gate: |_| true,
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::SLAYERS_PREY_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |p| p.damage_type,
+        label: "slayer's prey",
         target_gate: |_| true,
     },
 ];
