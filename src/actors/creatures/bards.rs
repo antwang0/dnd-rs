@@ -1,3 +1,4 @@
+use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, CUTTING_WORDS, CUTTING_WORDS_TAG,
     FONT_OF_INSPIRATION_TAG,
@@ -5,13 +6,67 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
-    BLESS, CHARM_PERSON, CURE_WOUNDS, DISSONANT_WHISPERS, FAERIE_FIRE, HEALING_WORD, HEROISM,
-    HOLD_PERSON, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, SUGGESTION, VICIOUS_MOCKERY,
+    BLESS, CHARM_PERSON, COUNTERSPELL, CURE_WOUNDS, DISSONANT_WHISPERS, FAERIE_FIRE, FIREBALL,
+    HEALING_WORD, HEROISM, HOLD_PERSON, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD,
+    SUGGESTION, VICIOUS_MOCKERY,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// Shared bard subclass builder — clones the baseline `BARD_TEMPLATE`
+/// envelope wholesale and layers on the per-subclass swaps: (a) display
+/// name + glyph, (b) the combat-style template flags (`has_extra_attack`,
+/// `has_dueling_style`), and (c) any extra actions on top of the
+/// inherited baseline action list (Additional Magical Secrets picks or
+/// similar per-subclass action layers).
+///
+/// Users:
+///   - **College of Valor** (`VALOR_BARD_TEMPLATE`) — flips
+///     `has_extra_attack: true` only. Combat-bard lane, no additional
+///     actions.
+///   - **College of Swords** (`SWORDS_BARD_TEMPLATE`) — flips both
+///     `has_extra_attack: true` AND `has_dueling_style: true`. Combat-
+///     bard lane with a per-swing damage floor lift.
+///   - **College of Lore** (`LORE_BARD_TEMPLATE`) — flips neither
+///     combat flag; adds Counterspell + Fireball via Additional Magical
+///     Secrets. Caster-bard lane.
+///
+/// Collapses the three near-identical `CreatureTemplate {..BARD_TEMPLATE.clone()}`
+/// struct literals into a single call per `LazyLock`. Matches the way
+/// `subclass_barbarian_template` collapses the Totem / Storm Herald
+/// barbarian family on the barbarian chassis and `subclass_warlock_template`
+/// collapses the tag-only Otherworldly Patron family on the warlock
+/// chassis — same shape, different chassis. Adding a new bard subclass
+/// with the same envelope (a future College of Whispers, Glamour, or
+/// Eloquence variant, etc.) lands as a one-line entry.
+fn subclass_bard_template(
+    name: &'static str,
+    glyph: char,
+    has_extra_attack: bool,
+    has_dueling_style: bool,
+    extra_actions: &[&'static (dyn Action + Send + Sync)],
+) -> CreatureTemplate {
+    // Extra actions layer on top of the baseline action list rather
+    // than replacing it — every bard subclass ships a strict superset
+    // of the baseline bard's kit (spell slots, Bardic Inspiration /
+    // Cutting Words / Font of Inspiration, the CC-heavy spell lineup).
+    // The `..BARD_TEMPLATE.clone()` tail below carries every other
+    // field forward without an N-line field-by-field copy.
+    let mut actions = BARD_TEMPLATE.actions.clone();
+    for &a in extra_actions {
+        actions.push(a);
+    }
+    CreatureTemplate {
+        name,
+        glyph,
+        has_extra_attack,
+        has_dueling_style,
+        actions,
+        ..BARD_TEMPLATE.clone()
+    }
+}
 
 /// Bard PC template. CHA-primary full caster with a support-flavored
 /// spell list (heals, debuffs, crowd-control). Headline mechanic:
@@ -180,19 +235,16 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// combat-heavy flavor; the color / team gates disambiguate them in
 /// combat).
 pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Bard envelope wholesale
-    // and flip `has_extra_attack: true`. The `..BARD_TEMPLATE.clone()`
-    // tail picks up every other field — spell slots, stats, actions,
-    // Bardic Inspiration / Cutting Words / Font of Inspiration
-    // features — without an N-line field-by-field copy. Same shape as
-    // `HUNTER_RANGER_TEMPLATE` / `ASSASSIN_ROGUE_TEMPLATE` /
-    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s subclass build.
-    CreatureTemplate {
-        name: "Valor Bard",
-        glyph: 'V',
-        has_extra_attack: true,
-        ..BARD_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_bard_template` helper —
+    // clones the baseline Bard envelope wholesale and flips
+    // `has_extra_attack: true`. The clone tail inside the helper picks
+    // up every other field — spell slots, stats, actions, Bardic
+    // Inspiration / Cutting Words / Font of Inspiration features —
+    // without an N-line field-by-field copy. Sibling helper users on
+    // the "class-scoped subclass builder" lane: `subclass_barbarian_template`
+    // (Totem / Storm Herald / Berserker / Zealot family) and
+    // `subclass_warlock_template` (tag-only Otherworldly Patron family).
+    subclass_bard_template("Valor Bard", 'V', true, false, &[])
 });
 
 /// College of Swords Bard — subclass build (XGtE). Identical envelope to
@@ -254,19 +306,100 @@ pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// only Inured to Undeath and `SCOUT_ROGUE_TEMPLATE` ships only Superior
 /// Mobility from the RAW subclass kit.
 pub static SWORDS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Subclass-of pattern: clone the baseline Bard envelope wholesale
-    // and flip the two subclass template flags. The `..BARD_TEMPLATE.clone()`
-    // tail picks up every other field — spell slots, stats, actions,
-    // Bardic Inspiration / Cutting Words / Font of Inspiration features
-    // — without an N-line field-by-field copy. Same shape as
-    // `VALOR_BARD_TEMPLATE`, and the same "flip two boolean flags on the
-    // clone" shape `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its
-    // Rakish Audacity + Fancy Footwork pair.
-    CreatureTemplate {
-        name: "Swords Bard",
-        glyph: 'W',
-        has_extra_attack: true,
-        has_dueling_style: true,
-        ..BARD_TEMPLATE.clone()
-    }
+    // Subclass-of pattern via the shared `subclass_bard_template` helper —
+    // clones the baseline Bard envelope wholesale and flips the two
+    // subclass template flags. Same shape as `VALOR_BARD_TEMPLATE`, and
+    // the same "flip two boolean flags on the clone" shape
+    // `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its Rakish Audacity +
+    // Fancy Footwork pair.
+    subclass_bard_template("Swords Bard", 'W', true, true, &[])
+});
+
+/// College of Lore Bard — subclass build (PHB). Identical envelope to
+/// the baseline `BARD_TEMPLATE` (level-7 build, CHA-primary full caster,
+/// Bardic Inspiration / Cutting Words / Font of Inspiration, Compulsion
+/// capstone slot) with **Additional Magical Secrets** (Lore subclass
+/// lv6) layered on as two extra prepared spells picked from any class
+/// list:
+///
+/// - **Counterspell** (wizard/sorcerer/warlock lv3 abjuration): reaction
+///   to cancel an enemy spell mid-cast. Slots into the bard's existing
+///   anti-caster lane next to Silence and Cutting Words — where Silence
+///   shuts down a caster area-of-effect and Cutting Words spikes a
+///   single-target attack roll, Counterspell hard-cancels the entire
+///   spell before it resolves. The classic "party's caster answer" pick
+///   for Additional Magical Secrets — Counterspell is on nearly every
+///   Lore Bard build's shortlist since it plugs the bard chassis's only
+///   real counter-caster gap.
+///
+/// - **Fireball** (wizard/sorcerer lv3 evocation): the workhorse AoE
+///   damage cantrip-plus. The baseline bard's damage lineup tops out at
+///   Dissonant Whispers (single-target 3d6 psychic) and Cloud of
+///   Daggers (single-tile 4d4 slashing) — Fireball's 8d6 fire on a 20-ft
+///   radius closes the "burst damage against clustered enemies" gap
+///   that no bard-list spell fills. Second classic Lore pick alongside
+///   Counterspell — the two together (single-target hard-answer +
+///   multi-target burst) round out the bard's kit into a full-caster
+///   damage-and-control shape.
+///
+/// The two picks bring the CR-2 chassis's spell loadout in line with
+/// what a level-7 Lore Bard would actually have prepared — most Lore
+/// Bard tables converge on Counterspell + Fireball at lv6 (RAW's
+/// Additional Magical Secrets grants two spells picked from any class,
+/// of any level ≤ half the bard's level rounded up, capped at spells
+/// available in the bard's slot table). Both spells are level 3, which
+/// the bard's `spell_slots_by_level` = `[4, 3, 3, 1]` covers cleanly
+/// through the three lv3 slots.
+///
+/// Cutting Words is the Lore signature feature RAW-wise — every Lore
+/// Bard ships it at lv3 — and it already lives on the baseline
+/// `BARD_TEMPLATE` (the CR-2 chassis is generous on the CC-heavy
+/// support kit; every bard subclass template picks up Cutting Words
+/// through the `..BARD_TEMPLATE.clone()` tail), so the Lore build
+/// doesn't need to explicitly re-add it here — the clone tail carries
+/// it forward.
+///
+/// Distinct from `VALOR_BARD_TEMPLATE` (Extra Attack — combat lane) and
+/// `SWORDS_BARD_TEMPLATE` (Extra Attack + Dueling — melee-swinger lane)
+/// on the identity axis: three bard subclass lanes now cover distinct
+/// bard archetypes — Valor / Swords converge on the "combat bard" tell
+/// (twice-per-Action scimitar cadence, per-swing damage floor on
+/// Swords), and Lore covers the "full-caster bard" tell (two extra
+/// non-bard spells rounding the CC-heavy baseline kit into a full
+/// damage/control caster). The three templates never legally co-occur
+/// on a single PC build (RAW: one Bard College pick per bard).
+///
+/// Ships the CR-2 template above the strict RAW lv6 gate for the same
+/// reason `VALOR_BARD_TEMPLATE` / `SWORDS_BARD_TEMPLATE` ship Extra
+/// Attack (RAW lv6) and `NECROMANCY_WIZARD_TEMPLATE` ships Inured to
+/// Undeath (RAW lv10) — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'L' — 'L' for "Lore" reads as the loremaster / archivist bard
+/// identity on the map. Distinct from baseline bard 'B', Valor Bard
+/// 'V', and Swords Bard 'W'. Collides with several NPC creature
+/// templates (Lizard, Lich) but the team-color-and-team-id combo
+/// disambiguates in a mixed encounter — same overlap policy as the
+/// other PC subclass glyphs (Assassin 'A' shares with Ape, Scout Rogue
+/// 'K' shares with Killer Whale, etc.).
+///
+/// RAW's Lore Bard picks up other features not shipped on this
+/// template — **Bonus Proficiencies** (three skill proficiencies at
+/// lv3 — ribbon-only surface, no combat lane) and **Peerless Skill**
+/// (lv14: expend one BI die on your OWN ability check as a self-buff
+/// — needs an ability-check surface, which the combat-focused engine
+/// doesn't currently model), so we ship the Additional Magical Secrets
+/// half alone — matching the way `NECROMANCY_WIZARD_TEMPLATE` ships
+/// only Inured to Undeath and `SWORDS_BARD_TEMPLATE` ships only Extra
+/// Attack + Dueling from the RAW subclass kit.
+pub static LORE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `subclass_bard_template` helper —
+    // clones the baseline Bard envelope wholesale and layers the
+    // Additional Magical Secrets picks (Counterspell + Fireball) onto
+    // the inherited action list via `extra_actions`. Same shape as
+    // `VALOR_BARD_TEMPLATE` / `SWORDS_BARD_TEMPLATE`, differing only in
+    // that Lore layers actions on rather than combat template flags —
+    // no Extra Attack, no Dueling — Lore is a caster subclass, not a
+    // melee-lane subclass.
+    subclass_bard_template("Lore Bard", 'L', false, false, &[&*COUNTERSPELL, &*FIREBALL])
 });

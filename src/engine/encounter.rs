@@ -56451,6 +56451,178 @@ mod tests {
         }
     }
 
+    /// College of Lore Bard (subclass, PHB): the subclass ships two
+    /// Additional Magical Secrets picks (Counterspell + Fireball) as
+    /// extra actions on top of the inherited baseline bard action list,
+    /// and layers NO combat-style template flags (unlike Valor /
+    /// Swords, which flip `has_extra_attack` / `has_dueling_style`).
+    /// Template drift check locks the Lore identity distinctly on its
+    /// own chassis — a hypothetical future Whispers Bard subclass must
+    /// NOT accidentally pick up Counterspell / Fireball through a bad
+    /// clone, and Lore must NOT accidentally pick up the combat flags
+    /// through a wrong stanza. Mirrors the
+    /// `swords_bard_flags_match_subclass_kit` shape on the "subclass-only
+    /// content lands only on the subclass template" pattern.
+    #[test]
+    fn lore_bard_ships_additional_magical_secrets_and_no_combat_flags() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{COUNTERSPELL, FIREBALL};
+        use crate::actors::creatures::bards::{
+            BARD_TEMPLATE, LORE_BARD_TEMPLATE, SWORDS_BARD_TEMPLATE, VALOR_BARD_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let valor = e
+            .instantiate_creature(&VALOR_BARD_TEMPLATE, Coordinate::new(3, 1), 0, 1)
+            .unwrap();
+        let swords = e
+            .instantiate_creature(&SWORDS_BARD_TEMPLATE, Coordinate::new(5, 1), 0, 2)
+            .unwrap();
+        let lore = e
+            .instantiate_creature(&LORE_BARD_TEMPLATE, Coordinate::new(7, 1), 0, 3)
+            .unwrap();
+        let counterspell: &dyn Action = &*COUNTERSPELL;
+        let fireball: &dyn Action = &*FIREBALL;
+        let has_action = |id: usize, needle: &dyn Action| -> bool {
+            e.actors[&id]
+                .actions
+                .iter()
+                .any(|a| a.name() == needle.name())
+        };
+        // Lore picks up both Additional Magical Secrets picks; the
+        // three baseline / Valor / Swords bard chassis pick up neither
+        // — the picks are strictly a Lore-only surface.
+        assert!(
+            has_action(lore, counterspell),
+            "Lore bard: Counterspell must land via Additional Magical Secrets"
+        );
+        assert!(
+            has_action(lore, fireball),
+            "Lore bard: Fireball must land via Additional Magical Secrets"
+        );
+        for (id, name) in [
+            (baseline, "baseline"),
+            (valor, "valor"),
+            (swords, "swords"),
+        ] {
+            assert!(
+                !has_action(id, counterspell),
+                "{} bard must NOT pick up Lore's Counterspell",
+                name
+            );
+            assert!(
+                !has_action(id, fireball),
+                "{} bard must NOT pick up Lore's Fireball",
+                name
+            );
+        }
+        // Combat-flag differentials: Lore is a caster-only subclass, so
+        // neither combat flag rides the template. Valor picks up Extra
+        // Attack only; Swords picks up both Extra Attack + Dueling.
+        assert!(
+            !e.actors[&lore].has_extra_attack(),
+            "Lore bard must NOT ship extra attack (caster-only lane)"
+        );
+        assert!(
+            !e.actors[&lore].has_dueling_style(),
+            "Lore bard must NOT ship the dueling fighting style"
+        );
+    }
+
+    /// Shared `subclass_bard_template` helper wire-through check: all
+    /// three bard subclass templates (Valor / Swords / Lore) route
+    /// through the same class-scoped builder, so a change to the shared
+    /// clone tail must lift or drop consistently across every subclass.
+    /// Locks that the helper preserves the baseline Bard's per-rest
+    /// feature charges (Bardic Inspiration + Cutting Words + Font of
+    /// Inspiration), the CHA-primary spell-slot loadout, and the
+    /// baseline stat spread across every subclass template — a
+    /// hypothetical future bard subclass added via the helper picks up
+    /// the same superset guarantee for free rather than needing its own
+    /// bespoke sanity check. Sibling to the `assert_dragonborn_variants_wire_ancestry_and_breath`
+    /// test-helper extraction on the "one shared invariant assertion
+    /// across a subclass family" lane.
+    #[test]
+    fn subclass_bard_helper_preserves_baseline_envelope_across_family() {
+        use crate::actions::class_features::{
+            BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG, FONT_OF_INSPIRATION_TAG,
+        };
+        use crate::actors::creatures::bards::{
+            BARD_TEMPLATE, LORE_BARD_TEMPLATE, SWORDS_BARD_TEMPLATE, VALOR_BARD_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Spawn one instance per subclass — the helper's clone tail
+        // must lift the baseline envelope onto every subclass row
+        // uniformly. A wire drift on one row (e.g. a subclass that
+        // accidentally drops FONT_OF_INSPIRATION_TAG through a bad
+        // helper edit) would surface here immediately.
+        let variants: [(&CreatureTemplate, &str); 3] = [
+            (&*VALOR_BARD_TEMPLATE, "valor"),
+            (&*SWORDS_BARD_TEMPLATE, "swords"),
+            (&*LORE_BARD_TEMPLATE, "lore"),
+        ];
+        for (i, (tpl, name)) in variants.iter().enumerate() {
+            let id = e
+                .instantiate_creature(tpl, Coordinate::new(2 + 3 * i as isize, 2), 0, i)
+                .unwrap();
+            let actor = &e.actors[&id];
+            assert!(
+                actor.has_passive_feature(BARDIC_INSPIRATION_TAG),
+                "{} bard must inherit Bardic Inspiration from the baseline",
+                name
+            );
+            assert!(
+                actor.has_passive_feature(CUTTING_WORDS_TAG),
+                "{} bard must inherit Cutting Words from the baseline",
+                name
+            );
+            assert!(
+                actor.has_passive_feature(FONT_OF_INSPIRATION_TAG),
+                "{} bard must inherit Font of Inspiration from the baseline",
+                name
+            );
+            // Spell-slot loadout must match the baseline bard exactly —
+            // no subclass alters the underlying full-caster envelope,
+            // only the surface flags / extra actions.
+            assert_eq!(
+                tpl.spell_slots_by_level, BARD_TEMPLATE.spell_slots_by_level,
+                "{} bard must inherit the baseline bard's spell-slot table",
+                name
+            );
+        }
+    }
+
+    /// Lore Bard inherits the baseline bard's per-rest feature charges
+    /// (Bardic Inspiration + Cutting Words + Font of Inspiration)
+    /// through the `..BARD_TEMPLATE.clone()` tail so the subclass build
+    /// stays a strict superset of the baseline — mirrors the sanity
+    /// check `valor_bard_inherits_baseline_bard_features` /
+    /// `swords_bard_inherits_baseline_bard_features` pattern on the
+    /// "subclass template preserves baseline feature set" lane.
+    ///
+    /// Also pins that Cutting Words — RAW's Lore signature feature —
+    /// rides on the baseline chassis and inherits into Lore through
+    /// the clone tail; the subclass template doesn't need to re-add
+    /// the tag explicitly.
+    #[test]
+    fn lore_bard_inherits_baseline_bard_features() {
+        use crate::actions::class_features::{
+            BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG, FONT_OF_INSPIRATION_TAG,
+        };
+        use crate::actors::creatures::bards::LORE_BARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let lore = e
+            .instantiate_creature(&LORE_BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&lore].has_passive_feature(BARDIC_INSPIRATION_TAG));
+        assert!(e.actors[&lore].has_passive_feature(CUTTING_WORDS_TAG));
+        assert!(e.actors[&lore].has_passive_feature(FONT_OF_INSPIRATION_TAG));
+        assert!(e.actors[&lore].feature_available(BARDIC_INSPIRATION_TAG));
+        assert!(e.actors[&lore].feature_available(CUTTING_WORDS_TAG));
+    }
+
     /// FAILED_SAVE_ADD_DIE_SOURCES cohort cleanup: with the cohort row
     /// simplified from a `consume: fn(&mut ActorInstance) -> bool`
     /// closure to a bare `tag: &'static str`, the tag-based
