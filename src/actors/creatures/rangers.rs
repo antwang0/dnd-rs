@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, ROVING_TAG,
-    VANISH, VANISH_TAG,
+    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG,
+    PLANAR_WARRIOR_TAG, ROVING_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -430,4 +430,139 @@ pub static FEY_WANDERER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Fey Wanderer Ranger", 'Y', DREADFUL_STRIKES_TAG)
+});
+
+/// Horizon Walker Ranger — Ranger Conclave **Horizon Walker** subclass
+/// build (XGtE). Identical envelope to the baseline `RANGER_TEMPLATE`
+/// (level-9 half-caster, longbow + scimitar, 4/3/3/1/1 slot ladder, same
+/// kiter spell list, Feral Senses / Foe Slayer / Vanish / Roving /
+/// Archery Style inherited via `..base.clone()`) with one subclass
+/// feature layered on: **Planar Warrior** (lv3 subclass tell) — passive
+/// once-per-turn +1d8 Force damage rider on any weapon hit.
+///
+/// The Horizon Walker's signature "the planar-touched ranger's swings
+/// slip partway into the Ethereal" tell — where the baseline ranger
+/// relies on their weapon's base damage type, the Horizon Walker's
+/// first swing each turn carries a Force aftershock that punches
+/// through nearly every typed-resistance lane (Force is the rarest-
+/// resisted damage type in the engine — vanishingly few monsters shrug
+/// it off, vs. the broad Fire / Cold / Necrotic resistance lanes on
+/// many monster chassis, and even vs. the Psychic-resistance lane a
+/// handful of aberrations / undead / constructs carry that gates the
+/// sibling Dreadful Strikes / Psychic Blades riders). Composes cleanly
+/// with the ranger's kiter kit: the +1d8 fires on the opening longbow
+/// shot (or the follow-up scimitar swing when a melee threat closes
+/// through the kite) at no action / concentration cost.
+///
+/// Sibling on the "once-per-turn +XdN weapon-hit rider" cross-class
+/// lane to `COLOSSUS_SLAYER_TAG` (Hunter Ranger lv3 — +1d8 weapon-typed
+/// with a wounded-target gate), `DREADFUL_STRIKES_TAG` (Fey Wanderer
+/// Ranger lv3 — +1d4 Psychic on any weapon hit), `PSYCHIC_BLADES_TAG`
+/// (Whispers Bard lv3 — +1d6 Psychic on any weapon hit),
+/// `FOE_SLAYER_TAG` (Ranger lv20 capstone — flat +WIS-mod on any weapon
+/// hit), `DIVINE_FURY_TAG` (Zealot Barbarian lv3 — +1d6 + level/2
+/// Radiant while raging), and `SNEAK_ATTACK_TAG` (Rogue once-per-turn
+/// +Nd6 with the qualifying-attack gate). The seven rider tags share
+/// the `ONCE_PER_TURN_RIDER_TAGS` ledger on `ActorInstance` — each
+/// fires at most once per turn on the shared per-actor gate, and a
+/// hypothetical multiclass carrier stacks every distinct tag's die
+/// cleanly on the opening shot (Hunter Ranger / Horizon Walker
+/// multiclass: Colossus Slayer + Planar Warrior + Foe Slayer all fire
+/// on the first wounded-target hit).
+///
+/// Distinct from the sibling `COLOSSUS_SLAYER_TAG` on two axes:
+///   1. **No target gate** — Planar Warrior fires against any target;
+///      Colossus Slayer requires `is_wounded()`. Horizon Walker opens
+///      on full-HP targets where Hunter opens only on softened ones.
+///   2. **Fixed damage type** — Planar Warrior always deals Force;
+///      Colossus Slayer inherits the weapon's damage type. The Force
+///      type is the load-bearing tell: Force is one of the rarest-
+///      resisted types in the engine, so the rider's damage stays
+///      unshaved across nearly every enemy chassis, distinct from the
+///      sibling Psychic riders (Dreadful Strikes / Psychic Blades) that
+///      lose their damage to the aberrant / construct / undead Psychic-
+///      resistance lane.
+///
+/// Same die size as Colossus Slayer (1d8) — two lv3 subclass riders
+/// converge on the same magnitude from different angles.
+///
+/// RAW-strict Planar Warrior costs a bonus action to mark a specific
+/// creature within 30 ft; the next weapon hit against that marked
+/// target *this turn* deals the +1d8 Force. We collapse both the bonus-
+/// action-mark and the per-target gate down to a plain "once-per-turn
+/// +1d8 Force on any target" rider on the shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger — matching the same collapse
+/// Dreadful Strikes / Psychic Blades apply to their own RAW per-target
+/// gates (both trade the per-target lookup for slotting cleanly into
+/// the once-per-turn ledger). Trades away the RAW "mark first, hit
+/// second" two-step for slotting into the existing rider chokepoint
+/// without a separate bonus-action-mark action surface plus a per-
+/// target-mark ledger.
+///
+/// RAW's Horizon Walker picks up other features not shipped on this
+/// template — **Detect Portal** (lv3: 1/rest sense a planar portal
+/// within 1 mile; ribbon on this engine's combat surface), **Ethereal
+/// Step** (lv7: 1/rest cast Etherealness on self as a bonus action for
+/// a single turn; needs an Ethereal Plane surface the engine doesn't
+/// model), **Distant Strike** (lv11: teleport up to 10 ft before each
+/// attack + third attack per Action against a fresh target; needs a
+/// per-attack teleport hook plus a distinct-target gate), and
+/// **Spectral Defense** (lv15: reaction to halve damage from an attack;
+/// needs a per-attack reaction hook). Only the lv3 Planar Warrior
+/// passive has a mechanical surface on the CR-1 (level-9) chassis that
+/// plugs cleanly into the shared `ONCE_PER_TURN_RIDER_TAGS` ledger, so
+/// we ship that half and leave the rest as future work — matching the
+/// way `FEY_WANDERER_RANGER_TEMPLATE` ships only Dreadful Strikes and
+/// `HUNTER_RANGER_TEMPLATE` ships only Colossus Slayer + Multiattack
+/// Defense + Superior Hunter's Defense (Evasion) from their respective
+/// RAW Conclave kits.
+///
+/// Ships on the CR-1 (level-9) ranger chassis at (or above) its strict
+/// RAW lv3 gate for the same reason `FEY_WANDERER_RANGER_TEMPLATE`,
+/// `HUNTER_RANGER_TEMPLATE`, and `GLOOM_STALKER_RANGER_TEMPLATE` ship
+/// their Conclave features above their strict RAW gates — class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Distinct from `RANGER_TEMPLATE` (Conclave-less baseline),
+/// `HUNTER_RANGER_TEMPLATE` (Hunter Conclave),
+/// `GLOOM_STALKER_RANGER_TEMPLATE` (Gloom Stalker Conclave), and
+/// `FEY_WANDERER_RANGER_TEMPLATE` (Fey Wanderer Conclave) so a
+/// Horizon-vs-Hunter / vs-Gloom / vs-Fey / vs-baseline encounter renders
+/// unambiguously by name.
+///
+/// Glyph 'Z' — 'Z' for "hori**Z**on" reads as a planar-touched wanderer;
+/// the letter's zigzag shape suggests the boundary between planes.
+/// Distinct from baseline ranger 'R', Hunter 'H', Gloom Stalker 'G',
+/// and Fey Wanderer 'Y'. Collides with a handful of NPC creature
+/// templates (Zombies, Ziggurats-adjacent) but the team-color-and-team-
+/// id combo disambiguates them in a mixed encounter — same overlap
+/// policy the other PC subclass glyphs already follow.
+pub static HORIZON_WALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Ranger envelope wholesale
+    // and layers on the Planar Warrior passive tag. The `..base.clone()`
+    // tail inside the helper picks up every other field — the full
+    // ranger spell list, save profs, stats, slots, Feral Senses / Foe
+    // Slayer / Vanish / Roving / Archery Style — without an N-line
+    // field-by-field copy. No new actions are pushed — Planar Warrior
+    // is a purely passive once-per-turn weapon-hit rider read at
+    // `resolve_attack_outcome` via the shared
+    // `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort in `engine::attack`, not
+    // a fresh action surface, so the "tag-only" shape the helper wraps
+    // is a natural fit. Second ranger-chassis user of the
+    // `with_subclass_tag` cross-class helper (after
+    // `FEY_WANDERER_RANGER_TEMPLATE`) — every prior ranger subclass
+    // (Hunter, Gloom Stalker) layers more than a single feature tag on
+    // top of the baseline so they stay on the explicit clone-and-insert
+    // body. Sibling helper users on the "clone base + insert one tag"
+    // cross-class lane: every tag-only Warlock Otherworldly Patron
+    // subclass (via `subclass_warlock_template`), `LIFE_CLERIC_TEMPLATE`,
+    // `FORGE_CLERIC_TEMPLATE`, `TWILIGHT_CLERIC_TEMPLATE`,
+    // `NECROMANCY_WIZARD_TEMPLATE`, `WAR_MAGIC_WIZARD_TEMPLATE`,
+    // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
+    // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
+    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
+    // `FEY_WANDERER_RANGER_TEMPLATE`.
+    RANGER_TEMPLATE.with_subclass_tag("Horizon Walker Ranger", 'Z', PLANAR_WARRIOR_TAG)
 });

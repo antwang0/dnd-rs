@@ -961,92 +961,21 @@ pub fn resolve_attack_outcome(
             "improved divine smite",
         );
     }
-    // 5e Hunter Ranger **Colossus Slayer** (level 3) — passive once-per-
-    // turn rider. On a weapon hit against a wounded target, lay an extra
-    // 1d8 of the weapon's damage type. Routes through the shared
-    // `try_fire_once_per_turn_weapon_die_rider` helper on the same "one
-    // die + one damage type + one target gate" corner Dreadful Strikes
-    // sits at below; the helper folds the caster-flag / ledger / target-
-    // gate / push / mark bookends the two riders share. Damage type
-    // matches the weapon (via `p.damage_type`) so a fire-imbued bow
-    // shot still reads as fire on the Colossus Slayer log line. Target
-    // gate: `is_wounded()` — the RAW "current HP < max" clause. Crit
-    // doubles the die via the shared `push_die_rider` chokepoint.
-    try_fire_once_per_turn_weapon_die_rider(
-        encounter,
-        &mut effects,
-        &p,
-        is_crit,
-        &OncePerTurnWeaponRiderSpec {
-            tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
-            dice: Dice::new(1, 8),
-            damage_type: p.damage_type,
-            label: "colossus slayer",
-            target_gate: |t| t.is_wounded(),
-        },
-    );
-    // 5e Fey Wanderer Ranger **Dreadful Strikes** (level 3, TCE) — passive
-    // once-per-turn weapon-hit rider. On any weapon hit, lay +1d4 Psychic
-    // damage on the target. Routes through the shared
-    // `try_fire_once_per_turn_weapon_die_rider` helper alongside Colossus
-    // Slayer above — same "one die + one damage type + optional target
-    // gate" corner. Distinctions from Colossus Slayer wired at the spec
-    // fields: no target gate (`|_| true` — RAW fires against any target,
-    // wounded or not), fixed Psychic damage type (`DamageType::Psychic`
-    // — RAW's "your weapon strikes whisper dread" tell fixes the type
-    // regardless of the weapon's base type), and 1d4 (vs. the weapon-
-    // typed 1d8 sibling). Crit doubles the die via the shared
-    // `push_die_rider` chokepoint.
-    try_fire_once_per_turn_weapon_die_rider(
-        encounter,
-        &mut effects,
-        &p,
-        is_crit,
-        &OncePerTurnWeaponRiderSpec {
-            tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
-            dice: Dice::new(1, 4),
-            damage_type: DamageType::Psychic,
-            label: "dreadful strikes",
-            target_gate: |_| true,
-        },
-    );
-    // 5e Whispers Bard **Psychic Blades** (level 3, XGtE) — passive
-    // once-per-turn weapon-hit rider. On any weapon hit, lay +1d6 Psychic
-    // damage on the target. Routes through the shared
-    // `try_fire_once_per_turn_weapon_die_rider` helper alongside Colossus
-    // Slayer / Dreadful Strikes above — the same "one die + one damage
-    // type + optional target gate" corner. Distinctions from the two
-    // ranger-side siblings wired at the spec fields: no target gate
-    // (`|_| true` — RAW fires against any target, wounded or not — sibling
-    // to Dreadful Strikes' no-gate lane), fixed Psychic damage type
-    // (`DamageType::Psychic` — RAW's "your whispers infuse your weapon
-    // strikes" fixes the type regardless of the weapon's base type —
-    // sibling to Dreadful Strikes' Psychic-fixed damage), and 1d6 —
-    // mid-die-size between Dreadful Strikes' 1d4 and Colossus Slayer's
-    // 1d8, matching Psychic Blades' RAW-lv3 anchor where the equivalent
-    // Fey Wanderer / Hunter riders also unlock.
-    //
-    // RAW-strict Psychic Blades spends a Bardic Inspiration die per
-    // activation and scales the die pool with bard level; we collapse
-    // both the BI-die cost AND the level-scaled pool to a flat +1d6 on
-    // the shared once-per-turn ledger, matching the same collapse
-    // Dreadful Strikes applies to its own RAW per-target hit-map — trades
-    // a small approximation for slotting cleanly into the existing
-    // once-per-turn rider chokepoint. Crit doubles the die via the
-    // shared `push_die_rider` chokepoint.
-    try_fire_once_per_turn_weapon_die_rider(
-        encounter,
-        &mut effects,
-        &p,
-        is_crit,
-        &OncePerTurnWeaponRiderSpec {
-            tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
-            dice: Dice::new(1, 6),
-            damage_type: DamageType::Psychic,
-            label: "psychic blades",
-            target_gate: |_| true,
-        },
-    );
+    // Once-per-turn weapon-hit +die riders on the shared
+    // `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort. Every row is a passive-
+    // feature tag on the caster whose `has_passive_feature` gate, once-
+    // per-turn ledger, per-feature target gate, per-feature damage-type
+    // resolver, and log line all fold through the shared
+    // `try_fire_once_per_turn_weapon_die_rider` chokepoint — the "check
+    // flag → check ledger → check target gate → push_die_rider → mark
+    // used" scaffolding lives in one place. Adding a future rider on
+    // the "one die + one damage type + one optional target gate" corner
+    // (Colossus Slayer / Dreadful Strikes / Psychic Blades / Planar
+    // Warrior all sit here today) lands as one row on the cohort table
+    // without touching this loop.
+    for spec in ONCE_PER_TURN_WEAPON_DIE_RIDERS {
+        try_fire_once_per_turn_weapon_die_rider(encounter, &mut effects, &p, is_crit, spec);
+    }
     // 5e Ranger **Foe Slayer** (level 20 capstone) — passive once-per-
     // turn rider. On any weapon hit, add the ranger's Wisdom modifier
     // as flat damage of the weapon's damage type. Two gates:
@@ -1373,13 +1302,17 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// Strikes 1d4). Crits double the die via the shared
     /// `push_die_rider` chokepoint per 5e RAW.
     pub dice: Dice,
-    /// Damage type stamped on the rider log line and the queued
-    /// `DealDamage` payload. Colossus Slayer passes `p.damage_type`
-    /// (weapon-typed — the rider inherits the swing's damage type);
-    /// Dreadful Strikes passes a fixed `DamageType::Psychic` — RAW's
-    /// "your weapon strikes whisper dread" tell fixes the type
-    /// regardless of the weapon's base type.
-    pub damage_type: DamageType,
+    /// Per-feature damage-type resolver. Colossus Slayer passes
+    /// `|p| p.damage_type` (weapon-typed — the rider inherits the
+    /// swing's damage type); Dreadful Strikes / Psychic Blades pass
+    /// `|_| DamageType::Psychic` — RAW's "whisper dread" / "infuse
+    /// with whispers" tell fixes the type regardless of the weapon's
+    /// base type. Held as a function-pointer so a future rider that
+    /// conditions its damage type on some attack-side axis (a
+    /// hypothetical "matches weapon type unless the weapon is Force,
+    /// then falls back to Radiant" edge case) lands as another closure
+    /// here without widening the helper.
+    pub damage_type: fn(&AttackParams) -> DamageType,
     /// Log label — "colossus slayer", "dreadful strikes". Formatted by
     /// `push_die_rider` as `"  {label}: +{extra} {damage_type:?}"` so
     /// the log shape stays uniform across every once-per-turn rider
@@ -1453,7 +1386,7 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
         p.target_id,
         spec.dice,
         is_crit,
-        spec.damage_type,
+        (spec.damage_type)(p),
         spec.label,
     );
     if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
@@ -1461,6 +1394,69 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
     }
     true
 }
+
+/// Shared cohort of once-per-turn weapon-hit die-riders — the "one die +
+/// one damage type + one optional target gate" corner of the on-hit
+/// rider design space. Consumed by `resolve_attack_outcome` right after
+/// the Improved Divine Smite block: each row is a passive-feature tag
+/// that, if held by the caster and not yet fired this turn, lays its
+/// die onto the swing. Every row folds through the shared
+/// `try_fire_once_per_turn_weapon_die_rider` helper so the "check flag →
+/// check ledger → check target gate → push_die_rider → mark used"
+/// scaffolding lives in one place.
+///
+/// Adding a future subclass rider on the same corner (a hypothetical
+/// "extra damage vs Frightened targets" archery-conclave pick, a
+/// per-turn magical-strike rider, ...) lands as a fresh
+/// `PLANAR_WARRIOR`-shaped `_TAG` const plus one row here — no touching
+/// `resolve_attack_outcome`. Distinct from the Foe Slayer / Divine Fury
+/// blocks in `resolve_attack_outcome` — those two riders have flat-
+/// bonus / compound-log shapes that don't fit this cohort's "die only,
+/// uniform log" corner and stay open-coded on their own gates for now.
+///
+/// Entries (each is one `has_passive_feature(TAG)` gated once-per-turn
+/// weapon-hit rider — see the linked tag docstring for the per-feature
+/// RAW rationale):
+///   - **Colossus Slayer** (Hunter Ranger lv3): +1d8 weapon-typed,
+///     wounded-target gate.
+///   - **Dreadful Strikes** (Fey Wanderer Ranger lv3, TCE): +1d4
+///     Psychic, no target gate.
+///   - **Psychic Blades** (Whispers Bard lv3, XGtE): +1d6 Psychic, no
+///     target gate.
+///   - **Planar Warrior** (Horizon Walker Ranger lv3, XGtE): +1d8
+///     Force, no target gate. Force is one of the rarest-resisted
+///     damage types in the engine — the Horizon Walker's rider punches
+///     through nearly every typed-defense lane cleanly.
+const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
+        dice: Dice::new(1, 8),
+        damage_type: |p| p.damage_type,
+        label: "colossus slayer",
+        target_gate: |t| t.is_wounded(),
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
+        dice: Dice::new(1, 4),
+        damage_type: |_| DamageType::Psychic,
+        label: "dreadful strikes",
+        target_gate: |_| true,
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |_| DamageType::Psychic,
+        label: "psychic blades",
+        target_gate: |_| true,
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::PLANAR_WARRIOR_TAG,
+        dice: Dice::new(1, 8),
+        damage_type: |_| DamageType::Force,
+        label: "planar warrior",
+        target_gate: |_| true,
+    },
+];
 
 /// A "+Xdy damage on hit" rider sourced from one of the caster's active
 /// conditions. The rider table is consumed once per weapon hit by

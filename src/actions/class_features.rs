@@ -2408,6 +2408,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     DIVINE_FURY_TAG,
     DREADFUL_STRIKES_TAG,
     PSYCHIC_BLADES_TAG,
+    PLANAR_WARRIOR_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2570,6 +2571,65 @@ pub const DREADFUL_STRIKES_TAG: &str = "ranger.dreadful_strikes";
 /// (1d4) and Colossus Slayer (1d8), matching its RAW-level-3 anchor
 /// where the equivalent Fey Wanderer / Hunter riders also unlock.
 pub const PSYCHIC_BLADES_TAG: &str = "bard.psychic_blades";
+
+/// 5e Ranger **Horizon Walker** subclass — **Planar Warrior** (level 3,
+/// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
+/// +1d8 Force damage on the target. RAW-strict Planar Warrior costs a
+/// bonus action to mark a specific creature within 30 ft; the next weapon
+/// hit against that marked target *this turn* deals the +1d8 Force. We
+/// collapse both the bonus-action-mark and the per-target gate down to a
+/// plain "once-per-turn +1d8 Force" rider on the shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger — matching the same collapse
+/// Dreadful Strikes / Psychic Blades apply to their own RAW per-target
+/// gates (both trade the per-target lookup for slotting cleanly into the
+/// once-per-turn ledger). Trades away the RAW "mark first, hit second"
+/// two-step for slotting into the existing rider chokepoint without a
+/// separate bonus-action-mark action surface plus a per-target-mark
+/// ledger.
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited to one trigger per turn) and read at the
+/// attack-resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// alongside the sibling once-per-turn weapon-die riders. The "once per
+/// turn" gate is the `once_per_turn_used(PLANAR_WARRIOR_TAG)` ledger on
+/// the actor, cleared at turn-start by `reset_for_new_round` (mirrors
+/// Colossus Slayer / Dreadful Strikes / Psychic Blades / Foe Slayer /
+/// Divine Fury on the same ledger).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider fires
+/// on melee AND ranged weapon hits (RAW: "when you hit the target with
+/// a weapon attack") — no melee-only gate. Damage is always typed Force
+/// — RAW's "shifts partially into the Ethereal Plane to deal force
+/// damage" fixes the type regardless of the weapon's base type, sibling
+/// to Dreadful Strikes' / Psychic Blades' Psychic-fixed damage and
+/// distinct from Colossus Slayer's `weapon-typed` die which mirrors the
+/// weapon. Force is one of the rarest-resisted damage types in the
+/// engine (essentially no monster carries Force resistance), so the
+/// Horizon Walker's rider punches through nearly every typed-defense
+/// lane cleanly — the RAW "planar warrior slips past mundane armor"
+/// tell.
+///
+/// RAW's Planar Warrior die scales from 1d8 → 2d8 at ranger level 11.
+/// We ship the lv3 1d8 base die on the HORIZON_WALKER_RANGER_TEMPLATE —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression; the lv11 die bump is left as future work behind a per-
+/// caster level gate (same shape Divine Fury's `+ level / 2` flat mod
+/// already uses on the Zealot chassis).
+///
+/// Sibling on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort to
+/// COLOSSUS_SLAYER_TAG (Hunter Ranger lv3 — +1d8 weapon-typed with a
+/// wounded-target gate), DREADFUL_STRIKES_TAG (Fey Wanderer Ranger lv3 —
+/// +1d4 Psychic on any weapon hit), PSYCHIC_BLADES_TAG (Whispers Bard
+/// lv3 — +1d6 Psychic on any weapon hit), FOE_SLAYER_TAG (Ranger lv20
+/// capstone — flat +WIS-mod on any weapon hit), DIVINE_FURY_TAG (Zealot
+/// Barbarian lv3 — +1d6 + level/2 Radiant while raging), and
+/// SNEAK_ATTACK_TAG (Rogue once-per-turn +Nd6 with the qualifying-attack
+/// gate). Planar Warrior lands at the same die size as Colossus Slayer
+/// (1d8) — the two lv3 subclass riders converge on the same magnitude
+/// from different angles (Hunter's wounded-target gate + weapon-typed
+/// vs. Horizon Walker's no-gate + Force-typed).
+pub const PLANAR_WARRIOR_TAG: &str = "ranger.planar_warrior";
 
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's
