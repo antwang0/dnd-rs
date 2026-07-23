@@ -2728,7 +2728,7 @@ impl CreatureTemplate {
     /// repeated once per subclass) into a single method call per
     /// subclass template.
     ///
-    /// Users (21+ callsites across eight class chassis today):
+    /// Users (23+ callsites across eight class chassis today):
     ///   - **Warlock** (8 tag-only Otherworldly Patron subclass templates
     ///     via the class-scoped `subclass_warlock_template` helper —
     ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
@@ -2745,8 +2745,8 @@ impl CreatureTemplate {
     ///     Oath of Glory, Oath of the Watchers).
     ///   - **Fighter** (1 tag-only Martial Archetype subclass template —
     ///     Samurai).
-    ///   - **Ranger** (1 tag-only Conclave subclass template — Fey
-    ///     Wanderer).
+    ///   - **Ranger** (3 tag-only Conclave subclass templates — Fey
+    ///     Wanderer, Horizon Walker, Monster Slayer).
     ///
     /// The **Bard** chassis has its own class-scoped
     /// `subclass_bard_template` helper (see `bards.rs`) with an optional
