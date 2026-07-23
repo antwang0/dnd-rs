@@ -1,7 +1,7 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, CUTTING_WORDS, CUTTING_WORDS_TAG,
-    FONT_OF_INSPIRATION_TAG,
+    FONT_OF_INSPIRATION_TAG, PSYCHIC_BLADES_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
@@ -18,35 +18,43 @@ use std::sync::LazyLock;
 /// Shared bard subclass builder — clones the baseline `BARD_TEMPLATE`
 /// envelope wholesale and layers on the per-subclass swaps: (a) display
 /// name + glyph, (b) the combat-style template flags (`has_extra_attack`,
-/// `has_dueling_style`), and (c) any extra actions on top of the
-/// inherited baseline action list (Additional Magical Secrets picks or
-/// similar per-subclass action layers).
+/// `has_dueling_style`), (c) any extra actions on top of the inherited
+/// baseline action list (Additional Magical Secrets picks or similar
+/// per-subclass action layers), and (d) an optional subclass passive-
+/// feature tag inserted into the baseline features set (a subclass-only
+/// passive read via `has_passive_feature(tag)` — e.g. Psychic Blades
+/// once-per-turn weapon-hit rider on the Whispers chassis).
 ///
 /// Users:
 ///   - **College of Valor** (`VALOR_BARD_TEMPLATE`) — flips
 ///     `has_extra_attack: true` only. Combat-bard lane, no additional
-///     actions.
+///     actions, no subclass tag.
 ///   - **College of Swords** (`SWORDS_BARD_TEMPLATE`) — flips both
 ///     `has_extra_attack: true` AND `has_dueling_style: true`. Combat-
-///     bard lane with a per-swing damage floor lift.
+///     bard lane with a per-swing damage floor lift, no subclass tag.
 ///   - **College of Lore** (`LORE_BARD_TEMPLATE`) — flips neither
 ///     combat flag; adds Counterspell + Fireball via Additional Magical
-///     Secrets. Caster-bard lane.
+///     Secrets. Caster-bard lane, no subclass tag.
+///   - **College of Whispers** (`WHISPERS_BARD_TEMPLATE`) — flips
+///     neither combat flag; layers `PSYCHIC_BLADES_TAG` (passive once-
+///     per-turn +1d6 Psychic weapon-hit rider on the shared
+///     `ONCE_PER_TURN_RIDER_TAGS` cohort). Skirmisher-bard lane.
 ///
-/// Collapses the three near-identical `CreatureTemplate {..BARD_TEMPLATE.clone()}`
+/// Collapses the four near-identical `CreatureTemplate {..BARD_TEMPLATE.clone()}`
 /// struct literals into a single call per `LazyLock`. Matches the way
 /// `subclass_barbarian_template` collapses the Totem / Storm Herald
 /// barbarian family on the barbarian chassis and `subclass_warlock_template`
 /// collapses the tag-only Otherworldly Patron family on the warlock
 /// chassis — same shape, different chassis. Adding a new bard subclass
-/// with the same envelope (a future College of Whispers, Glamour, or
-/// Eloquence variant, etc.) lands as a one-line entry.
+/// with the same envelope (a future College of Glamour, Eloquence, or
+/// Spirits variant, etc.) lands as a one-line entry.
 fn subclass_bard_template(
     name: &'static str,
     glyph: char,
     has_extra_attack: bool,
     has_dueling_style: bool,
     extra_actions: &[&'static (dyn Action + Send + Sync)],
+    subclass_tag: Option<&'static str>,
 ) -> CreatureTemplate {
     // Extra actions layer on top of the baseline action list rather
     // than replacing it — every bard subclass ships a strict superset
@@ -58,12 +66,23 @@ fn subclass_bard_template(
     for &a in extra_actions {
         actions.push(a);
     }
+    // Subclass passive tag — inserted into a fresh clone of the baseline
+    // features set so the baseline bard's Bardic Inspiration / Cutting
+    // Words / Font of Inspiration tags still ride through. `if let`
+    // collapses the "no-tag" case to a no-op — matches the shape
+    // `with_subclass_tag` uses on the standalone helper (see
+    // `CreatureTemplate::with_subclass_tag`).
+    let mut features = BARD_TEMPLATE.features.clone();
+    if let Some(tag) = subclass_tag {
+        features.insert(tag);
+    }
     CreatureTemplate {
         name,
         glyph,
         has_extra_attack,
         has_dueling_style,
         actions,
+        features,
         ..BARD_TEMPLATE.clone()
     }
 }
@@ -244,7 +263,7 @@ pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the "class-scoped subclass builder" lane: `subclass_barbarian_template`
     // (Totem / Storm Herald / Berserker / Zealot family) and
     // `subclass_warlock_template` (tag-only Otherworldly Patron family).
-    subclass_bard_template("Valor Bard", 'V', true, false, &[])
+    subclass_bard_template("Valor Bard", 'V', true, false, &[], None)
 });
 
 /// College of Swords Bard — subclass build (XGtE). Identical envelope to
@@ -312,7 +331,7 @@ pub static SWORDS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the same "flip two boolean flags on the clone" shape
     // `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its Rakish Audacity +
     // Fancy Footwork pair.
-    subclass_bard_template("Swords Bard", 'W', true, true, &[])
+    subclass_bard_template("Swords Bard", 'W', true, true, &[], None)
 });
 
 /// College of Lore Bard — subclass build (PHB). Identical envelope to
@@ -401,5 +420,99 @@ pub static LORE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // that Lore layers actions on rather than combat template flags —
     // no Extra Attack, no Dueling — Lore is a caster subclass, not a
     // melee-lane subclass.
-    subclass_bard_template("Lore Bard", 'L', false, false, &[&*COUNTERSPELL, &*FIREBALL])
+    subclass_bard_template("Lore Bard", 'L', false, false, &[&*COUNTERSPELL, &*FIREBALL], None)
+});
+
+/// College of Whispers Bard — subclass build (XGtE). Identical envelope
+/// to the baseline `BARD_TEMPLATE` (level-7 build, CHA-primary full
+/// caster, Bardic Inspiration / Cutting Words / Font of Inspiration,
+/// Compulsion capstone slot) with **Psychic Blades** (Whispers subclass
+/// lv3) layered on as a passive once-per-turn weapon-hit rider:
+///
+/// - **Psychic Blades** (lv3): on any weapon hit, lay +1d6 Psychic
+///   damage on the target. Read at the shared once-per-turn weapon-die
+///   rider chokepoint in `engine::attack::resolve_attack_outcome` right
+///   after the Dreadful Strikes block, keyed off the
+///   `PSYCHIC_BLADES_TAG` entry on the shared `ONCE_PER_TURN_RIDER_TAGS`
+///   ledger. RAW-strict Psychic Blades expends a Bardic Inspiration die
+///   per activation and scales the die pool with bard level (2d6 lv3 →
+///   3d6 lv5 → 5d6 lv10 → 8d6 lv15); we collapse both the BI-die cost
+///   AND the level-scaled pool to a plain +1d6 on the shared once-per-
+///   turn ledger, matching the same "no ammo cost, one-die-typed" corner
+///   Dreadful Strikes sits at on the ranger chassis. Trades a small
+///   approximation of the level-scaled RAW pool for slotting cleanly
+///   into the existing rider chokepoint without a separate accounting
+///   surface.
+///
+/// The tag layer brings the CR-2 chassis's per-swing damage in line with
+/// what a level-7 Whispers Bard would land on the opening scimitar
+/// stroke — the mid-die-size 1d6 (Colossus Slayer 1d8 > Psychic Blades
+/// 1d6 > Dreadful Strikes 1d4) matches Psychic Blades' RAW-lv3 anchor
+/// where the equivalent Fey Wanderer / Hunter riders also unlock. The
+/// bard chassis picks up an initiation-style damage lift on the opening
+/// swing per turn — closes the "opening-round damage gap" against the
+/// combat-bard Valor / Swords lanes' second-swing / +2-Dueling lifts.
+///
+/// Pairs naturally with the bard's existing support kit: the Whispers
+/// bard sits at scimitar range on the opening round, lays +1d6 Psychic
+/// on the first hit while Bardic Inspiration primes an ally's next
+/// roll — the RAW "psychological warfare bard" tell. Distinct from
+/// `VALOR_BARD_TEMPLATE` (Extra Attack — combat lane), `SWORDS_BARD_TEMPLATE`
+/// (Extra Attack + Dueling — melee-swinger lane), and `LORE_BARD_TEMPLATE`
+/// (Counterspell + Fireball — caster lane) on the identity axis: four
+/// bard subclass lanes now cover distinct archetypes.
+///
+/// Sibling on the "once-per-turn +XdN weapon-hit rider" cross-class
+/// lane to `COLOSSUS_SLAYER_TAG` (Hunter Ranger lv3 — +1d8 weapon-typed
+/// with a wounded-target gate), `DREADFUL_STRIKES_TAG` (Fey Wanderer
+/// Ranger lv3 — +1d4 Psychic on any weapon hit), `FOE_SLAYER_TAG`
+/// (Ranger lv20 capstone — flat +WIS-mod on any weapon hit),
+/// `DIVINE_FURY_TAG` (Zealot Barbarian lv3 — +1d6 + level/2 Radiant
+/// while raging), and `SNEAK_ATTACK_TAG` (Rogue once-per-turn +Nd6 with
+/// the qualifying-attack gate). The six rider tags share the
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger on `ActorInstance` — each fires at
+/// most once per turn on the shared per-actor gate.
+///
+/// Ships the CR-2 template at (or slightly above) its strict RAW lv3
+/// gate for the same reason `VALOR_BARD_TEMPLATE` / `SWORDS_BARD_TEMPLATE`
+/// ship Extra Attack (RAW lv6) and `NECROMANCY_WIZARD_TEMPLATE` ships
+/// Inured to Undeath (RAW lv10) — class templates target a balanced
+/// playable level, not lockstep PHB progression.
+///
+/// Glyph 'P' — 'P' for "Psychic" reads as the Psychic Blades signature
+/// on the map. Distinct from baseline bard 'B', Valor Bard 'V', Swords
+/// Bard 'W', and Lore Bard 'L'. Collides with a handful of NPC creature
+/// templates (Paladin subclasses, Pit Fiends, Purple Worms, Pixies) but
+/// the team-color-and-team-id combo disambiguates in a mixed encounter —
+/// same overlap policy as the other PC subclass glyphs (Assassin 'A'
+/// shares with Ape, Scout Rogue 'K' shares with Killer Whale, etc.).
+///
+/// RAW's Whispers Bard picks up other features not shipped on this
+/// template — **Words of Terror** (lv3: 1-minute Frightened condition
+/// via a WIS-save-once-per-long-rest CHA-based DC — needs a per-target
+/// long-rest social-skill hook the combat-focused engine doesn't model),
+/// **Mantle of Whispers** (lv6: reaction on a nearby death to steal
+/// the corpse's identity — ribbon-only surface, no combat lane),
+/// **Shadow Lore** (lv14: single-target save-or-blindly-follow-orders
+/// enchantment burst — needs a per-target charm-with-strict-commands
+/// hook the engine doesn't currently model). Only the lv3 Psychic
+/// Blades passive has a mechanical surface on the CR-2 chassis that
+/// plugs cleanly into the shared `ONCE_PER_TURN_RIDER_TAGS` ledger, so
+/// we ship that half alone — matching the way `NECROMANCY_WIZARD_TEMPLATE`
+/// ships only Inured to Undeath, `SWORDS_BARD_TEMPLATE` ships only
+/// Extra Attack + Dueling, and `LORE_BARD_TEMPLATE` ships only
+/// Additional Magical Secrets from their respective RAW subclass kits.
+pub static WHISPERS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `subclass_bard_template` helper
+    // — clones the baseline Bard envelope wholesale and layers the
+    // PSYCHIC_BLADES_TAG onto the inherited features set via the helper's
+    // `subclass_tag` axis. First bard-chassis user of the helper's
+    // `subclass_tag` field — every prior bard subclass (Valor / Swords /
+    // Lore) passes `None` because those three sit purely on combat-flag
+    // flips and action-layer picks. Same shape as the sibling
+    // `with_subclass_tag` cross-class helper on the standalone lane, just
+    // routed through the bard-chassis-scoped builder so Whispers picks
+    // up every baseline bard field (spell slots, actions, features,
+    // stats, saves) through the `..BARD_TEMPLATE.clone()` tail.
+    subclass_bard_template("Whispers Bard", 'P', false, false, &[], Some(PSYCHIC_BLADES_TAG))
 });

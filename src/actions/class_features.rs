@@ -2407,6 +2407,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     FOE_SLAYER_TAG,
     DIVINE_FURY_TAG,
     DREADFUL_STRIKES_TAG,
+    PSYCHIC_BLADES_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2523,6 +2524,52 @@ pub const FOE_SLAYER_TAG: &str = "ranger.foe_slayer";
 /// — +1d6 + level/2 Radiant while raging), and SNEAK_ATTACK_TAG (Rogue
 /// once-per-turn +Nd6 with the qualifying-attack gate).
 pub const DREADFUL_STRIKES_TAG: &str = "ranger.dreadful_strikes";
+
+/// 5e Bard **College of Whispers** subclass — **Psychic Blades** (level 3,
+/// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
+/// +1d6 Psychic damage on the target. RAW's Psychic Blades RAW-strictly
+/// spends a Bardic Inspiration die per activation and scales the die pool
+/// with bard level (2d6 at lv3 → 3d6 lv5 → 5d6 lv10 → 8d6 lv15); we
+/// collapse both the RAW BI-die cost AND the level-scaled die pool down
+/// to a plain "once-per-turn +1d6 Psychic" rider on the same shared
+/// `ONCE_PER_TURN_RIDER_TAGS` ledger as Colossus Slayer / Dreadful
+/// Strikes so the feature slots into the existing rider chokepoint
+/// without either an inspiration-die burn accounting surface or a per-
+/// caster level die-pool scaler. Matches the same "one-die-typed +
+/// no-target-gate + no-per-rest-charge" corner Dreadful Strikes already
+/// sits at — the two features converge on the same shape from different
+/// class chassis (Ranger's Fey Wanderer conclave lv3 psychic rider vs.
+/// Bard's Whispers college lv3 psychic rider).
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited to one trigger per turn) and read at the
+/// attack-resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// right after the Dreadful Strikes block. The "once per turn" gate is
+/// the `once_per_turn_used(PSYCHIC_BLADES_TAG)` ledger on the actor,
+/// cleared at turn-start by `reset_for_new_round` (mirrors Colossus
+/// Slayer / Dreadful Strikes / Foe Slayer / Divine Fury on the same
+/// ledger).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider fires
+/// on melee AND ranged weapon hits (RAW: "When you hit a creature with a
+/// weapon attack") — no melee-only gate. Damage is always typed Psychic
+/// — RAW's "your whispers infuse your weapon strikes" fixes the type at
+/// Psychic regardless of the weapon's base type, sibling to Dreadful
+/// Strikes' Psychic-fixed damage and distinct from Colossus Slayer's
+/// `weapon-typed` die which mirrors the weapon.
+///
+/// Sibling on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort to
+/// COLOSSUS_SLAYER_TAG (Hunter Ranger lv3 — +1d8 weapon-typed with a
+/// wounded-target gate), DREADFUL_STRIKES_TAG (Fey Wanderer Ranger lv3
+/// — +1d4 Psychic on any weapon hit), FOE_SLAYER_TAG (Ranger lv20
+/// capstone — flat +WIS-mod on any weapon hit), DIVINE_FURY_TAG (Zealot
+/// Barbarian lv3 — +1d6 + level/2 Radiant while raging), and
+/// SNEAK_ATTACK_TAG (Rogue once-per-turn +Nd6 with the qualifying-attack
+/// gate). Psychic Blades lands mid-die-size between Dreadful Strikes
+/// (1d4) and Colossus Slayer (1d8), matching its RAW-level-3 anchor
+/// where the equivalent Fey Wanderer / Hunter riders also unlock.
+pub const PSYCHIC_BLADES_TAG: &str = "bard.psychic_blades";
 
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's

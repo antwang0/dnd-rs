@@ -26750,6 +26750,198 @@ mod tests {
         );
     }
 
+    /// Psychic Blades (Whispers Bard lv3, XGtE): passive once-per-turn
+    /// +1d6 Psychic damage rider on any weapon hit. Distinct from
+    /// Colossus Slayer's wounded-target gate — Psychic Blades fires
+    /// against a full-HP target too, sibling to Dreadful Strikes'
+    /// no-gate lane. We probe with an unwounded goblin across a seed
+    /// loop and expect a "psychic blades" log line on at least one
+    /// connecting swing plus the once-per-turn ledger flipping to used.
+    #[test]
+    fn psychic_blades_fires_on_weapon_hit_and_marks_used() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::PSYCHIC_BLADES_TAG;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bards::WHISPERS_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let b = e
+                .instantiate_creature(&WHISPERS_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Full-HP goblin — the Colossus Slayer wounded gate would
+            // reject; Psychic Blades must still fire.
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = SCIMITAR.side_effects(&mut e, b, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("psychic blades")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&b].once_per_turn_used(PSYCHIC_BLADES_TAG),
+                    "once-per-turn ledger should flip after the rider fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'psychic blades' log line on at least one connecting swing"
+        );
+    }
+
+    /// Psychic Blades is once-per-turn. Once the shared ledger is set,
+    /// subsequent swings on the same turn must not fire the rider — the
+    /// sibling shape to the Colossus Slayer / Dreadful Strikes / Foe
+    /// Slayer / Divine Fury once-per-turn assertions on the shared
+    /// `ONCE_PER_TURN_RIDER_TAGS` cohort.
+    #[test]
+    fn psychic_blades_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::PSYCHIC_BLADES_TAG;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bards::WHISPERS_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&WHISPERS_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&b)
+            .unwrap()
+            .mark_once_per_turn_used(PSYCHIC_BLADES_TAG);
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let tv = vec![g];
+            let _ = SCIMITAR.side_effects(&mut e, b, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("psychic blades"));
+        assert!(
+            !any_rider,
+            "psychic blades must not fire while the once-per-turn ledger is set"
+        );
+    }
+
+    /// Baseline / Valor / Swords / Lore bards must NOT ship Psychic
+    /// Blades — the tag is Whispers-only. Locks the subclass tag
+    /// composition against a template drift (e.g. accidentally promoting
+    /// Psychic Blades to the baseline `BARD_TEMPLATE` features set and
+    /// having the +1d6 psychic rider fire on every bard weapon hit).
+    /// Mirrors `dreadful_strikes_tag_is_fey_wanderer_only` on the
+    /// "subclass-only tag lands only on the subclass template" pattern.
+    #[test]
+    fn psychic_blades_tag_is_whispers_bard_only() {
+        use crate::actions::class_features::PSYCHIC_BLADES_TAG;
+        use crate::actors::creatures::bards::{
+            BARD_TEMPLATE, LORE_BARD_TEMPLATE, SWORDS_BARD_TEMPLATE, VALOR_BARD_TEMPLATE,
+            WHISPERS_BARD_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let baseline = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let valor = e
+            .instantiate_creature(&VALOR_BARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let swords = e
+            .instantiate_creature(&SWORDS_BARD_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let lore = e
+            .instantiate_creature(&LORE_BARD_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        let whispers = e
+            .instantiate_creature(&WHISPERS_BARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].has_passive_feature(PSYCHIC_BLADES_TAG),
+            "baseline Bard must NOT carry Psychic Blades"
+        );
+        assert!(
+            !e.actors[&valor].has_passive_feature(PSYCHIC_BLADES_TAG),
+            "Valor Bard must NOT carry Psychic Blades"
+        );
+        assert!(
+            !e.actors[&swords].has_passive_feature(PSYCHIC_BLADES_TAG),
+            "Swords Bard must NOT carry Psychic Blades"
+        );
+        assert!(
+            !e.actors[&lore].has_passive_feature(PSYCHIC_BLADES_TAG),
+            "Lore Bard must NOT carry Psychic Blades"
+        );
+        assert!(
+            e.actors[&whispers].has_passive_feature(PSYCHIC_BLADES_TAG),
+            "Whispers Bard MUST carry Psychic Blades"
+        );
+    }
+
+    /// The Whispers Bard subclass template inherits every other baseline
+    /// bard feature via the shared `subclass_bard_template` helper —
+    /// verifies Bardic Inspiration / Cutting Words / Font of Inspiration
+    /// all still ride on the clone so a future refactor of the helper
+    /// can't silently drop baseline features. Sibling shape to
+    /// `fey_wanderer_ranger_inherits_baseline_features` on the ranger
+    /// chassis.
+    #[test]
+    fn whispers_bard_inherits_baseline_features() {
+        use crate::actions::class_features::{
+            BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG, FONT_OF_INSPIRATION_TAG,
+        };
+        use crate::actors::creatures::bards::WHISPERS_BARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let whispers = e
+            .instantiate_creature(&WHISPERS_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&whispers].has_passive_feature(BARDIC_INSPIRATION_TAG),
+            "Whispers Bard should inherit Bardic Inspiration from baseline"
+        );
+        assert!(
+            e.actors[&whispers].has_passive_feature(CUTTING_WORDS_TAG),
+            "Whispers Bard should inherit Cutting Words from baseline"
+        );
+        assert!(
+            e.actors[&whispers].has_passive_feature(FONT_OF_INSPIRATION_TAG),
+            "Whispers Bard should inherit Font of Inspiration from baseline"
+        );
+    }
+
+    /// Whispers Bard picks up neither combat template flag (unlike Valor
+    /// / Swords), matching the RAW-subclass-lane split — Whispers is a
+    /// psychic-rider skirmisher, not a combat-second-swing lane. Locks
+    /// the template drift against a bad clone that would silently pick
+    /// up the Valor / Swords `has_extra_attack` / `has_dueling_style`
+    /// flags via the shared `subclass_bard_template` helper.
+    #[test]
+    fn whispers_bard_flags_match_subclass_kit() {
+        use crate::actors::creatures::bards::WHISPERS_BARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let whispers = e
+            .instantiate_creature(&WHISPERS_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&whispers].has_extra_attack(),
+            "Whispers Bard must NOT ship Extra Attack (Valor / Swords-only)"
+        );
+        assert!(
+            !e.actors[&whispers].has_dueling_style(),
+            "Whispers Bard must NOT ship Dueling style (Swords-only)"
+        );
+    }
+
     /// Foe Slayer (Ranger lv20 capstone): passive once-per-turn +WIS-
     /// mod flat damage rider on weapon hits. Since the RANGER_TEMPLATE
     /// ships with WIS 14 (+2 modifier), a connecting weapon swing
@@ -52829,14 +53021,14 @@ mod tests {
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
             COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG,
-            ONCE_PER_TURN_RIDER_TAGS, SNEAK_ATTACK_TAG,
+            ONCE_PER_TURN_RIDER_TAGS, PSYCHIC_BLADES_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            5,
+            6,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
@@ -52844,6 +53036,7 @@ mod tests {
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DIVINE_FURY_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DREADFUL_STRIKES_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSYCHIC_BLADES_TAG));
 
         let mut e = ei_with_terrain(15, 15, &[]);
         let g = e
@@ -56280,9 +56473,12 @@ mod tests {
     /// while the baseline bard's flags stay off and the Valor bard
     /// carries only `has_extra_attack: true` (no Dueling style). Template
     /// drift check locks the two-flag Swords loadout distinctly on its
-    /// own chassis — a hypothetical future Whispers Bard subclass must
-    /// NOT accidentally pick up either flag through a bad clone. Mirrors
-    /// the `extra_attack_lands_only_on_valor_bard` shape on the
+    /// own chassis — the sibling Whispers Bard subclass must NOT
+    /// accidentally pick up either flag through a bad clone (Whispers
+    /// is a psychic-rider skirmisher lane, not a combat-second-swing
+    /// lane); the sibling `whispers_bard_flags_match_subclass_kit` test
+    /// pins the reciprocal shape on the Whispers chassis. Mirrors the
+    /// `extra_attack_lands_only_on_valor_bard` shape on the
     /// "subclass-only flag lands only on the subclass template" pattern.
     #[test]
     fn swords_bard_flags_match_subclass_kit() {
@@ -56457,12 +56653,14 @@ mod tests {
     /// and layers NO combat-style template flags (unlike Valor /
     /// Swords, which flip `has_extra_attack` / `has_dueling_style`).
     /// Template drift check locks the Lore identity distinctly on its
-    /// own chassis — a hypothetical future Whispers Bard subclass must
-    /// NOT accidentally pick up Counterspell / Fireball through a bad
-    /// clone, and Lore must NOT accidentally pick up the combat flags
-    /// through a wrong stanza. Mirrors the
-    /// `swords_bard_flags_match_subclass_kit` shape on the "subclass-only
-    /// content lands only on the subclass template" pattern.
+    /// own chassis — the sibling Whispers Bard subclass must NOT
+    /// accidentally pick up Counterspell / Fireball through a bad clone
+    /// (Whispers is a psychic-rider skirmisher, not an Additional
+    /// Magical Secrets lane), and Lore must NOT accidentally pick up
+    /// the combat flags OR the Psychic Blades tag through a wrong
+    /// stanza. Mirrors the `swords_bard_flags_match_subclass_kit` shape
+    /// on the "subclass-only content lands only on the subclass
+    /// template" pattern.
     #[test]
     fn lore_bard_ships_additional_magical_secrets_and_no_combat_flags() {
         use crate::actions::action_template::Action;

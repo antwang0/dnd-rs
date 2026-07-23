@@ -2728,7 +2728,7 @@ impl CreatureTemplate {
     /// repeated once per subclass) into a single method call per
     /// subclass template.
     ///
-    /// Users (18+ callsites across seven class chassis today):
+    /// Users (21+ callsites across eight class chassis today):
     ///   - **Warlock** (8 tag-only Otherworldly Patron subclass templates
     ///     via the class-scoped `subclass_warlock_template` helper —
     ///     Undying / Great Old One / Archfey / Celestial / Marid / Dao /
@@ -2743,6 +2743,18 @@ impl CreatureTemplate {
     ///     Way of the Long Death).
     ///   - **Paladin** (2 tag-only Sacred Oath subclass templates —
     ///     Oath of Glory, Oath of the Watchers).
+    ///   - **Fighter** (1 tag-only Martial Archetype subclass template —
+    ///     Samurai).
+    ///   - **Ranger** (1 tag-only Conclave subclass template — Fey
+    ///     Wanderer).
+    ///
+    /// The **Bard** chassis has its own class-scoped
+    /// `subclass_bard_template` helper (see `bards.rs`) with an optional
+    /// `subclass_tag` axis that layers a single tag into the baseline
+    /// features set the same way this helper does — sibling shape,
+    /// specialized for bards to also cover the extra_attack /
+    /// dueling_style flag flips and per-subclass action-layer picks the
+    /// Valor / Swords / Lore / Whispers family carries.
     ///
     /// Distinct from `subclass_barbarian_template` (barbarian family
     /// helper): that helper builds the shared level-9 envelope from

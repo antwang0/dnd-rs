@@ -1010,6 +1010,43 @@ pub fn resolve_attack_outcome(
             target_gate: |_| true,
         },
     );
+    // 5e Whispers Bard **Psychic Blades** (level 3, XGtE) — passive
+    // once-per-turn weapon-hit rider. On any weapon hit, lay +1d6 Psychic
+    // damage on the target. Routes through the shared
+    // `try_fire_once_per_turn_weapon_die_rider` helper alongside Colossus
+    // Slayer / Dreadful Strikes above — the same "one die + one damage
+    // type + optional target gate" corner. Distinctions from the two
+    // ranger-side siblings wired at the spec fields: no target gate
+    // (`|_| true` — RAW fires against any target, wounded or not — sibling
+    // to Dreadful Strikes' no-gate lane), fixed Psychic damage type
+    // (`DamageType::Psychic` — RAW's "your whispers infuse your weapon
+    // strikes" fixes the type regardless of the weapon's base type —
+    // sibling to Dreadful Strikes' Psychic-fixed damage), and 1d6 —
+    // mid-die-size between Dreadful Strikes' 1d4 and Colossus Slayer's
+    // 1d8, matching Psychic Blades' RAW-lv3 anchor where the equivalent
+    // Fey Wanderer / Hunter riders also unlock.
+    //
+    // RAW-strict Psychic Blades spends a Bardic Inspiration die per
+    // activation and scales the die pool with bard level; we collapse
+    // both the BI-die cost AND the level-scaled pool to a flat +1d6 on
+    // the shared once-per-turn ledger, matching the same collapse
+    // Dreadful Strikes applies to its own RAW per-target hit-map — trades
+    // a small approximation for slotting cleanly into the existing
+    // once-per-turn rider chokepoint. Crit doubles the die via the
+    // shared `push_die_rider` chokepoint.
+    try_fire_once_per_turn_weapon_die_rider(
+        encounter,
+        &mut effects,
+        &p,
+        is_crit,
+        &OncePerTurnWeaponRiderSpec {
+            tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
+            dice: Dice::new(1, 6),
+            damage_type: DamageType::Psychic,
+            label: "psychic blades",
+            target_gate: |_| true,
+        },
+    );
     // 5e Ranger **Foe Slayer** (level 20 capstone) — passive once-per-
     // turn rider. On any weapon hit, add the ranger's Wisdom modifier
     // as flat damage of the weapon's damage type. Two gates:
