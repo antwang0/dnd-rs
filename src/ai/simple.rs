@@ -3214,54 +3214,81 @@ fn try_smite_spell(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    // Slot-cheapest first — preserves higher slots for emergencies.
-    // The order is defined by the central `ALL_SMITE_SPELLS` registry,
+    // Melee-flavor smite picker: gate on adjacent-enemy so the prime
+    // is consumed this turn by the paladin's Extra Attack loop. Slot-
+    // cheapest first — preserves higher slots for emergencies. The
+    // order is defined by the central `ALL_SMITE_SPELLS` registry,
     // so adding a new smite is one entry in spells.rs and the AI picks
     // it up automatically.
-    use crate::actions::action_template::Action;
-    use crate::actions::spells::ALL_SMITE_SPELLS;
-    for spell in ALL_SMITE_SPELLS {
-        if let Some(aei) = try_self_action(encounter, actor_id, spell.name()) {
-            return Some(aei);
-        }
-    }
-    None
+    try_smite_from_registry(
+        encounter,
+        actor_id,
+        crate::actions::spells::ALL_SMITE_SPELLS,
+        0,
+    )
 }
 
-/// Ranged-flavor smite picker (Lightning Arrow and any future ranged
-/// primes). Mirrors `try_smite_spell` but gates on enemy-within-bow-
-/// range (24 tiles) rather than adjacency — the prime loads the next
+/// Ranged-flavor smite picker (Ensnaring Strike, Lightning Arrow, and
+/// any future ranger primes). Mirrors `try_smite_spell` but gates on
+/// enemy-within-bow-range (24 tiles ≈ 60 ft, well inside the RAW 150 ft
+/// longbow range) rather than adjacency — the prime loads the next
 /// *ranged* weapon attack, so a far-away threat is the right trigger.
-/// Skips when the actor is already concentrating (Hunter's Mark and
-/// Lightning Arrow share the concentration slot; AI picks whichever
-/// fires first based on pipeline order) or has the prime up already.
+/// The either-lane Ensnaring Strike rider still fires on the melee
+/// scimitar fallback when a threat closes through the kite; the
+/// bow-range engagement gate here just decides *when to burn the
+/// slot* on the smite prime, not which weapon consumes the rider.
+/// Skips when the actor is already concentrating (Hunter's Mark,
+/// Ensnaring Strike, and Lightning Arrow share the concentration
+/// slot; AI picks whichever fires first based on pipeline order).
 fn try_ranged_smite_spell(
     encounter: &EncounterInstance,
     actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_smite_from_registry(
+        encounter,
+        actor_id,
+        crate::actions::spells::ALL_RANGED_SMITE_SPELLS,
+        24,
+    )
+}
+
+/// Shared "walk a smite-spell registry, pick the first spell whose
+/// per-spell validator allows the cast" helper. Both the paladin's
+/// melee-adjacent smite picker (`try_smite_spell`) and the ranger's
+/// bow-range smite picker (`try_ranged_smite_spell`) collapse to a
+/// one-line call on this helper — the only per-caller axes are the
+/// registry (paladin's `ALL_SMITE_SPELLS` vs ranger's
+/// `ALL_RANGED_SMITE_SPELLS`) and the engagement range (0 tiles ≈
+/// melee-adjacent vs 24 tiles ≈ 60 ft bowshot).
+///
+/// The per-spell double-prime gate is handled inside each
+/// `SmiteSpell::custom_validate_input` (`!has_condition(prime)`), so
+/// the loop just relies on `try_self_action` returning `None` for
+/// spells whose prime is already up — no outer bail-out needed.
+///
+/// The concentration gate lives here rather than on each spell's
+/// `custom_validate_input` because it's a per-caster policy decision
+/// ("don't drop the current concentration for another smite") rather
+/// than a per-spell RAW gate — the smite spells themselves are
+/// concentration-bound and would validly drop the current
+/// concentration to install their own, but the AI's heuristic
+/// prefers to keep whatever concentration is already up (Bless /
+/// Compelled Duel / Hunter's Mark / etc.) rather than churn.
+fn try_smite_from_registry(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    registry: &[&crate::actions::spells::SmiteSpell],
+    engagement_range: isize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     if actor.is_concentrating() {
         return None;
     }
-    // Bow range RAW = 150 ft = 60 tiles; we use 24 tiles (60 ft) as the
-    // engagement gate so the ranger only burns the slot when a threat
-    // is in a reasonably-aimed bowshot, not across the entire map.
-    if !any_enemy_within(encounter, actor_id, 24) {
+    if !any_enemy_within(encounter, actor_id, engagement_range) {
         return None;
     }
     use crate::actions::action_template::Action;
-    use crate::actions::spells::ALL_RANGED_SMITE_SPELLS;
-    for spell in ALL_RANGED_SMITE_SPELLS {
-        if actor.has_condition(spell.prime) {
-            continue;
-        }
+    for spell in registry {
         if let Some(aei) = try_self_action(encounter, actor_id, spell.name()) {
             return Some(aei);
         }

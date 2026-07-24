@@ -675,6 +675,21 @@ pub enum Condition {
     /// OnHitRider gates the rider to bow swings so a melee fallback
     /// can't burn the prime.
     LightningArrowPrimed,
+    /// Ensnaring Strike primed (5e level-1 ranger conjuration,
+    /// concentration). The ranger's next weapon attack hit — either
+    /// melee or ranged — deals +1d6 piercing via the on-hit rider table,
+    /// and thorny vines sprout at the point of impact: the target makes
+    /// a STR save vs the ranger's WIS-based DC or is Restrained until
+    /// the spell ends. One-shot prime — the rider table strips this
+    /// flag the moment the consuming hit lands. Ranger's lv1 sibling to
+    /// the paladin's Wrathful Smite prime (also lv1, also STR-save-vs-
+    /// condition follow-up, but Wrathful is CHA-anchored + melee-only +
+    /// psychic-typed + Frightened; Ensnaring is WIS-anchored + both
+    /// lanes + piercing-typed + Restrained). Unlike Lightning Arrow
+    /// (ranged-only), Ensnaring Strike fires on either the scimitar
+    /// swing or the longbow shot — matching RAW's "the next time you
+    /// hit a creature with a weapon attack" broad envelope.
+    EnsnaringStriking,
     /// Barkskin (5e level-2 transmutation, concentration). The target's
     /// skin hardens to bark: their AC becomes 16 unless their natural /
     /// worn-armor AC is already higher. We model the "AC floor" via the
@@ -1382,6 +1397,7 @@ impl Condition {
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
+            Condition::EnsnaringStriking => "primed with ensnaring strike",
             Condition::Barkskinned => "barkskinned",
             Condition::Untracked => "passing without trace",
             Condition::HolyWeaponed => "wielding a holy weapon",
@@ -1517,6 +1533,7 @@ impl Condition {
                 | Condition::WardingBonded
                 | Condition::MindBlanked
                 | Condition::LightningArrowPrimed
+                | Condition::EnsnaringStriking
                 | Condition::Barkskinned
                 | Condition::Untracked
                 | Condition::HolyWeaponed

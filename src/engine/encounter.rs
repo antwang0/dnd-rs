@@ -37096,6 +37096,86 @@ mod tests {
         assert!(e.actors[&rng].has_condition(Condition::LightningArrowPrimed));
     }
 
+    /// Ensnaring Strike: lv1 ranger smite-spell prime. Verifies the
+    /// bonus-action + lv1 slot cost shape and that casting installs
+    /// the `EnsnaringStriking` condition on the caster. Sibling test
+    /// to `lightning_arrow_primes_caster` — same SmiteSpell chassis,
+    /// different slot cost / prime condition.
+    #[test]
+    fn ensnaring_strike_primes_caster() {
+        use crate::actions::spells::ENSNARING_STRIKE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let rng = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let costs = ENSNARING_STRIKE.cost(&e, rng, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::BonusAction)));
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+        for ef in ENSNARING_STRIKE.side_effects(&mut e, rng, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&rng].has_condition(Condition::EnsnaringStriking));
+        // Concentration bookkeeping: the caster is now concentrating on
+        // Ensnaring Strike, so a second concentration cast (Hunter's
+        // Mark, Lightning Arrow, ...) would drop this prime cleanly.
+        assert!(e.actors[&rng].is_concentrating());
+    }
+
+    /// Ensnaring Strike primes `EnsnaringStriking`; the next weapon hit
+    /// forces a STR save (caster WIS-DC) that, on fail, applies
+    /// Restrained. Sibling test to `wrathful_smite_can_frighten_on_hit`
+    /// — same lv1 smite-follow-up shape, different save/condition
+    /// (STR/Restrained vs WIS/Frightened) and different DC anchor
+    /// (WIS vs CHA).
+    #[test]
+    fn ensnaring_strike_can_restrain_on_hit() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actions::spells::ENSNARING_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut restrained_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let rng = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = ENSNARING_STRIKE.side_effects(&mut e, rng, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let tv = vec![g];
+            // Melee scimitar swing consumes the either-lane prime; the
+            // ranged bow fallback would fire the same rider (RAW: "the
+            // next time you hit a creature with a weapon attack"), but
+            // the scimitar keeps the test setup adjacent.
+            let weapon_effects = SCIMITAR.side_effects(&mut e, rng, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Restrained))
+            {
+                restrained_any = true;
+                break;
+            }
+        }
+        assert!(
+            restrained_any,
+            "ensnaring strike never restrained a target across 80 seeds"
+        );
+    }
+
     /// Conjure Volley: lv5 ranger conjuration burst. Verifies the lv5
     /// slot cost and that any enemy inside the burst footprint takes
     /// damage on a failed save (seed-deterministic — we just check that

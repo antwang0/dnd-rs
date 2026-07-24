@@ -5,8 +5,8 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
-    CONJURE_VOLLEY, CURE_WOUNDS, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK, LESSER_RESTORATION,
-    LIGHTNING_ARROW, SPIKE_GROWTH,
+    CONJURE_VOLLEY, CURE_WOUNDS, ENSNARING_STRIKE, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK,
+    LESSER_RESTORATION, LIGHTNING_ARROW, SPIKE_GROWTH,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
@@ -54,6 +54,23 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     evocations on the half-caster spell ladder.
     actions.push(&LIGHTNING_ARROW);
     actions.push(&*CONJURE_VOLLEY);
+    // lv1 **Ensnaring Strike** (`SmiteSpell` chassis): bonus-action
+    // concentration prime that loads the next weapon attack (either
+    // melee or ranged — RAW's broad "hit with a weapon attack"
+    // envelope) with +1d6 piercing and a STR save (vs the ranger's
+    // WIS-based DC) gating Restrained (10 rounds) on fail. Sibling to
+    // Wrathful Smite (paladin lv1) on the "bonus-action prime + save-
+    // vs-condition follow-up" corner of the smite lane — same slot
+    // cost, same 1d6 die, same STR save shape, but distinct on damage
+    // type (Piercing vs Psychic), condition (Restrained vs
+    // Frightened), DC anchor (WIS vs CHA), and weapon lane
+    // (either-lane vs melee-only). Ranger's cheap-slot alternative to
+    // Lightning Arrow (lv3): Ensnaring Strike trades away the +4d8
+    // lightning burst for a Restrained lock that shuts down enemy
+    // movement / positioning at 1/3 the slot cost, and Ensnaring's
+    // rider fires on a melee scimitar swing when a threat closes
+    // through the kite (Lightning Arrow is ranged-only).
+    actions.push(&ENSNARING_STRIKE);
     // lv2 **Barkskin**: ranger half-caster pickup. Touch concentration
     // buff that floors the target's AC at 16 — pairs cleanly with the
     // ranger's longbow kite (cast on self before the fight, then plink

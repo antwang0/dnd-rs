@@ -10977,14 +10977,26 @@ pub static ALL_SMITE_SPELLS: &[&SmiteSpell] = &[
     &BANISHING_SMITE,
 ];
 
-/// Ranged-only smite spells (Lightning Arrow today; future ranged Smite
-/// primes — Hail of Thorns variants, etc. — would slot in here). Kept
-/// distinct from `ALL_SMITE_SPELLS` because the AI's melee-smite
-/// pipeline gates on adjacent-enemy-present, which is wrong for a
-/// ranged prime; the ranged registry pairs with the AI's ranger-flavored
-/// `try_ranged_smite_spell` heuristic which gates on enemy-in-bow-range.
-/// Same SmiteSpell chassis — the gate is the only difference.
-pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&LIGHTNING_ARROW];
+/// Ranger-flavored smite spells (Ensnaring Strike at lv1, Lightning
+/// Arrow at lv3 — ordered cheapest-slot first, matching the AI's
+/// "preserve higher slots for emergencies" heuristic on
+/// `ALL_SMITE_SPELLS`). Kept distinct from the paladin-flavored
+/// `ALL_SMITE_SPELLS` registry because the AI's melee-smite pipeline
+/// gates on adjacent-enemy-present, which is wrong for a ranger's
+/// bow-range prime; the ranged registry pairs with the AI's ranger-
+/// flavored `try_ranged_smite_spell` heuristic which gates on
+/// enemy-in-bow-range (24 tiles). Same SmiteSpell chassis — the gate
+/// is the only difference.
+///
+/// Note: **Ensnaring Strike**'s on-hit rider fires on either the
+/// scimitar swing or the longbow shot (RAW: "the next time you hit
+/// a creature with a weapon attack"), while **Lightning Arrow**'s
+/// rider is ranged-only (RAW: "with this weapon" refers to the bow
+/// swing the prime installs on). The AI heuristic still gates on
+/// bow-range for both since the ranger's action-economy loop
+/// typically closes on the longbow — the melee-fallback lane on
+/// Ensnaring Strike is a bonus, not the primary consumption path.
+pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &LIGHTNING_ARROW];
 
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
@@ -19623,6 +19635,42 @@ pub static LIGHTNING_ARROW: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 3,
     prime: Condition::LightningArrowPrimed,
     concentration_name: "Lightning Arrow",
+};
+
+/// Ensnaring Strike — level-1 ranger conjuration, bonus action,
+/// concentration. Primes the ranger's next weapon attack (either
+/// melee or ranged) with +1d6 piercing and a STR save (vs the
+/// ranger's WIS-based DC) gates Restrained (10 rounds) on fail.
+///
+/// Signature ranger-flavored lockdown at the lv1 slot tier. RAW's
+/// ongoing 1d6-per-turn drip while restrained collapses to a single
+/// on-hit 1d6 rider — the load-bearing tactical effect is the
+/// Restrained install, and the smite-follow-up shape doesn't carry a
+/// per-round DoT so the drip is left to future work if
+/// `ConditionTemplate::HeatMetaled`-style round-tick damage lands as
+/// a generalized surface. Sibling to the paladin's Wrathful Smite on
+/// the lv1 "bonus-action prime + save-vs-condition follow-up" lane:
+/// same slot cost, same die (1d6), same STR-save vs a self-DC, but
+/// distinct on four axes:
+///   1. **Damage type** — Piercing (thorny vines) vs Psychic.
+///   2. **Condition** — Restrained vs Frightened.
+///   3. **DC anchor** — WIS (ranger's spellcasting mod) vs CHA.
+///   4. **Weapon lane** — either melee or ranged (RAW's "the next
+///      time you hit a creature with a weapon attack" broad envelope)
+///      vs melee-only.
+///
+/// The either-lane routing makes Ensnaring Strike the first entry on
+/// the `ALL_RANGED_SMITE_SPELLS` registry whose rider fires on melee
+/// swings too — the AI's `try_ranged_smite_spell` gate uses bow-range
+/// as the "enemy in engagement window" heuristic, but the primed hit
+/// itself can consume on the scimitar fallback when a melee threat
+/// closes through the kite.
+pub static ENSNARING_STRIKE: SmiteSpell = SmiteSpell {
+    display_name: "ensnaring strike",
+    aliases: &["ensnaring", "smite-ensnare", "vines"],
+    spell_slot_lvl: 1,
+    prime: Condition::EnsnaringStriking,
+    concentration_name: "Ensnaring Strike",
 };
 
 /// Conjure Volley — level-5 ranger conjuration. The ranger fires a

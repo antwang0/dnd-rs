@@ -1994,6 +1994,40 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             consume_on_trigger: true,
             follow_up: None,
         },
+        // 5e Ensnaring Strike — 1st-level ranger conjuration, bonus
+        // action, concentration. Primes the ranger's next weapon
+        // attack — either melee or ranged (RAW's "the next time you
+        // hit a creature with a weapon attack" broad envelope) — with
+        // +1d6 piercing and a STR save vs the ranger's WIS-based DC
+        // gates Restrained (10 rounds) on fail. Sibling to Wrathful
+        // Smite on the lv1 "save-vs-condition follow-up" corner but
+        // distinct on damage type (Piercing vs Psychic), condition
+        // (Restrained vs Frightened), DC anchor (WIS vs CHA), and
+        // weapon lane (either vs melee-only). First entry on the
+        // rider table whose weapon-lane composition is
+        // `!melee_only && !ranged_only` alongside a save-follow-up —
+        // Crusader's Mantle / Crown of Stars / Bigby's Hand / Holy
+        // Weapon / Enlarge already ride the either-lane gate but as
+        // damage-only riders without a follow-up save.
+        OnHitRider {
+            condition: Condition::EnsnaringStriking,
+            dice: Dice::new(1, 6),
+            label: "ensnaring strike",
+            damage_type: DamageType::Piercing,
+            melee_only: false,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Wisdom,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(10),
+                },
+                label: "ensnaring strike restrain",
+                hp_threshold: None,
+            }),
+        },
         // 5e Holy Weapon — 5th-level paladin evocation, concentration.
         // The caster's weapon glows with radiant light: every weapon
         // attack hit deals an extra 2d8 radiant damage. Persistent (not
