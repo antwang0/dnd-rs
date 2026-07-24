@@ -1434,7 +1434,16 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///     — the RAW "mark target with bonus action, hit for +1d6" two-
 ///     step collapses to a plain once-per-turn +1d6 rider without a
 ///     per-target-mark ledger.
-const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
+///   - **Gathered Swarm** (Swarmkeeper Ranger lv3, TCE): +1d6 Piercing,
+///     no target gate. RAW's three-option choice (piercing damage /
+///     STR-save shove / self-teleport) collapses to the load-bearing
+///     damage-rider lane; the two movement alternatives would need a
+///     per-hit optional-side-effect surface plus AI heuristics for the
+///     trade, so they stay out for now. Sibling in die size to Psychic
+///     Blades / Slayer's Prey but Piercing-fixed (physical, distinct
+///     from the Psychic Blades / Dreadful Strikes psychic lane and the
+///     Planar Warrior force lane).
+pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
         dice: Dice::new(1, 8),
@@ -1468,6 +1477,13 @@ const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         dice: Dice::new(1, 6),
         damage_type: |p| p.damage_type,
         label: "slayer's prey",
+        target_gate: |_| true,
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::GATHERED_SWARM_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |_| DamageType::Piercing,
+        label: "gathered swarm",
         target_gate: |_| true,
     },
 ];

@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG,
-    PLANAR_WARRIOR_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
+    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, GATHERED_SWARM_TAG,
+    MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -428,7 +428,9 @@ pub static FEY_WANDERER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     // `NECROMANCY_WIZARD_TEMPLATE`, `WAR_MAGIC_WIZARD_TEMPLATE`,
     // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
     // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
-    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`.
+    // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
+    // `HORIZON_WALKER_RANGER_TEMPLATE`, `MONSTER_SLAYER_RANGER_TEMPLATE`,
+    // `SWARMKEEPER_RANGER_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Fey Wanderer Ranger", 'Y', DREADFUL_STRIKES_TAG)
 });
 
@@ -563,7 +565,8 @@ pub static HORIZON_WALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
     // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
-    // `FEY_WANDERER_RANGER_TEMPLATE`.
+    // `FEY_WANDERER_RANGER_TEMPLATE`, `MONSTER_SLAYER_RANGER_TEMPLATE`,
+    // `SWARMKEEPER_RANGER_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Horizon Walker Ranger", 'Z', PLANAR_WARRIOR_TAG)
 });
 
@@ -681,7 +684,123 @@ pub static MONSTER_SLAYER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
     // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`,
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
-    // `FEY_WANDERER_RANGER_TEMPLATE`, `HORIZON_WALKER_RANGER_TEMPLATE`.
+    // `FEY_WANDERER_RANGER_TEMPLATE`, `HORIZON_WALKER_RANGER_TEMPLATE`,
+    // `SWARMKEEPER_RANGER_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Monster Slayer Ranger", 'M', SLAYERS_PREY_TAG)
 });
 
+/// Swarmkeeper Ranger — Ranger Conclave **Swarmkeeper** subclass build
+/// (TCE). Identical envelope to the baseline `RANGER_TEMPLATE` (level-9
+/// half-caster, longbow + scimitar, 4/3/3/1/1 slot ladder, same kiter
+/// spell list, Feral Senses / Foe Slayer / Vanish / Roving / Archery
+/// Style inherited via `..base.clone()`) with one subclass feature
+/// layered on: **Gathered Swarm** (lv3 subclass tell) — passive once-
+/// per-turn +1d6 Piercing damage rider on any weapon hit.
+///
+/// The Swarmkeeper's signature "a swarm of nature spirits swirls around
+/// the ranger and chews on their targets" tell — where a baseline ranger
+/// relies purely on their weapon's base damage, the Swarmkeeper's first
+/// swing each turn carries a Piercing aftershock from the swarm's bite.
+/// Composes cleanly with the ranger's kiter kit: the +1d6 fires on the
+/// opening longbow shot (or the follow-up scimitar swing when a melee
+/// threat closes through the kite) at no action / concentration cost.
+///
+/// Sibling on the "once-per-turn +XdN weapon-hit rider" cross-class
+/// lane to `COLOSSUS_SLAYER_TAG` (Hunter Ranger lv3 — +1d8 weapon-typed
+/// with a wounded-target gate), `DREADFUL_STRIKES_TAG` (Fey Wanderer
+/// Ranger lv3 — +1d4 Psychic on any weapon hit), `PSYCHIC_BLADES_TAG`
+/// (Whispers Bard lv3 — +1d6 Psychic on any weapon hit),
+/// `PLANAR_WARRIOR_TAG` (Horizon Walker Ranger lv3 — +1d8 Force on any
+/// weapon hit), `SLAYERS_PREY_TAG` (Monster Slayer Ranger lv3 — +1d6
+/// weapon-typed on any weapon hit), `FOE_SLAYER_TAG` (Ranger lv20
+/// capstone — flat +WIS-mod on any weapon hit), `DIVINE_FURY_TAG`
+/// (Zealot Barbarian lv3 — +1d6 + level/2 Radiant while raging), and
+/// `SNEAK_ATTACK_TAG` (Rogue once-per-turn +Nd6 with the qualifying-
+/// attack gate). The nine rider tags share the `ONCE_PER_TURN_RIDER_TAGS`
+/// ledger on `ActorInstance` — each fires at most once per turn on the
+/// shared per-actor gate.
+///
+/// Distinct from the sibling `SLAYERS_PREY_TAG` on the damage-type axis
+/// — Gathered Swarm always deals Piercing (the swarm's bite is fixed);
+/// Slayer's Prey inherits the weapon's damage type. Same die size (1d6)
+/// and same no-target-gate shape.
+///
+/// RAW-strict Gathered Swarm offers three per-hit alternatives — the
+/// +1d6 piercing spirit-swarm bite, a Strength save vs. a forced 15-ft
+/// move on the target, or a 5-ft self-teleport for the swarmkeeper.
+/// We collapse the choice down to the load-bearing damage-rider lane
+/// so the feature slots into the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS`
+/// cohort — matching the same collapse Planar Warrior / Slayer's Prey
+/// apply to their own RAW bonus-action mark-and-hit two-steps (both
+/// trade the RAW alternate branches for slotting cleanly into the
+/// once-per-turn ledger). The two RAW movement alternatives would need
+/// a per-hit optional-side-effect surface plus AI heuristics for when
+/// to take the shove or the self-teleport over the damage — the collapse
+/// trades those alternatives away in exchange for slotting cleanly into
+/// the existing rider chokepoint without additional per-hit choice
+/// scaffolding.
+///
+/// RAW's Swarmkeeper picks up other features not shipped on this
+/// template — **Swarmkeeper Magic** (lv3: an expanded spell list
+/// including Faerie Fire / Web / Gaseous Form / Arcane Eye / Insect
+/// Plague; several are already baseline ranger picks, and the rest
+/// need a per-subclass spell-list expansion the engine doesn't yet
+/// carry as a first-class axis), **Writhing Tide** (lv7: 1/rest bonus
+/// action to grant 10 ft fly speed for 1 minute; needs a temporary
+/// fly-speed surface), **Mighty Swarm** (lv11: Gathered Swarm's
+/// piercing rider bumps to 1d8 and the shove distance to 15 ft with a
+/// prone rider; the die bump is a per-level scaling hook the sibling
+/// Dreadful Strikes / Planar Warrior riders also defer), and **Swarming
+/// Dispersal** (lv15: 1/rest reaction to gain resistance to damage and
+/// teleport 30 ft; needs a reactive damage-reduction hook plus a self-
+/// teleport surface). Only the lv3 Gathered Swarm passive has a
+/// mechanical surface on the CR-1 (level-9) chassis that plugs cleanly
+/// into the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort, so we ship
+/// that half and leave the rest as future work — matching the way
+/// `HORIZON_WALKER_RANGER_TEMPLATE` ships only Planar Warrior,
+/// `FEY_WANDERER_RANGER_TEMPLATE` ships only Dreadful Strikes, and
+/// `MONSTER_SLAYER_RANGER_TEMPLATE` ships only Slayer's Prey from their
+/// respective RAW Conclave kits.
+///
+/// Ships on the CR-1 (level-9) ranger chassis at (or above) its strict
+/// RAW lv3 gate for the same reason `FEY_WANDERER_RANGER_TEMPLATE`,
+/// `HUNTER_RANGER_TEMPLATE`, `GLOOM_STALKER_RANGER_TEMPLATE`,
+/// `HORIZON_WALKER_RANGER_TEMPLATE`, and `MONSTER_SLAYER_RANGER_TEMPLATE`
+/// ship their Conclave features above their strict RAW gates — class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Distinct from `RANGER_TEMPLATE` (Conclave-less baseline),
+/// `HUNTER_RANGER_TEMPLATE` (Hunter Conclave),
+/// `GLOOM_STALKER_RANGER_TEMPLATE` (Gloom Stalker Conclave),
+/// `FEY_WANDERER_RANGER_TEMPLATE` (Fey Wanderer Conclave),
+/// `HORIZON_WALKER_RANGER_TEMPLATE` (Horizon Walker Conclave), and
+/// `MONSTER_SLAYER_RANGER_TEMPLATE` (Monster Slayer Conclave) so a
+/// Swarmkeeper-vs-any-other-ranger encounter renders unambiguously by
+/// name.
+///
+/// Glyph 'K' — 'K' for "swarm**K**eeper" reads as the ranger tending
+/// their bound spirit-swarm. Distinct from baseline ranger 'R', Hunter
+/// 'H', Gloom Stalker 'G', Fey Wanderer 'Y', Horizon Walker 'Z', and
+/// Monster Slayer 'M'. Collides with a handful of NPC creature templates
+/// (Kobolds, Krakens, Knights) but the team-color-and-team-id combo
+/// disambiguates them in a mixed encounter — same overlap policy the
+/// other PC subclass glyphs already follow.
+pub static SWARMKEEPER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern via the shared `CreatureTemplate::with_subclass_tag`
+    // cross-class helper — clones the baseline Ranger envelope wholesale
+    // and layers on the Gathered Swarm passive tag. Fourth ranger-chassis
+    // user of the `with_subclass_tag` cross-class helper (after
+    // `FEY_WANDERER_RANGER_TEMPLATE`, `HORIZON_WALKER_RANGER_TEMPLATE`,
+    // and `MONSTER_SLAYER_RANGER_TEMPLATE`). Sibling helper users on the
+    // "clone base + insert one tag" cross-class lane: every tag-only
+    // Warlock Otherworldly Patron subclass (via `subclass_warlock_template`),
+    // `LIFE_CLERIC_TEMPLATE`, `FORGE_CLERIC_TEMPLATE`,
+    // `TWILIGHT_CLERIC_TEMPLATE`, `NECROMANCY_WIZARD_TEMPLATE`,
+    // `WAR_MAGIC_WIZARD_TEMPLATE`, `SHADOW_MAGIC_SORCERER_TEMPLATE`,
+    // `ABERRANT_MIND_SORCERER_TEMPLATE`, `DIVINE_SOUL_SORCERER_TEMPLATE`,
+    // `LONG_DEATH_MONK_TEMPLATE`, `GLORY_PALADIN_TEMPLATE`,
+    // `WATCHERS_PALADIN_TEMPLATE`, `FEY_WANDERER_RANGER_TEMPLATE`,
+    // `HORIZON_WALKER_RANGER_TEMPLATE`, `MONSTER_SLAYER_RANGER_TEMPLATE`.
+    RANGER_TEMPLATE.with_subclass_tag("Swarmkeeper Ranger", 'K', GATHERED_SWARM_TAG)
+});

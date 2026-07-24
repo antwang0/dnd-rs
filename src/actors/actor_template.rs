@@ -2745,8 +2745,8 @@ impl CreatureTemplate {
     ///     Oath of Glory, Oath of the Watchers).
     ///   - **Fighter** (1 tag-only Martial Archetype subclass template —
     ///     Samurai).
-    ///   - **Ranger** (3 tag-only Conclave subclass templates — Fey
-    ///     Wanderer, Horizon Walker, Monster Slayer).
+    ///   - **Ranger** (4 tag-only Conclave subclass templates — Fey
+    ///     Wanderer, Horizon Walker, Monster Slayer, Swarmkeeper).
     ///
     /// The **Bard** chassis has its own class-scoped
     /// `subclass_bard_template` helper (see `bards.rs`) with an optional
@@ -3068,11 +3068,13 @@ pub struct ActorInstance {
     /// instead of a bool field per feature. Marked at the swing site
     /// via `mark_once_per_turn_used(tag)`; cleared wholesale at
     /// turn-start by `reset_for_new_round`. Read via
-    /// `once_per_turn_used(tag)` — reserved thin-wrappers
+    /// `once_per_turn_used(tag)` — the four legacy thin-wrappers
     /// (`sneak_attack_used` / `colossus_slayer_used` /
     /// `foe_slayer_used` / `divine_fury_used`) delegate to it so
-    /// existing callsites keep the same one-liner shape. The tag
-    /// list is documented in
+    /// pre-refactor callsites keep the same one-liner shape; newer
+    /// tags (Dreadful Strikes, Psychic Blades, Planar Warrior,
+    /// Slayer's Prey, Gathered Swarm) route through the generic API
+    /// directly. The tag list is documented in
     /// `class_features::ONCE_PER_TURN_RIDER_TAGS`.
     once_per_turn_marks: HashSet<&'static str>,
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
@@ -5821,15 +5823,20 @@ impl ActorInstance {
         if self.conditions.remove(&Condition::MindWhipped).is_some() {
             self.action_slots = 0;
         }
-        // Once-per-turn attack-rider ledger — Sneak Attack, Colossus
-        // Slayer, Foe Slayer, Divine Fury all share a single
-        // `HashSet<&'static str>` cleared here in one line. Adding a
-        // future once-per-turn rider (a subclass equivalent, a new
-        // Battle Master maneuver's per-turn window) needs no touch
-        // to this reset site — the tag just plugs into the shared
-        // ledger via `mark_once_per_turn_used(TAG)`. Help grants
-        // from this actor live with the helped actor, so we don't
-        // clear them here.
+        // Once-per-turn attack-rider ledger — every entry in
+        // `ONCE_PER_TURN_RIDER_TAGS` (Sneak Attack, Colossus Slayer,
+        // Foe Slayer, Divine Fury, Dreadful Strikes, Psychic Blades,
+        // Planar Warrior, Slayer's Prey, Gathered Swarm) shares a
+        // single `HashSet<&'static str>` cleared here in one line.
+        // Adding a future once-per-turn rider (a subclass equivalent,
+        // a new Battle Master maneuver's per-turn window) needs no
+        // touch to this reset site — the tag just plugs into the
+        // shared ledger via `mark_once_per_turn_used(TAG)` and lands
+        // as one new row on the sibling `ONCE_PER_TURN_WEAPON_DIE_RIDERS`
+        // cohort (the cross-module invariant is pinned by
+        // `every_weapon_die_rider_tag_is_registered_in_the_ledger_list`).
+        // Help grants from this actor live with the helped actor, so we
+        // don't clear them here.
         self.once_per_turn_marks.clear();
         // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
         // per-turn ledger of targets this actor has landed a connecting

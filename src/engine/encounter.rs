@@ -27169,16 +27169,16 @@ mod tests {
     }
 
     /// Baseline / Hunter / Gloom Stalker / Fey Wanderer / Horizon
-    /// Walker rangers must NOT ship Slayer's Prey — the tag is Monster
-    /// Slayer-only. Locks the subclass tag composition against a
-    /// template drift.
+    /// Walker / Swarmkeeper rangers must NOT ship Slayer's Prey — the
+    /// tag is Monster Slayer-only. Locks the subclass tag composition
+    /// against a template drift.
     #[test]
     fn slayers_prey_tag_is_monster_slayer_only() {
         use crate::actions::class_features::SLAYERS_PREY_TAG;
         use crate::actors::creatures::rangers::{
             FEY_WANDERER_RANGER_TEMPLATE, GLOOM_STALKER_RANGER_TEMPLATE,
             HORIZON_WALKER_RANGER_TEMPLATE, HUNTER_RANGER_TEMPLATE,
-            MONSTER_SLAYER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+            MONSTER_SLAYER_RANGER_TEMPLATE, RANGER_TEMPLATE, SWARMKEEPER_RANGER_TEMPLATE,
         };
         let mut e = ei_with_terrain(20, 20, &[]);
         let baseline = e
@@ -27199,7 +27199,10 @@ mod tests {
         let monster = e
             .instantiate_creature(&MONSTER_SLAYER_RANGER_TEMPLATE, Coordinate::new(12, 12), 0, 0)
             .unwrap();
-        for id in [baseline, hunter, gloom, fey, horizon] {
+        let swarm = e
+            .instantiate_creature(&SWARMKEEPER_RANGER_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        for id in [baseline, hunter, gloom, fey, horizon, swarm] {
             assert!(
                 !e.actors[&id].has_passive_feature(SLAYERS_PREY_TAG),
                 "non-Monster-Slayer Ranger must NOT carry Slayer's Prey"
@@ -27238,6 +27241,166 @@ mod tests {
         assert!(
             e.actors[&monster].has_passive_feature(ROVING_TAG),
             "Monster Slayer Ranger should inherit Roving from baseline"
+        );
+    }
+
+    /// Gathered Swarm (Swarmkeeper Ranger lv3, TCE): passive once-per-
+    /// turn +1d6 Piercing damage rider on any weapon hit. Sibling shape
+    /// to Planar Warrior / Slayer's Prey but Piercing-fixed rather than
+    /// Force-fixed / weapon-typed. We probe with a full-HP goblin across
+    /// a seed loop and expect a "gathered swarm" log line on at least
+    /// one connecting swing plus the once-per-turn ledger flipping to
+    /// used.
+    #[test]
+    fn gathered_swarm_fires_on_weapon_hit_and_marks_used() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::GATHERED_SWARM_TAG;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::SWARMKEEPER_RANGER_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&SWARMKEEPER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("gathered swarm")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&r].once_per_turn_used(GATHERED_SWARM_TAG),
+                    "once-per-turn ledger should flip after the rider fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'gathered swarm' log line on at least one connecting swing"
+        );
+    }
+
+    /// Gathered Swarm is once-per-turn. Sibling shape to the Colossus
+    /// Slayer / Dreadful Strikes / Psychic Blades / Planar Warrior /
+    /// Slayer's Prey / Foe Slayer / Divine Fury once-per-turn
+    /// assertions on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort.
+    #[test]
+    fn gathered_swarm_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::GATHERED_SWARM_TAG;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::SWARMKEEPER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let r = e
+            .instantiate_creature(&SWARMKEEPER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&r)
+            .unwrap()
+            .mark_once_per_turn_used(GATHERED_SWARM_TAG);
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("gathered swarm"));
+        assert!(
+            !any_rider,
+            "gathered swarm must not fire while the once-per-turn ledger is set"
+        );
+    }
+
+    /// Baseline / Hunter / Gloom Stalker / Fey Wanderer / Horizon
+    /// Walker / Monster Slayer rangers must NOT ship Gathered Swarm —
+    /// the tag is Swarmkeeper-only. Locks the subclass tag composition
+    /// against a template drift.
+    #[test]
+    fn gathered_swarm_tag_is_swarmkeeper_only() {
+        use crate::actions::class_features::GATHERED_SWARM_TAG;
+        use crate::actors::creatures::rangers::{
+            FEY_WANDERER_RANGER_TEMPLATE, GLOOM_STALKER_RANGER_TEMPLATE,
+            HORIZON_WALKER_RANGER_TEMPLATE, HUNTER_RANGER_TEMPLATE,
+            MONSTER_SLAYER_RANGER_TEMPLATE, RANGER_TEMPLATE, SWARMKEEPER_RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let gloom = e
+            .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let fey = e
+            .instantiate_creature(&FEY_WANDERER_RANGER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        let horizon = e
+            .instantiate_creature(&HORIZON_WALKER_RANGER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let monster = e
+            .instantiate_creature(&MONSTER_SLAYER_RANGER_TEMPLATE, Coordinate::new(12, 12), 0, 0)
+            .unwrap();
+        let swarm = e
+            .instantiate_creature(&SWARMKEEPER_RANGER_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        for id in [baseline, hunter, gloom, fey, horizon, monster] {
+            assert!(
+                !e.actors[&id].has_passive_feature(GATHERED_SWARM_TAG),
+                "non-Swarmkeeper Ranger must NOT carry Gathered Swarm"
+            );
+        }
+        assert!(
+            e.actors[&swarm].has_passive_feature(GATHERED_SWARM_TAG),
+            "Swarmkeeper Ranger MUST carry Gathered Swarm"
+        );
+    }
+
+    /// The Swarmkeeper subclass template inherits every other baseline
+    /// ranger feature via the shared `with_subclass_tag` helper —
+    /// verifies Foe Slayer / Vanish / Roving all still ride on the
+    /// clone so a future refactor of the helper can't silently drop
+    /// baseline features. Sibling shape to
+    /// `fey_wanderer_ranger_inherits_baseline_features` /
+    /// `horizon_walker_ranger_inherits_baseline_features` /
+    /// `monster_slayer_ranger_inherits_baseline_features` on the ranger
+    /// chassis.
+    #[test]
+    fn swarmkeeper_ranger_inherits_baseline_features() {
+        use crate::actions::class_features::{FOE_SLAYER_TAG, ROVING_TAG, VANISH_TAG};
+        use crate::actors::creatures::rangers::SWARMKEEPER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let swarm = e
+            .instantiate_creature(&SWARMKEEPER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&swarm].has_passive_feature(FOE_SLAYER_TAG),
+            "Swarmkeeper Ranger should inherit Foe Slayer from baseline"
+        );
+        assert!(
+            e.actors[&swarm].has_passive_feature(VANISH_TAG),
+            "Swarmkeeper Ranger should inherit Vanish from baseline"
+        );
+        assert!(
+            e.actors[&swarm].has_passive_feature(ROVING_TAG),
+            "Swarmkeeper Ranger should inherit Roving from baseline"
         );
     }
 
@@ -53342,22 +53505,23 @@ mod tests {
     /// The shared once-per-turn rider ledger cleanly separates its
     /// registered tags — a Sneak Attack mark doesn't accidentally
     /// suppress a Colossus Slayer / Foe Slayer / Divine Fury / Dreadful
-    /// Strikes / Psychic Blades / Planar Warrior swing (and vice versa).
-    /// Locks the HashSet-backed decoupling that the pre-refactor bool
-    /// cohort trivially had by construction.
+    /// Strikes / Psychic Blades / Planar Warrior / Slayer's Prey /
+    /// Gathered Swarm swing (and vice versa). Locks the HashSet-backed
+    /// decoupling that the pre-refactor bool cohort trivially had by
+    /// construction.
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
             COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG,
-            ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
-            SNEAK_ATTACK_TAG,
+            GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSYCHIC_BLADES_TAG,
+            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            8,
+            9,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
@@ -53368,6 +53532,7 @@ mod tests {
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSYCHIC_BLADES_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PLANAR_WARRIOR_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SLAYERS_PREY_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GATHERED_SWARM_TAG));
 
         let mut e = ei_with_terrain(15, 15, &[]);
         let g = e
@@ -53399,6 +53564,35 @@ mod tests {
                 !e.actors[&g].once_per_turn_used(tag),
                 "reset_for_new_round should clear {}",
                 tag
+            );
+        }
+    }
+
+    /// Drift-prevention: every tag that drives a row in the shared
+    /// `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort in `engine::attack` MUST
+    /// also be registered in the sibling `ONCE_PER_TURN_RIDER_TAGS`
+    /// ledger list in `class_features`. Without this invariant, a new
+    /// rider-spec row (Colossus Slayer / Dreadful Strikes / Psychic
+    /// Blades / Planar Warrior / Slayer's Prey / Gathered Swarm today
+    /// — and any future addition) could be added to the cohort without
+    /// its tag reaching the `reset_for_new_round` clear-all loop, and
+    /// the ledger would stay flipped across turns after the first fire
+    /// (silent "once per encounter" instead of "once per turn"). The
+    /// two arrays live in different modules for good reason (the spec
+    /// carries a `Dice` type that lives in `engine`, while the tag
+    /// list has to be readable by `ActorInstance` in `actors`), so a
+    /// hard invariant test pins the two halves together at the compile-
+    /// check level.
+    #[test]
+    fn every_weapon_die_rider_tag_is_registered_in_the_ledger_list() {
+        use crate::actions::class_features::ONCE_PER_TURN_RIDER_TAGS;
+        use crate::engine::attack::ONCE_PER_TURN_WEAPON_DIE_RIDERS;
+        for spec in ONCE_PER_TURN_WEAPON_DIE_RIDERS {
+            assert!(
+                ONCE_PER_TURN_RIDER_TAGS.contains(&spec.tag),
+                "rider spec tag {} missing from ONCE_PER_TURN_RIDER_TAGS — \
+                 reset_for_new_round would not clear it",
+                spec.tag,
             );
         }
     }

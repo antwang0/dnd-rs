@@ -2410,6 +2410,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     PSYCHIC_BLADES_TAG,
     PLANAR_WARRIOR_TAG,
     SLAYERS_PREY_TAG,
+    GATHERED_SWARM_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2631,6 +2632,60 @@ pub const PSYCHIC_BLADES_TAG: &str = "bard.psychic_blades";
 /// from different angles (Hunter's wounded-target gate + weapon-typed
 /// vs. Horizon Walker's no-gate + Force-typed).
 pub const PLANAR_WARRIOR_TAG: &str = "ranger.planar_warrior";
+
+/// 5e Ranger **Swarmkeeper** subclass — **Gathered Swarm** (level 3,
+/// TCE). Passive once-per-turn weapon-hit rider: on any weapon hit, the
+/// swarm of nature spirits bound to the ranger lays +1d6 piercing damage
+/// on the target. RAW's Gathered Swarm offers three per-hit riders — the
+/// +1d6 piercing spirit-swarm bite, an STR-save forced 15-ft move on the
+/// target, or a 5-ft move on the swarmkeeper themselves — and we collapse
+/// the choice down to the load-bearing damage-rider lane so the feature
+/// slots into the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort. The
+/// two RAW alternatives (STR-save shove and self-teleport) would need a
+/// per-hit optional-side-effect surface plus AI heuristics for when to
+/// take the movement over the damage — the collapse trades those two
+/// alternative riders away in exchange for slotting cleanly into the
+/// existing rider chokepoint.
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited to one trigger per turn) and read at the
+/// attack-resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// via the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort alongside
+/// the sibling once-per-turn weapon-die riders. The "once per turn"
+/// gate is the `once_per_turn_used(GATHERED_SWARM_TAG)` ledger on the
+/// actor, cleared at turn-start by `reset_for_new_round` (mirrors
+/// Colossus Slayer / Dreadful Strikes / Psychic Blades / Planar Warrior
+/// / Slayer's Prey / Foe Slayer / Divine Fury on the same ledger).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider fires
+/// on melee AND ranged weapon hits (RAW: "when you hit a creature with
+/// an attack") — no melee-only gate. Damage is always typed Piercing
+/// — RAW's "the swarm attacks it with claws, teeth, or stingers" fixes
+/// the type at piercing regardless of the weapon's base type, distinct
+/// from Colossus Slayer's / Slayer's Prey's weapon-typed damage and
+/// sibling to Dreadful Strikes' / Psychic Blades' Psychic-fixed damage
+/// and Planar Warrior's Force-fixed damage. Piercing is a physical
+/// damage type that a handful of skeleton-like undead resist per RAW —
+/// the swarm's bite is chipped down on that lane, distinct from the
+/// unshaved Force lane the Horizon Walker's Planar Warrior enjoys.
+///
+/// Sibling on the shared `ONCE_PER_TURN_RIDER_TAGS` cohort to
+/// COLOSSUS_SLAYER_TAG (Hunter Ranger lv3 — +1d8 weapon-typed with a
+/// wounded-target gate), DREADFUL_STRIKES_TAG (Fey Wanderer Ranger lv3
+/// — +1d4 Psychic on any weapon hit), PSYCHIC_BLADES_TAG (Whispers
+/// Bard lv3 — +1d6 Psychic on any weapon hit), PLANAR_WARRIOR_TAG
+/// (Horizon Walker Ranger lv3 — +1d8 Force on any weapon hit),
+/// SLAYERS_PREY_TAG (Monster Slayer Ranger lv3 — +1d6 weapon-typed on
+/// any weapon hit), FOE_SLAYER_TAG (Ranger lv20 capstone — flat
+/// +WIS-mod on any weapon hit), DIVINE_FURY_TAG (Zealot Barbarian lv3
+/// — +1d6 + level/2 Radiant while raging), and SNEAK_ATTACK_TAG (Rogue
+/// once-per-turn +Nd6 with the qualifying-attack gate). Gathered Swarm
+/// lands at the same die size as Psychic Blades / Slayer's Prey (1d6)
+/// — three lv3 subclass riders converge on the same magnitude from
+/// different angles (Whispers' Psychic-fixed, Monster Slayer's weapon-
+/// typed, Swarmkeeper's Piercing-fixed).
+pub const GATHERED_SWARM_TAG: &str = "ranger.gathered_swarm";
 
 /// 5e Ranger **Monster Slayer** subclass — **Slayer's Prey** (level 3,
 /// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
