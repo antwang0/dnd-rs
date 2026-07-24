@@ -690,6 +690,27 @@ pub enum Condition {
     /// swing or the longbow shot — matching RAW's "the next time you
     /// hit a creature with a weapon attack" broad envelope.
     EnsnaringStriking,
+    /// Zephyr Strike primed (5e level-1 ranger transmutation, XGtE,
+    /// concentration). The ranger's next weapon attack hit — either
+    /// melee or ranged (RAW's "the next attack you make on this turn"
+    /// broad envelope, unrestricted by weapon lane) — deals +1d8 force
+    /// damage via the on-hit rider table. One-shot prime — the rider
+    /// table strips this flag the moment the consuming hit lands.
+    /// Ranger's lv1 pure-damage sibling to Ensnaring Strike (lv1
+    /// piercing + Restrained follow-up) and Lightning Arrow (lv3
+    /// lightning, ranged-only): same SmiteSpell chassis, no save
+    /// follow-up, no ranged gate, and Force-typed (one of the rarest-
+    /// resisted damage types in the engine — the rider punches through
+    /// nearly every typed-defense lane cleanly). RAW's companion
+    /// clauses (advantage on the primed attack, +30 ft speed for the
+    /// turn, and no opportunity attacks provoked while the spell is
+    /// up) are left as future work — a per-hit advantage rider needs a
+    /// caster-side attack-mode chokepoint the engine doesn't yet
+    /// expose, and the movement + OA-immunity clauses fold into the
+    /// same turn-scoped kite envelope the ranger's baseline Fighting
+    /// Style: Archery + Vanish already lean on. The +1d8 force damage
+    /// is the load-bearing tactical clause and rides here alone.
+    ZephyrStriking,
     /// Barkskin (5e level-2 transmutation, concentration). The target's
     /// skin hardens to bark: their AC becomes 16 unless their natural /
     /// worn-armor AC is already higher. We model the "AC floor" via the
@@ -1398,6 +1419,7 @@ impl Condition {
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
             Condition::EnsnaringStriking => "primed with ensnaring strike",
+            Condition::ZephyrStriking => "primed with zephyr strike",
             Condition::Barkskinned => "barkskinned",
             Condition::Untracked => "passing without trace",
             Condition::HolyWeaponed => "wielding a holy weapon",
@@ -1532,8 +1554,6 @@ impl Condition {
                 | Condition::Enlarged
                 | Condition::WardingBonded
                 | Condition::MindBlanked
-                | Condition::LightningArrowPrimed
-                | Condition::EnsnaringStriking
                 | Condition::Barkskinned
                 | Condition::Untracked
                 | Condition::HolyWeaponed
@@ -1575,17 +1595,33 @@ impl Condition {
         )
     }
 
-    /// True if this condition is one of the Paladin **Smite** primes — the
-    /// bonus-action "next melee hit gets a damage rider" buffs (`Smiting`
-    /// for plain Divine Smite, plus the spell smites SearingSmiting /
-    /// WrathfulSmiting / BrandingSmiting / BlindingSmiting / StaggeringSmiting
-    /// / BanishingSmiting / ThunderousSmiting; DivineStriking for the
-    /// Cleric variant). Centralized so the dispellable-buff sweep, the
-    /// AI's "don't double-prime" gates, and any future smite-aware
-    /// chokepoint read a single helper instead of listing each prime by
-    /// name. Mutually exclusive in spirit (only one rider lands per swing
-    /// RAW; the engine doesn't enforce stacking — adding two primes lets
-    /// both ride).
+    /// True if this condition is one of the **Smite-family** primes —
+    /// the bonus-action "next weapon hit gets a damage / follow-up rider"
+    /// buffs that consume from the caster on the next weapon swing.
+    /// Spans three flavors on the same one-shot on-hit-rider corner:
+    ///   - **Paladin melee smite spells**: `SearingSmiting` /
+    ///     `WrathfulSmiting` / `BrandingSmiting` / `BlindingSmiting` /
+    ///     `StaggeringSmiting` / `BanishingSmiting` / `ThunderousSmiting`
+    ///     (via the shared `SmiteSpell` chassis + the paladin's
+    ///     `ALL_SMITE_SPELLS` registry).
+    ///   - **Ranger smite spells**: `LightningArrowPrimed` (lv3),
+    ///     `EnsnaringStriking` (lv1), `ZephyrStriking` (lv1) — same
+    ///     `SmiteSpell` chassis, different registry
+    ///     (`ALL_RANGED_SMITE_SPELLS`) and AI engagement heuristic
+    ///     (bow-range vs melee-adjacent).
+    ///   - **Class-feature smites**: `Smiting` (Paladin Divine Smite)
+    ///     and `DivineStriking` (Cleric Divine Strike / Twilight
+    ///     Domain).
+    /// Centralized so the dispellable-buff sweep, the AI's "don't
+    /// double-prime" gates, and any future smite-aware chokepoint read
+    /// a single helper instead of listing each prime by name — adding
+    /// a new smite prime (a hypothetical 2024 paladin smite variant,
+    /// a future ranger smite pickup, etc.) lands as one row on this
+    /// matches! arm and the dispellable-buff sweep picks it up
+    /// automatically without a second edit on the OR list below.
+    /// Mutually exclusive in spirit (only one rider lands per swing
+    /// RAW; the engine doesn't enforce stacking — adding two primes
+    /// lets both ride).
     pub fn is_smite_prime(&self) -> bool {
         matches!(
             self,
@@ -1598,6 +1634,9 @@ impl Condition {
                 | Condition::BanishingSmiting
                 | Condition::ThunderousSmiting
                 | Condition::DivineStriking
+                | Condition::LightningArrowPrimed
+                | Condition::EnsnaringStriking
+                | Condition::ZephyrStriking
         )
     }
 

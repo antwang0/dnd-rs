@@ -2028,6 +2028,31 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 hp_threshold: None,
             }),
         },
+        // 5e Zephyr Strike — 1st-level ranger transmutation (XGtE),
+        // bonus action, concentration. Primes the ranger's next weapon
+        // attack — either melee or ranged (RAW: "the next attack you
+        // make on this turn", broad envelope unrestricted by weapon
+        // lane) — with +1d8 Force damage. Sibling to Ensnaring Strike
+        // on the lv1 either-lane prime corner but the pure-damage
+        // trade — no follow-up save, no condition install, just raw
+        // Force (one of the rarest-resisted damage types in the
+        // engine). melee_only=false and ranged_only=false so the
+        // rider fires on either the scimitar swing or the longbow
+        // shot; consume_on_trigger=true so the first hit consumes
+        // the prime, matching every other one-shot lv1 smite spell.
+        // follow_up=None distinguishes it from Ensnaring Strike's
+        // STR-save-vs-Restrained rider — Zephyr Strike is the pure
+        // damage lane of the lv1 ranger prime pair.
+        OnHitRider {
+            condition: Condition::ZephyrStriking,
+            dice: Dice::new(1, 8),
+            label: "zephyr strike",
+            damage_type: DamageType::Force,
+            melee_only: false,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: None,
+        },
         // 5e Holy Weapon — 5th-level paladin evocation, concentration.
         // The caster's weapon glows with radiant light: every weapon
         // attack hit deals an extra 2d8 radiant damage. Persistent (not

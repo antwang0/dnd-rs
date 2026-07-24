@@ -6,7 +6,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
     CONJURE_VOLLEY, CURE_WOUNDS, ENSNARING_STRIKE, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK,
-    LESSER_RESTORATION, LIGHTNING_ARROW, SPIKE_GROWTH,
+    LESSER_RESTORATION, LIGHTNING_ARROW, SPIKE_GROWTH, ZEPHYR_STRIKE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
@@ -71,6 +71,20 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // rider fires on a melee scimitar swing when a threat closes
     // through the kite (Lightning Arrow is ranged-only).
     actions.push(&ENSNARING_STRIKE);
+    // lv1 **Zephyr Strike** (`SmiteSpell` chassis, XGtE): bonus-action
+    // concentration prime that loads the next weapon attack (either
+    // melee or ranged — RAW's "the next attack you make on this turn"
+    // broad envelope) with +1d8 Force damage. Sibling to Ensnaring
+    // Strike (piercing + Restrained follow-up) on the "either-lane
+    // lv1 prime" corner but the pure-damage trade — no follow-up save,
+    // no condition install, just raw Force (one of the rarest-resisted
+    // damage types in the engine, punching through nearly every
+    // typed-defense lane cleanly). The two lv1 primes split the
+    // tactical role: Ensnaring for the lock, Zephyr for the raw dice
+    // — a ranger with both slots free burns Ensnaring first (the AI's
+    // registry order on `ALL_RANGED_SMITE_SPELLS` puts it first) and
+    // rolls onto Zephyr on the next round's cast.
+    actions.push(&ZEPHYR_STRIKE);
     // lv2 **Barkskin**: ranger half-caster pickup. Touch concentration
     // buff that floors the target's AC at 16 — pairs cleanly with the
     // ranger's longbow kite (cast on self before the fight, then plink

@@ -10977,9 +10977,9 @@ pub static ALL_SMITE_SPELLS: &[&SmiteSpell] = &[
     &BANISHING_SMITE,
 ];
 
-/// Ranger-flavored smite spells (Ensnaring Strike at lv1, Lightning
-/// Arrow at lv3 — ordered cheapest-slot first, matching the AI's
-/// "preserve higher slots for emergencies" heuristic on
+/// Ranger-flavored smite spells (Ensnaring Strike + Zephyr Strike at
+/// lv1, Lightning Arrow at lv3 — ordered cheapest-slot first, matching
+/// the AI's "preserve higher slots for emergencies" heuristic on
 /// `ALL_SMITE_SPELLS`). Kept distinct from the paladin-flavored
 /// `ALL_SMITE_SPELLS` registry because the AI's melee-smite pipeline
 /// gates on adjacent-enemy-present, which is wrong for a ranger's
@@ -10988,15 +10988,27 @@ pub static ALL_SMITE_SPELLS: &[&SmiteSpell] = &[
 /// enemy-in-bow-range (24 tiles). Same SmiteSpell chassis — the gate
 /// is the only difference.
 ///
-/// Note: **Ensnaring Strike**'s on-hit rider fires on either the
-/// scimitar swing or the longbow shot (RAW: "the next time you hit
-/// a creature with a weapon attack"), while **Lightning Arrow**'s
-/// rider is ranged-only (RAW: "with this weapon" refers to the bow
-/// swing the prime installs on). The AI heuristic still gates on
-/// bow-range for both since the ranger's action-economy loop
-/// typically closes on the longbow — the melee-fallback lane on
-/// Ensnaring Strike is a bonus, not the primary consumption path.
-pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &LIGHTNING_ARROW];
+/// Note: **Ensnaring Strike** and **Zephyr Strike**'s on-hit riders
+/// fire on either the scimitar swing or the longbow shot (RAW:
+/// Ensnaring's "the next time you hit a creature with a weapon
+/// attack" broad envelope and Zephyr's "the next attack you make on
+/// this turn" turn-scoped envelope — both unrestricted by weapon
+/// lane), while **Lightning Arrow**'s rider is ranged-only (RAW:
+/// "with this weapon" refers to the bow swing the prime installs on).
+/// The AI heuristic still gates on bow-range for all three since the
+/// ranger's action-economy loop typically closes on the longbow — the
+/// melee-fallback lane on Ensnaring Strike / Zephyr Strike is a bonus,
+/// not the primary consumption path.
+///
+/// Both lv1 primes share a slot cost but split the tactical role:
+/// Ensnaring trades away raw damage for a Restrained lock (STR-save
+/// follow-up), while Zephyr trades away the lock for +1d8 Force damage
+/// (one of the rarest-resisted damage types in the engine, punching
+/// through nearly every typed-defense lane). The registry orders
+/// Ensnaring first so a ranger facing a target with poor STR saves
+/// preferentially burns the lock-flavored slot before falling through
+/// to Zephyr's raw-damage rider on the next round's cast.
+pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &ZEPHYR_STRIKE, &LIGHTNING_ARROW];
 
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
@@ -19671,6 +19683,51 @@ pub static ENSNARING_STRIKE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::EnsnaringStriking,
     concentration_name: "Ensnaring Strike",
+};
+
+/// Zephyr Strike — level-1 ranger transmutation (XGtE), bonus action,
+/// concentration. Primes the ranger's next weapon attack (either melee
+/// or ranged — RAW's "the next attack you make on this turn" broad
+/// envelope, unrestricted by weapon lane) with +1d8 Force damage via
+/// the on-hit rider table.
+///
+/// Signature ranger-flavored raw-damage prime at the lv1 slot tier.
+/// Sibling to Ensnaring Strike on the "either-lane bonus-action prime"
+/// corner but distinct on the tactical trade:
+///   1. **Damage type** — Force (rare-resisted, punches through
+///      nearly every typed-defense lane) vs Piercing (broadly halved
+///      by heavy-armor / DamageResistant / typed rows).
+///   2. **Die size** — 1d8 vs 1d6 — raw-damage lane.
+///   3. **Follow-up** — none (pure damage) vs STR-save-vs-Restrained.
+///   4. **Rider consume** — same one-shot semantics as Ensnaring
+///      Strike and Lightning Arrow: the first weapon hit consumes
+///      the prime.
+///
+/// The either-lane routing places Zephyr Strike alongside Ensnaring
+/// Strike as an entry on `ALL_RANGED_SMITE_SPELLS` whose rider fires
+/// on melee swings too — the AI's `try_ranged_smite_spell` picker
+/// uses bow-range as the "enemy in engagement window" heuristic, but
+/// the primed hit itself can consume on the scimitar fallback when a
+/// melee threat closes through the kite.
+///
+/// RAW's companion clauses (advantage on the primed attack, +30 ft
+/// walking speed for the turn, and no opportunity attacks provoked
+/// while the spell is up) are left as future work — a per-hit
+/// caster-side attack-mode advantage rider needs a chokepoint the
+/// engine doesn't yet expose, and the movement + OA-immunity clauses
+/// fold into the same turn-scoped kite envelope the ranger's baseline
+/// Fighting Style: Archery + Vanish already lean on. The +1d8 Force
+/// damage prime is the load-bearing tactical clause and rides here
+/// alone, matching the way Ensnaring Strike's per-round 1d6 drip
+/// while Restrained and Lightning Arrow's 10-ft splash are similarly
+/// left to future work in favor of the smite-follow-up chassis's
+/// core one-shot rider shape.
+pub static ZEPHYR_STRIKE: SmiteSpell = SmiteSpell {
+    display_name: "zephyr strike",
+    aliases: &["zephyr", "smite-zephyr", "wind-strike"],
+    spell_slot_lvl: 1,
+    prime: Condition::ZephyrStriking,
+    concentration_name: "Zephyr Strike",
 };
 
 /// Conjure Volley — level-5 ranger conjuration. The ranger fires a

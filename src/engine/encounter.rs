@@ -34763,6 +34763,57 @@ mod tests {
         assert!(!Condition::Sphered.is_dispellable_buff());
     }
 
+    /// Drift-prevention: every SmiteSpell-chassis prime (paladin +
+    /// ranger flavors) must register through the shared
+    /// `is_smite_prime()` helper so the `is_dispellable_buff` sweep
+    /// picks them up without a duplicate row on the explicit OR list.
+    /// Locks the promotion of the three ranger smite primes
+    /// (`LightningArrowPrimed` / `EnsnaringStriking` / `ZephyrStriking`)
+    /// into `is_smite_prime` — same lane as the paladin family — so a
+    /// future ranger smite spell (a hypothetical Sunbeam Strike, Storm
+    /// Strike, etc.) that adds a `_Primed` / `_Striking` condition
+    /// and wires it into `is_smite_prime` picks up the dispel + double-
+    /// prime-gate + AI concentration bookkeeping for free without a
+    /// second edit on the `is_dispellable_buff` explicit-OR block.
+    #[test]
+    fn every_smite_spell_prime_registers_via_is_smite_prime() {
+        // Paladin family — the seven SmiteSpell prime conditions plus
+        // the two class-feature Smite primes (Divine Smite + Divine
+        // Strike). Every entry must return true from is_smite_prime().
+        for prime in [
+            Condition::Smiting,
+            Condition::SearingSmiting,
+            Condition::WrathfulSmiting,
+            Condition::BrandingSmiting,
+            Condition::BlindingSmiting,
+            Condition::StaggeringSmiting,
+            Condition::BanishingSmiting,
+            Condition::ThunderousSmiting,
+            Condition::DivineStriking,
+            Condition::LightningArrowPrimed,
+            Condition::EnsnaringStriking,
+            Condition::ZephyrStriking,
+        ] {
+            assert!(
+                prime.is_smite_prime(),
+                "expected {:?} to route through is_smite_prime",
+                prime
+            );
+            assert!(
+                prime.is_dispellable_buff(),
+                "expected {:?} to route through is_dispellable_buff via is_smite_prime",
+                prime
+            );
+        }
+        // A non-smite prime (Bless / MageArmored) doesn't route
+        // through is_smite_prime but still lands as dispellable via
+        // the explicit-OR list — sanity-check the negation so a future
+        // over-broad expansion of is_smite_prime doesn't silently
+        // collapse the two lanes.
+        assert!(!Condition::Blessed.is_smite_prime());
+        assert!(Condition::Blessed.is_dispellable_buff());
+    }
+
     /// Thunderous Smite (lv1 paladin evocation): bonus-action prime that
     /// adds +2d6 thunder + STR-save Prone on the next melee hit. Verifies
     /// the prime install + concentration mark.
@@ -37173,6 +37224,96 @@ mod tests {
         assert!(
             restrained_any,
             "ensnaring strike never restrained a target across 80 seeds"
+        );
+    }
+
+    /// Zephyr Strike: lv1 ranger smite-spell prime (XGtE). Verifies the
+    /// bonus-action + lv1 slot cost shape and that casting installs the
+    /// `ZephyrStriking` condition on the caster plus routes through the
+    /// standard concentration bookkeeping. Sibling test to
+    /// `ensnaring_strike_primes_caster` — same SmiteSpell chassis, same
+    /// slot cost, different prime condition.
+    #[test]
+    fn zephyr_strike_primes_caster() {
+        use crate::actions::spells::ZEPHYR_STRIKE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let rng = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let costs = ZEPHYR_STRIKE.cost(&e, rng, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::BonusAction)));
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+        for ef in ZEPHYR_STRIKE.side_effects(&mut e, rng, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&rng].has_condition(Condition::ZephyrStriking));
+        // Concentration bookkeeping: the caster is now concentrating on
+        // Zephyr Strike, so a second concentration cast (Hunter's Mark,
+        // Lightning Arrow, Ensnaring Strike, ...) would drop this prime
+        // cleanly.
+        assert!(e.actors[&rng].is_concentrating());
+    }
+
+    /// Zephyr Strike primes `ZephyrStriking`; the next weapon hit
+    /// consumes the prime and lands +1d8 Force damage on the target
+    /// via the on-hit rider table. Sibling test to
+    /// `lightning_arrow_primes_caster` on the "prime + verify weapon
+    /// hit consumes it" corner — Lightning Arrow is ranged-only,
+    /// Zephyr fires on either lane, so we exercise the melee scimitar
+    /// path here (Ensnaring Strike's `ensnaring_strike_can_restrain_on_hit`
+    /// already covers the either-lane consume across the sibling
+    /// registry). The +1d8 Force die's mean is 4.5, and the goblin's
+    /// 7-HP baseline plus the scimitar's mean 1d6+2 ≈ 5.5 melee damage
+    /// puts a hit-plus-Zephyr swing well over the goblin's HP most
+    /// seeds, so we assert on prime consumption rather than a
+    /// specific HP delta (dice variance across seeds).
+    #[test]
+    fn zephyr_strike_consumes_prime_on_weapon_hit() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actions::spells::ZEPHYR_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut consumed_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let rng = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = ZEPHYR_STRIKE.side_effects(&mut e, rng, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(e.actors[&rng].has_condition(Condition::ZephyrStriking));
+            let tv = vec![g];
+            let weapon_effects = SCIMITAR.side_effects(&mut e, rng, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            // The prime is consumed if either the swing landed (rider
+            // stripped `ZephyrStriking`) or the goblin died from the
+            // extra +1d8 Force damage (kill removes the actor mid-swing).
+            let prime_still_up = e
+                .actors
+                .get(&rng)
+                .is_some_and(|a| a.has_condition(Condition::ZephyrStriking));
+            if !prime_still_up {
+                consumed_any = true;
+                break;
+            }
+        }
+        assert!(
+            consumed_any,
+            "zephyr strike prime was never consumed by a scimitar hit across 80 seeds"
         );
     }
 
