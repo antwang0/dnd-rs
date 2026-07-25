@@ -1324,6 +1324,63 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     },
 ];
 
+/// One row in the `CONDITION_SPEED_MULTIPLIERS` cohort — a single
+/// condition whose presence applies a multiplicative factor to the
+/// holder's final walking speed. Sibling to `ConditionSpeedBonus` on
+/// the "cohort of `(flag_closure, magnitude)` rows" pattern — same
+/// shape, different composition axis: the additive bumps
+/// (Longstrider / Fly / Spider Climb / ...) fold in first through
+/// `condition_speed_bonus`, then the multiplicative factors here stack
+/// on top via `.product()`. Adding a new speed multiplier lands as a
+/// one-line table entry rather than another `if self.has_condition(...)
+/// { factor *= N; }` branch in `speed()`.
+struct ConditionSpeedMultiplier {
+    flag: fn(&ActorInstance) -> bool,
+    factor: f32,
+}
+
+/// Multiplicative walking-speed factor cohort read by `speed()` after
+/// additive bonuses fold in. Every matching row's `factor` composes
+/// via `.product()` so multiple simultaneous multipliers compound
+/// correctly (Haste ×2 + Slow ×½ ⇒ ×1 = base; Slow ×½ + Power Word
+/// Pain ×½ ⇒ ×¼ if both landed on the same target through separate
+/// concentration chains).
+///
+/// Sibling to `CONDITION_SPEED_BONUSES` (additive flat bumps) — the
+/// two tables split by composition axis (add-then-multiply):
+/// additive bumps land first, then multiplicative factors apply.
+///
+/// Entries (in order):
+///   - **Hasted** (5e Haste spell, concentration): ×2 walking speed.
+///     Paired with the +2 AC / advantage-on-DEX-saves / extra-attack
+///     riders on the sibling cohorts.
+///   - **Slowed** (5e Slow spell, concentration): ×½ walking speed.
+///     Paired with the -2 AC / -2 DEX-save riders on the sibling
+///     cohorts — the compound debuff shape distinguishes Slowed from
+///     Power Word: Pain's pure-speed-and-attack-disadvantage lane.
+///   - **PowerWordPained** (5e Power Word: Pain, XGtE level-7
+///     necromancy, concentration): ×½ walking speed. Distinct from
+///     Slowed on the "no AC / DEX-save penalty" axis — the pain
+///     rides the pure attack-disadvantage + half-speed lane so DEX-
+///     anchored bursts still save at full bonus and the target's AC
+///     stays intact. RAW's per-turn CON-save-to-break loop rides the
+///     shared `ROUND_END_SAVES` table next to Hold Person / Hideous
+///     Laughter / Flesh to Stone.
+const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
+    ConditionSpeedMultiplier {
+        flag: |a| a.has_condition(Condition::Hasted),
+        factor: 2.0,
+    },
+    ConditionSpeedMultiplier {
+        flag: |a| a.has_condition(Condition::Slowed),
+        factor: 0.5,
+    },
+    ConditionSpeedMultiplier {
+        flag: |a| a.has_condition(Condition::PowerWordPained),
+        factor: 0.5,
+    },
+];
+
 /// One row in the `CONDITION_AC_BONUSES` cohort — a single condition
 /// whose presence contributes a flat AC delta to the holder. Sibling to
 /// `ConditionSpeedBonus { flag, bonus_ft }` on the "cohort of `(source
@@ -5415,16 +5472,20 @@ impl ActorInstance {
     pub fn speed(&self) -> f32 {
         let bonus = self.total_item_bonuses().speed as f32;
         let raw = (self.base_speed + bonus + self.condition_speed_bonus()).max(0.0);
-        // 5e Haste doubles speed; Slow halves it. If both happen to be
-        // active (e.g. cross-cast), they cancel back to base — applying
-        // the factor multiplicatively keeps the math symmetric.
-        let mut factor = 1.0_f32;
-        if self.has_condition(Condition::Hasted) {
-            factor *= 2.0;
-        }
-        if self.has_condition(Condition::Slowed) {
-            factor *= 0.5;
-        }
+        // Multiplicative speed factors (Haste ×2, Slow ×½, Power Word
+        // Pain ×½, …) compose via the shared `CONDITION_SPEED_MULTIPLIERS`
+        // table so a new speed multiplier lands as a one-line entry.
+        // `.product()` on an empty iterator returns 1.0 (identity for
+        // multiplication), so a target with no matching row keeps its
+        // additive-only speed unchanged. Cross-cast composition stays
+        // symmetric: Haste + Slow ⇒ ×2 · ×½ = ×1 back to base, Slow +
+        // Power Word Pain ⇒ ×½ · ×½ = ×¼ if both land on the same
+        // target through separate concentration chains.
+        let factor: f32 = CONDITION_SPEED_MULTIPLIERS
+            .iter()
+            .filter(|row| (row.flag)(self))
+            .map(|row| row.factor)
+            .product();
         raw * factor
     }
 

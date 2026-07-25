@@ -13812,21 +13812,32 @@ impl Action for ConjureElemental {
 
 pub static CONJURE_ELEMENTAL: LazyLock<ConjureElemental> = LazyLock::new(|| ConjureElemental {});
 
-/// Power Word Pain — 5e level-7 enchantment, action. Single target;
-/// no save, no attack roll — but the spell only takes effect if the
-/// target has 100 HP or fewer at cast time. RAW: target is racked with
-/// pain that imposes Slowed-equivalent effects (speed reduced, can't
-/// take reactions, takes disadvantage on attacks and CON saves to
-/// maintain concentration). We approximate via the existing `Slowed`
-/// condition (already wires up speed multiplier, DEX-save disadvantage,
-/// and the AC penalty) for 10 rounds — long enough for the encounter
-/// without needing a per-turn "CON save to end" loop in the engine.
+/// Power Word Pain — 5e level-7 necromancy (XGtE), action,
+/// concentration. Single target within 24 tiles (60 ft); no save, no
+/// attack roll — but the spell only takes effect if the target has
+/// 100 HP or fewer at cast time. RAW: target is racked with excruciating
+/// pain — attack rolls suffer disadvantage and walking speed halves;
+/// at the end of each of the target's turns the target attempts a CON
+/// save vs the caster's spell DC to shake the pain off.
+///
+/// Applies the dedicated `PowerWordPained` condition rather than
+/// reusing `Slowed`: the pain rides the pure attack-disadvantage +
+/// half-speed lane (no unrelated -2 AC / -2 DEX-save penalty from
+/// Slowed's compound envelope), matching RAW. The per-turn CON-save-
+/// to-break loop rides the shared `ROUND_END_SAVES` table next to
+/// Hold Person's WIS-vs-Stunned save and Flesh to Stone's CON-vs-
+/// Petrified save — same save-then-clear-and-drop-concentration
+/// semantics on a fresh save/condition axis. The half-speed multiplier
+/// folds into the shared `CONDITION_SPEED_MULTIPLIERS` table (a
+/// sibling row to Hasted ×2 and Slowed ×½) so cross-cast stacking
+/// composes correctly.
 ///
 /// HP-threshold spells are rare in the engine — most spells gate on
-/// save or HP-percent rather than absolute HP. Power Word Pain is the
-/// canonical example so we keep the threshold literal (≤100 HP) and
-/// log the gate explicitly so a play-through can see why a Tarrasque
-/// shrugs it off and a level-3 fighter doesn't.
+/// save or HP-percent rather than absolute HP. Power Word Pain is one
+/// of the canonical Power Word family (Stun ≤150, Kill ≤100, Pain
+/// ≤100) so we keep the threshold literal and log the gate explicitly
+/// so a play-through can see why a Tarrasque shrugs it off and a
+/// level-3 fighter doesn't.
 pub struct PowerWordPain {}
 
 impl Action for PowerWordPain {
@@ -13846,6 +13857,9 @@ impl Action for PowerWordPain {
     fn requires_los(&self) -> bool {
         true
     }
+    fn deals_damage(&self) -> bool {
+        false
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -13859,7 +13873,7 @@ impl Action for PowerWordPain {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -13882,11 +13896,25 @@ impl Action for PowerWordPain {
             "  power word pain: target has {} HP, racked with pain",
             hp
         ));
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Slowed,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        // 100-round timer serves as the RAW "up to 1 minute" cap; the
+        // per-turn CON save via `ROUND_END_SAVES` is the primary
+        // break-free path, and concentration drop cleans up the tail
+        // (`StartConcentration` with the (target, PowerWordPained)
+        // pair wires both).
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::PowerWordPained,
+                timer: ConditionTimer::Rounds(100),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Power Word Pain",
+                    vec![(target_id, Condition::PowerWordPained)],
+                ),
+            }),
+        ]
     }
 }
 

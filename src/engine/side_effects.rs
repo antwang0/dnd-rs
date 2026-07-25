@@ -1437,6 +1437,15 @@ pub const CLEANSING_TOUCH_DEBUFFS: &[Condition] = &[
     Condition::Mocked,
     Condition::Baned,
     Condition::Slowed,
+    // Power Word: Pain (XGtE lv7 necromancy). Cleansing Touch's "end
+    // one spell effect on you or a creature you touch" clause covers
+    // the pain rider cleanly — a paladin adjacent to a pained ally
+    // (or an enemy caster reachable by Cleansing Touch) can lift the
+    // condition without waiting on the target's per-turn CON save
+    // via `ROUND_END_SAVES`. Sibling to `Slowed` above (Slow spell
+    // debuff, ×½ speed compound) on the "spell-installed movement
+    // debuff" corner — Cleansing Touch treats both as strippable.
+    Condition::PowerWordPained,
     Condition::Outlined,
     Condition::Burning,
 ];

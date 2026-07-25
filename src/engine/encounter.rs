@@ -305,6 +305,19 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Dexterity,
         log_verb: "tries to put out the flames:",
     },
+    // 5e Power Word: Pain (XGtE level-7 necromancy) — CON save at end of
+    // each turn to shake off the pain. Concentration-anchored on the
+    // caster (the pain rides `PowerWordPained` which the shared
+    // `find_concentration_owner` lookup skips for non-spell installs).
+    // Sibling to Hold Person's WIS-vs-Stunned save on the "target
+    // repeatedly saves to break free" corner — same save-then-clear-
+    // and-drop-concentration semantics, distinct save axis (CON vs
+    // WIS) and distinct condition (PowerWordPained vs Stunned).
+    RoundEndSave {
+        condition: Condition::PowerWordPained,
+        save_ability: crate::engine::types::AbilityScoreType::Constitution,
+        log_verb: "strains against the racking pain:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine
@@ -32506,8 +32519,12 @@ mod tests {
         assert!(!e.auto_fail_save(actor, AbilityScoreType::Wisdom));
     }
 
-    /// Power Word Pain installs Slowed only if the target has ≤100 HP.
-    /// High-HP boss is unaffected; low-HP target is debuffed without a save.
+    /// Power Word Pain installs PowerWordPained only if the target has
+    /// ≤100 HP. High-HP boss is unaffected; low-HP target is debuffed
+    /// without a save. Also asserts concentration lands on the caster
+    /// (the pain rides the shared concentration lane so a caster's
+    /// second concentration spell — Wall of Fire, etc. — displaces
+    /// the pain cleanly).
     #[test]
     fn power_word_pain_gates_on_hp_threshold() {
         use crate::actions::spells::POWER_WORD_PAIN;
@@ -32524,18 +32541,122 @@ mod tests {
         let boss = e
             .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(10, 5), 1, 1)
             .unwrap();
-        // Low-HP target — Slowed should land.
+        // Low-HP target — PowerWordPained should land + concentration.
         let tids = vec![goblin];
         for x in POWER_WORD_PAIN.side_effects(&mut e, wizard, Some(&tids), None, None) {
             x.apply(&mut e);
         }
-        assert!(e.actors[&goblin].has_condition(Condition::Slowed));
-        // High-HP boss — Slowed should NOT land (>100 HP).
+        assert!(e.actors[&goblin].has_condition(Condition::PowerWordPained));
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "power word pain should anchor concentration on the caster"
+        );
+        // Drop the wizard's concentration so a second cast can start
+        // fresh (RAW: one concentration spell at a time).
+        e.drop_concentration(wizard);
+        // High-HP boss — PowerWordPained should NOT land (>100 HP).
         let tids = vec![boss];
         for x in POWER_WORD_PAIN.side_effects(&mut e, wizard, Some(&tids), None, None) {
             x.apply(&mut e);
         }
-        assert!(!e.actors[&boss].has_condition(Condition::Slowed));
+        assert!(!e.actors[&boss].has_condition(Condition::PowerWordPained));
+        assert!(
+            !e.actors[&wizard].is_concentrating(),
+            "no concentration when the HP-threshold gate rejects the target"
+        );
+    }
+
+    /// PowerWordPained halves the holder's walking speed via the shared
+    /// `CONDITION_SPEED_MULTIPLIERS` table — same ×½ magnitude as
+    /// Slowed but a distinct condition (no compound AC / DEX-save
+    /// penalty). Also pins the "no AC penalty" invariant so a future
+    /// edit that accidentally puts PowerWordPained on the AC-bonus
+    /// cohort fails here.
+    #[test]
+    fn power_word_pained_halves_speed_and_leaves_ac_intact() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&goblin].speed();
+        let base_ac = e.actors[&goblin].armor_class();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::PowerWordPained, ConditionTimer::Rounds(10));
+        let pained_speed = e.actors[&goblin].speed();
+        let pained_ac = e.actors[&goblin].armor_class();
+        assert!(
+            (pained_speed - base_speed * 0.5).abs() < 0.01,
+            "power word pain should halve walking speed: base={} pained={}",
+            base_speed,
+            pained_speed
+        );
+        assert_eq!(
+            pained_ac, base_ac,
+            "power word pain must NOT touch AC (distinct from Slowed's -2 AC compound envelope)"
+        );
+    }
+
+    /// PowerWordPained imposes disadvantage on the holder's attack
+    /// rolls via the shared `imposes_attacker_disadvantage` cohort.
+    /// Pins the classification so a future edit that accidentally
+    /// drops PowerWordPained from the cohort fails here.
+    #[test]
+    fn power_word_pained_imposes_attacker_disadvantage() {
+        assert!(
+            Condition::PowerWordPained.imposes_attacker_disadvantage(),
+            "power word pain should impose attacker disadvantage per RAW"
+        );
+    }
+
+    /// PowerWordPained rides the shared `ROUND_END_SAVES` table with a
+    /// CON save vs the caster's spell DC — a passed save clears the
+    /// pain and drops the caster's concentration. Uses a many-round
+    /// loop since a single roll can fail; across 30 tries a target
+    /// with a decent CON should hit at least one successful save.
+    #[test]
+    fn power_word_pained_repeated_con_save_breaks_the_hold() {
+        use crate::actions::spells::POWER_WORD_PAIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let tids = vec![target];
+        for x in POWER_WORD_PAIN.side_effects(&mut e, wizard, Some(&tids), None, None) {
+            x.apply(&mut e);
+        }
+        assert!(
+            e.actors[&target].has_condition(Condition::PowerWordPained),
+            "prime install failed"
+        );
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "prime install must anchor concentration"
+        );
+        let mut broke_free = false;
+        for _ in 0..30 {
+            e.apply_round_end_saves(target);
+            if !e.actors[&target].has_condition(Condition::PowerWordPained) {
+                broke_free = true;
+                break;
+            }
+        }
+        assert!(
+            broke_free,
+            "fighter with CON prof should break power word pain via repeated CON saves"
+        );
+        assert!(
+            !e.actors[&wizard].is_concentrating(),
+            "the caster's concentration should drop when the target breaks free"
+        );
     }
 
     /// Frostbite is a CON-save cantrip — on a fail, target takes 1d6

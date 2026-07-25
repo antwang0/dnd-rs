@@ -1312,6 +1312,30 @@ pub enum Condition {
     /// hook, or a resistance-piercing rider) can attach to this
     /// condition specifically without disturbing Guiding Bolt's lane.
     MarkedForGrave,
+    /// Power Word Pain (5e level-7 necromancy, XGtE). The target's body
+    /// is racked with excruciating pain: attack rolls suffer
+    /// disadvantage (joins `imposes_attacker_disadvantage`) and the
+    /// walking speed halves (joins the shared `SPEED_MULTIPLIERS`
+    /// multiplicative table next to Hasted / Slowed). Concentration-
+    /// bound on the caster. At the end of each of the target's turns
+    /// the target can attempt a CON save vs the caster's spell DC to
+    /// shake the pain off — registered on the shared `ROUND_END_SAVES`
+    /// table next to Hold Person's WIS-vs-Stunned save and Flesh to
+    /// Stone's CON-vs-Petrified save (same save-then-clear-and-drop-
+    /// concentration semantics, distinct save/condition axis). Distinct
+    /// from `Slowed` (5e Slow spell): Slowed layers -2 AC and -2 DEX
+    /// saves on top of the half-speed multiplier which don't fit RAW's
+    /// Power Word Pain envelope — the pain condition rides the pure
+    /// attack-disadvantage + half-speed lane so the target still saves
+    /// against DEX-anchored bursts (Fireball, Lightning Bolt) at full
+    /// bonus and doesn't lose AC. The HP-threshold gate (≤100 HP) is
+    /// applied at spell cast time in `PowerWordPain::side_effects`
+    /// (RAW's "you must have a target with 100 HP or less" clause),
+    /// matching the same at-cast gate `PowerWordStun` uses for its
+    /// ≤150 HP threshold and `PowerWordKill` uses for its ≤100 HP
+    /// insta-kill. Not on `is_dispellable_buff` — it's a debuff on the
+    /// enemy, not a friendly buff.
+    PowerWordPained,
 }
 
 impl Condition {
@@ -1336,6 +1360,7 @@ impl Condition {
             Condition::Outlined => "outlined",
             Condition::GuidingBoltLit => "marked by guiding bolt",
             Condition::MarkedForGrave => "marked for the grave",
+            Condition::PowerWordPained => "racked with power word pain",
             Condition::Helped => "helped",
             Condition::Hidden => "hidden",
             Condition::Burning => "burning",
@@ -1762,6 +1787,7 @@ impl Condition {
                 | Condition::Disarmed
                 | Condition::WaterSphered
                 | Condition::Darkened
+                | Condition::PowerWordPained
         )
     }
 
