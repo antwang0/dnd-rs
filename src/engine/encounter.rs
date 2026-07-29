@@ -2915,6 +2915,37 @@ impl EncounterInstance {
         outcome
     }
 
+    /// True iff `actor_id` is currently concentrating on a spell of the
+    /// given school.
+    ///
+    /// The school is resolved by name off the actor's own action list
+    /// rather than stored on `ConcentrationData`. That keeps
+    /// `Action::school()` the single source of truth — a spell's school
+    /// is declared exactly once, on its impl — and it means a future
+    /// concentration spell can never install a mark carrying the wrong
+    /// school, because it never carries one at all. The alternative
+    /// (a `school` field on `ConcentrationData`) would have to be set
+    /// correctly at each of the ~100 install sites, and a missed one
+    /// would fail silently.
+    ///
+    /// The lookup is sound because a caster necessarily holds the spell
+    /// they are concentrating on: `ConcentrationData::spell_name` is
+    /// written from the casting action's own `name()`, and that action
+    /// came off this actor's list. An untagged spell reads `None` and
+    /// fails the comparison closed.
+    pub fn concentrating_on_school(&self, actor_id: usize, school: SpellSchool) -> bool {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let Some(conc) = actor.concentration() else {
+            return false;
+        };
+        actor
+            .find_action(&conc.spell_name)
+            .and_then(|a| a.school())
+            .is_some_and(|s| s == school)
+    }
+
     /// Roll a Constitution save to maintain concentration vs the
     /// post-mitigation damage DC (max(10, dmg/2)). Honors the 5e Warlock
     /// **Eldritch Mind** invocation: actors holding the
@@ -2929,6 +2960,35 @@ impl EncounterInstance {
     ) -> crate::engine::saves::SaveOutcome {
         use crate::actions::class_features::ELDRITCH_MIND_TAG;
         use crate::engine::types::AbilityScoreType;
+        // 5e Conjuration Wizard **Focused Conjuration** (subclass level
+        // 10): "your concentration can't be broken as a result of
+        // taking damage" while concentrating on a conjuration spell.
+        // RAW makes no save at all rather than granting an auto-pass,
+        // so this short-circuits ahead of the roll — which also keeps
+        // the feature from perturbing the seeded RNG stream for every
+        // *other* actor in the encounter, the same property the
+        // Diviner's Portent substitution is pinned on.
+        //
+        // Only the damage lane is covered, which is exactly RAW's
+        // wording and is why the gate sits here rather than in
+        // `drop_concentration`: casting a second concentration spell,
+        // dying, or failing a Hold Person-style round-end save all
+        // still end the conjuration.
+        if self.concentrating_on_school(actor_id, SpellSchool::Conjuration)
+            && self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| {
+                    a.has_passive_feature(crate::actions::class_features::FOCUSED_CONJURATION_TAG)
+                })
+        {
+            let name = self.actor_name(actor_id);
+            self.log(format!(
+                "  focused conjuration: {}'s concentration holds through the damage",
+                name
+            ));
+            return crate::engine::saves::SaveOutcome::Pass;
+        }
         let extra_mode = if self
             .actors
             .get(&actor_id)
@@ -6614,7 +6674,51 @@ impl EncounterInstance {
         effects.append(&mut self.trigger_overchannel_backlash(caster_id, spell_level));
         self.trigger_arcane_ward(caster_id, spell_level, school);
         self.trigger_expert_divination(caster_id, spell_level, school);
+        self.trigger_benign_transposition_recharge(caster_id, spell_level, school);
         effects
+    }
+
+    /// 5e Conjuration Wizard **Benign Transposition** (subclass level 6)
+    /// post-cast hook: casting a conjuration spell of 1st level or
+    /// higher refreshes the teleport's charge.
+    ///
+    /// Third row of the school-gated post-cast family, and the only one
+    /// that *gives back* a resource on the school axis rather than
+    /// spending or growing one — Arcane Ward tops up an absorption
+    /// pool, Expert Divination refunds a slot, this one re-arms an
+    /// action. Same three-gate shape (school, non-cantrip, feature
+    /// held), same cheapest-gate-first ordering.
+    ///
+    /// The recharge condition is what makes the feature interesting to
+    /// play rather than a once-per-rest blink: a conjurer who keeps
+    /// casting their own school teleports every round, and one who
+    /// reaches for a Fireball goes without. Refreshing an already-full
+    /// charge logs nothing, the same way a top-up against a full Arcane
+    /// Ward does.
+    fn trigger_benign_transposition_recharge(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        school: Option<SpellSchool>,
+    ) {
+        use crate::actions::class_features::BENIGN_TRANSPOSITION_TAG;
+        if school != Some(SpellSchool::Conjuration) || spell_level == 0 {
+            return;
+        }
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        if !caster.has_passive_feature(BENIGN_TRANSPOSITION_TAG)
+            || caster.feature_available(BENIGN_TRANSPOSITION_TAG)
+        {
+            return;
+        }
+        caster.restore_feature_charge(BENIGN_TRANSPOSITION_TAG);
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  benign transposition: {}'s conjuring re-anchors the transposition",
+            name
+        ));
     }
 
     /// 5e Divination Wizard **Expert Divination** (subclass level 6)
@@ -33149,6 +33253,260 @@ mod tests {
         assert_ne!(sub.glyph, base.glyph, "the tradition renders distinctly");
     }
 
+
+
+    /// Focused Conjuration (Conjuration Wizard lv10): damage cannot
+    /// break concentration on a conjuration spell. Driven at the
+    /// concentration-save chokepoint with an unreachable DC so a rolled
+    /// save could not possibly pass — the only way through is the
+    /// short-circuit.
+    #[test]
+    fn focused_conjuration_holds_a_conjuration_through_damage() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::{CONJURATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let conjurer = e
+            .instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        for id in [conjurer, plain] {
+            e.actors
+                .get_mut(&id)
+                .unwrap()
+                .start_concentration(ConcentrationData::new("Web"));
+        }
+        assert!(
+            e.roll_concentration_save(conjurer, 999).passed(),
+            "a conjurer's conjuration survives any amount of damage"
+        );
+        assert!(
+            !e.roll_concentration_save(plain, 999).passed(),
+            "the baseline wizard has no such protection"
+        );
+        assert!(
+            e.messages().iter().any(|m| m.contains("focused conjuration")),
+            "the hold is logged"
+        );
+    }
+
+    /// The school gate is the whole feature. The same conjurer holding
+    /// the same DC on a *non*-conjuration concentration spell rolls the
+    /// save like anyone else — RAW protects the school, not the caster.
+    /// Haste is on the baseline chassis and is transmutation.
+    #[test]
+    fn focused_conjuration_does_not_protect_other_schools() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::CONJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let conjurer = e
+            .instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&conjurer)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Haste"));
+        assert!(
+            !e.roll_concentration_save(conjurer, 999).passed(),
+            "Haste is transmutation — the conjurer rolls and fails like anyone else"
+        );
+        // ...and a caster concentrating on nothing at all never
+        // short-circuits, whatever they hold.
+        e.actors.get_mut(&conjurer).unwrap().end_concentration();
+        assert!(
+            !e.concentrating_on_school(conjurer, SpellSchool::Conjuration),
+            "no concentration is not conjuration concentration"
+        );
+    }
+
+    /// `concentrating_on_school` resolves the school by looking the
+    /// Title-Case `ConcentrationData::spell_name` back up against the
+    /// caster's own lowercase `Action::name()`. Pinned across every
+    /// concentration conjuration the baseline wizard chassis carries,
+    /// because a casing or naming drift on any one of them would
+    /// silently downgrade Focused Conjuration to a no-op for that spell
+    /// rather than failing loudly.
+    #[test]
+    fn concentration_school_lookup_survives_the_display_name_casing() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::CONJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let conjurer = e
+            .instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for name in ["Web", "Stinking Cloud", "Cloudkill", "Cloud of Daggers"] {
+            e.actors
+                .get_mut(&conjurer)
+                .unwrap()
+                .start_concentration(ConcentrationData::new(name));
+            assert!(
+                e.concentrating_on_school(conjurer, SpellSchool::Conjuration),
+                "{} must resolve to its conjuration school tag",
+                name
+            );
+        }
+        // A spell the caster doesn't hold resolves to no school and
+        // fails the gate closed rather than matching by accident.
+        e.actors
+            .get_mut(&conjurer)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Not A Spell"));
+        assert!(!e.concentrating_on_school(conjurer, SpellSchool::Conjuration));
+    }
+
+    /// Benign Transposition teleports the conjurer and spends its
+    /// charge; the charge comes back off a levelled conjuration cast
+    /// rather than off a rest.
+    #[test]
+    fn benign_transposition_teleports_then_recharges_on_a_conjuration_cast() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{BENIGN_TRANSPOSITION, BENIGN_TRANSPOSITION_TAG};
+        use crate::actors::creatures::wizards::CONJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let conjurer = e
+            .instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG));
+
+        let dest = Coordinate::new(8, 2);
+        let locs = vec![dest];
+        assert!(
+            BENIGN_TRANSPOSITION.custom_validate_input(&e, conjurer, None, Some(&locs), None),
+            "an unspent charge and a legal landing spot validate"
+        );
+        let effects = BENIGN_TRANSPOSITION.side_effects(&mut e, conjurer, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&conjurer].location(),
+            dest,
+            "the conjurer lands on the chosen space"
+        );
+        assert!(
+            !e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
+            "the blink spent its charge"
+        );
+        let back = vec![Coordinate::new(2, 2)];
+        assert!(
+            !BENIGN_TRANSPOSITION.custom_validate_input(&e, conjurer, None, Some(&back), None),
+            "a spent charge fails validation"
+        );
+
+        // A levelled conjuration re-arms it; a cantrip and a
+        // non-conjuration do not.
+        e.dispatch_post_cast_triggers(conjurer, 0, &[], Some(SpellSchool::Conjuration));
+        assert!(
+            !e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
+            "RAW excludes cantrips"
+        );
+        e.dispatch_post_cast_triggers(conjurer, 3, &[], Some(SpellSchool::Evocation));
+        e.dispatch_post_cast_triggers(conjurer, 3, &[], None);
+        assert!(
+            !e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
+            "a Fireball is not a conjuration, and an untagged spell fails closed"
+        );
+        e.dispatch_post_cast_triggers(conjurer, 2, &[], Some(SpellSchool::Conjuration));
+        assert!(
+            e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
+            "a levelled conjuration re-anchors the transposition"
+        );
+        assert!(
+            e.messages()
+                .iter()
+                .any(|m| m.contains("benign transposition"))
+        );
+    }
+
+    /// The recharge is a refill, not a grant: it can only ever restore
+    /// a charge for a feature the actor's template actually carries, so
+    /// a baseline wizard casting conjurations all day never acquires
+    /// the blink.
+    #[test]
+    fn benign_transposition_recharge_does_not_grant_the_feature() {
+        use crate::actions::class_features::BENIGN_TRANSPOSITION_TAG;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let plain = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.dispatch_post_cast_triggers(plain, 5, &[], Some(SpellSchool::Conjuration));
+        assert!(
+            !e.actors[&plain].feature_available(BENIGN_TRANSPOSITION_TAG),
+            "the refill is gated on the template's own feature set"
+        );
+    }
+
+    /// Template drift pin for the ninth wizard tradition: exactly two
+    /// features and exactly one new action over the baseline chassis.
+    #[test]
+    fn conjuration_wizard_inherits_baseline_features() {
+        use crate::actions::class_features::{
+            ARCANE_RECOVERY_TAG, BENIGN_TRANSPOSITION_TAG, FOCUSED_CONJURATION_TAG,
+            SHORT_REST_FEATURES,
+        };
+        use crate::actors::creatures::wizards::{CONJURATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let base = &*WIZARD_TEMPLATE;
+        let sub = &*CONJURATION_WIZARD_TEMPLATE;
+        assert!(sub.features.contains(BENIGN_TRANSPOSITION_TAG));
+        assert!(sub.features.contains(FOCUSED_CONJURATION_TAG));
+        assert!(sub.features.contains(ARCANE_RECOVERY_TAG));
+        let mut extra: Vec<_> = sub.features.difference(&base.features).copied().collect();
+        extra.sort();
+        assert_eq!(
+            extra,
+            vec![BENIGN_TRANSPOSITION_TAG, FOCUSED_CONJURATION_TAG],
+            "exactly two features separate the tradition from the baseline"
+        );
+        assert_eq!(
+            sub.actions.len(),
+            base.actions.len() + 1,
+            "Benign Transposition is the tradition's only action surface"
+        );
+        assert!(
+            !SHORT_REST_FEATURES.contains(&BENIGN_TRANSPOSITION_TAG),
+            "the blink recharges on a conjuration cast, not on a rest"
+        );
+        assert_ne!(sub.glyph, base.glyph, "the tradition renders distinctly");
+    }
+
+    /// Drift pin on the conjuration `school()` tags. Focused
+    /// Conjuration and the Benign Transposition recharge both read the
+    /// school off `Action::school()`, so an untagged conjuration is a
+    /// silent hole in both features rather than a visible break. Pins
+    /// the four concentration conjurations the wizard chassis leans on
+    /// plus a representative from each side of the cantrip gate.
+    #[test]
+    fn conjuration_spells_carry_their_school_tag() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{
+            ACID_SPLASH, CLOUDKILL, CLOUD_OF_DAGGERS, DIMENSION_DOOR, FIREBALL, MISTY_STEP,
+            STINKING_CLOUD, WEB,
+        };
+        let conjurations: Vec<&'static (dyn Action + Send + Sync)> = vec![
+            &*WEB,
+            &*STINKING_CLOUD,
+            &*CLOUDKILL,
+            &*CLOUD_OF_DAGGERS,
+            &*MISTY_STEP,
+            &*DIMENSION_DOOR,
+            &*ACID_SPLASH,
+        ];
+        for spell in conjurations {
+            assert_eq!(
+                spell.school(),
+                Some(SpellSchool::Conjuration),
+                "{} must be tagged conjuration",
+                spell.name()
+            );
+        }
+        assert_ne!(
+            FIREBALL.school(),
+            Some(SpellSchool::Conjuration),
+            "the tag must actually discriminate"
+        );
+    }
 
     /// Storm Giant is immune to lightning and thunder, resistant to cold.
     /// Validates the damage-modifier envelope so the giant lives up to

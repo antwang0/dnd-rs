@@ -1280,3 +1280,88 @@ pub static ILLUSION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         crate::actions::class_features::ILLUSORY_SELF_TAG,
     )
 });
+
+/// Conjuration Wizard — Arcane Tradition **School of Conjuration**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// the two mechanically-surfaced School of Conjuration features layered
+/// on:
+///
+///   - **Benign Transposition** (subclass lv6) — an action, no slot:
+///     teleport up to 30 ft. Recharges not on a rest but on the
+///     conjurer's own casting, any conjuration of 1st level or higher.
+///   - **Focused Conjuration** (subclass lv10) — while concentrating
+///     on a conjuration spell, damage cannot break the concentration.
+///
+/// The signature "the cloud stays up" tell. The baseline wizard's
+/// battlefield-control spells are overwhelmingly conjurations — Web,
+/// Stinking Cloud, Cloudkill, Cloud of Daggers are all on the chassis
+/// already — and all of them are concentration, which means their real
+/// failure mode has never been the save DC. It's the archer who plinks
+/// the wizard for 7 and rolls the cloud off the board. Focused
+/// Conjuration deletes that failure mode outright for exactly those
+/// spells and does nothing at all for Haste, Hold Monster or Greater
+/// Invisibility. It is the most narrowly-scoped defensive feature on
+/// the wizard chassis and, inside its scope, the most absolute: the
+/// only unconditional concentration protection in the engine.
+///
+/// The two features compose better than they look. A conjurer who
+/// leads with Web and then keeps casting conjurations is holding a
+/// concentration nothing can shake *and* re-arming a free 30-ft blink
+/// on every one of those casts — so the fragile INT-caster body that
+/// has to stay alive to hold the cloud is also the one that can leave
+/// any melee it finds itself in, repeatedly, for no slot. The
+/// recharge condition is what ties them: both features pay out on the
+/// same axis, and playing the school is what feeds them.
+///
+/// Benign Transposition's action cost keeps it from dominating the
+/// Misty Step this chassis also carries. The blink is free and
+/// renewable but costs the turn; Misty Step costs a 2nd-level slot but
+/// leaves the action up to cast with. Neither is strictly better.
+///
+/// Minor Conjuration (subclass lv2) is left out — it conjures an
+/// inanimate object of at most 10 lb, and the engine models no
+/// object the wizard could produce or use. Durable Summons (lv14)
+/// grants 30 temp HP to creatures the conjurer summons, and the engine
+/// has no summoning surface for it to apply to; it would ship as a
+/// tag nothing reads.
+///
+/// Distinct from the eight sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline),
+/// `NECROMANCY_WIZARD_TEMPLATE` (passive necrotic resistance),
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (passive +INT-mod initiative),
+/// `ABJURATION_WIZARD_TEMPLATE` (the rechargeable Arcane Ward
+/// absorption pool), `EVOCATION_WIZARD_TEMPLATE` (blast-shaping and
+/// damage augmentation), `DIVINATION_WIZARD_TEMPLATE` (the d20
+/// substitution bank), `ENCHANTMENT_WIZARD_TEMPLATE` (slot-free
+/// lockdown plus free single-target doubling), and
+/// `ILLUSION_WIZARD_TEMPLATE` (the per-rest auto-miss). Nine
+/// templates, nine distinct axes — this is the only one whose axis is
+/// keeping an effect that already landed *on the board*. RAW allows
+/// exactly one Arcane Tradition pick per wizard, so no two ever
+/// legally co-occur on a single build.
+///
+/// Glyph 'Γ' — the conjurer's gate, an opening with something on the
+/// far side of it. Distinct from baseline wizard 'M' (mage),
+/// Necromancy 'N', War Magic 'Σ', Abjuration 'Θ', Evocation 'Δ',
+/// Divination 'Ψ', Enchantment 'Φ', and Illusion 'Λ'; collides with no
+/// other template glyph in the engine.
+pub static CONJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Two-tag subclass, one of which also contributes an action, so
+    // neither the tag-only `with_subclass_tag` helper nor a bare field
+    // override fits — same explicit clone-and-override shape
+    // `ENCHANTMENT_WIZARD_TEMPLATE` uses.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::BENIGN_TRANSPOSITION_TAG);
+    features.insert(crate::actions::class_features::FOCUSED_CONJURATION_TAG);
+    let mut actions = WIZARD_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::class_features::BENIGN_TRANSPOSITION);
+    CreatureTemplate {
+        name: "Conjuration Wizard",
+        glyph: 'Γ',
+        features,
+        actions,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

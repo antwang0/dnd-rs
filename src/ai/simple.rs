@@ -5539,9 +5539,16 @@ mod tests {
             // baseline loadout also carries Mirror Image, so the AI
             // reaches the layered case the cohort ordering exists for:
             // decoys first, per-rest charge for what gets through.
+            // The Conjuration Wizard exercises the school tag from both
+            // ends under the driver: its Web / Stinking Cloud / Cloudkill
+            // casts install concentration marks that Focused Conjuration
+            // then has to resolve back to a school by name, and every
+            // levelled conjuration it casts re-arms Benign Transposition
+            // through the post-cast trigger registry.
             use crate::actors::creatures::wizards::{
-                ABJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE,
-                ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
+                ABJURATION_WIZARD_TEMPLATE, CONJURATION_WIZARD_TEMPLATE,
+                DIVINATION_WIZARD_TEMPLATE, ENCHANTMENT_WIZARD_TEMPLATE,
+                EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
             };
             let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
             let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
@@ -5550,6 +5557,8 @@ mod tests {
                 e.instantiate_creature(&ENCHANTMENT_WIZARD_TEMPLATE, Coordinate::new(4, 12), 0, 27);
             let _ =
                 e.instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 14), 0, 28);
+            let _ =
+                e.instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 16), 0, 29);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

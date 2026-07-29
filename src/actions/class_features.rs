@@ -9618,6 +9618,168 @@ pub const HYPNOTIC_GAZE_TAG: &str = "wizard.hypnotic_gaze";
 /// let through.
 pub const ILLUSORY_SELF_TAG: &str = "wizard.illusory_self";
 
+/// Class-feature tag for the Conjuration Wizard's **Focused
+/// Conjuration** (School of Conjuration subclass level 10, PHB).
+/// Passive, always-on, no charge — membership marker read via
+/// `has_passive_feature`.
+///
+/// RAW: "Beginning at 10th level, while you are concentrating on a
+/// conjuration spell, your concentration can't be broken as a result of
+/// taking damage."
+///
+/// Read at `EncounterInstance::roll_concentration_save`, which
+/// short-circuits to `Pass` ahead of the roll when the holder is
+/// concentrating on a spell whose `Action::school()` is
+/// `Conjuration`. Short-circuiting rather than auto-passing is the
+/// RAW reading — no save is made at all — and it also keeps the
+/// feature from consuming a d20 out of the encounter's seeded stream,
+/// so a Conjurer in the party doesn't reshuffle every subsequent roll
+/// for everyone else.
+///
+/// The damage lane is the *only* lane RAW covers, and the gate's
+/// position encodes that: it sits on the save, not on
+/// `drop_concentration`, so casting a second concentration spell,
+/// going down, or failing a round-end save still ends the conjuration
+/// normally.
+///
+/// This is the strongest concentration-protection in the engine and
+/// the only unconditional one. The Warlock's Eldritch Mind invocation
+/// — read at the same site — grants an advantage layer and still
+/// rolls; War Caster-style flat bonuses would still roll. Focused
+/// Conjuration doesn't roll. Its price is paid on the spell list
+/// rather than in the feature: it protects Web, Cloudkill, Stinking
+/// Cloud and Cloud of Daggers, and does nothing at all for Haste,
+/// Hold Monster or Greater Invisibility.
+pub const FOCUSED_CONJURATION_TAG: &str = "wizard.focused_conjuration";
+
+/// Class-feature tag for the Conjuration Wizard's **Benign
+/// Transposition** (School of Conjuration subclass level 6, PHB).
+/// Gates the `BENIGN_TRANSPOSITION` action and carries its single
+/// charge.
+///
+/// RAW: "As an action, you can teleport up to 30 feet to an unoccupied
+/// space that you can see. Alternatively, you can choose a space within
+/// range that is occupied by a Small or Medium creature. If that
+/// creature is willing, you both teleport, swapping places. Once you
+/// use this feature, you can't use it again until you finish a long
+/// rest or you cast a conjuration spell of 1st level or higher."
+///
+/// Deliberately **not** in `SHORT_REST_FEATURES` — its recharge isn't
+/// a rest at all. `EncounterInstance::trigger_benign_transposition_recharge`
+/// refills the charge off the post-cast trigger registry whenever the
+/// holder casts a levelled conjuration, which is the whole character of
+/// the feature: a conjurer playing their own school blinks every round,
+/// and one reaching for a Fireball goes without. The long-rest fallback
+/// rides the normal `long_rest` refill for any tag not listed as
+/// short-rest.
+///
+/// The RAW swap clause is left out. Both halves are a teleport of the
+/// conjurer, and only the self-move half has a target the engine can
+/// pick without a consent prompt — "if that creature is willing" is a
+/// question the AI has no channel to ask an ally, and answering it
+/// implicitly (any ally is always willing) would let the conjurer
+/// yank an ally out of position against their interest. The self-blink
+/// is the load-bearing clause and rides here alone, matching how
+/// Hypnotic Gaze ships its one-shot install without RAW's optional
+/// per-turn sustain.
+pub const BENIGN_TRANSPOSITION_TAG: &str = "wizard.benign_transposition";
+
+/// Benign Transposition — Conjuration Wizard lv6 self-teleport.
+///
+/// Shape-wise a Misty Step that costs an action instead of a bonus
+/// action and a charge instead of a 2nd-level slot: same 30 ft (12
+/// tile) range, same `SinglePoint` schema, same `can_move_to` landing
+/// validation, same `TeleportActor` effect that bypasses the per-step
+/// opportunity-attack dispatch a `MoveActor` would provoke.
+///
+/// The action cost is what keeps it from strictly dominating Misty
+/// Step on the chassis that carries both: the conjurer who blinks with
+/// this has spent their turn, where the one who blinks with Misty Step
+/// has spent a slot and can still cast. They trade cleanly — the
+/// charge is free and renewable but expensive in tempo, the slot is
+/// scarce but cheap in tempo.
+pub struct BenignTransposition {}
+
+impl Action for BenignTransposition {
+    fn name(&self) -> &str {
+        "benign transposition"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bt", "transpose"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !caster.feature_available(BENIGN_TRANSPOSITION_TAG) {
+            return false;
+        }
+        // Destination must be a legal landing spot for the conjurer's
+        // full footprint — the same constraint Misty Step applies,
+        // minus any movement-budget check, since a teleport bypasses
+        // movement entirely.
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_feature(BENIGN_TRANSPOSITION_TAG);
+        }
+        vec![Box::new(crate::engine::side_effects::TeleportActor {
+            actor_id: caster_id,
+            dest: point,
+        })]
+    }
+}
+
+pub static BENIGN_TRANSPOSITION: LazyLock<BenignTransposition> =
+    LazyLock::new(|| BenignTransposition {});
+
 /// Overchannel — Evocation Wizard prime. Free (no action, no bonus
 /// action, no slot): declares that the caster's next damaging spell of
 /// level 1-5 deals maximum damage instead of rolling.

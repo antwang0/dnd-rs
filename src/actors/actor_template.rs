@@ -4486,9 +4486,24 @@ impl ActorInstance {
         self.rolls_death_saves
     }
 
-    /// First action in the actor's list whose `name()` matches `name`.
+    /// First action in the actor's list whose `name()` matches `name`,
+    /// compared case-insensitively.
+    ///
+    /// Case-insensitive because the engine carries a spell's display
+    /// name in two casings and neither is wrong. `Action::name()` is
+    /// lowercase throughout ("web", "stinking cloud") since it doubles
+    /// as the command-line token; `ConcentrationData::spell_name` is
+    /// Title Case ("Web", "Stinking Cloud") since it is written for the
+    /// log and the UI. `EncounterInstance::concentrating_on_school`
+    /// resolves the second back to the first to read the spell's
+    /// school, and an exact comparison would silently never match —
+    /// failing closed in a way that looks exactly like "this spell has
+    /// no school tag".
     pub fn find_action(&self, name: &str) -> Option<&'static (dyn Action + Send + Sync)> {
-        self.actions.iter().find(|a| a.name() == name).copied()
+        self.actions
+            .iter()
+            .find(|a| a.name().eq_ignore_ascii_case(name))
+            .copied()
     }
 
     /// First melee weapon action on this actor's action list — the
@@ -6667,6 +6682,25 @@ impl ActorInstance {
 
     pub fn spend_feature(&mut self, tag: &'static str) -> bool {
         self.features_remaining.remove(tag)
+    }
+
+    /// Put a spent per-use charge back without waiting for a rest.
+    /// Returns `true` if the charge was actually restored (it had been
+    /// spent), `false` if it was already up.
+    ///
+    /// The counterpart to `spend_feature` for features whose RAW
+    /// recharge condition is an in-encounter event rather than a rest —
+    /// today the Conjuration Wizard's Benign Transposition, which comes
+    /// back whenever its holder casts a conjuration spell of 1st level
+    /// or higher. Distinct from `grant_feature_for_test`, which also
+    /// writes `features_max` and so *adds* a feature the template never
+    /// had: this only refills a charge for a feature the actor already
+    /// carries, and is a no-op for one they don't.
+    pub fn restore_feature_charge(&mut self, tag: &'static str) -> bool {
+        if !self.features_max.contains(tag) {
+            return false;
+        }
+        self.features_remaining.insert(tag)
     }
 
     /// True if this actor was instantiated with `tag` in their template's
