@@ -815,3 +815,109 @@ pub static WAR_MAGIC_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         crate::actions::class_features::TACTICAL_WIT_TAG,
     )
 });
+
+/// Abjuration Wizard — Arcane Tradition **School of Abjuration**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// one subclass feature layered on: **Arcane Ward** (Abjuration
+/// subclass level 2, PHB) — the first abjuration spell of 1st level or
+/// higher the abjurer casts weaves a personal damage-absorbing ward,
+/// and every later abjuration cast tops it back up by twice the slot
+/// level.
+///
+/// The signature "the abjurer spends the fight standing inside their
+/// own spell" tell. Mechanically it's a **third HP pool**, distinct
+/// from both of the engine's existing ones:
+///   - Unlike **temp HP** it drains *first* (RAW: "the ward takes the
+///     damage instead of you" resolves ahead of damage *to you*), it
+///     survives at 0 rather than vanishing, and it refills from a
+///     recurring in-combat source rather than a grant-the-larger-value
+///     rule.
+///   - Unlike **regeneration** it isn't a per-round trickle and can't
+///     be suppressed by a damage type.
+///
+/// Both distinctions matter in play: a baseline Wizard's Shield /
+/// Mage Armor casts buy AC and nothing else, while the same two casts
+/// on this chassis also weave and then feed the ward.
+///
+/// `arcane_ward_base: 6` is the RAW "twice your wizard level" term for
+/// a level-3 abjurer, and with the chassis's INT 16 (+3) the full ward
+/// maximum works out to 9 points. The level term is chosen against the
+/// wizard chassis's **body** rather than its slot table: the baseline
+/// template pairs a level-17 archmage spell list (4/3/3/2/2/1/1/1/1)
+/// with a 2d6+2 (~9 HP) frame, so the strict-RAW level-17 term
+/// (2 × 17 = 34, +3 INT = 37) would quadruple the template's effective
+/// hit points and swamp every other defensive lane in the engine —
+/// Shield's +5 AC, Mirror Image's decoys, Blur's disadvantage, Mage
+/// Armor's AC floor. At 9 points the ward roughly doubles the
+/// abjurer's survivability, which is the proportion RAW actually
+/// lands at low levels (a level-2 abjurer's 14 HP alongside a 7-point
+/// ward) and is exactly the "sized for a balanced playable level, not
+/// lockstep PHB progression" convention every other subclass template
+/// here ships under.
+///
+/// The abjurer's own loadout feeds the ward without any extra pickups:
+/// **Shield** (lv1 reaction) and **Mage Armor** (lv1) each weave-or-
+/// recharge for 2, **Dispel Magic** (lv3) for 6, and **Banishment**
+/// (lv4) for 8 — so the defensive half of the wizard's spell list
+/// stops being purely preventative and starts paying into a pool.
+///
+/// Read at three chokepoints: `weave_or_recharge_arcane_ward` on the
+/// actor (pool arithmetic), `EncounterInstance::trigger_arcane_ward` on
+/// the shared post-cast trigger registry next to Wild Magic Surge and
+/// the Heart of the Storm eruption (the form / recharge hook, gated on
+/// `Action::school() == Some(SpellSchool::Abjuration)`), and
+/// `take_typed_damage` on the actor (absorption, ahead of temp HP).
+///
+/// Distinct from the three sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline, Arcane Recovery only),
+/// `NECROMANCY_WIZARD_TEMPLATE` (School of Necromancy — passive
+/// necrotic resistance), and `WAR_MAGIC_WIZARD_TEMPLATE` (School of War
+/// Magic — passive +INT-mod initiative). The four cover four distinct
+/// defensive axes: nothing, a typed damage halver, an initiative
+/// augment, and a rechargeable absorption pool. RAW allows exactly one
+/// Arcane Tradition pick per wizard, so the features never legally
+/// co-occur on a single build.
+///
+/// **First template on the `arcane_ward_base` lane** — the field is 0
+/// (feature off) for every other creature in the engine, so a
+/// non-abjurer's damage path short-circuits on the first `min` against
+/// an empty pool.
+///
+/// RAW's School of Abjuration picks up other features not shipped on
+/// this template — **Abjuration Savant** (lv2: halve the gp/time cost
+/// of copying abjuration spells into the spellbook; no combat
+/// surface), **Projected Ward** (lv6: spend the ward to absorb damage
+/// aimed at an ally within 30 ft; needs a reaction hook that can
+/// redirect a resolved damage instance across actors), **Improved
+/// Abjuration** (lv10: add the proficiency bonus to Counterspell /
+/// Dispel Magic ability checks; the engine resolves both spells
+/// without a contested check today), and **Spell Resistance** (lv14
+/// capstone: advantage on saves against spells plus resistance to
+/// their damage; needs a "was this save forced by a spell?" flag on
+/// the save path). Only the lv2 Arcane Ward has a mechanical surface
+/// that plugs cleanly into the existing damage pipeline, so we ship
+/// that and leave the rest as future work — matching the way
+/// `NECROMANCY_WIZARD_TEMPLATE` ships only Inured to Undeath and
+/// `WAR_MAGIC_WIZARD_TEMPLATE` only Tactical Wit.
+///
+/// Glyph 'Θ' — a warded circle, evoking the ward the abjurer wraps
+/// themselves in. Distinct from baseline wizard 'M' (mage), Necromancy
+/// 'N', and War Magic 'Σ'; collides with no other template glyph in
+/// the engine.
+pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Struct-field subclass (not `with_subclass_tag`): Arcane Ward is
+    // carried by the `arcane_ward_base` scalar rather than a feature
+    // tag, because the pool needs a size and the tag set is a
+    // `HashSet<&'static str>` with nowhere to put one. Same explicit
+    // clone-and-override shape the other flag-bearing subclass
+    // templates use (Storm Sorcerer, the paladin oaths, the War /
+    // Light / Tempest clerics) rather than the tag-only helper lane.
+    CreatureTemplate {
+        name: "Abjuration Wizard",
+        glyph: 'Θ',
+        arcane_ward_base: 6,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

@@ -2043,6 +2043,19 @@ pub struct CreatureTemplate {
     /// Long rest restores to this template max. 0 = no legendary
     /// resistance (the default for ordinary creatures).
     pub legendary_resistances: u32,
+    /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2), expressed
+    /// as the RAW "twice your wizard level" term of the ward's maximum.
+    /// 0 (the default, and every non-abjurer) disables the feature. The
+    /// holder's Intelligence modifier is added on top when the ward
+    /// forms, so a template shipping `arcane_ward_base: 18` on a build
+    /// with INT 20 weaves a 23-point ward.
+    ///
+    /// Carried as a template constant rather than derived from the
+    /// actor's `level` because `level` tracks in-run XP progression from
+    /// 1, not the build level a class template targets — same reasoning
+    /// that ships `crit_threshold: 19` flat on the Champion rather than
+    /// gating it behind a level check.
+    pub arcane_ward_base: u32,
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves for half damage, take 0
     /// on a pass and half on a fail instead of half / full.
     pub has_evasion: bool,
@@ -2874,6 +2887,7 @@ impl CreatureTemplate {
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
             legendary_resistances: 0,
+            arcane_ward_base: 0,
             has_evasion: false,
             has_uncanny_dodge: false,
             has_deflect_missiles: false,
@@ -3099,6 +3113,35 @@ pub struct ActorInstance {
     /// Doesn't stack: a new grant replaces existing temp HP only if
     /// larger. Cleared on long rest.
     temp_hp: u32,
+    /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) — the
+    /// ward's current hit points. A separate pool from `temp_hp`: it is
+    /// drained *first* (RAW "the ward takes the damage instead of you",
+    /// which resolves before the "damage to you" that temp HP absorbs),
+    /// it persists at 0 rather than vanishing (RAW "while the ward has
+    /// 0 hit points it can't absorb damage, but its magic remains"),
+    /// and it refills off abjuration casts rather than off a fresh
+    /// grant-the-larger-value rule. Only meaningful while
+    /// `arcane_ward_formed` is set.
+    arcane_ward: u32,
+    /// Whether the Arcane Ward has been woven yet this encounter. The
+    /// ward doesn't exist until its holder casts their first abjuration
+    /// spell of 1st level or higher (RAW); before that, the pool is
+    /// dormant and absorbs nothing. Distinguishes "ward at 0 HP, still
+    /// rechargeable" from "ward never formed", which the recharge hook
+    /// needs to tell apart: the first abjuration cast fills the ward to
+    /// its maximum, every later one restores only twice the slot level.
+    arcane_ward_formed: bool,
+    /// RAW "twice your wizard level" term of the Arcane Ward maximum,
+    /// pre-doubled into a flat pool size by the template. 0 disables the
+    /// feature entirely — the overwhelming majority of actors. Carried
+    /// as a template constant rather than derived from `level` because
+    /// `level` tracks in-run XP progression from 1, not the build level
+    /// the class template targets; the same reason the Champion ships
+    /// `crit_threshold: 19` rather than deriving it from a level gate.
+    /// The holder's Intelligence modifier is added on top at
+    /// ward-formation time, so the full RAW maximum is
+    /// `arcane_ward_base + INT mod`.
+    arcane_ward_base: u32,
     level: u32,
     xp: u32,
     /// Saving-throw proficiencies — adds proficiency bonus to roll_save.
@@ -3468,6 +3511,9 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             damage_modifiers: ct.damage_modifiers.clone(),
             temp_hp: 0,
+            arcane_ward: 0,
+            arcane_ward_formed: false,
+            arcane_ward_base: ct.arcane_ward_base,
             level: 1,
             xp: 0,
             proficient_saves: ct.proficient_saves.clone(),
@@ -4489,6 +4535,13 @@ impl ActorInstance {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
         self.temp_hp = 0;
+        // 5e Arcane Ward RAW: "once you create the ward, you can't create
+        // it again until you finish a long rest." Dropping both the pool
+        // and the woven latch here is what makes the next encounter's
+        // first abjuration cast re-weave a full-strength ward instead of
+        // trickling twice-the-slot-level onto a stale one.
+        self.arcane_ward = 0;
+        self.arcane_ward_formed = false;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
@@ -4589,6 +4642,76 @@ impl ActorInstance {
             self.temp_hp = amount;
         }
         self.temp_hp
+    }
+
+    /// True when this actor holds the Abjuration Wizard's Arcane Ward
+    /// feature at all (`arcane_ward_base > 0` on their template) —
+    /// independent of whether the ward has been woven yet. The single
+    /// gate every ward consumer opens with.
+    pub fn has_arcane_ward(&self) -> bool {
+        self.arcane_ward_base > 0
+    }
+
+    /// Current Arcane Ward hit points. 0 for actors without the feature,
+    /// for holders who haven't cast an abjuration spell yet, and for
+    /// holders whose ward has been fully drained (RAW: the magic remains
+    /// and can still be recharged — see `arcane_ward_formed`).
+    pub fn arcane_ward(&self) -> u32 {
+        self.arcane_ward
+    }
+
+    /// Whether the Arcane Ward has already been woven since the last
+    /// long rest. Distinct from `arcane_ward() > 0`: a fully-drained
+    /// ward is still formed (RAW keeps its magic alive and rechargeable)
+    /// and must not re-weave at full strength on the next abjuration
+    /// cast. Read by the post-cast hook to pick the log line and by the
+    /// UI to decide whether to render the ward gauge at all.
+    pub fn arcane_ward_formed(&self) -> bool {
+        self.arcane_ward_formed
+    }
+
+    /// Full RAW Arcane Ward maximum: twice the holder's wizard level
+    /// (carried as the flat `arcane_ward_base` template term) plus their
+    /// Intelligence modifier. Floors at `arcane_ward_base` so a hypothetical
+    /// negative-INT abjurer can't end up with a ward smaller than the
+    /// level term alone. Returns 0 for actors without the feature.
+    pub fn arcane_ward_max(&self) -> u32 {
+        if !self.has_arcane_ward() {
+            return 0;
+        }
+        let int_mod = self.ability_modifier(AbilityScoreType::Intelligence);
+        (self.arcane_ward_base as i32 + int_mod).max(self.arcane_ward_base as i32) as u32
+    }
+
+    /// 5e Abjuration Wizard Arcane Ward form-or-recharge step, run when
+    /// the holder casts an abjuration spell of 1st level or higher.
+    ///
+    /// - First such cast **weaves** the ward: it appears at its full
+    ///   `arcane_ward_max`, independent of the slot level spent.
+    /// - Every later cast **recharges** it by twice the slot level,
+    ///   capped at the maximum. A ward sitting at 0 recharges normally —
+    ///   RAW keeps the magic alive even when the pool is spent.
+    ///
+    /// Returns `Some((gained, now))` when the pool actually moved, and
+    /// `None` for non-holders, cantrips (`spell_level == 0`), and
+    /// already-full wards — so the caller logs only on a real change.
+    pub fn weave_or_recharge_arcane_ward(&mut self, spell_level: u32) -> Option<(u32, u32)> {
+        if !self.has_arcane_ward() || spell_level == 0 {
+            return None;
+        }
+        let max = self.arcane_ward_max();
+        let target = if self.arcane_ward_formed {
+            (self.arcane_ward + 2 * spell_level).min(max)
+        } else {
+            self.arcane_ward_formed = true;
+            max
+        };
+        let gained = target.saturating_sub(self.arcane_ward);
+        if gained == 0 {
+            return None;
+        }
+        self.arcane_ward = target;
+        Some((gained, self.arcane_ward))
     }
 
     /// Returns the post-modifier damage value (immunity → 0, resistance
@@ -6100,9 +6223,10 @@ impl ActorInstance {
     }
 
     /// Apply `raw` damage of type `dt`, factoring in immunity / resistance
-    /// / vulnerability and absorbing through any temp HP first. Returns
-    /// `(outcome, final_amount)` where `final_amount` is the actual HP
-    /// delta that landed (after all reductions and temp-HP absorption).
+    /// / vulnerability and absorbing through the Arcane Ward and then any
+    /// temp HP first. Returns `(outcome, final_amount)` where
+    /// `final_amount` is the actual HP delta that landed (after all
+    /// reductions and both absorption pools).
     pub fn take_typed_damage(&mut self, raw: u32, dt: DamageType) -> (DamageOutcome, u32) {
         let scaled = self.effective_damage(raw, dt);
         if scaled == 0 {
@@ -6115,6 +6239,23 @@ impl ActorInstance {
                 },
                 0,
             );
+        }
+        // 5e Abjuration Wizard Arcane Ward: "whenever you take damage,
+        // the ward takes the damage instead." Drains ahead of temp HP —
+        // the ward intercepts the damage before it is damage *to you*,
+        // which is the layer temp HP absorbs. Gated to Active actors for
+        // the same reason temp HP is: a Dying / Stable actor's incoming
+        // damage is bookkept as death-save failures, not an HP delta the
+        // ward could stand in front of.
+        let scaled = if matches!(self.hp_state, HpState::Active) {
+            let warded = scaled.min(self.arcane_ward);
+            self.arcane_ward -= warded;
+            scaled - warded
+        } else {
+            scaled
+        };
+        if scaled == 0 {
+            return (DamageOutcome::Reduced, 0);
         }
         // Burn temp HP first; only the leftover hits real HP. Temp HP
         // is only relevant for Active actors — Dying / Stable creatures

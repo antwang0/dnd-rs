@@ -161,6 +161,55 @@ impl fmt::Display for Size {
     }
 }
 
+/// The eight 5e schools of magic. Every spell belongs to exactly one;
+/// the school is the axis a whole family of subclass features keys off
+/// ("when you cast an abjuration spell of 1st level or higher…",
+/// "when you roll damage for a wizard evocation spell…").
+///
+/// Surfaced on the `Action` trait as `school() -> Option<SpellSchool>`,
+/// defaulting to `None`. `None` means "not a spell, or a spell whose
+/// school has no mechanical surface yet" — weapon attacks, monster
+/// attacks, class features, and item actions all sit there, and so do
+/// the spell impls whose school nothing currently reads. Every consumer
+/// gates on an explicit `Some(school)` match, so an untagged spell
+/// fails the gate closed (no ward recharge, no damage bump) rather than
+/// firing on the wrong school.
+///
+/// Tagged today: **Abjuration** (read by the Abjuration Wizard's Arcane
+/// Ward form/recharge hook) and **Evocation** (read by the Evocation
+/// Wizard's Sculpt Spells / Potent Cantrip / Empowered Evocation trio).
+/// The other six variants exist so a future Illusion / Enchantment /
+/// Divination / Necromancy / Conjuration / Transmutation subclass
+/// feature lands as spell-side `school()` overrides plus one consumer,
+/// with no enum churn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpellSchool {
+    Abjuration,
+    Conjuration,
+    Divination,
+    Enchantment,
+    Evocation,
+    Illusion,
+    Necromancy,
+    Transmutation,
+}
+
+impl fmt::Display for SpellSchool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self {
+            SpellSchool::Abjuration => "abjuration",
+            SpellSchool::Conjuration => "conjuration",
+            SpellSchool::Divination => "divination",
+            SpellSchool::Enchantment => "enchantment",
+            SpellSchool::Evocation => "evocation",
+            SpellSchool::Illusion => "illusion",
+            SpellSchool::Necromancy => "necromancy",
+            SpellSchool::Transmutation => "transmutation",
+        };
+        write!(f, "{}", name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CreatureType {
     Aberration,

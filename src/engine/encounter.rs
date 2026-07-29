@@ -247,7 +247,7 @@ use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEvent;
-use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size};
+use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
@@ -5672,8 +5672,9 @@ impl EncounterInstance {
 
     /// Dispatch every post-cast trigger the engine models. Runs each
     /// registered post-cast hook against `caster_id` with the resolved
-    /// spell context (`spell_level`, `damage_types`) and returns the
-    /// concatenation of side-effects each hook produced. Called once
+    /// spell context (`spell_level`, `damage_types`, `school`) and
+    /// returns the concatenation of side-effects each hook produced.
+    /// Called once
     /// from the shared `Action::execute` chokepoint — the single call
     /// site keeps the trigger dispatch out of every action impl and
     /// lets a new post-cast trigger drop in as one line of this method
@@ -5687,6 +5688,14 @@ impl EncounterInstance {
     ///     → 10-ft radius enemy burst (feature-tag gated on
     ///     `HEART_OF_THE_STORM_TAG`; cantrip gated; damage-type
     ///     gated).
+    ///   - **Arcane Ward form / recharge** — abjuration cast of 1st
+    ///     level or higher → weave the ward at full strength (first
+    ///     cast) or top it up by twice the slot level (later casts).
+    ///     Template gated on `arcane_ward_base > 0`; cantrip gated;
+    ///     school gated. Produces no side-effects — it mutates the
+    ///     caster's ward pool in place and logs — so it returns an
+    ///     empty vec and exists in the registry for the single
+    ///     post-cast chokepoint rather than for its return value.
     ///
     /// Each hook is responsible for its own opt-in / short-circuit
     /// gates and returns an empty vec on a miss. The dispatcher is
@@ -5706,6 +5715,7 @@ impl EncounterInstance {
         caster_id: usize,
         spell_level: u32,
         damage_types: &[DamageType],
+        school: Option<SpellSchool>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         let mut effects = Vec::new();
         effects.append(&mut self.trigger_wild_magic_surge(caster_id, spell_level));
@@ -5714,7 +5724,63 @@ impl EncounterInstance {
             spell_level,
             damage_types,
         ));
+        self.trigger_arcane_ward(caster_id, spell_level, school);
         effects
+    }
+
+    /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) post-cast
+    /// hook: casting an abjuration spell of 1st level or higher either
+    /// weaves the ward (first cast since the last long rest — appears at
+    /// its full `arcane_ward_max`) or recharges it by twice the slot
+    /// level, capped at that maximum.
+    ///
+    /// Three gates, cheapest first: the school must be
+    /// `Some(SpellSchool::Abjuration)` (an untagged spell reads `None`
+    /// and fails closed), the slot level must be non-zero (RAW excludes
+    /// cantrips — Blade Ward and Resistance don't feed the ward), and
+    /// the caster must hold the feature. The actor-side helper does the
+    /// pool arithmetic and reports whether anything actually moved, so a
+    /// top-up against an already-full ward logs nothing.
+    ///
+    /// Sibling in shape to `trigger_wild_magic_surge` /
+    /// `trigger_heart_of_the_storm_eruption` on the post-cast registry,
+    /// but on the "mutate the caster, emit no side-effects" lane: the
+    /// ward is caster-local bookkeeping with no target set to resolve,
+    /// so routing it through a `Heal`-style side-effect would buy
+    /// nothing but indirection.
+    fn trigger_arcane_ward(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        school: Option<SpellSchool>,
+    ) {
+        if school != Some(SpellSchool::Abjuration) || spell_level == 0 {
+            return;
+        }
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        let name = caster.name().to_string();
+        let was_formed = caster.arcane_ward_formed();
+        let Some((gained, now)) = caster.weave_or_recharge_arcane_ward(spell_level) else {
+            return;
+        };
+        let max = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.arcane_ward_max())
+            .unwrap_or(now);
+        if was_formed {
+            self.log(format!(
+                "  arcane ward: {} absorbs {} more magic ({}/{})",
+                name, gained, now, max
+            ));
+        } else {
+            self.log(format!(
+                "  arcane ward: {} weaves a {}-point ward",
+                name, now
+            ));
+        }
     }
 
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
@@ -60889,5 +60955,265 @@ mod tests {
         assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Strength));
         assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Dexterity));
         assert!(e.actors[&gloom].is_save_proficient(AbilityScoreType::Wisdom));
+    }
+
+    /// Arcane Ward is dormant until the abjurer's first abjuration cast:
+    /// the pool exists on the template but absorbs nothing, and the UI
+    /// gauge stays hidden (`arcane_ward_formed` false). Pins the RAW
+    /// "you weave the ward when you cast an abjuration spell" gate — a
+    /// template flag alone must not hand out free absorption.
+    #[test]
+    fn arcane_ward_is_dormant_until_first_abjuration_cast() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::actors::creatures::wizards::{ABJURATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        // The abjurer holds the feature; the baseline wizard does not.
+        assert!(e.actors[&abjurer].has_arcane_ward());
+        assert!(!e.actors[&baseline].has_arcane_ward());
+        // Dormant: no pool, no gauge, but a known maximum waiting.
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 0);
+        assert!(!e.actors[&abjurer].arcane_ward_formed());
+        // 6 (RAW twice-wizard-level term) + 3 (INT 16) = 9.
+        assert_eq!(e.actors[&abjurer].arcane_ward_max(), 9);
+        assert_eq!(e.actors[&baseline].arcane_ward_max(), 0);
+        // A dormant ward absorbs nothing — damage lands on HP in full.
+        let before = e.actors[&abjurer].hitpoints();
+        DealDamage {
+            actor_id: abjurer,
+            amount: 3,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&abjurer].hitpoints() + 3, before);
+    }
+
+    /// End-to-end through `Action::execute`: casting Mage Armor (an
+    /// abjuration spell of 1st level) weaves the ward at full strength,
+    /// and the ward then eats damage ahead of HP. Confirms the
+    /// post-cast trigger registry is actually wired to `school()` —
+    /// not just that `weave_or_recharge_arcane_ward` works in isolation.
+    #[test]
+    fn abjuration_cast_weaves_ward_that_absorbs_damage() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::actions::spells::MAGE_ARMOR;
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let actor = e.actors.get_mut(&abjurer).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            actor.spell_slot_manager.restore_spell_slots();
+        }
+        // Mage Armor is a NoArgs self-buff — no target list.
+        for ef in MAGE_ARMOR.execute(&mut e, abjurer, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&abjurer].arcane_ward_formed());
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 9);
+        // The ward soaks the first 9 points; the 10th lands on HP.
+        let hp_before = e.actors[&abjurer].hitpoints();
+        DealDamage {
+            actor_id: abjurer,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 5);
+        assert_eq!(e.actors[&abjurer].hitpoints(), hp_before);
+        DealDamage {
+            actor_id: abjurer,
+            amount: 7,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        // Ward drains to 0 and the 2-point remainder spills onto HP.
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 0);
+        assert_eq!(e.actors[&abjurer].hitpoints() + 2, hp_before);
+        // Drained is not gone: RAW keeps the ward's magic alive.
+        assert!(e.actors[&abjurer].arcane_ward_formed());
+    }
+
+    /// The ward drains ahead of temp HP. Both pools are "absorb before
+    /// HP" layers, and RAW orders the ward first ("the ward takes the
+    /// damage instead of you" resolves before the damage is damage *to
+    /// you*, which is what temp HP soaks). Pins the ordering so a future
+    /// refactor of `take_typed_damage` can't silently swap them — the
+    /// swap is invisible on total damage taken but changes which pool
+    /// survives to soak the next hit.
+    #[test]
+    fn arcane_ward_drains_before_temp_hp() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let actor = e.actors.get_mut(&abjurer).unwrap();
+            actor.weave_or_recharge_arcane_ward(1);
+            actor.gain_temp_hp(5);
+        }
+        let hp_before = e.actors[&abjurer].hitpoints();
+        DealDamage {
+            actor_id: abjurer,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        // Ward ate all 4; temp HP is untouched.
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 5);
+        assert_eq!(e.actors[&abjurer].temp_hp(), 5);
+        assert_eq!(e.actors[&abjurer].hitpoints(), hp_before);
+    }
+
+    /// Recharge arithmetic: the first abjuration cast fills the ward
+    /// regardless of slot level, later casts add twice the slot level,
+    /// the pool caps at the maximum, and cantrips (`spell_level == 0`)
+    /// contribute nothing. Also pins the "already full" no-op so the
+    /// post-cast hook stays quiet instead of logging a 0-point top-up.
+    #[test]
+    fn arcane_ward_recharges_by_twice_the_slot_level() {
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&abjurer).unwrap();
+        // Cantrips never weave the ward.
+        assert_eq!(actor.weave_or_recharge_arcane_ward(0), None);
+        assert!(!actor.arcane_ward_formed());
+        // First cast weaves at full strength even off a level-1 slot.
+        assert_eq!(actor.weave_or_recharge_arcane_ward(1), Some((9, 9)));
+        // A full ward is a no-op — nothing to log.
+        assert_eq!(actor.weave_or_recharge_arcane_ward(3), None);
+        // Drain it, then top up by 2 x slot level, capped at the max.
+        actor.take_typed_damage(9, DamageType::Force);
+        assert_eq!(actor.arcane_ward(), 0);
+        assert_eq!(actor.weave_or_recharge_arcane_ward(2), Some((4, 4)));
+        assert_eq!(actor.weave_or_recharge_arcane_ward(4), Some((5, 9)));
+    }
+
+    /// A long rest un-weaves the ward entirely (RAW: "once you create
+    /// the ward, you can't create it again until you finish a long
+    /// rest"), so the next encounter's first abjuration cast rebuilds it
+    /// at full strength rather than trickling 2 points onto a stale
+    /// pool. The multi-encounter dungeon loop rests between fights, so
+    /// this is the live path, not a corner case.
+    #[test]
+    fn long_rest_unweaves_arcane_ward() {
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&abjurer).unwrap();
+        actor.weave_or_recharge_arcane_ward(1);
+        actor.take_typed_damage(6, DamageType::Force);
+        assert_eq!(actor.arcane_ward(), 3);
+        actor.long_rest();
+        assert!(!actor.arcane_ward_formed());
+        assert_eq!(actor.arcane_ward(), 0);
+        // Re-weaving after the rest lands the full pool again.
+        assert_eq!(actor.weave_or_recharge_arcane_ward(1), Some((9, 9)));
+    }
+
+    /// Non-abjuration casts leave the ward alone. Fire Bolt (evocation
+    /// cantrip) and Fireball (evocation, level 3) both route through the
+    /// same post-cast trigger registry, so this pins the school gate
+    /// rather than an accidental "any spell recharges" reading.
+    #[test]
+    fn non_abjuration_casts_do_not_feed_the_ward() {
+        use crate::actions::spells::{FIREBALL, MAGE_ARMOR};
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let abjurer = e
+            .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+            .unwrap();
+        {
+            let actor = e.actors.get_mut(&abjurer).unwrap();
+            actor.spell_slot_manager.restore_spell_slots();
+        }
+        // Weave the ward, then spend it down to 1.
+        e.actors
+            .get_mut(&abjurer)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        for ef in MAGE_ARMOR.execute(&mut e, abjurer, None, None, None) {
+            ef.apply(&mut e);
+        }
+        e.actors
+            .get_mut(&abjurer)
+            .unwrap()
+            .take_typed_damage(8, DamageType::Force);
+        assert_eq!(e.actors[&abjurer].arcane_ward(), 1);
+        // A level-3 evocation cast must not top it up.
+        e.actors
+            .get_mut(&abjurer)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        let point = vec![Coordinate::new(9, 9)];
+        for ef in FIREBALL.execute(&mut e, abjurer, None, Some(&point), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&abjurer].arcane_ward(),
+            1,
+            "an evocation cast fed the abjuration ward — school gate broken"
+        );
+    }
+
+    /// Every spell the engine tags as Abjuration must actually be one,
+    /// and the tag must survive on the `&dyn Action` the engine holds
+    /// (not just on the concrete type). Drift-prevention for the
+    /// `school()` lane: a future spell added to the abjurer's loadout
+    /// without a `school()` override silently stops feeding the ward,
+    /// and this list is where that gets noticed.
+    #[test]
+    fn abjuration_spells_report_their_school() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{
+            AID, BANISHMENT, COUNTERSPELL, DEATH_WARD, DISPEL_MAGIC, MAGE_ARMOR, SANCTUARY,
+            SHIELD, STONESKIN,
+        };
+        let tagged: Vec<&dyn Action> = vec![
+            &*SHIELD,
+            &*MAGE_ARMOR,
+            &*SANCTUARY,
+            &*AID,
+            &*DEATH_WARD,
+            &*STONESKIN,
+            &*BANISHMENT,
+            &*COUNTERSPELL,
+            &*DISPEL_MAGIC,
+        ];
+        for action in tagged {
+            assert_eq!(
+                action.school(),
+                Some(SpellSchool::Abjuration),
+                "{} lost its abjuration school tag",
+                action.name()
+            );
+        }
+    }
+
+    /// Non-spell actions report no school, so every school-keyed feature
+    /// fails closed on them. Pins the `None` default on the `Action`
+    /// trait against a future refactor that gives it a real value.
+    #[test]
+    fn non_spell_actions_have_no_school() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGSWORD;
+        assert_eq!(LONGSWORD.school(), None);
     }
 }

@@ -585,6 +585,27 @@ pub trait Action {
         Vec::new()
     }
 
+    /// The 5e school of magic this action belongs to, or `None` for
+    /// anything that isn't a spell (weapon / monster attacks, class
+    /// features, item actions) — and for spell impls whose school no
+    /// consumer reads yet.
+    ///
+    /// Read at the post-cast chokepoint in `execute` and threaded into
+    /// `EncounterInstance::dispatch_post_cast_triggers`, so a
+    /// school-keyed feature (Arcane Ward's "cast an abjuration spell of
+    /// 1st level or higher" recharge, Empowered Evocation's damage
+    /// bump, Sculpt Spells' ally shield) reads one value instead of
+    /// pattern-matching spell names. Also read directly by the
+    /// pre-damage hooks that need the school *before* side-effects are
+    /// built (Sculpt Spells at burst-target time).
+    ///
+    /// Defaults to `None` so every non-spell action and every untagged
+    /// spell fails school gates closed. Tagging a spell is a two-line
+    /// override next to `damage_types`.
+    fn school(&self) -> Option<crate::engine::types::SpellSchool> {
+        None
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -901,6 +922,7 @@ pub trait Action {
             caster_id,
             spell_level,
             &damage_types,
+            self.school(),
         );
         side_effects.append(&mut post_cast_effects);
         for cost in costs {

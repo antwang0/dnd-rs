@@ -356,6 +356,22 @@ pub fn render_sideinfo(
             Style::default().fg(Color::LightCyan),
         ));
     }
+    // 5e Abjuration Wizard Arcane Ward — a third HP pool that soaks
+    // damage ahead of temp HP. Shown as "(ward N/M)" once woven so the
+    // player can see how much absorption is left and whether another
+    // abjuration cast would be wasted on a full ward. Deliberately still
+    // rendered at 0/M: RAW keeps a drained ward rechargeable, and hiding
+    // it there would read as "the feature is gone".
+    if curr_actor.arcane_ward_formed() {
+        hp_spans.push(Span::styled(
+            format!(
+                " (ward {}/{})",
+                curr_actor.arcane_ward(),
+                curr_actor.arcane_ward_max()
+            ),
+            Style::default().fg(Color::LightBlue),
+        ));
+    }
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),
