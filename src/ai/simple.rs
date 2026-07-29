@@ -4319,8 +4319,10 @@ fn try_self_centered_burst(
     None
 }
 
-/// Find the (target, action) pair where the target has the lowest current
-/// HP among combat-active enemies AND we can validly hit them right now.
+/// Find the (target, action) pair where the target is closest to dropping
+/// among combat-active enemies AND we can validly hit them right now.
+/// "Closest to dropping" is `effective_hitpoints` — HP plus the temp-HP
+/// and Arcane Ward absorption pools — not the raw HP bar.
 /// Ties on HP break by attack reach (prefer longer-reach action) so we use
 /// our better tools when offered the choice.
 fn try_attack_focus_fire(
@@ -4338,7 +4340,10 @@ fn try_attack_focus_fire(
     // Sort key: (mode_pri, target_hp, -reach). Lower wins:
     //   - mode_pri (advantage=0, normal=1, disadvantage=2): fish for
     //     advantage opportunities first.
-    //   - HP ascending: focus-fire wounded.
+    //   - HP ascending: focus-fire wounded. Reads `effective_hitpoints`
+    //     (HP + temp HP + Arcane Ward), not raw HP — the question here
+    //     is "who drops soonest", and a target behind an absorption pool
+    //     is further from dropping than their HP bar suggests.
     //   - Reach descending: prefer the longest-reach action when tied
     //     (so a longbow gets used over a one-tile melee on a far target,
     //     etc.).
@@ -4362,7 +4367,7 @@ fn try_attack_focus_fire(
         let is_melee = reach <= MELEE_REACH;
         let mode = encounter.compute_attack_mode(actor_id, target_id, is_melee);
         let mode_pri = mode_priority(mode);
-        let hp = target.hitpoints();
+        let hp = target.effective_hitpoints();
         let pick = match &best {
             None => true,
             Some((bm, bh, br, _)) => {
@@ -4502,7 +4507,9 @@ fn try_step_toward_lowest_hp(
             if id == actor_id || t.team() == my_team || !t.is_combat_active() {
                 None
             } else {
-                Some((id, t.hitpoints()))
+                // Same "who drops soonest" question as the focus-fire
+                // picker, so the same answer: absorption pools count.
+                Some((id, t.effective_hitpoints()))
             }
         })
         .min_by_key(|(_, hp)| *hp)?
@@ -5707,6 +5714,78 @@ mod tests {
             0
         );
         assert_eq!(e.ally_shield_capacity(evoker, None, 3), 0);
+    }
+
+    /// Focus fire targets whoever drops soonest, which is not whoever
+    /// has the lowest HP bar. Two enemies at identical HP, one sitting
+    /// behind an absorption pool: the AI must swing at the unshielded
+    /// one, because the shielded one needs strictly more damage to fall.
+    ///
+    /// Runs the assertion twice, once per pool (temp HP and Arcane
+    /// Ward), because they are separate fields and a heuristic could
+    /// easily account for one and miss the other.
+    #[test]
+    fn focus_fire_prefers_the_target_closest_to_dropping() {
+        use crate::actors::creatures::wizards::ABJURATION_WIZARD_TEMPLATE;
+
+        // `bare` and `shielded` start at equal HP; only `shielded` gets
+        // a pool. Both are in reach of the attacker.
+        let picked_target = |grant: &dyn Fn(&mut crate::actors::actor_template::ActorInstance)| {
+            let mut e = empty_arena();
+            let attacker = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let shielded = e
+                .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let bare = e
+                .instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 5), 1, 1)
+                .unwrap();
+            // Equalize HP so the pool is the only difference.
+            let hp = e.actors[&bare].hitpoints().min(e.actors[&shielded].hitpoints());
+            for id in [bare, shielded] {
+                let a = e.actors.get_mut(&id).unwrap();
+                let excess = a.hitpoints() - hp;
+                if excess > 0 {
+                    a.take_damage(excess);
+                }
+            }
+            grant(e.actors.get_mut(&shielded).unwrap());
+            assert!(
+                e.actors[&shielded].effective_hitpoints()
+                    > e.actors[&bare].effective_hitpoints(),
+                "test setup: the shielded target should be harder to drop"
+            );
+            let aei = try_attack_focus_fire(&e, attacker).expect("expected an attack");
+            let target = aei.target_ids().and_then(|t| t.first().copied());
+            (target, bare, shielded)
+        };
+
+        for (label, grant) in [
+            (
+                "temp HP",
+                &(|a: &mut crate::actors::actor_template::ActorInstance| {
+                    a.gain_temp_hp(8);
+                }) as &dyn Fn(&mut crate::actors::actor_template::ActorInstance),
+            ),
+            (
+                "arcane ward",
+                &(|a: &mut crate::actors::actor_template::ActorInstance| {
+                    a.weave_or_recharge_arcane_ward(1);
+                }),
+            ),
+        ] {
+            let (target, bare, shielded) = picked_target(grant);
+            assert_eq!(
+                target,
+                Some(bare),
+                "focus fire picked the target behind {} instead of the one \
+                 closest to dropping (shielded={}, bare={})",
+                label,
+                shielded,
+                bare
+            );
+        }
     }
 
     #[test]

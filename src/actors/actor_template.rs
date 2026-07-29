@@ -4644,6 +4644,29 @@ impl ActorInstance {
         self.temp_hp
     }
 
+    /// Total damage this actor can absorb before dropping: real HP plus
+    /// both pools that stand in front of it — temporary hit points and
+    /// the Abjuration Wizard's Arcane Ward.
+    ///
+    /// This is the number "how close is that target to falling?" actually
+    /// wants. Raw `hitpoints()` answers a different question, and the gap
+    /// between them is not cosmetic: a 9 HP abjurer behind a full 9-point
+    /// ward reads as the squishiest thing on the board while needing
+    /// double the damage of anyone at the same HP, and an ally who just
+    /// ate a Heroism / False Life / Armor of Agathys grant reads the
+    /// same way. A focus-fire heuristic keyed on `hitpoints()` walks into
+    /// both.
+    ///
+    /// Deliberately *not* what healing decisions should read — a heal
+    /// restores real HP only, so an ally sitting at 2 HP behind 20 temp
+    /// HP is still the one worth a Cure Wounds, and the support pipeline
+    /// keeps using `hitpoints()`.
+    pub fn effective_hitpoints(&self) -> u32 {
+        self.hitpoints
+            .saturating_add(self.temp_hp)
+            .saturating_add(self.arcane_ward)
+    }
+
     /// True when this actor holds the Abjuration Wizard's Arcane Ward
     /// feature at all (`arcane_ward_base > 0` on their template) —
     /// independent of whether the ward has been woven yet. The single
