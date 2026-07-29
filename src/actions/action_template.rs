@@ -47,23 +47,18 @@ fn resolve_burst_targets(
         // fall through to the normal save path — `roll_save_against_caster`
         // consumes the prime on its first call.
         let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
-        let has_evasion = save_ability == AbilityScoreType::Dexterity
-            && encounter
-                .actors
-                .get(&target_id)
-                .is_some_and(|a| a.has_evasion());
-        let dmg = if has_evasion {
-            SaveDamagePolicy::HalfOnSave.apply_with_evasion(damage, save.passed())
-        } else {
-            SaveDamagePolicy::HalfOnSave.apply(damage, save.passed())
-        };
+        // Post-save damage (Potent Cantrip on the caster side, Evasion
+        // on the target side, plus the base policy) resolves at the
+        // shared engine chokepoint — see `resolve_post_save_damage`.
+        let dmg = encounter.resolve_post_save_damage(
+            caster_id,
+            target_id,
+            save_ability,
+            SaveDamagePolicy::HalfOnSave,
+            damage,
+            save.passed(),
+        );
         if dmg == 0 {
-            if has_evasion && save.passed() {
-                encounter.log(format!(
-                    "  evasion: {} takes no damage",
-                    encounter.actor_name(target_id)
-                ));
-            }
             continue;
         }
         effects.push(Box::new(DealDamage {

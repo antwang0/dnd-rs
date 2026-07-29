@@ -931,6 +931,11 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 ///   - **Sculpt Spells** (subclass lv2) — `1 + spell level` allies
 ///     inside the evoker's own blast automatically succeed on their
 ///     save and take no damage.
+///   - **Potent Cantrip** (subclass lv6) — a creature that succeeds on
+///     its save against one of the evoker's cantrips still takes half
+///     damage (but no rider). Note RAW's gate is *cantrip*, not
+///     *evocation cantrip*, so it lifts the Poison Spray / Toll the
+///     Dead / Mind Sliver pickups from other schools too.
 ///   - **Empowered Evocation** (subclass lv10) — +INT modifier to one
 ///     damage roll of any evocation spell.
 ///
@@ -942,7 +947,9 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// ally stands, which in a corridor-heavy generated map is often
 /// nowhere. Sculpt Spells converts every one of those into a
 /// friend-or-foe blast the evoker can drop on a melee scrum, and
-/// Empowered Evocation pays a flat +3 on top of each.
+/// Empowered Evocation pays a flat +3 on top of each. Potent Cantrip
+/// covers the other end of the slot curve: once the evoker is out of
+/// slots, their at-will damage stops being all-or-nothing.
 ///
 /// Both features route through chokepoints that already existed for
 /// the sorcerer's metamagic, which is what keeps the template's diff
@@ -974,17 +981,15 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// allows exactly one Arcane Tradition pick per wizard, so no two ever
 /// legally co-occur on a single build.
 ///
-/// RAW's School of Evocation picks up two features not shipped here —
-/// **Potent Cantrip** (lv6: a creature that succeeds on a save against
-/// your cantrip still takes half damage; needs a save-or-nothing
-/// chokepoint that the dozen cantrip impls currently hand-roll as
-/// "return early on a passed save") and **Overchannel** (lv14: maximize
-/// the damage dice of a lv1-5 spell, at escalating necrotic self-damage
-/// after the first use per rest; needs a per-rest use counter plus a
-/// maximize-this-roll prime). Both are real future work on chokepoints
-/// this change already moves toward — `roll_empowered_sum` is where an
-/// Overchannel maximize would land, next to the Empowered Evocation
-/// bonus — matching the way `NECROMANCY_WIZARD_TEMPLATE` ships only
+/// RAW's School of Evocation picks up one further feature not shipped
+/// here — **Overchannel** (lv14: maximize the damage dice of a lv1-5
+/// spell, at escalating necrotic self-damage after the first use per
+/// rest; needs a per-rest use counter plus a maximize-this-roll prime).
+/// It is real future work on a chokepoint this template already leans
+/// on: `roll_empowered_sum` is where the maximize would land, right
+/// next to the Empowered Evocation bonus, and `Dice::max_roll` already
+/// exists for it. Shipping three of four subclass features and naming
+/// the fourth matches the way `NECROMANCY_WIZARD_TEMPLATE` ships only
 /// Inured to Undeath and `WAR_MAGIC_WIZARD_TEMPLATE` only Tactical Wit.
 ///
 /// Glyph 'Δ' — the evoker's raw elemental burst. Distinct from baseline
@@ -995,6 +1000,7 @@ pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     // helper: clone the baseline feature set and insert both rows.
     let mut features = WIZARD_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::SCULPT_SPELLS_TAG);
+    features.insert(crate::actions::class_features::POTENT_CANTRIP_TAG);
     features.insert(crate::actions::class_features::EMPOWERED_EVOCATION_TAG);
     CreatureTemplate {
         name: "Evocation Wizard",

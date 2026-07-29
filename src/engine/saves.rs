@@ -81,6 +81,31 @@ impl SaveDamagePolicy {
             SaveDamagePolicy::NoneOnSave => self.apply(raw, passed),
         }
     }
+
+    /// Caster-side mirror of `apply_with_evasion`: the 5e Evocation
+    /// Wizard **Potent Cantrip** shifts a save-or-nothing cantrip one
+    /// notch *worse for the target* — a successful save now leaves half
+    /// damage standing instead of none.
+    ///
+    /// Expressed as a policy upgrade rather than a damage tweak, because
+    /// that is exactly what it is: `NoneOnSave` becomes `HalfOnSave` and
+    /// everything downstream (Evasion, the caller's zero-damage
+    /// short-circuit) reads the upgraded policy and composes correctly
+    /// on its own. A rogue with Evasion who makes their DEX save against
+    /// a potent Sacred Flame still takes nothing — Potent Cantrip lifts
+    /// the effect into the "half on a successful save" class, which is
+    /// precisely the class Evasion zeroes.
+    ///
+    /// `HalfOnSave` is returned unchanged: it already leaves half
+    /// standing, and the leveled spells that carry it aren't cantrips.
+    /// Caller is responsible for confirming the feature is in play AND
+    /// that the cast is a cantrip.
+    pub fn with_potent_cantrip(self) -> Self {
+        match self {
+            SaveDamagePolicy::NoneOnSave => SaveDamagePolicy::HalfOnSave,
+            SaveDamagePolicy::HalfOnSave => self,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -430,16 +430,11 @@ fn burst_save_damage(
         // spells that route through `burst_save_damage`.
         let save = encounter.roll_save_against_caster(tid, save_ability, dc, caster_id);
         let passed = save.passed();
-        let has_evasion = save_ability == AbilityScoreType::Dexterity
-            && encounter
-                .actors
-                .get(&tid)
-                .is_some_and(|a| a.has_evasion());
-        let dmg = if has_evasion {
-            outcome.apply_with_evasion(raw, passed)
-        } else {
-            outcome.apply(raw, passed)
-        };
+        // Post-save damage (Potent Cantrip on the caster side, Evasion
+        // on the target side, plus `outcome`) resolves at the shared
+        // engine chokepoint — see `resolve_post_save_damage`.
+        let dmg = encounter
+            .resolve_post_save_damage(caster_id, tid, save_ability, outcome, raw, passed);
         saves.push((tid, passed));
         if dmg == 0 {
             continue;
@@ -690,6 +685,67 @@ fn concentration_burst_with_rider(
         data: ConcentrationData::with_conditions(spell_name, conditions),
     }));
     effects
+}
+
+/// Single-target save-or-nothing cantrip resolver — the cantrip sibling
+/// of `save_for_half_damage`. Rolls the caster-aware save, then resolves
+/// the damage through the shared post-save chokepoint, so the four
+/// cantrips on this shape pick up two things they previously couldn't:
+///
+///   - **Potent Cantrip** (Evocation Wizard lv6), which upgrades the
+///     `NoneOnSave` policy so a successful save still leaves half
+///     standing. The old hand-rolled shape (`if save.passed() { return
+///     Vec::new(); }`) had no room to express that — it discarded the
+///     save outcome before any damage existed to halve.
+///   - **Evasion** on the DEX-save cantrips, which only matters once
+///     Potent Cantrip has lifted the effect into the half-on-save class.
+///
+/// Returns the queued `DealDamage` (empty on a fully-saved hit) plus the
+/// save outcome, so callers that attach a rider on a failed save
+/// (Vicious Mockery's `Mocked`) can branch without re-rolling.
+///
+/// Routes the save through `roll_save_against_caster` so the Sorcerer
+/// Heightened Spell metamagic prime forces disadvantage (RAW), and the
+/// damage through `roll_empowered_sum` so Empowered Spell and Empowered
+/// Evocation both apply — matching every other damage-roll site in this
+/// file.
+#[allow(clippy::too_many_arguments)]
+fn cantrip_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, bool) {
+    let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
+    let passed = save.passed();
+    let raw = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
+    let dmg = encounter.resolve_post_save_damage(
+        caster_id,
+        target_id,
+        save_ability,
+        SaveDamagePolicy::NoneOnSave,
+        raw,
+        passed,
+    );
+    if dmg == 0 {
+        return (Vec::new(), passed);
+    }
+    encounter.log(format!(
+        "  {}: {}({}) = {} {:?}",
+        action_name, dice, raw, dmg, damage_type
+    ));
+    (
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type,
+        })],
+        passed,
+    )
 }
 
 /// Roll a damage burst against a target's saving throw, halving on
@@ -1126,25 +1182,21 @@ impl Action for SacredFlame {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
 
-        // Route through the caster-aware save helper so the Sorcerer
-        // Heightened Spell metamagic prime forces disadvantage on the
-        // save (RAW). The prime is consumed on the first save resolved
-        // through this site; a passed save is a clean miss (cantrips
-        // don't half-on-save).
-        let save = encounter
-            .roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
-
-        let die = Dice::new(n, 8);
-        let raw = encounter.roll(&die);
-        encounter.log(format!("  sacred flame: {}({}) = {} radiant", die, raw, raw));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: raw,
-            damage_type: DamageType::Radiant,
-        })]
+        // Shared save-or-nothing cantrip resolver: caster-aware save
+        // (Heightened Spell), caster-aware damage roll (Empowered Spell
+        // / Empowered Evocation), and the post-save chokepoint that
+        // applies Potent Cantrip and Evasion.
+        cantrip_save_damage(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(n, 8),
+            DamageType::Radiant,
+            "sacred flame",
+        )
+        .0
     }
 }
 
@@ -3102,18 +3154,17 @@ impl Action for PoisonSpray {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
-        let die = Dice::new(n, 12);
-        let raw = encounter.roll(&die);
-        encounter.log(format!("  poison spray: {}({}) = {} poison", die, raw, raw));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: raw,
-            damage_type: DamageType::Poison,
-        })]
+        cantrip_save_damage(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(n, 12),
+            DamageType::Poison,
+            "poison spray",
+        )
+        .0
     }
 }
 
@@ -3554,32 +3605,29 @@ impl Action for TollTheDead {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        // Caster-aware save so Heightened Spell metamagic can force
-        // disadvantage on the save. The prime is consumed on the first
-        // save resolved through this site.
-        let save = encounter
-            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
+        // The die upgrade is resolved before the save so the shared
+        // cantrip resolver gets the right pool; RAW keys it on the
+        // target's wounded state, which the save can't change.
         let wounded = encounter
             .actors
             .get(&target_id)
             .is_some_and(|a| a.is_wounded());
         let die = if wounded { Dice::new(n, 12) } else { Dice::new(n, 8) };
-        let raw = encounter.roll(&die);
-        encounter.log(format!(
-            "  toll the dead: {}({}) = {} necrotic{}",
+        cantrip_save_damage(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
             die,
-            raw,
-            raw,
-            if wounded { " (wounded)" } else { "" }
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: raw,
-            damage_type: DamageType::Necrotic,
-        })]
+            DamageType::Necrotic,
+            if wounded {
+                "toll the dead (wounded)"
+            } else {
+                "toll the dead"
+            },
+        )
+        .0
     }
 }
 
@@ -3626,29 +3674,30 @@ impl Action for ViciousMockery {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        // Caster-aware save so Heightened Spell metamagic can force
-        // disadvantage on the save. The prime is consumed on the first
-        // save resolved through this site.
-        let save = encounter
-            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
-        let die = Dice::new(n, 4);
-        let raw = encounter.roll(&die);
-        encounter.log(format!("  vicious mockery: {}({}) = {} psychic", die, raw, raw));
-        vec![
-            Box::new(DealDamage {
-                actor_id: target_id,
-                amount: raw,
-                damage_type: DamageType::Psychic,
-            }),
-            Box::new(ApplyCondition {
+        let (mut effects, passed) = cantrip_save_damage(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            Dice::new(n, 4),
+            DamageType::Psychic,
+            "vicious mockery",
+        );
+        // RAW's disadvantage rider lands only on a failed save. Potent
+        // Cantrip's "takes half the damage but suffers no additional
+        // effect" is exactly this split — a saved target that still eats
+        // half the psychic damage does not pick up `Mocked` — which is
+        // why the resolver hands back the save outcome rather than just
+        // the damage effects.
+        if !passed {
+            effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::Mocked,
                 timer: ConditionTimer::UntilStartOfNextTurn,
-            }),
-        ]
+            }));
+        }
+        effects
     }
 }
 

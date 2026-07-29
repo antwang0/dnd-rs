@@ -5320,6 +5320,87 @@ impl EncounterInstance {
         Some(twin_id)
     }
 
+    /// Resolve how much of a pre-rolled `raw` damage value actually
+    /// lands on `target_id` given their save outcome — the single place
+    /// the engine turns "they passed / they failed" into a number.
+    ///
+    /// Folds the two features that bend the standard save-for-half /
+    /// save-for-nothing tables, in the order RAW composes them:
+    ///
+    ///   1. **Potent Cantrip** (Evocation Wizard lv6, caster side) —
+    ///      upgrades a cantrip's `NoneOnSave` to `HalfOnSave`, so a
+    ///      successful save leaves half standing.
+    ///   2. **Evasion** (Rogue / Monk / Ranger, target side) — on DEX
+    ///      saves, shifts `HalfOnSave` one notch the other way: pass
+    ///      takes nothing, fail takes half.
+    ///
+    /// Running Potent Cantrip first is what makes the three-way case
+    /// come out right: a rogue with Evasion who makes their DEX save
+    /// against a potent Sacred Flame takes nothing, because Potent
+    /// Cantrip lifts the effect into exactly the class Evasion zeroes.
+    /// Doing it in the other order would leave the rogue eating half.
+    ///
+    /// Extracted from the two burst resolvers (`resolve_burst_targets`
+    /// in `action_template.rs` and `burst_save_damage` in `spells.rs`)
+    /// which each carried their own copy of the Evasion branch and its
+    /// log line. Both now delegate here, so a future modifier on this
+    /// lane — a Potent-Cantrip sibling, a "half again on a failed save"
+    /// rider — lands once instead of twice.
+    pub fn resolve_post_save_damage(
+        &mut self,
+        caster_id: usize,
+        target_id: usize,
+        save_ability: AbilityScoreType,
+        policy: crate::engine::saves::SaveDamagePolicy,
+        raw: u32,
+        passed: bool,
+    ) -> u32 {
+        let policy = if self.potent_cantrip_applies(caster_id, policy) {
+            let name = self.actor_name(caster_id);
+            self.log(format!("  potent cantrip: {}'s cantrip still bites", name));
+            policy.with_potent_cantrip()
+        } else {
+            policy
+        };
+        let has_evasion = save_ability == AbilityScoreType::Dexterity
+            && self
+                .actors
+                .get(&target_id)
+                .is_some_and(|a| a.has_evasion());
+        if !has_evasion {
+            return policy.apply(raw, passed);
+        }
+        let dmg = policy.apply_with_evasion(raw, passed);
+        if dmg == 0 && passed {
+            let target_name = self.actor_name(target_id);
+            self.log(format!("  evasion: {} takes no damage", target_name));
+        }
+        dmg
+    }
+
+    /// Whether Potent Cantrip should upgrade `policy` on the cast
+    /// currently in flight: the caster holds the feature, the cast is a
+    /// cantrip, and the effect is one the upgrade can actually move
+    /// (`NoneOnSave` — a `HalfOnSave` effect already leaves half
+    /// standing, so firing there would log a no-op).
+    ///
+    /// The cantrip gate reads the in-flight cast's level rather than the
+    /// policy, which matters: `NoneOnSave` also carries the handful of
+    /// leveled spells that zero on a save (Disintegrate), and RAW must
+    /// not lift those.
+    fn potent_cantrip_applies(
+        &self,
+        caster_id: usize,
+        policy: crate::engine::saves::SaveDamagePolicy,
+    ) -> bool {
+        use crate::engine::saves::SaveDamagePolicy;
+        policy == SaveDamagePolicy::NoneOnSave
+            && self.current_cast().is_some_and(|c| c.level == 0)
+            && self.actors.get(&caster_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::POTENT_CANTRIP_TAG)
+            })
+    }
+
     /// The set of ally ids inside `(point, radius)` that this cast spares
     /// entirely: they don't roll a save, take no damage, and are recorded
     /// as having passed so per-target riders skip them too.
@@ -61653,6 +61734,193 @@ mod tests {
         assert!(
             !e.actors[&evoker].has_condition(Condition::CarefulSpelling),
             "the Careful Spell prime should be consumed when it shields someone"
+        );
+    }
+
+    /// Potent Cantrip turns a saved cantrip from a clean miss into half
+    /// damage, and leaves everything else alone: a leveled spell that
+    /// also zeroes on a save (the `NoneOnSave` policy is shared with
+    /// Disintegrate) must not be lifted, and a caster without the
+    /// feature must not be either.
+    #[test]
+    fn potent_cantrip_leaves_half_damage_on_a_saved_cantrip() {
+        use crate::actors::creatures::wizards::{EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::saves::SaveDamagePolicy;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+
+        // Cantrip frame: the evoker's saved cantrip still lands half.
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                target,
+                AbilityScoreType::Wisdom,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                true
+            ),
+            5
+        );
+        // A failed save is unchanged — the feature only touches the
+        // successful-save cell of the table.
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                target,
+                AbilityScoreType::Wisdom,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                false
+            ),
+            10
+        );
+        // A wizard without the feature still gets nothing on a save.
+        assert_eq!(
+            e.resolve_post_save_damage(
+                baseline,
+                target,
+                AbilityScoreType::Wisdom,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                true
+            ),
+            0
+        );
+        e.exit_cast();
+
+        // Leveled frame: Disintegrate-shaped `NoneOnSave` spells share
+        // the policy but must not be lifted.
+        e.enter_cast(Some(SpellSchool::Transmutation), 6);
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                target,
+                AbilityScoreType::Wisdom,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                true
+            ),
+            0
+        );
+        e.exit_cast();
+    }
+
+    /// Potent Cantrip and Evasion compose in the order
+    /// `resolve_post_save_damage` runs them: the cantrip is lifted into
+    /// the half-on-save class first, which is exactly the class Evasion
+    /// zeroes, so an evasive rogue who makes the DEX save still takes
+    /// nothing. Running them the other way round would leave the rogue
+    /// eating half, so this pins the ordering rather than just the
+    /// result.
+    #[test]
+    fn potent_cantrip_and_evasion_compose() {
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        use crate::engine::saves::SaveDamagePolicy;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        assert!(e.actors[&rogue].has_evasion());
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        // Passed DEX save: Potent Cantrip lifts to half, Evasion zeroes it.
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                rogue,
+                AbilityScoreType::Dexterity,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                true
+            ),
+            0
+        );
+        // Failed DEX save: Evasion halves what Potent Cantrip lifted.
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                rogue,
+                AbilityScoreType::Dexterity,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                false
+            ),
+            5
+        );
+        // A non-DEX save skips Evasion entirely on both cells.
+        assert_eq!(
+            e.resolve_post_save_damage(
+                evoker,
+                rogue,
+                AbilityScoreType::Wisdom,
+                SaveDamagePolicy::NoneOnSave,
+                10,
+                true
+            ),
+            5
+        );
+        e.exit_cast();
+    }
+
+    /// Vicious Mockery's disadvantage rider is gated on a *failed* save,
+    /// not on damage landing. Under Potent Cantrip a saved target eats
+    /// half the psychic damage but must not pick up `Mocked` — RAW's
+    /// "takes half the damage but suffers no additional effect". Runs
+    /// the cantrip across many seeds so both save outcomes occur, and
+    /// asserts the invariant on every one.
+    #[test]
+    fn potent_vicious_mockery_never_mocks_on_a_successful_save() {
+        use crate::actions::spells::VICIOUS_MOCKERY;
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        let mut saved_seen = false;
+        let mut failed_seen = false;
+        for seed in 0..80u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let evoker = e
+                .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&evoker)
+                .unwrap()
+                .give_resource(crate::engine::side_effects::Resource::Action);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let hp_before = e.actors[&target].hitpoints();
+            let targets = vec![target];
+            for ef in VICIOUS_MOCKERY.execute(&mut e, evoker, Some(&targets), None, None) {
+                ef.apply(&mut e);
+            }
+            let mocked = e.actors[&target].has_condition(Condition::Mocked);
+            let damaged = e.actors[&target].hitpoints() < hp_before;
+            if mocked {
+                failed_seen = true;
+            } else if damaged {
+                // Damage without the rider is the Potent Cantrip cell:
+                // the save succeeded and half got through anyway.
+                saved_seen = true;
+            }
+        }
+        assert!(failed_seen, "no failed save across 80 seeds");
+        assert!(
+            saved_seen,
+            "Potent Cantrip never produced a saved-but-damaged Vicious Mockery \
+             across 80 seeds — is the cantrip resolver wired up?"
         );
     }
 }

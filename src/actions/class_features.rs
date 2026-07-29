@@ -9440,3 +9440,30 @@ pub const SCULPT_SPELLS_TAG: &str = "wizard.sculpt_spells";
 /// spells roll damage once and share it across the blast, so the bonus
 /// lands once per cast rather than once per target.
 pub const EMPOWERED_EVOCATION_TAG: &str = "wizard.empowered_evocation";
+
+/// Class-feature tag for the Evocation Wizard's **Potent Cantrip**
+/// (School of Evocation subclass level 6, PHB). Passive, at-will —
+/// same membership-marker shape as `SCULPT_SPELLS_TAG` /
+/// `EMPOWERED_EVOCATION_TAG`.
+///
+/// RAW: "When a creature succeeds on a saving throw against your
+/// cantrip, the creature takes half the damage but suffers no
+/// additional effect." Note the gate is *cantrip*, not *evocation
+/// cantrip* — the feature lifts every damaging save cantrip the evoker
+/// knows, including the Poison Spray / Toll the Dead / Mind Sliver
+/// pickups from other schools.
+///
+/// Read at `EncounterInstance::resolve_post_save_damage`, the shared
+/// post-save damage chokepoint, where it upgrades the effect's
+/// `SaveDamagePolicy` from `NoneOnSave` to `HalfOnSave` before Evasion
+/// is consulted. Expressing it as a policy upgrade is what makes the
+/// three-way interaction fall out for free: a target with Evasion who
+/// makes their DEX save against a potent cantrip still takes nothing,
+/// because Potent Cantrip lifts the effect into exactly the class
+/// Evasion zeroes.
+///
+/// The cantrip gate reads the in-flight cast's level off the cast
+/// stack (`level == 0`), so the feature is inert on leveled spells —
+/// including the small set that also use `NoneOnSave` (Disintegrate),
+/// which RAW must not benefit.
+pub const POTENT_CANTRIP_TAG: &str = "wizard.potent_cantrip";
