@@ -69,6 +69,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2c. Hypnotic Gaze — the enchanter's slot-free adjacent
+        //     lockdown. Placed above the heal / buff lanes and well
+        //     above the slot-spending control lane because it is free:
+        //     a gaze that lands is a Hold Person the wizard didn't have
+        //     to pay for, and the only cost is an action they were
+        //     going to spend on a cantrip anyway.
+        if let Some(aei) = try_hypnotic_gaze(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -689,6 +699,16 @@ impl Controller for SimpleAi {
         //             a flat +4; lower than Sweeping when there's an
         //             adjacent splash target available.
         if let Some(aei) = try_feinting_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p*. Action Surge — free, once per short rest, hands the
+        //      fighter a second Action. Sits with the other free primes
+        //      because it costs nothing to take: firing it here never
+        //      displaces anything, and the ladder is re-entered
+        //      afterwards so the extra action gets spent on whatever
+        //      rung the fighter would have used anyway.
+        if let Some(aei) = try_action_surge(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -4067,6 +4087,89 @@ fn try_step_away_from_threats(
     ))
 }
 
+/// Fighter **Action Surge** — free (RAW: "no action required"), grants
+/// a second Action this turn, once per short rest.
+///
+/// Unreachable by the AI until now, which mattered more than most
+/// missing pickers: it is the largest single-turn output swing a
+/// fighter has, and on an Extra Attack chassis it literally doubles
+/// the turn.
+///
+/// Because it costs nothing, the only real question is *when*, and the
+/// answer is "as soon as there is something to spend it on". It
+/// refreshes on a short rest, so holding it across an encounter wastes
+/// it outright — there is no later fight it is being saved for. The
+/// gate is therefore just "a hostile is in play within the 24-tile
+/// spell window the sibling free-prime pickers use", which fires it on
+/// the first round of contact.
+///
+/// Terminates because `side_effects` spends the charge, so
+/// `custom_validate_input`'s `feature_ready` gate fails on the next
+/// pass through the ladder and the fighter proceeds to attack with the
+/// action it was just handed.
+fn try_action_surge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(encounter, actor_id, 24, "action surge")
+}
+
+/// Enchantment Wizard **Hypnotic Gaze** — an action, no slot: an
+/// adjacent creature makes a WIS save or is Charmed *and* Incapacitated
+/// until the end of the enchanter's next turn.
+///
+/// Kept as its own picker rather than a row on `try_hold_person`'s
+/// `SOFT_LOCKS` registry, which is the natural-looking home for it:
+/// that picker opens by bailing when the actor is already
+/// concentrating, because every lock on its list is a concentration
+/// spell. Hypnotic Gaze is not, and folding it in would either give it
+/// a gate RAW doesn't impose or force the concentration bail to become
+/// per-row.
+///
+/// Gated on an adjacent hostile that isn't already Incapacitated —
+/// there is no point spending the enchanter's action to disable
+/// something that is already out of the fight. Reach and line of sight
+/// are left to `validate`.
+///
+/// Fires ahead of the slot-spending control lane below it, because it
+/// is the only lockdown on the chassis that costs no slot at all: a
+/// gaze that lands is a Hold Person the wizard didn't have to pay for.
+fn try_hypnotic_gaze(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("hypnotic gaze")?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target.team() == my_team
+            || !target.is_combat_active()
+            || target.has_condition(Condition::Incapacitated)
+        {
+            continue;
+        }
+        if footprint_chebyshev(
+            my_loc,
+            my_size,
+            target.location(),
+            get_tiles_from_size(target.size()),
+        ) > 0
+        {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
 /// Self-teleport actions the AI will spend to break out of melee, in
 /// the order it will reach for them: cheapest resource first.
 ///
@@ -7367,6 +7470,91 @@ mod tests {
         assert!(
             try_shapechanger(&e, wiz).is_none(),
             "the temp HP pool doesn't stack — one form is all there is"
+        );
+    }
+
+    /// Action Surge was reachable by no picker at all before this —
+    /// the fighter's largest single-turn output swing, never used.
+    /// Fires as soon as there is a hostile to spend the extra action
+    /// on, and terminates because the charge is spent on use.
+    #[test]
+    fn action_surge_fires_once_when_a_hostile_is_in_play() {
+        use crate::actions::class_features::ACTION_SURGE_TAG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let (e, solo) = pinned_caster(&FIGHTER_TEMPLATE, 0);
+        assert!(
+            try_action_surge(&e, solo).is_none(),
+            "nothing to surge against"
+        );
+
+        let (mut e, fighter) = pinned_caster(&FIGHTER_TEMPLATE, 1);
+        let aei = try_action_surge(&e, fighter).expect("a hostile is in play");
+        assert_eq!(aei.action().name(), "action surge");
+        assert!(
+            e.actors[&fighter].feature_available(ACTION_SURGE_TAG),
+            "the charge is still up before the action resolves"
+        );
+
+        // Resolving it hands over an Action and burns the charge, so
+        // the picker goes quiet — no re-entry loop on a free action.
+        let effects = aei.action().side_effects(&mut e, fighter, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&fighter].feature_available(ACTION_SURGE_TAG),
+            "the surge spent its charge"
+        );
+        assert!(
+            e.actors[&fighter].can_consume_resource(Resource::Action),
+            "and handed over an Action to spend"
+        );
+        assert!(
+            try_action_surge(&e, fighter).is_none(),
+            "the picker must not re-fire on a spent charge"
+        );
+    }
+
+    /// Hypnotic Gaze shipped with no picker, so the Enchantment
+    /// Wizard's only slot-free lockdown was player-only. Fires on an
+    /// adjacent hostile, skips one that is already Incapacitated, and
+    /// doesn't reach past melee.
+    #[test]
+    fn hypnotic_gaze_targets_an_adjacent_hostile_that_is_still_in_the_fight() {
+        use crate::actors::creatures::wizards::{ENCHANTMENT_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let (e, wiz) = pinned_caster(&ENCHANTMENT_WIZARD_TEMPLATE, 1);
+        let aei = try_hypnotic_gaze(&e, wiz).expect("an adjacent hostile");
+        assert_eq!(aei.action().name(), "hypnotic gaze");
+        let target = aei.target_ids().as_ref().unwrap()[0];
+        assert_ne!(e.actors[&target].team(), e.actors[&wiz].team());
+
+        // Already out of the fight — don't spend the action again.
+        let (mut e, wiz) = pinned_caster(&ENCHANTMENT_WIZARD_TEMPLATE, 1);
+        let goblin = *e
+            .actors
+            .keys()
+            .find(|id| e.actors[id].team() != e.actors[&wiz].team())
+            .unwrap();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(2));
+        assert!(
+            try_hypnotic_gaze(&e, wiz).is_none(),
+            "no point gazing at something already incapacitated"
+        );
+
+        // Nothing in reach, and no gaze on the baseline chassis.
+        let (e, wiz) = pinned_caster(&ENCHANTMENT_WIZARD_TEMPLATE, 0);
+        assert!(try_hypnotic_gaze(&e, wiz).is_none(), "gaze is melee-range");
+        let (e, plain) = pinned_caster(&WIZARD_TEMPLATE, 1);
+        assert!(
+            try_hypnotic_gaze(&e, plain).is_none(),
+            "the baseline wizard has no gaze"
         );
     }
 
