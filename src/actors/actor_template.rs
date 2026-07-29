@@ -3142,6 +3142,25 @@ pub struct ActorInstance {
     /// ward-formation time, so the full RAW maximum is
     /// `arcane_ward_base + INT mod`.
     arcane_ward_base: u32,
+    /// 5e Evocation Wizard **Overchannel** (subclass level 14) — how
+    /// many times the holder has maximized a spell since their last long
+    /// rest. Drives the escalating backlash: the first use is free, the
+    /// second costs 2d12 necrotic per spell level, and each later use
+    /// adds another d12 per level. Counting uses (rather than storing the
+    /// next die count) keeps the RAW formula readable at the one site
+    /// that applies it.
+    overchannel_uses: u32,
+    /// Set at the damage-roll site when Overchannel actually fires,
+    /// cleared by the post-cast trigger that charges the backlash.
+    ///
+    /// The two steps can't be one: RAW maximizes the damage *during* the
+    /// cast and charges the caster "immediately after you cast it", and
+    /// those are different phases of `Action::execute` — the roll happens
+    /// inside `side_effects`, the backlash has to land in the post-cast
+    /// trigger dispatch so it resolves as a normal `DealDamage` (with
+    /// concentration checks and death handling) rather than as a raw HP
+    /// poke from inside a dice helper.
+    overchannel_backlash_pending: bool,
     level: u32,
     xp: u32,
     /// Saving-throw proficiencies — adds proficiency bonus to roll_save.
@@ -3514,6 +3533,8 @@ impl ActorInstance {
             arcane_ward: 0,
             arcane_ward_formed: false,
             arcane_ward_base: ct.arcane_ward_base,
+            overchannel_uses: 0,
+            overchannel_backlash_pending: false,
             level: 1,
             xp: 0,
             proficient_saves: ct.proficient_saves.clone(),
@@ -4542,6 +4563,11 @@ impl ActorInstance {
         // trickling twice-the-slot-level onto a stale one.
         self.arcane_ward = 0;
         self.arcane_ward_formed = false;
+        // RAW: the Overchannel backlash escalates "if you use this
+        // feature again before you finish a long rest", so the rest
+        // resets the escalation to its free first use.
+        self.overchannel_uses = 0;
+        self.overchannel_backlash_pending = false;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
@@ -4665,6 +4691,44 @@ impl ActorInstance {
         self.hitpoints
             .saturating_add(self.temp_hp)
             .saturating_add(self.arcane_ward)
+    }
+
+    /// Record an Overchannel use and report how many d12 of necrotic
+    /// backlash *per spell level* the caster owes for it.
+    ///
+    /// RAW: "The first time you do so, you suffer no adverse effect. If
+    /// you use this feature again before you finish a long rest, you
+    /// take 2d12 necrotic damage for each level of the spell. Each time
+    /// you use this feature again before finishing a long rest, the
+    /// necrotic damage per level increases by 1d12." So use #1 owes 0,
+    /// use #2 owes 2, use #3 owes 3, and so on — the die count and the
+    /// use count coincide from the second use onward.
+    pub fn note_overchannel_use(&mut self) -> u32 {
+        self.overchannel_uses += 1;
+        if self.overchannel_uses <= 1 {
+            0
+        } else {
+            self.overchannel_uses
+        }
+    }
+
+    /// Latch that Overchannel fired on the cast currently resolving, so
+    /// the post-cast trigger knows to charge the backlash.
+    pub fn set_overchannel_backlash_pending(&mut self) {
+        self.overchannel_backlash_pending = true;
+    }
+
+    /// Read and clear the Overchannel backlash latch. Returns whether it
+    /// was set — the post-cast trigger's single gate.
+    pub fn take_overchannel_backlash_pending(&mut self) -> bool {
+        std::mem::take(&mut self.overchannel_backlash_pending)
+    }
+
+    /// How many times Overchannel has fired since the last long rest.
+    /// Exposed for the UI's resource panel and for tests that assert the
+    /// escalation ramp.
+    pub fn overchannel_uses(&self) -> u32 {
+        self.overchannel_uses
     }
 
     /// True when this actor holds the Abjuration Wizard's Arcane Ward

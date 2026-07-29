@@ -1356,8 +1356,109 @@ impl EncounterInstance {
     /// `roll_empowered`, which rerolls low dice) — different features,
     /// different classes, neither aware of the other.
     pub fn roll_empowered_sum(&mut self, caster_id: usize, count: u32, faces: u32) -> u32 {
-        let base: u32 = self.roll_empowered(caster_id, count, faces).iter().sum();
+        let dice = Dice::new(count, faces);
+        // Overchannel replaces the roll outright rather than modifying
+        // it, so it is resolved first — there are no dice left for
+        // Empowered Spell's reroll to improve once every die is showing
+        // its top face, and calling through anyway would burn that
+        // separate prime for nothing.
+        let base = match self.consume_overchannel(caster_id, dice) {
+            Some(maxed) => maxed,
+            None => self.roll_empowered(caster_id, count, faces).iter().sum(),
+        };
         base + self.empowered_evocation_bonus(caster_id)
+    }
+
+    /// 5e Evocation Wizard **Overchannel** (subclass lv14): if the caster
+    /// has the prime up and the cast is a damaging spell of level 1-5,
+    /// consume the prime, return `dice` at maximum instead of rolling,
+    /// and latch the escalating backlash for the post-cast trigger to
+    /// charge. Returns `None` — leaving the normal roll to happen —
+    /// whenever any gate fails.
+    ///
+    /// The level window is RAW ("a wizard spell of 1st through 5th
+    /// level") and is what keeps the feature from trivializing the
+    /// evoker's level 6-9 slots; cantrips are excluded by the same
+    /// clause. The prime is only consumed on a cast that can actually
+    /// use it, so declaring Overchannel and then firing a cantrip leaves
+    /// it up rather than wasting it — the same forgiving semantics the
+    /// metamagic primes use.
+    ///
+    /// Zero-die pools (`count == 0`) are skipped too: they carry no
+    /// damage to maximize, and burning the prime on one would be a pure
+    /// loss.
+    fn consume_overchannel(&mut self, caster_id: usize, dice: Dice) -> Option<u32> {
+        const MAX_OVERCHANNEL_LEVEL: u32 = 5;
+        if dice.count == 0 {
+            return None;
+        }
+        let level = self.current_cast().map(|c| c.level).unwrap_or(0);
+        if level == 0 || level > MAX_OVERCHANNEL_LEVEL {
+            return None;
+        }
+        let caster = self.actors.get_mut(&caster_id)?;
+        if !caster.has_condition(Condition::Overchanneling) {
+            return None;
+        }
+        caster.remove_condition(Condition::Overchanneling);
+        let backlash_dice = caster.note_overchannel_use();
+        if backlash_dice > 0 {
+            caster.set_overchannel_backlash_pending();
+        }
+        let maxed = dice.max_roll();
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  overchannel: {} maximizes {} → {}",
+            name, dice, maxed
+        ));
+        Some(maxed)
+    }
+
+    /// Post-cast half of Overchannel: charge the necrotic backlash the
+    /// damage-roll site latched. RAW: "you take 2d12 necrotic damage for
+    /// each level of the spell, immediately after you cast it", rising
+    /// by 1d12 per level on each further use before a long rest.
+    ///
+    /// Emitted as a normal `DealDamage` side-effect rather than applied
+    /// in place, so the backlash goes through the full damage pipeline —
+    /// it can break the evoker's own concentration, drop them, and be
+    /// logged like any other hit. That is the whole reason the feature is
+    /// split across two phases instead of being resolved inside the dice
+    /// helper.
+    ///
+    /// RAW adds "this damage ignores resistance and immunity", which the
+    /// engine's damage pipeline has no lane for; the wizard chassis has
+    /// neither against necrotic, so the approximation is invisible today
+    /// and would only surface on a Necromancy-multiclass build.
+    fn trigger_overchannel_backlash(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let pending = self
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.take_overchannel_backlash_pending());
+        if !pending || spell_level == 0 {
+            return Vec::new();
+        }
+        let uses = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.overchannel_uses())
+            .unwrap_or(0);
+        let dice = Dice::new(uses * spell_level, 12);
+        let amount = self.roll(&dice);
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  overchannel backlash: {} takes {}({}) necrotic",
+            name, dice, amount
+        ));
+        vec![Box::new(crate::engine::side_effects::DealDamage {
+            actor_id: caster_id,
+            amount,
+            damage_type: DamageType::Necrotic,
+        })]
     }
 
     /// The Empowered Evocation flat damage bonus for `caster_id` on the
@@ -6037,6 +6138,10 @@ impl EncounterInstance {
     ///     → 10-ft radius enemy burst (feature-tag gated on
     ///     `HEART_OF_THE_STORM_TAG`; cantrip gated; damage-type
     ///     gated).
+    ///   - **Overchannel backlash** — the escalating necrotic self-hit
+    ///     owed for maximizing a spell, latched at the damage-roll site
+    ///     and charged here so it resolves as a normal `DealDamage`
+    ///     (RAW: "immediately after you cast it").
     ///   - **Arcane Ward form / recharge** — abjuration cast of 1st
     ///     level or higher → weave the ward at full strength (first
     ///     cast) or top it up by twice the slot level (later casts).
@@ -6073,6 +6178,7 @@ impl EncounterInstance {
             spell_level,
             damage_types,
         ));
+        effects.append(&mut self.trigger_overchannel_backlash(caster_id, spell_level));
         self.trigger_arcane_ward(caster_id, spell_level, school);
         effects
     }
@@ -62064,5 +62170,119 @@ mod tests {
         use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
         assert_eq!(LONGSWORD.school(), None);
         assert_eq!(SCIMITAR.school(), None);
+    }
+
+    /// Overchannel maximizes the damage dice of a level 1-5 spell and
+    /// leaves everything outside that window rolling normally. Uses the
+    /// shared damage-roll chokepoint directly so the assertion is exact:
+    /// a maximized 4d6 is always 24, which a real roll reaches with
+    /// probability 1/1296.
+    #[test]
+    fn overchannel_maximizes_damage_inside_its_level_window() {
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let prime = |e: &mut EncounterInstance| {
+            e.actors
+                .get_mut(&evoker)
+                .unwrap()
+                .add_condition(Condition::Overchanneling, ConditionTimer::Rounds(2));
+        };
+
+        // Inside the window: maximized, and the prime is spent.
+        prime(&mut e);
+        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        let int_mod = e.actors[&evoker]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Intelligence)
+            as u32;
+        // 4d6 maxed = 24, plus Empowered Evocation's flat +INT.
+        assert_eq!(e.roll_empowered_sum(evoker, 4, 6), 24 + int_mod);
+        assert!(!e.actors[&evoker].has_condition(Condition::Overchanneling));
+        e.exit_cast();
+
+        // Above the window (level 6+): RAW excludes it, and the prime
+        // survives for a cast that can actually use it.
+        prime(&mut e);
+        e.enter_cast(Some(SpellSchool::Evocation), 6);
+        let rolled = e.roll_empowered_sum(evoker, 4, 6);
+        assert!(rolled >= 4 + int_mod && rolled <= 24 + int_mod);
+        assert!(
+            e.actors[&evoker].has_condition(Condition::Overchanneling),
+            "a level-6 cast should not burn the prime"
+        );
+        e.exit_cast();
+
+        // Cantrips are outside the window too, on the same reasoning.
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.roll_empowered_sum(evoker, 4, 6);
+        assert!(e.actors[&evoker].has_condition(Condition::Overchanneling));
+        e.exit_cast();
+    }
+
+    /// The backlash ramp: the first use since a long rest is free, the
+    /// second costs 2d12 per spell level, the third 3d12, and a long
+    /// rest resets the ramp. Asserts through the post-cast trigger so
+    /// the two halves of the feature — maximize during the cast, charge
+    /// immediately after — are exercised together.
+    ///
+    /// Reads the die pool off the backlash log line rather than the HP
+    /// delta, because the ramp outruns the wizard chassis almost
+    /// immediately: a 2d12 hit already averages more than the 2d6+2
+    /// frame's hit points, so by the third use there'd be no HP left to
+    /// measure a delta against. The die pool is the thing under test
+    /// anyway — the HP delta is just `DealDamage` doing its usual job.
+    #[test]
+    fn overchannel_backlash_escalates_and_resets_on_a_long_rest() {
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+
+        // Runs one maximized level-`lvl` cast and returns the backlash
+        // die pool the post-cast trigger charged, or None when the use
+        // was free. Deliberately drops the trigger's side-effects
+        // unapplied: the ramp is what's under test, and letting a
+        // third-use backlash actually land would just kill the evoker
+        // partway through the sequence.
+        let overchannel_once = |e: &mut EncounterInstance, lvl: u32| -> Option<String> {
+            e.actors
+                .get_mut(&evoker)
+                .unwrap()
+                .add_condition(Condition::Overchanneling, ConditionTimer::Rounds(2));
+            e.enter_cast(Some(SpellSchool::Evocation), lvl);
+            e.roll_empowered_sum(evoker, 2, 6);
+            e.exit_cast();
+            let log_before = e.messages().len();
+            let _ =
+                e.dispatch_post_cast_triggers(evoker, lvl, &[], Some(SpellSchool::Evocation));
+            e.messages()[log_before..]
+                .iter()
+                .find(|m| m.contains("overchannel backlash"))
+                .and_then(|m| {
+                    m.split_whitespace()
+                        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()) && w.contains("d12"))
+                        .map(|w| w.split('(').next().unwrap_or(w).to_string())
+                })
+        };
+
+        assert_eq!(
+            overchannel_once(&mut e, 1),
+            None,
+            "the first use since a long rest is free"
+        );
+        assert_eq!(overchannel_once(&mut e, 1).as_deref(), Some("2d12"));
+        assert_eq!(overchannel_once(&mut e, 1).as_deref(), Some("3d12"));
+        // The pool scales with the spell level too, not just the ramp:
+        // fourth use at level 3 is 4 x 3 = 12d12.
+        assert_eq!(overchannel_once(&mut e, 3).as_deref(), Some("12d12"));
+        assert_eq!(e.actors[&evoker].overchannel_uses(), 4);
+
+        // A long rest resets the ramp — the next use is free again.
+        e.actors.get_mut(&evoker).unwrap().long_rest();
+        assert_eq!(e.actors[&evoker].overchannel_uses(), 0);
+        assert_eq!(overchannel_once(&mut e, 1), None);
     }
 }

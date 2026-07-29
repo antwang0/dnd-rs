@@ -938,6 +938,10 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 ///     Dead / Mind Sliver pickups from other schools too.
 ///   - **Empowered Evocation** (subclass lv10) — +INT modifier to one
 ///     damage roll of any evocation spell.
+///   - **Overchannel** (subclass lv14) — a free prime that makes the
+///     next damaging spell of level 1-5 deal maximum damage, at the
+///     cost of escalating necrotic backlash on every use after the
+///     first before a long rest.
 ///
 /// The signature "the evoker drops a Fireball on the melee and their
 /// own front line walks out of it" tell. This is the template that
@@ -981,31 +985,38 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// allows exactly one Arcane Tradition pick per wizard, so no two ever
 /// legally co-occur on a single build.
 ///
-/// RAW's School of Evocation picks up one further feature not shipped
-/// here — **Overchannel** (lv14: maximize the damage dice of a lv1-5
-/// spell, at escalating necrotic self-damage after the first use per
-/// rest; needs a per-rest use counter plus a maximize-this-roll prime).
-/// It is real future work on a chokepoint this template already leans
-/// on: `roll_empowered_sum` is where the maximize would land, right
-/// next to the Empowered Evocation bonus, and `Dice::max_roll` already
-/// exists for it. Shipping three of four subclass features and naming
-/// the fourth matches the way `NECROMANCY_WIZARD_TEMPLATE` ships only
-/// Inured to Undeath and `WAR_MAGIC_WIZARD_TEMPLATE` only Tactical Wit.
+/// This is the first subclass template in the engine to ship its RAW
+/// feature set **complete** — all four School of Evocation features
+/// have a mechanical surface here, where the sibling wizard traditions
+/// ship one apiece (`NECROMANCY_WIZARD_TEMPLATE` only Inured to
+/// Undeath, `WAR_MAGIC_WIZARD_TEMPLATE` only Tactical Wit). That fell
+/// out of the chokepoints rather than from extra effort per feature:
+/// once the cast context exists, three of the four are a gate plus a
+/// few lines at a shared site that was already there.
+///
+/// Only Evocation Savant's out-of-combat spellbook-copying discount has
+/// no surface, and it has no combat surface in RAW either.
 ///
 /// Glyph 'Δ' — the evoker's raw elemental burst. Distinct from baseline
 /// wizard 'M' (mage), Necromancy 'N', War Magic 'Σ', and Abjuration
 /// 'Θ'; collides with no other template glyph in the engine.
 pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Two-tag subclass, so not the single-tag `with_subclass_tag`
-    // helper: clone the baseline feature set and insert both rows.
+    // Four-tag subclass, so not the single-tag `with_subclass_tag`
+    // helper: clone the baseline feature set and insert every row.
+    // Overchannel also contributes an action (the prime), which the
+    // tag-only helper has no lane for either.
     let mut features = WIZARD_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::SCULPT_SPELLS_TAG);
     features.insert(crate::actions::class_features::POTENT_CANTRIP_TAG);
     features.insert(crate::actions::class_features::EMPOWERED_EVOCATION_TAG);
+    features.insert(crate::actions::class_features::OVERCHANNEL_TAG);
+    let mut actions = WIZARD_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::class_features::OVERCHANNEL);
     CreatureTemplate {
         name: "Evocation Wizard",
         glyph: 'Δ',
         features,
+        actions,
         ..WIZARD_TEMPLATE.clone()
     }
 });

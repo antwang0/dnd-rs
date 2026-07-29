@@ -1336,6 +1336,24 @@ pub enum Condition {
     /// insta-kill. Not on `is_dispellable_buff` — it's a debuff on the
     /// enemy, not a friendly buff.
     PowerWordPained,
+    /// Overchannel primed (5e Evocation Wizard, subclass level 14). The
+    /// evoker has declared that their next damaging spell of level 1-5
+    /// will deal **maximum** damage instead of rolling. Consumed at the
+    /// shared spell-damage chokepoint (`roll_empowered_sum`), which
+    /// swaps the roll for `Dice::max_roll` and latches the backlash the
+    /// post-cast trigger then charges.
+    ///
+    /// Modeled as a prime because the engine has no "choose an option
+    /// while casting" surface — the same shape the six sorcerer
+    /// metamagic primes already use, minus the sorcery-point cost
+    /// (Overchannel is free per RAW; its price is paid in necrotic
+    /// backlash on every use after the first). Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't sit
+    /// across rounds, matching the metamagic primes.
+    ///
+    /// Not on `is_dispellable_buff`: it's a declaration about the
+    /// caster's next cast, not a magical effect on them.
+    Overchanneling,
 }
 
 impl Condition {
@@ -1361,6 +1379,7 @@ impl Condition {
             Condition::GuidingBoltLit => "marked by guiding bolt",
             Condition::MarkedForGrave => "marked for the grave",
             Condition::PowerWordPained => "racked with power word pain",
+            Condition::Overchanneling => "overchanneling",
             Condition::Helped => "helped",
             Condition::Hidden => "hidden",
             Condition::Burning => "burning",

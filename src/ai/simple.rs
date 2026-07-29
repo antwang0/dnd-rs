@@ -676,6 +676,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'-b. Overchannel — Evocation Wizard prime. Free to declare;
+        //        makes the next level 1-5 damaging spell deal maximum
+        //        damage. Sits next to the metamagic primes because it's
+        //        the same "set up the next cast" shape, but its picker
+        //        gates on surviving the backlash rather than on a
+        //        resource pool.
+        if let Some(aei) = try_overchannel(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q''. Heightened Spell — sorcerer bonus-action metamagic prime.
         //       Burns 3 sorcery points to force the first save against
         //       the next save-or-suck cast (Hold Person / Polymorph /
@@ -1782,6 +1792,47 @@ fn try_empowered_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "empowered spell")
+}
+
+/// Overchannel — Evocation Wizard prime (subclass lv14). Declares that
+/// the next damaging spell of level 1-5 deals maximum damage.
+///
+/// Costs no resource at all, so unlike the sorcerer's metamagic primes
+/// there's no "is it worth the points" question — the price is the
+/// escalating necrotic backlash, which is what this picker actually
+/// gates on. The evoker overchannels freely on the first use of each
+/// long rest and then only while healthy enough to pay: the backlash for
+/// the next use is `(uses + 1) * spell_level` d12, so we require the
+/// evoker's current HP to cover its *average* comfortably before
+/// declaring. A wizard chassis has few enough hit points that a
+/// second-use backlash off a level-5 slot (3d12 x 5, avg 97) would be
+/// suicide, and the gate stops the AI from walking into it.
+///
+/// Also gated on holding a level 1-5 slot (the RAW window — priming with
+/// only level 6+ slots left would burn nothing, but would also never
+/// fire) and on an enemy in spell range, so the prime doesn't dangle in
+/// an empty room.
+fn try_overchannel(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    const MAX_OVERCHANNEL_LEVEL: u32 = 5;
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Overchanneling) {
+        return None;
+    }
+    // Highest slot level 1-5 the evoker could actually spend — both the
+    // "do I have a usable slot" gate and the worst-case backlash base.
+    let top_slot = (1..=MAX_OVERCHANNEL_LEVEL)
+        .rfind(|lvl| actor.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)?;
+    // Average of Nd12 is 6.5N; require better than 2x headroom so a bad
+    // roll doesn't drop the evoker on their own spell.
+    let backlash_dice = (actor.overchannel_uses() + 1) * top_slot;
+    let expected = (backlash_dice * 13).div_ceil(2);
+    if backlash_dice > 0 && actor.hitpoints() <= expected * 2 {
+        return None;
+    }
+    try_self_action_when_enemy_within(encounter, actor_id, 24, "overchannel")
 }
 
 /// Heightened Spell — sorcerer bonus-action metamagic prime. Burns

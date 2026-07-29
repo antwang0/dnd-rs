@@ -9467,3 +9467,112 @@ pub const EMPOWERED_EVOCATION_TAG: &str = "wizard.empowered_evocation";
 /// including the small set that also use `NoneOnSave` (Disintegrate),
 /// which RAW must not benefit.
 pub const POTENT_CANTRIP_TAG: &str = "wizard.potent_cantrip";
+
+/// Class-feature tag for the Evocation Wizard's **Overchannel**
+/// (School of Evocation subclass level 14, PHB). Passive membership
+/// marker gating the `OVERCHANNEL` prime action; the per-rest
+/// escalation lives in `ActorInstance::overchannel_uses` rather than in
+/// the `features_remaining` charge pool, because Overchannel isn't
+/// limited to N uses — it just gets more expensive.
+///
+/// RAW: "When you cast a wizard spell of 1st through 5th level that
+/// deals damage, you can deal maximum damage with that spell. The first
+/// time you do so, you suffer no adverse effect. If you use this feature
+/// again before you finish a long rest, you take 2d12 necrotic damage
+/// for each level of the spell, immediately after you cast it. Each time
+/// you use this feature again before finishing a long rest, the necrotic
+/// damage per level increases by 1d12."
+pub const OVERCHANNEL_TAG: &str = "wizard.overchannel";
+
+/// Overchannel — Evocation Wizard prime. Free (no action, no bonus
+/// action, no slot): declares that the caster's next damaging spell of
+/// level 1-5 deals maximum damage instead of rolling.
+///
+/// RAW isn't an action at all — it's a choice made while casting — but
+/// the engine has no "pick an option mid-cast" surface, so it lands as a
+/// prime, the same shape the six sorcerer metamagic primes use. The
+/// difference from those is the price: metamagic charges sorcery points
+/// up front, while Overchannel is free to declare and charges escalating
+/// necrotic backlash *after* the cast it powers.
+///
+/// Consumed at `EncounterInstance::roll_empowered_sum` via
+/// `consume_overchannel`, which swaps the dice roll for `Dice::max_roll`
+/// and latches the backlash for the post-cast trigger. The prime only
+/// burns on a cast that can actually use it, so declaring it and then
+/// firing a cantrip or a level-6+ spell leaves it up.
+pub struct Overchannel {}
+
+impl Action for Overchannel {
+    fn name(&self) -> &str {
+        "overchannel"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["oc", "overchan"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        free_cost()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Holds the feature, isn't already primed. Free actions with no
+        // gate would otherwise be spammable no-ops in the action list.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.has_passive_feature(OVERCHANNEL_TAG) && !a.has_condition(Condition::Overchanneling)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Surface the price before it's paid — the backlash for this use
+        // is already determined by how many times the evoker has
+        // overchannelled since their last long rest.
+        let owed = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.overchannel_uses() + 1)
+            .unwrap_or(1);
+        let name = encounter.actor_name(caster_id);
+        if owed <= 1 {
+            encounter.log(format!("{} overchannels — the first use is free.", name));
+        } else {
+            encounter.log(format!(
+                "{} overchannels again — {}d12 necrotic per spell level.",
+                name, owed
+            ));
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Overchanneling,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static OVERCHANNEL: LazyLock<Overchannel> = LazyLock::new(|| Overchannel {});
