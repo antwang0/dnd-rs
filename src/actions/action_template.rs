@@ -887,15 +887,44 @@ pub trait Action {
             let sp_cost = crate::engine::side_effects::spell_slot_level(&costs)
                 .unwrap_or(1)
                 .max(1);
-            if let Some(twin_id) = encounter.consume_twinned_spell(
-                caster_id,
-                self.name(),
-                self.is_harmful(),
-                self.reach_tiles(),
-                self.requires_los(),
-                sp_cost,
-                original_target_id,
-            ) {
+            // Two features double a single-target cast onto a second
+            // creature: the Sorcerer's Twinned Spell (a consumable
+            // prime charging sorcery points, any single-target spell)
+            // and the Enchantment Wizard's Split Enchantment (free,
+            // always on, leveled enchantments only). They resolve
+            // through the same twin block below because the *effect* is
+            // identical — re-run the action's side-effects against one
+            // more id — and differ only in the gate.
+            //
+            // The paid prime is offered first and the free passive only
+            // gets a look if it didn't fire. That ordering is what
+            // keeps a caster holding both from doubling twice, and it
+            // errs the right way: a sorcerer/enchanter would rather
+            // spend nothing, but the prime is already up and would
+            // otherwise sit unspent across a cast it was declared for.
+            let second_target = encounter
+                .consume_twinned_spell(
+                    caster_id,
+                    self.name(),
+                    self.is_harmful(),
+                    self.reach_tiles(),
+                    self.requires_los(),
+                    sp_cost,
+                    original_target_id,
+                )
+                .or_else(|| {
+                    encounter.consume_split_enchantment(
+                        caster_id,
+                        self.name(),
+                        self.school(),
+                        crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0),
+                        self.is_harmful(),
+                        self.reach_tiles(),
+                        self.requires_los(),
+                        original_target_id,
+                    )
+                });
+            if let Some(twin_id) = second_target {
                 let twin_targets = vec![twin_id];
                 let mut twin_effects = self.side_effects(
                     encounter,
@@ -922,6 +951,15 @@ pub trait Action {
                         new_type,
                     );
                 }
+                // One cast is one spell and one concentration. Without
+                // this fold the twin's own `StartConcentration` would
+                // land second and its `drop_concentration` prologue
+                // would rip the effect straight back off the first
+                // target — see `fold_doubled_concentration`.
+                crate::engine::side_effects::fold_doubled_concentration(
+                    &mut side_effects,
+                    &mut twin_effects,
+                );
                 side_effects.append(&mut twin_effects);
             }
         }

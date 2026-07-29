@@ -9531,6 +9531,48 @@ pub const EXPERT_DIVINATION_TAG: &str = "wizard.expert_divination";
 /// RAW denies them.
 pub const THIRD_EYE_TAG: &str = "wizard.third_eye";
 
+/// Class-feature tag for the Enchantment Wizard's **Split Enchantment**
+/// (School of Enchantment subclass level 6, PHB). Passive, at-will, no
+/// per-rest charge — membership marker read via `has_passive_feature`.
+///
+/// RAW: "When you cast an enchantment spell of 1st level or higher that
+/// targets only one creature, you can have it target a second
+/// creature."
+///
+/// Read at `EncounterInstance::consume_split_enchantment`, which shares
+/// its target picker with the Sorcerer's Twinned Spell metamagic and
+/// resolves through the same doubling block in `Action::execute`. The
+/// two features want the same second creature for the same reasons and
+/// differ only in price and scope: Twinned Spell is a prime costing
+/// `max(1, level)` sorcery points that covers any single-target spell
+/// including cantrips; Split Enchantment is free and permanent but only
+/// touches leveled enchantments.
+pub const SPLIT_ENCHANTMENT_TAG: &str = "wizard.split_enchantment";
+
+/// Class-feature tag for the Enchantment Wizard's **Hypnotic Gaze**
+/// (School of Enchantment subclass level 2, PHB). Membership marker
+/// gating the `HYPNOTIC_GAZE` action; the once-per-turn cadence lives
+/// on the action's own Action-slot cost rather than a charge pool,
+/// matching RAW's "as an action" wording.
+///
+/// RAW: "As an action, choose one creature that you can see within 5
+/// feet of you. If the target can see or hear you, it must succeed on a
+/// Wisdom saving throw against your wizard spell save DC or be charmed
+/// by you until the end of your next turn. The charmed target is
+/// incapacitated." Sustaining it across later turns is RAW-optional and
+/// costs the enchanter their action every round; we ship the one-shot
+/// install, which is the load-bearing clause — an incapacitated
+/// creature that also cannot attack the enchanter is out of the fight
+/// for a round without a slot being spent.
+///
+/// Installs both `Charmed` (with the `charmed_by` link, so the
+/// engine-wide "can't attack the charmer" restriction binds) and
+/// `Incapacitated`. The pairing is the point: `Charmed` alone is a
+/// targeting restriction, `Incapacitated` alone leaves the target free
+/// to attack the enchanter's allies, and only together do they match
+/// RAW's "out of the fight, and specifically out of *your* fight".
+pub const HYPNOTIC_GAZE_TAG: &str = "wizard.hypnotic_gaze";
+
 /// Overchannel — Evocation Wizard prime. Free (no action, no bonus
 /// action, no slot): declares that the caster's next damaging spell of
 /// level 1-5 deals maximum damage instead of rolling.
@@ -9623,3 +9665,147 @@ impl Action for Overchannel {
 }
 
 pub static OVERCHANNEL: LazyLock<Overchannel> = LazyLock::new(|| Overchannel {});
+
+/// Hypnotic Gaze — Enchantment Wizard action. Costs an Action and no
+/// slot: one adjacent creature makes a WIS save against the enchanter's
+/// INT-based spell save DC or is Charmed by them *and* Incapacitated
+/// until the end of the enchanter's next turn.
+///
+/// The slot-free price is what makes this the subclass's signature
+/// low-level tell. Every other "take a creature out of the fight for a
+/// round" effect on the wizard chassis — Hold Person, Hypnotic Pattern,
+/// Tasha's Hideous Laughter — costs a leveled slot; this one costs
+/// nothing but proximity, which is also its whole restriction: an
+/// INT-caster with a 2d6+2 frame standing in melee reach of the
+/// creature it wants to lock down is making a real trade.
+///
+/// Both halves of the payload matter and neither is sufficient:
+/// `Incapacitated` alone would leave the target free to walk over and
+/// beat on the enchanter's allies next round, and `Charmed` alone is
+/// only a targeting restriction. Installed together — with the
+/// `charmed_by` link, so the engine-wide "can't attack the charmer"
+/// gate binds across declared actions, opportunity attacks and Riposte
+/// alike — the target is out of the fight generally and out of the
+/// enchanter's fight specifically.
+///
+/// RAW's sustain clause ("on subsequent turns, you can use your action
+/// to maintain this effect") is left out: it is the same action spent
+/// again, and re-casting the gaze each round reaches the same place
+/// through the normal action economy. The one-shot install is the
+/// load-bearing part.
+pub struct HypnoticGaze {}
+
+impl Action for HypnoticGaze {
+    fn name(&self) -> &str {
+        "hypnotic gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hg", "gaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW "within 5 feet of you" — the engine's melee envelope.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !caster.has_passive_feature(HYPNOTIC_GAZE_TAG) {
+            return false;
+        }
+        // Don't re-gaze a target that is already locked down — the
+        // action is better spent elsewhere, and RAW's "sustain" clause
+        // (which we don't model) is what would apply here anyway.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| !t.has_condition(Condition::Charmed))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let dc = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spell_save_dc(AbilityScoreType::Intelligence))
+            .unwrap_or(10);
+        let caster_name = encounter.actor_name(caster_id);
+        let target_name = encounter.actor_name(target_id);
+        if encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id)
+            .passed()
+        {
+            encounter.log(format!(
+                "  hypnotic gaze: {} shakes off {}'s stare",
+                target_name, caster_name
+            ));
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  hypnotic gaze: {} is transfixed by {}",
+            target_name, caster_name
+        ));
+        // RAW's duration is "until the end of your next turn". The
+        // engine's `UntilStartOfNextTurn` timer clears at the start of
+        // the *holder's* turn, which for a target that acts after the
+        // enchanter lands one tick short; a flat 1-round timer is the
+        // closer fit and matches how the sibling round-scale lockdowns
+        // (Hold Person's stun window, Mind Whip) are timed.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(1),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::Rounds(1),
+            }),
+        ]
+    }
+}
+
+pub static HYPNOTIC_GAZE: LazyLock<HypnoticGaze> = LazyLock::new(|| HypnoticGaze {});

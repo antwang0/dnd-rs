@@ -5659,6 +5659,84 @@ impl EncounterInstance {
         ));
     }
 
+    /// Pick the second creature a single-target spell should also land
+    /// on, for the features that re-fire a cast against one extra
+    /// target: the Sorcerer's **Twinned Spell** metamagic and the
+    /// Enchantment Wizard's **Split Enchantment**.
+    ///
+    /// The heuristic mirrors the AI's own targeting lanes so a doubled
+    /// cast picks the target a player would: harmful spells take the
+    /// **nearest** eligible enemy (focus-fire), buffs and heals take the
+    /// **lowest-HP** eligible ally (heal-the-weakest). Ties break on
+    /// actor id so a seeded run is reproducible. The original target is
+    /// always excluded — RAW's "a second creature" is a different one —
+    /// as are the caster and anyone not combat-active.
+    ///
+    /// `reach` and `requires_los` come from the action being doubled, so
+    /// the second target has to sit inside the same envelope the first
+    /// one did. A `None` reach means the action does its own range
+    /// logic and the distance gate is skipped.
+    ///
+    /// Extracted from `consume_twinned_spell`, which used to own this
+    /// walk inline. The two callers differ on everything *around* the
+    /// pick — one is a consumable prime paid for in sorcery points, the
+    /// other an always-on passive gated on the spell's school — and on
+    /// nothing about the pick itself, which is why it is worth exactly
+    /// one copy.
+    fn pick_second_spell_target(
+        &self,
+        caster_id: usize,
+        is_harmful: bool,
+        reach: Option<isize>,
+        requires_los: bool,
+        original_target_id: usize,
+    ) -> Option<usize> {
+        let caster = self.actors.get(&caster_id)?;
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = crate::engine::util::get_tiles_from_size(caster.size());
+        let mut candidates: Vec<(usize, isize, u32)> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || *id == original_target_id {
+                    return None;
+                }
+                if !a.is_combat_active() {
+                    return None;
+                }
+                // Harmful → opposite team; non-harmful (buff/heal) → same team.
+                if (a.team() == caster_team) == is_harmful {
+                    return None;
+                }
+                let dist = crate::engine::util::footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    crate::engine::util::get_tiles_from_size(a.size()),
+                );
+                if let Some(r) = reach
+                    && dist > r
+                {
+                    return None;
+                }
+                if requires_los && !self.actor_has_line_of_sight(caster_id, *id) {
+                    return None;
+                }
+                Some((*id, dist, a.hitpoints()))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        if is_harmful {
+            candidates.sort_unstable_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        } else {
+            candidates.sort_unstable_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
+        }
+        Some(candidates[0].0)
+    }
+
     /// 5e Sorcerer Twinned Spell metamagic — if the caster has the prime
     /// up, return a second target id to re-fire the action against, plus
     /// the SP cost charged for the twin. Returns `None` when the prime
@@ -5695,56 +5773,14 @@ impl EncounterInstance {
         if caster.sorcery_points() < sp_cost {
             return None;
         }
-        let caster_team = caster.team();
-        let caster_loc = caster.location();
-        let caster_size = crate::engine::util::get_tiles_from_size(caster.size());
         let caster_name = caster.name().to_string();
-        // Pick the second target. The shape mirrors the AI's targeting
-        // heuristics: harmful → nearest enemy in reach + LOS; non-harmful
-        // → lowest-HP ally in reach + LOS. Original target is always
-        // excluded so we don't double-tap the same creature.
-        let mut candidates: Vec<(usize, isize, u32)> = self
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if *id == caster_id || *id == original_target_id {
-                    return None;
-                }
-                if !a.is_combat_active() {
-                    return None;
-                }
-                // Harmful → opposite team; non-harmful (buff/heal) → same team.
-                if (a.team() == caster_team) == is_harmful {
-                    return None;
-                }
-                let dist = crate::engine::util::footprint_chebyshev(
-                    caster_loc,
-                    caster_size,
-                    a.location(),
-                    crate::engine::util::get_tiles_from_size(a.size()),
-                );
-                if let Some(r) = reach
-                    && dist > r
-                {
-                    return None;
-                }
-                if requires_los && !self.actor_has_line_of_sight(caster_id, *id) {
-                    return None;
-                }
-                Some((*id, dist, a.hitpoints()))
-            })
-            .collect();
-        if candidates.is_empty() {
-            return None;
-        }
-        // Sort: harmful → nearest first (focus-fire), non-harmful → lowest HP
-        // first (heal-the-weakest). Ties break on actor_id for determinism.
-        if is_harmful {
-            candidates.sort_unstable_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-        } else {
-            candidates.sort_unstable_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
-        }
-        let twin_id = candidates[0].0;
+        let twin_id = self.pick_second_spell_target(
+            caster_id,
+            is_harmful,
+            reach,
+            requires_los,
+            original_target_id,
+        )?;
         let twin_name = self.actor_name(twin_id);
         // Consume prime + SP atomically. Spending SP can fail in principle
         // (race with another mutation), so guard with a re-check before
@@ -5765,6 +5801,74 @@ impl EncounterInstance {
             sp_left,
         ));
         Some(twin_id)
+    }
+
+    /// 5e Enchantment Wizard **Split Enchantment** (subclass level 6):
+    /// if the caster holds the feature and the in-flight spell is an
+    /// enchantment of 1st level or higher that named exactly one
+    /// creature, return a second creature to re-fire it against.
+    ///
+    /// RAW: "When you cast an enchantment spell of 1st level or higher
+    /// that targets only one creature, you can have it target a second
+    /// creature." No resource attached — it is a passive that simply
+    /// doubles every single-target enchantment the enchanter casts, and
+    /// that is what makes the subclass: a Hold Person that lands on two
+    /// creatures for one 2nd-level slot, a Dominate Person that takes
+    /// two, a Bless on two allies.
+    ///
+    /// Shares `pick_second_spell_target` with the Sorcerer's Twinned
+    /// Spell — the two features want the same creature for the same
+    /// reasons, and differ only in what they cost and what they gate
+    /// on. Where Twinned Spell is a consumable prime charging
+    /// `max(1, level)` sorcery points and covering any single-target
+    /// spell including cantrips, Split Enchantment is free, always on,
+    /// and restricted to leveled enchantments. A caster somehow holding
+    /// both doubles once, not twice: `execute` tries the paid prime
+    /// first and only falls through to the free passive if the prime
+    /// wasn't up, so the sorcery points are never spent on something
+    /// the passive would have covered anyway.
+    ///
+    /// The cantrip exclusion is RAW and load-bearing here: it is what
+    /// keeps Vicious Mockery / Mind Sliver from becoming free
+    /// double-taps at will.
+    // Same flat argument list as `consume_twinned_spell` — the two are
+    // called side by side from one `.or_else` chain in `Action::execute`
+    // and every argument is read straight off the action, so keeping the
+    // shapes identical is worth more than the lint.
+    #[allow(clippy::too_many_arguments)]
+    pub fn consume_split_enchantment(
+        &mut self,
+        caster_id: usize,
+        action_name: &str,
+        school: Option<SpellSchool>,
+        spell_level: u32,
+        is_harmful: bool,
+        reach: Option<isize>,
+        requires_los: bool,
+        original_target_id: usize,
+    ) -> Option<usize> {
+        use crate::actions::class_features::SPLIT_ENCHANTMENT_TAG;
+        if school != Some(SpellSchool::Enchantment) || spell_level == 0 {
+            return None;
+        }
+        let caster = self.actors.get(&caster_id)?;
+        if !caster.has_passive_feature(SPLIT_ENCHANTMENT_TAG) {
+            return None;
+        }
+        let caster_name = caster.name().to_string();
+        let second_id = self.pick_second_spell_target(
+            caster_id,
+            is_harmful,
+            reach,
+            requires_los,
+            original_target_id,
+        )?;
+        let second_name = self.actor_name(second_id);
+        self.log(format!(
+            "  split enchantment: {} splits {} onto {}",
+            caster_name, action_name, second_name
+        ));
+        Some(second_id)
     }
 
     /// Resolve how much of a pre-rolled `raw` damage value actually
@@ -8058,6 +8162,21 @@ mod tests {
     /// grid so LOS can be tested deterministically (terrain_gen randomness
     /// would otherwise make assertions seed-dependent).
     fn ei_with_terrain(width: usize, height: usize, walls: &[(isize, isize)]) -> EncounterInstance {
+        ei_with_terrain_seeded(width, height, walls, 0)
+    }
+
+    /// Seed-parameterized `ei_with_terrain`, for the tests that sweep a
+    /// range of seeds because the behavior under test rides a die roll
+    /// (a save-or-condition install, a to-hit). Those tests each used
+    /// to open-code the `TerrainGenParams` / `ActorGenParams` /
+    /// `from_params` / floor-fill dance inline; this is the same body
+    /// with the seed lifted to a parameter.
+    fn ei_with_terrain_seeded(
+        width: usize,
+        height: usize,
+        walls: &[(isize, isize)],
+        seed: u64,
+    ) -> EncounterInstance {
         // Use generator to bootstrap, then overwrite the terrain map.
         let tp = TerrainGenParams {
             width,
@@ -8071,7 +8190,7 @@ mod tests {
             pc_template: None,
             start_team: 0,
         };
-        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
         e.terrain = vec![
             TerrainInfo {
                 terrain_type: TerrainType::Floor,
@@ -63522,5 +63641,319 @@ mod tests {
             !e.charm_blocks_hostility(charmer, charmed),
             "the restriction is one-directional"
         );
+    }
+    /// Split Enchantment lands a single-target enchantment on a second
+    /// creature for free. Driven with Heroism — a no-save, no-attack-
+    /// roll level-1 enchantment — so the assertion is about the
+    /// doubling and not about a die. Pinned against a baseline wizard
+    /// casting the same spell in the same encounter.
+    #[test]
+    fn split_enchantment_doubles_a_single_target_enchantment() {
+        use crate::actions::spells::HEROISM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::{ENCHANTMENT_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let both_blessed = |enchanter: bool| -> (bool, bool) {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let template = if enchanter {
+                &*ENCHANTMENT_WIZARD_TEMPLATE
+            } else {
+                &*WIZARD_TEMPLATE
+            };
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let primary = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+                .unwrap();
+            let second = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 2)
+                .unwrap();
+            {
+                let a = e.actors.get_mut(&caster).unwrap();
+                a.give_resource(crate::engine::side_effects::Resource::BonusAction);
+                a.spell_slot_manager.restore_spell_slots();
+            }
+            for ef in HEROISM.execute(&mut e, caster, Some(&vec![primary]), None, None) {
+                ef.apply(&mut e);
+            }
+            (
+                e.actors[&primary].has_condition(Condition::Heroic),
+                e.actors[&second].has_condition(Condition::Heroic),
+            )
+        };
+        assert_eq!(
+            both_blessed(false),
+            (true, false),
+            "a baseline wizard's Heroism lands on one ally"
+        );
+        assert_eq!(
+            both_blessed(true),
+            (true, true),
+            "the enchanter's lands on two"
+        );
+    }
+
+    /// Split Enchantment's three gates. RAW restricts it to enchantment
+    /// spells of 1st level or higher, and the cantrip exclusion is
+    /// load-bearing — without it Vicious Mockery and Mind Sliver become
+    /// free at-will double-taps.
+    #[test]
+    fn split_enchantment_gates_on_school_level_and_feature() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::{ENCHANTMENT_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::SpellSchool;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let enchanter = e
+            .instantiate_creature(&ENCHANTMENT_WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 7), 0, 1)
+            .unwrap();
+        let primary = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let _second = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 1)
+            .unwrap();
+        let split = |e: &mut EncounterInstance, caster, school, lvl| {
+            e.consume_split_enchantment(caster, "test", school, lvl, true, None, false, primary)
+        };
+        assert!(
+            split(&mut e, enchanter, Some(SpellSchool::Enchantment), 1).is_some(),
+            "a level-1 enchantment splits"
+        );
+        assert!(
+            split(&mut e, enchanter, Some(SpellSchool::Enchantment), 0).is_none(),
+            "cantrips are excluded — RAW, and the reason at-will control isn't doubled"
+        );
+        assert!(
+            split(&mut e, enchanter, Some(SpellSchool::Evocation), 3).is_none(),
+            "wrong school"
+        );
+        assert!(split(&mut e, enchanter, None, 3).is_none(), "untagged fails closed");
+        assert!(
+            split(&mut e, baseline, Some(SpellSchool::Enchantment), 3).is_none(),
+            "a baseline wizard has no feature"
+        );
+    }
+
+    /// A caster holding both doubling features doubles once. `execute`
+    /// offers the sorcery-point prime first and only falls through to
+    /// the free passive if it didn't fire, so the two can never stack
+    /// into a triple-target cast.
+    #[test]
+    fn twinned_spell_and_split_enchantment_do_not_stack() {
+        use crate::actions::spells::HEROISM;
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::ENCHANTMENT_WIZARD_TEMPLATE;
+        use std::sync::LazyLock;
+        // No shipping template holds both — RAW can't produce one
+        // without a multiclass — so the test builds the hypothetical
+        // carrier rather than asserting on a build that can't exist.
+        static BOTH: LazyLock<CreatureTemplate> = LazyLock::new(|| CreatureTemplate {
+            name: "Enchanter/Sorcerer",
+            sorcery_points: 5,
+            ..ENCHANTMENT_WIZARD_TEMPLATE.clone()
+        });
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&BOTH, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let allies: Vec<usize> = (0..3)
+            .map(|i| {
+                e.instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(6 + i as isize, 5),
+                    0,
+                    1 + i,
+                )
+                .unwrap()
+            })
+            .collect();
+        {
+            let a = e.actors.get_mut(&caster).unwrap();
+            a.give_resource(crate::engine::side_effects::Resource::BonusAction);
+            a.spell_slot_manager.restore_spell_slots();
+            a.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(10));
+            a.give_sorcery_points(5);
+        }
+        for ef in HEROISM.execute(&mut e, caster, Some(&vec![allies[0]]), None, None) {
+            ef.apply(&mut e);
+        }
+        let hit = allies
+            .iter()
+            .filter(|id| e.actors[id].has_condition(Condition::Heroic))
+            .count();
+        assert_eq!(hit, 2, "exactly two targets, never three");
+        assert!(
+            !e.actors[&caster].has_condition(Condition::TwinnedSpelling),
+            "the paid prime is what fired, so it was consumed"
+        );
+    }
+
+    /// Hypnotic Gaze installs the full RAW payload on a failed save:
+    /// Charmed *plus* the `charmed_by` link *plus* Incapacitated. The
+    /// link is what makes the two clauses one effect — a gazed creature
+    /// can't attack the enchanter on its own turn, and (via the shared
+    /// charm gate) can't opportunity-attack or riposte them either.
+    ///
+    /// Seed-swept because the payload rides a WIS save; the assertion
+    /// is over the seeds where the save actually failed, plus a pin
+    /// that at least one such seed exists.
+    #[test]
+    fn hypnotic_gaze_charms_and_incapacitates_on_a_failed_save() {
+        use crate::actions::class_features::HYPNOTIC_GAZE;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::ENCHANTMENT_WIZARD_TEMPLATE;
+        let mut failures = 0;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let enchanter = e
+                .instantiate_creature(&ENCHANTMENT_WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&enchanter)
+                .unwrap()
+                .give_resource(crate::engine::side_effects::Resource::Action);
+            assert!(
+                HYPNOTIC_GAZE.validate_input(&e, enchanter, Some(&vec![victim]), None, None),
+                "the gaze is available against an adjacent, un-charmed target"
+            );
+            for ef in HYPNOTIC_GAZE.execute(&mut e, enchanter, Some(&vec![victim]), None, None) {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&victim].has_condition(Condition::Charmed) {
+                // Save made — nothing installs, including the link.
+                assert!(!e.actors[&victim].has_condition(Condition::Incapacitated));
+                assert_eq!(e.actors[&victim].charmed_by(), None);
+                continue;
+            }
+            failures += 1;
+            assert!(
+                e.actors[&victim].has_condition(Condition::Incapacitated),
+                "Charmed alone would leave the victim free to hit the enchanter's allies"
+            );
+            assert_eq!(e.actors[&victim].charmed_by(), Some(enchanter));
+            assert!(e.charm_blocks_hostility(victim, enchanter));
+            assert!(
+                !SCIMITAR.validate_input(&e, victim, Some(&vec![enchanter]), None, None),
+                "the gazed creature can't swing back at the enchanter"
+            );
+            // ...and the gaze won't be re-spent on an already-locked target.
+            assert!(
+                !HYPNOTIC_GAZE.validate_input(&e, enchanter, Some(&vec![victim]), None, None)
+            );
+        }
+        assert!(failures > 0, "no seed produced a failed save — test is vacuous");
+    }
+
+    /// Drift pin on the enchantment `school()` tags. Split Enchantment
+    /// fails closed on an untagged spell, so an un-tagged enchantment
+    /// pickup would silently stop doubling with nothing else to notice.
+    #[test]
+    fn enchantment_spells_report_their_school() {
+        use crate::actions::spells::{
+            BANE, BLESS, CHARM_MONSTER, CHARM_PERSON, COMMAND, COMPULSION, CONFUSION,
+            CROWN_OF_MADNESS, DOMINATE_BEAST, DOMINATE_MONSTER, DOMINATE_PERSON, FEEBLEMIND,
+            HEROISM, HOLD_MONSTER, HOLD_PERSON, HYPNOTIC_PATTERN, MASS_SUGGESTION, MIND_SLIVER,
+            OTTOS_IRRESISTIBLE_DANCE, POWER_WORD_KILL, POWER_WORD_PAIN, POWER_WORD_STUN, SLEEP,
+            SUGGESTION, TASHAS_HIDEOUS_LAUGHTER, VICIOUS_MOCKERY,
+        };
+        use crate::engine::types::SpellSchool;
+        let enchantments: Vec<&'static dyn crate::actions::action_template::Action> = vec![
+            &*CHARM_PERSON,
+            &*CHARM_MONSTER,
+            &*HOLD_PERSON,
+            &*HOLD_MONSTER,
+            &*COMMAND,
+            &*SUGGESTION,
+            &*MASS_SUGGESTION,
+            &*DOMINATE_PERSON,
+            &*DOMINATE_BEAST,
+            &*DOMINATE_MONSTER,
+            &*CONFUSION,
+            &*CROWN_OF_MADNESS,
+            &*HYPNOTIC_PATTERN,
+            &*SLEEP,
+            &*TASHAS_HIDEOUS_LAUGHTER,
+            &*COMPULSION,
+            &*OTTOS_IRRESISTIBLE_DANCE,
+            &*POWER_WORD_STUN,
+            &*POWER_WORD_KILL,
+            &*POWER_WORD_PAIN,
+            &*FEEBLEMIND,
+            &*BANE,
+            &*BLESS,
+            &*HEROISM,
+            &*MIND_SLIVER,
+            &*VICIOUS_MOCKERY,
+        ];
+        for spell in enchantments {
+            assert_eq!(
+                spell.school(),
+                Some(SpellSchool::Enchantment),
+                "{} must report the enchantment school",
+                spell.name()
+            );
+        }
+    }
+    /// Regression: a **twinned concentration spell** used to land on the
+    /// second target only. `Action::execute` re-runs the spell's
+    /// `side_effects` for the twin and appends the result, which for a
+    /// concentration spell produced a second `StartConcentration` — and
+    /// that effect's first act is `drop_concentration`, which tore the
+    /// condition straight back off the first target. Twinned Spell
+    /// therefore did nothing for its sorcery points on Hold Person /
+    /// Heroism / Bestow Curse / Crown of Madness: exactly the spells
+    /// worth twinning.
+    ///
+    /// Both targets must hold the condition, the caster must be
+    /// concentrating on one spell, and dropping it must clean up both —
+    /// the last clause is what distinguishes a real merge from an
+    /// install that merely skipped the teardown.
+    #[test]
+    fn twinned_concentration_spell_holds_both_targets() {
+        use crate::actions::spells::HEROISM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let primary = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let twin = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 2)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&sorcerer).unwrap();
+            a.give_resource(crate::engine::side_effects::Resource::BonusAction);
+            a.spell_slot_manager.restore_spell_slots();
+            a.give_sorcery_points(5);
+            a.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(10));
+        }
+        for ef in HEROISM.execute(&mut e, sorcerer, Some(&vec![primary]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&primary].has_condition(Condition::Heroic),
+            "the primary target keeps the buff the caster paid for"
+        );
+        assert!(e.actors[&twin].has_condition(Condition::Heroic));
+        assert!(e.actors[&sorcerer].is_concentrating());
+
+        // One concentration, two targets — and dropping it cleans up
+        // both. A merge that only suppressed the second install would
+        // leave the twin's buff stranded here.
+        e.drop_concentration(sorcerer);
+        assert!(!e.actors[&primary].has_condition(Condition::Heroic));
+        assert!(!e.actors[&twin].has_condition(Condition::Heroic));
+        assert!(!e.actors[&sorcerer].is_concentrating());
     }
 }

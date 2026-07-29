@@ -1113,3 +1113,90 @@ pub static DIVINATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Enchantment Wizard — Arcane Tradition **School of Enchantment**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// the two mechanically-surfaced School of Enchantment features layered
+/// on:
+///
+///   - **Hypnotic Gaze** (subclass lv2) — an action, no slot: an
+///     adjacent creature makes a WIS save or is Charmed by the
+///     enchanter and Incapacitated for a round.
+///   - **Split Enchantment** (subclass lv6) — every single-target
+///     enchantment of 1st level or higher also lands on a second
+///     creature, free.
+///
+/// The signature "the enchanter takes two creatures out of the fight
+/// with one slot" tell. The baseline wizard's control suite is deep and
+/// almost entirely single-target — Hold Person, Hold Monster, Dominate
+/// Person, Charm Person, Command, Suggestion, Tasha's Hideous Laughter,
+/// Crown of Madness, Bestow Curse — and Split Enchantment doubles the
+/// throughput of every one of them at no cost. It is the widest
+/// single-feature swing on the wizard chassis: not a bigger number on
+/// one target, but the same effect on twice as many.
+///
+/// Split Enchantment shares its target picker and its resolution path
+/// with the Sorcerer's **Twinned Spell** metamagic, which is what keeps
+/// the diff small — the doubling block in `Action::execute` already
+/// existed. The two differ on price and scope in a way the shared code
+/// keeps straight: Twinned Spell is a consumable prime charging
+/// `max(1, level)` sorcery points and covering any single-target spell
+/// *including cantrips*; Split Enchantment is free and always on but
+/// only touches leveled enchantments. A caster holding both doubles
+/// once, not twice — `execute` offers the paid prime first and falls
+/// through to the free passive only if it didn't fire.
+///
+/// Hypnotic Gaze is the first slot-free lockdown on the wizard chassis,
+/// and its price is positional rather than economic: an INT-caster with
+/// a 2d6+2 frame has to be standing in melee reach of the thing it
+/// wants to disable. It composes with the engine-wide Charmed
+/// enforcement — the gazed creature can't attack the enchanter, on its
+/// own turn or via an opportunity attack or a riposte — so the two
+/// clauses of RAW's payload land as one coherent "out of the fight, and
+/// specifically out of *your* fight".
+///
+/// Instinctive Charm (subclass lv10) and Alter Memories (lv14) are left
+/// as future work. Alter Memories has no combat surface in RAW at all.
+/// Instinctive Charm has one — a reaction that redirects an incoming
+/// attack onto the attacker's nearest other creature — but the engine's
+/// attack pipeline resolves against a target id fixed before the
+/// reaction window opens, so redirecting mid-swing needs a re-targeting
+/// chokepoint that no existing feature has asked for; approximating it
+/// as a plain miss would lose the "your attacker hits their own ally"
+/// clause that is the whole point of the feature.
+///
+/// Distinct from the six sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline),
+/// `NECROMANCY_WIZARD_TEMPLATE` (passive necrotic resistance),
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (passive +INT-mod initiative),
+/// `ABJURATION_WIZARD_TEMPLATE` (the rechargeable Arcane Ward
+/// absorption pool), `EVOCATION_WIZARD_TEMPLATE` (blast-shaping and
+/// damage augmentation), and `DIVINATION_WIZARD_TEMPLATE` (the d20
+/// substitution bank). Seven templates, seven distinct axes. RAW allows
+/// exactly one Arcane Tradition pick per wizard, so no two ever legally
+/// co-occur on a single build.
+///
+/// Glyph 'Φ' — the enchanter's hypnotic eye. Distinct from baseline
+/// wizard 'M' (mage), Necromancy 'N', War Magic 'Σ', Abjuration 'Θ',
+/// Evocation 'Δ', and Divination 'Ψ'; collides with no other template
+/// glyph in the engine.
+pub static ENCHANTMENT_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Two-tag subclass, one of which also contributes an action, so
+    // neither the tag-only `with_subclass_tag` helper nor a bare field
+    // override fits — same explicit clone-and-override shape
+    // `EVOCATION_WIZARD_TEMPLATE` uses.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::HYPNOTIC_GAZE_TAG);
+    features.insert(crate::actions::class_features::SPLIT_ENCHANTMENT_TAG);
+    let mut actions = WIZARD_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::class_features::HYPNOTIC_GAZE);
+    CreatureTemplate {
+        name: "Enchantment Wizard",
+        glyph: 'Φ',
+        features,
+        actions,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

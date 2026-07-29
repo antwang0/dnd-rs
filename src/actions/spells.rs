@@ -1418,6 +1418,9 @@ pub static SACRED_BURST: LazyLock<SacredBurst> = LazyLock::new(|| SacredBurst {}
 pub struct HoldPerson {}
 
 impl Action for HoldPerson {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "hold person"
     }
@@ -1599,6 +1602,9 @@ pub static FIRE_BOLT: LazyLock<FireBolt> = LazyLock::new(|| FireBolt {});
 pub struct Bless {}
 
 impl Action for Bless {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "bless"
     }
@@ -2666,6 +2672,9 @@ pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});
 pub struct Bane {}
 
 impl Action for Bane {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "bane"
     }
@@ -3740,6 +3749,9 @@ pub static VICIOUS_MOCKERY: LazyLock<ViciousMockery> = LazyLock::new(|| ViciousM
 pub struct Heroism {}
 
 impl Action for Heroism {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "heroism"
     }
@@ -4091,6 +4103,9 @@ pub static SHATTER: LazyLock<Shatter> = LazyLock::new(|| Shatter {});
 pub struct Sleep {}
 
 impl Action for Sleep {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "sleep"
     }
@@ -4174,6 +4189,9 @@ pub static SLEEP: LazyLock<Sleep> = LazyLock::new(|| Sleep {});
 pub struct CharmPerson {}
 
 impl Action for CharmPerson {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "charm person"
     }
@@ -4567,6 +4585,9 @@ pub static COLOR_SPRAY: LazyLock<ColorSpray> = LazyLock::new(|| ColorSpray {});
 pub struct Command {}
 
 impl Action for Command {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "command"
     }
@@ -5059,6 +5080,9 @@ pub static VAMPIRIC_TOUCH: LazyLock<VampiricTouch> = LazyLock::new(|| VampiricTo
 pub struct HypnoticPattern {}
 
 impl Action for HypnoticPattern {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "hypnotic pattern"
     }
@@ -5398,6 +5422,9 @@ pub static HEX: LazyLock<Hex> = LazyLock::new(|| Hex {});
 pub struct HoldMonster {}
 
 impl Action for HoldMonster {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "hold monster"
     }
@@ -7182,6 +7209,9 @@ pub static BANISHMENT: LazyLock<Banishment> = LazyLock::new(|| Banishment {});
 pub struct TashasHideousLaughter {}
 
 impl Action for TashasHideousLaughter {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "tasha's hideous laughter"
     }
@@ -7512,6 +7542,9 @@ pub static FINGER_OF_DEATH: LazyLock<FingerOfDeath> = LazyLock::new(|| FingerOfD
 pub struct PowerWordStun {}
 
 impl Action for PowerWordStun {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "power word stun"
     }
@@ -7682,6 +7715,9 @@ pub static SYNAPTIC_STATIC: LazyLock<SynapticStatic> = LazyLock::new(|| Synaptic
 pub struct CrownOfMadness {}
 
 impl Action for CrownOfMadness {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "crown of madness"
     }
@@ -7829,6 +7865,9 @@ pub static WORD_OF_RADIANCE: LazyLock<WordOfRadiance> = LazyLock::new(|| WordOfR
 pub struct CalmEmotions {}
 
 impl Action for CalmEmotions {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "calm emotions"
     }
@@ -7928,6 +7967,9 @@ pub static CALM_EMOTIONS: LazyLock<CalmEmotions> = LazyLock::new(|| CalmEmotions
 pub struct Suggestion {}
 
 impl Action for Suggestion {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "suggestion"
     }
@@ -8011,6 +8053,9 @@ pub static SUGGESTION: LazyLock<Suggestion> = LazyLock::new(|| Suggestion {});
 pub struct MassSuggestion {}
 
 impl Action for MassSuggestion {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "mass suggestion"
     }
@@ -8309,6 +8354,9 @@ pub static MASS_HEAL: LazyLock<MassHeal> = LazyLock::new(|| MassHeal {});
 pub struct PowerWordKill {}
 
 impl Action for PowerWordKill {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "power word kill"
     }
@@ -12544,6 +12592,9 @@ pub static ANIMATE_DEAD: LazyLock<AnimateDead> = LazyLock::new(|| AnimateDead {}
 pub struct Confusion {}
 
 impl Action for Confusion {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "confusion"
     }
@@ -12832,6 +12883,9 @@ pub static PLANT_GROWTH: LazyLock<PlantGrowth> = LazyLock::new(|| PlantGrowth {}
 pub struct DominatePerson {}
 
 impl Action for DominatePerson {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "dominate person"
     }
@@ -12911,6 +12965,9 @@ pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| Dominate
 pub struct DominateBeast {}
 
 impl Action for DominateBeast {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "dominate beast"
     }
@@ -13494,6 +13551,9 @@ pub static PRISMATIC_SPRAY: LazyLock<PrismaticSpray> = LazyLock::new(|| Prismati
 pub struct Feeblemind {}
 
 impl Action for Feeblemind {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "feeblemind"
     }
@@ -13575,6 +13635,9 @@ pub static FEEBLEMIND: LazyLock<Feeblemind> = LazyLock::new(|| Feeblemind {});
 pub struct OttosIrresistibleDance {}
 
 impl Action for OttosIrresistibleDance {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "otto's irresistible dance"
     }
@@ -14096,6 +14159,9 @@ pub static CONJURE_ELEMENTAL: LazyLock<ConjureElemental> = LazyLock::new(|| Conj
 pub struct PowerWordPain {}
 
 impl Action for PowerWordPain {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "power word pain"
     }
@@ -17006,6 +17072,9 @@ pub static GUIDANCE: LazyLock<Guidance> = LazyLock::new(|| Guidance {});
 pub struct DissonantWhispers {}
 
 impl Action for DissonantWhispers {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "dissonant whispers"
     }
@@ -19843,6 +19912,9 @@ pub static REGENERATE: LazyLock<Regenerate> = LazyLock::new(|| Regenerate {});
 pub struct CharmMonster {}
 
 impl Action for CharmMonster {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "charm monster"
     }
@@ -21791,6 +21863,9 @@ pub static CROWN_OF_THORNS: LazyLock<CrownOfThorns> = LazyLock::new(|| CrownOfTh
 pub struct SilveryBarbs {}
 
 impl Action for SilveryBarbs {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "silvery barbs"
     }
@@ -22044,6 +22119,9 @@ pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {}
 pub struct DominateMonster {}
 
 impl Action for DominateMonster {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "dominate monster"
     }
@@ -24102,6 +24180,9 @@ pub static MADDENING_DARKNESS: LazyLock<MaddeningDarkness> =
 pub struct Geas {}
 
 impl Action for Geas {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "geas"
     }
@@ -24414,6 +24495,9 @@ pub static WALL_OF_WATER: LazyLock<WallOfWater> = LazyLock::new(|| WallOfWater {
 pub struct Compulsion {}
 
 impl Action for Compulsion {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn name(&self) -> &str {
         "compulsion"
     }

@@ -5523,12 +5523,23 @@ mod tests {
             // allies, low faces onto enemies) are reachable, plus the
             // Expert Divination slot refund off its Mind Spike / True
             // Seeing / Foresight pickups.
+            // The Enchantment Wizard drives the doubling path from the
+            // free side: every single-target enchantment it casts
+            // re-enters `side_effects` for a second creature, including
+            // the concentration spells whose merged `StartConcentration`
+            // is the trickiest part of that block. Its Hypnotic Gaze
+            // also puts a `charmed_by` link on a hostile mid-fight,
+            // which is the AI-side exercise of the charm restriction on
+            // declared actions, opportunity attacks and Riposte alike.
             use crate::actors::creatures::wizards::{
-                ABJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
+                ABJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE,
+                ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
             };
             let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
             let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
             let _ = e.instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 26);
+            let _ =
+                e.instantiate_creature(&ENCHANTMENT_WIZARD_TEMPLATE, Coordinate::new(4, 12), 0, 27);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

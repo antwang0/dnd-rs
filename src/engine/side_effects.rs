@@ -42,6 +42,103 @@ pub trait ApplicableSideEffect {
     fn elemental_damage_target(&self) -> Option<(usize, DamageType)> {
         None
     }
+
+    /// If this side-effect starts a concentration, hand back the caster
+    /// it belongs to together with the per-target payload it will clean
+    /// up on drop. Default `None` — every side-effect that isn't a
+    /// concentration install.
+    ///
+    /// Read by `fold_doubled_concentration` so a doubling feature can
+    /// tell whether a re-fired cast produced a second, competing
+    /// install. See that function for why the competition is a bug.
+    fn concentration_payload(&self) -> Option<ConcentrationPayload<'_>> {
+        None
+    }
+
+    /// Fold another install's per-target payload into this one. Returns
+    /// true when absorbed. Default: no-op.
+    fn absorb_concentration_payload(&mut self, _extra: &ConcentrationPayload<'_>) -> bool {
+        false
+    }
+}
+
+/// The per-target bookkeeping a `StartConcentration` will roll back
+/// when the concentration drops. Borrowed out of the side-effect so
+/// `fold_doubled_concentration` can compare and merge two installs
+/// without cloning the whole `ConcentrationData`.
+pub struct ConcentrationPayload<'a> {
+    pub caster_id: usize,
+    pub conditions: &'a [(usize, Condition)],
+    pub attack_buffs: &'a [(usize, i32)],
+    pub save_buffs: &'a [(usize, i32)],
+    pub damage_buffs: &'a [(usize, i32)],
+}
+
+/// Merge a doubled cast's second `StartConcentration` into the first,
+/// dropping the redundant install from `doubled`.
+///
+/// **The bug this fixes.** Two features re-run a single-target spell's
+/// `side_effects` against a second creature and append the result: the
+/// Sorcerer's Twinned Spell metamagic and the Enchantment Wizard's
+/// Split Enchantment. When the spell concentrates, that produces *two*
+/// `StartConcentration` effects for the same caster — and
+/// `StartConcentration::apply` opens by calling `drop_concentration`,
+/// which tears down whatever the caster was holding. The second install
+/// therefore ripped the condition straight back off the first target,
+/// so a twinned Hold Person / Heroism / Bestow Curse / Crown of Madness
+/// landed on the *second* target only. The feature silently did nothing
+/// for the slot it charged, on exactly the spells worth twinning.
+///
+/// RAW is unambiguous: one cast is one spell and one concentration, and
+/// it holds both targets. `ConcentrationData` already models that — its
+/// rollback lists are per-target — so the fix is to merge rather than
+/// to stack: the surviving install cleans up both targets when it ends,
+/// and one broken concentration check still drops the whole spell.
+///
+/// Returns true when a merge happened. Cheap and total when it doesn't:
+/// a non-concentration spell has no payload on either side and the
+/// walk falls straight through.
+pub fn fold_doubled_concentration(
+    primary: &mut [Box<dyn ApplicableSideEffect>],
+    doubled: &mut Vec<Box<dyn ApplicableSideEffect>>,
+) -> bool {
+    // Find the doubled install (there is at most one per cast) and pull
+    // its payload out into owned form — the borrow can't outlive the
+    // walk over `primary` below.
+    let Some(idx) = doubled
+        .iter()
+        .position(|se| se.concentration_payload().is_some())
+    else {
+        return false;
+    };
+    let owned = {
+        let payload = doubled[idx].concentration_payload().unwrap();
+        (
+            payload.caster_id,
+            payload.conditions.to_vec(),
+            payload.attack_buffs.to_vec(),
+            payload.save_buffs.to_vec(),
+            payload.damage_buffs.to_vec(),
+        )
+    };
+    let extra = ConcentrationPayload {
+        caster_id: owned.0,
+        conditions: &owned.1,
+        attack_buffs: &owned.2,
+        save_buffs: &owned.3,
+        damage_buffs: &owned.4,
+    };
+    let merged = primary.iter_mut().any(|se| {
+        se.concentration_payload()
+            .is_some_and(|p| p.caster_id == extra.caster_id)
+            && se.absorb_concentration_payload(&extra)
+    });
+    if merged {
+        // The doubled install is now redundant — leaving it in would
+        // re-introduce the very `drop_concentration` that caused the bug.
+        doubled.remove(idx);
+    }
+    merged
 }
 
 /// 5e Sorcerer Extended Spell: minimum `Rounds(n)` timer that qualifies
@@ -735,6 +832,47 @@ pub struct StartConcentration {
 }
 
 impl ApplicableSideEffect for StartConcentration {
+    fn concentration_payload(&self) -> Option<ConcentrationPayload<'_>> {
+        Some(ConcentrationPayload {
+            caster_id: self.caster_id,
+            conditions: &self.data.conditions,
+            attack_buffs: &self.data.attack_buffs,
+            save_buffs: &self.data.save_buffs,
+            damage_buffs: &self.data.damage_buffs,
+        })
+    }
+
+    fn absorb_concentration_payload(&mut self, extra: &ConcentrationPayload<'_>) -> bool {
+        if extra.caster_id != self.caster_id {
+            return false;
+        }
+        // Union rather than append: the doubled cast re-runs the same
+        // builder, so a payload entry aimed at the caster themselves
+        // (a self-buff rider) comes back identical and must not be
+        // rolled back twice on drop.
+        for entry in extra.conditions {
+            if !self.data.conditions.contains(entry) {
+                self.data.conditions.push(*entry);
+            }
+        }
+        for entry in extra.attack_buffs {
+            if !self.data.attack_buffs.contains(entry) {
+                self.data.attack_buffs.push(*entry);
+            }
+        }
+        for entry in extra.save_buffs {
+            if !self.data.save_buffs.contains(entry) {
+                self.data.save_buffs.push(*entry);
+            }
+        }
+        for entry in extra.damage_buffs {
+            if !self.data.damage_buffs.contains(entry) {
+                self.data.damage_buffs.push(*entry);
+            }
+        }
+        true
+    }
+
     fn apply(&self, ei: &mut EncounterInstance) {
         // Drop any prior concentration first — cleanup its effects.
         ei.drop_concentration(self.caster_id);
