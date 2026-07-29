@@ -4179,21 +4179,28 @@ fn try_attack_aoe(
             // disqualifies the candidate entirely — we don't damage our
             // own side. Self also counts as an ally.
             //
-            // 5e Sorcerer Careful Spell exception: if the caster has the
-            // CarefulSpelling prime up, allies inside the radius can be
-            // shielded — up to CHA-mod of them (the caster themselves
-            // included). When the ally count fits the shield cap, we
-            // tolerate the "friendly fire" and let the burst chokepoint
-            // consume the prime + skip those ids.
-            let careful_capacity = if actor.has_condition(Condition::CarefulSpelling) {
-                Some(
-                    actor
-                        .ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
-                        .max(1) as usize,
-                )
-            } else {
-                None
-            };
+            // Exception: the caster may hold a feature that carves
+            // allies out of their own blast — the Sorcerer's Careful
+            // Spell prime (CHA-mod allies, any spell) or the Evocation
+            // Wizard's Sculpt Spells (1 + spell level allies, evocation
+            // only). `ally_shield_capacity` answers "how many allies can
+            // this caster tolerate in the blast" for the specific spell
+            // under consideration, sharing its per-feature helpers with
+            // the resolver that will actually do the sparing — so the
+            // AI's model can't drift from the outcome. When the ally
+            // count fits the capacity we tolerate the overlap and let
+            // the burst chokepoint skip those ids.
+            //
+            // Without this, an Evocation Wizard would never fire the
+            // blast its whole subclass is built around: every candidate
+            // point in a melee scrum catches an ally, and the gate would
+            // reject all of them.
+            let shield_capacity = encounter.ally_shield_capacity(
+                actor_id,
+                action.school(),
+                crate::engine::side_effects::spell_slot_level(&aei.cost(encounter))
+                    .unwrap_or(0),
+            );
             let mut enemy_hits = 0usize;
             let mut ally_hits = 0usize;
             for (id, a) in encounter.actors.iter() {
@@ -4215,10 +4222,7 @@ fn try_attack_aoe(
                     enemy_hits += 1;
                 }
             }
-            let friendly_fire_blocked = match careful_capacity {
-                Some(cap) => ally_hits > cap,
-                None => ally_hits > 0,
-            };
+            let friendly_fire_blocked = ally_hits > shield_capacity;
             if friendly_fire_blocked || enemy_hits < 2 {
                 continue;
             }
@@ -5636,6 +5640,73 @@ mod tests {
             "sacred burst",
             "any burst would clip the ally — AI should pick single-target"
         );
+    }
+
+    /// An AI-controlled Evocation Wizard fires its blast into a scrum
+    /// that a baseline wizard's friendly-fire gate rejects. Sculpt
+    /// Spells is the whole point of the subclass and it lives entirely
+    /// on the resolver side, so without teaching the AI's gate about it
+    /// the feature would be unreachable for every non-player evoker:
+    /// each candidate point in a melee catches an ally, and the gate
+    /// would veto all of them.
+    ///
+    /// Targets `try_attack_aoe` directly rather than the full `decide`
+    /// pipeline — the wizard chassis opens with self-buffs (Mage Armor,
+    /// Mirror Image) that would win the priority ordering long before
+    /// the AoE step, and those are a different decision than the one
+    /// under test. Both casters get the identical board, so the only
+    /// difference is the feature.
+    #[test]
+    fn ai_evoker_blasts_through_allies_that_stop_a_baseline_wizard() {
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::wizards::{EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::SpellSchool;
+
+        // One ally toe-to-toe with two enemies: every burst point that
+        // catches both enemies catches the ally too.
+        let picks_burst = |template: &'static CreatureTemplate| {
+            let mut e = empty_arena();
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(11, 10), 0, 1)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 11), 1, 1)
+                .unwrap();
+            try_attack_aoe(&e, caster).is_some()
+        };
+
+        assert!(
+            !picks_burst(&WIZARD_TEMPLATE),
+            "baseline wizard should refuse a blast that clips its own ally"
+        );
+        assert!(
+            picks_burst(&EVOCATION_WIZARD_TEMPLATE),
+            "Evocation Wizard should accept the same blast — Sculpt Spells \
+             carves the ally out"
+        );
+
+        // And the capacity the gate reads matches what the resolver will
+        // actually spare: evocation only, scaling on 1 + spell level.
+        let mut e = empty_arena();
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.ally_shield_capacity(evoker, Some(SpellSchool::Evocation), 3),
+            4
+        );
+        assert_eq!(
+            e.ally_shield_capacity(evoker, Some(SpellSchool::Evocation), 0),
+            1
+        );
+        assert_eq!(
+            e.ally_shield_capacity(evoker, Some(SpellSchool::Enchantment), 3),
+            0
+        );
+        assert_eq!(e.ally_shield_capacity(evoker, None, 3), 0);
     }
 
     #[test]

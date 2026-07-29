@@ -5420,6 +5420,82 @@ impl EncounterInstance {
             })
     }
 
+    /// How many allies the Sorcerer's **Careful Spell** prime can spare
+    /// on this cast, or `None` when the caster isn't holding it. RAW:
+    /// "a number of those creatures up to your Charisma modifier
+    /// (minimum of one creature)."
+    ///
+    /// Split out from `auto_pass_shielded_allies` so the AI can ask the
+    /// same question *before* committing to a blast point — the
+    /// friendly-fire gate needs the capacity, not the shielded set — and
+    /// the two can't drift apart.
+    fn careful_spell_capacity(&self, caster_id: usize) -> Option<usize> {
+        let caster = self.actors.get(&caster_id)?;
+        if !caster.has_condition(Condition::CarefulSpelling) {
+            return None;
+        }
+        Some(
+            caster
+                .ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
+                .max(1) as usize,
+        )
+    }
+
+    /// How many allies the Evocation Wizard's **Sculpt Spells** can carve
+    /// out of a `school`-school, `level`-level cast, or `None` when the
+    /// feature doesn't apply. RAW: "a number of them equal to 1 + the
+    /// spell's level", evocation only — so a cantrip spares one ally and
+    /// a Fireball four.
+    ///
+    /// Takes the school and level explicitly rather than reading the cast
+    /// stack, because the AI's only useful call site is *before* the cast
+    /// exists. `auto_pass_shielded_allies` passes the in-flight frame's
+    /// values; `ally_shield_capacity` passes the candidate spell's.
+    fn sculpt_spells_capacity(
+        &self,
+        caster_id: usize,
+        school: Option<SpellSchool>,
+        level: u32,
+    ) -> Option<usize> {
+        if school != Some(SpellSchool::Evocation) {
+            return None;
+        }
+        let caster = self.actors.get(&caster_id)?;
+        if !caster.has_passive_feature(crate::actions::class_features::SCULPT_SPELLS_TAG) {
+            return None;
+        }
+        Some(1 + level as usize)
+    }
+
+    /// The most allies `caster_id` could spare from a `school`-school,
+    /// `level`-level blast — the union size of every shielding feature
+    /// they hold. 0 means a blast that catches an ally really does hurt
+    /// that ally.
+    ///
+    /// The union is a plain `max` because both features take a prefix of
+    /// the same nearest-first ally ordering, so the larger prefix
+    /// contains the smaller.
+    ///
+    /// Exists for the AI's friendly-fire gate, which has to decide
+    /// whether a candidate blast point is acceptable *before* the spell
+    /// is cast and therefore can't read the shielded set that
+    /// `auto_pass_shielded_allies` produces mid-resolution. Sharing the
+    /// per-feature capacity helpers with that function is what keeps the
+    /// AI's model of "how many allies can I tolerate in the blast" from
+    /// drifting away from what the resolver will actually spare.
+    pub fn ally_shield_capacity(
+        &self,
+        caster_id: usize,
+        school: Option<SpellSchool>,
+        level: u32,
+    ) -> usize {
+        let careful = self.careful_spell_capacity(caster_id).unwrap_or(0);
+        let sculpt = self
+            .sculpt_spells_capacity(caster_id, school, level)
+            .unwrap_or(0);
+        careful.max(sculpt)
+    }
+
     /// The set of ally ids inside `(point, radius)` that this cast spares
     /// entirely: they don't roll a save, take no damage, and are recorded
     /// as having passed so per-target riders skip them too.
@@ -5467,19 +5543,7 @@ impl EncounterInstance {
                 .clone()
         };
 
-        let careful_primed = self
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_condition(Condition::CarefulSpelling));
-        if careful_primed {
-            let cha_mod = self
-                .actors
-                .get(&caster_id)
-                .map(|a| {
-                    a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
-                        .max(1) as usize
-                })
-                .unwrap_or(1);
+        if let Some(cha_mod) = self.careful_spell_capacity(caster_id) {
             let picked: Vec<usize> = ally_ids(self).into_iter().take(cha_mod).collect();
             if !picked.is_empty() {
                 let caster_name = self.actor_name(caster_id);
@@ -5498,16 +5562,12 @@ impl EncounterInstance {
         // Sculpt Spells: gated on the school of the cast currently being
         // resolved rather than on anything the caster is holding, so it
         // is inert outside a cast and on every non-evocation spell.
-        let sculpts = self
-            .current_cast()
-            .is_some_and(|c| c.school == Some(SpellSchool::Evocation))
-            && self.actors.get(&caster_id).is_some_and(|a| {
-                a.has_passive_feature(crate::actions::class_features::SCULPT_SPELLS_TAG)
-            });
-        if sculpts {
-            // RAW "1 + the spell's level" — a cantrip shields one ally,
-            // a Fireball four.
-            let count = 1 + self.current_cast().map(|c| c.level).unwrap_or(0) as usize;
+        let cast = self.current_cast();
+        if let Some(count) = self.sculpt_spells_capacity(
+            caster_id,
+            cast.and_then(|c| c.school),
+            cast.map(|c| c.level).unwrap_or(0),
+        ) {
             let picked: Vec<usize> = ally_ids(self).into_iter().take(count).collect();
             if !picked.is_empty() {
                 let caster_name = self.actor_name(caster_id);
