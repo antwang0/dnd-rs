@@ -34,6 +34,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 1b. Hypnotic Gaze — the enchanter's slot-free adjacent
+        //     lockdown. Deliberately ABOVE the kite / teleport /
+        //     Disengage rungs below, all of which fire on exactly the
+        //     same trigger (a ranged caster with something in contact)
+        //     and would otherwise consume every situation the gaze
+        //     exists for — an integration probe caught it firing in
+        //     0 of 40 encounters when it sat below them. Answering the
+        //     melee threat by disabling it beats stepping one tile away
+        //     from a hostile that has 5 ft of reach and 30 ft of
+        //     movement, and the Charmed half means the gazed creature
+        //     can't swing at the enchanter even on the way past.
+        if let Some(aei) = try_hypnotic_gaze(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 2. Kite if we're a ranged attacker under melee threat.
         if has_ranged_attack(encounter, actor_id)
             && under_melee_threat(encounter, actor_id)
@@ -66,16 +81,6 @@ impl Controller for SimpleAi {
             && is_low_hp(encounter, actor_id, 0.3)
             && let Some(aei) = try_disengage(encounter, actor_id)
         {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 2c. Hypnotic Gaze — the enchanter's slot-free adjacent
-        //     lockdown. Placed above the heal / buff lanes and well
-        //     above the slot-spending control lane because it is free:
-        //     a gaze that lands is a Hold Person the wizard didn't have
-        //     to pay for, and the only cost is an action they were
-        //     going to spend on a cantrip anyway.
-        if let Some(aei) = try_hypnotic_gaze(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -433,6 +438,33 @@ impl Controller for SimpleAi {
         //      vs. Inspired's 10-round Rounds timer that consumes on
         //      the next attack/save).
         if let Some(aei) = try_zealous_presence(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3h''. Area control — Web / Hypnotic Pattern / Evard's /
+        //       Entangle / Sleet Storm on the densest cluster of
+        //       hostiles. Declines while already concentrating.
+        //
+        //       Placed at the TOP of the concentration lane, above the
+        //       apex ally buffs immediately below, because those buffs
+        //       fire on turn one and hold for the whole fight — an
+        //       integration probe found every wizard opening with
+        //       Foresight and therefore never casting a control spell
+        //       again, in any of 40 encounters. Only one concentration
+        //       can be held, so whichever rung comes first here decides
+        //       the caster's entire fight, and a dense cluster of
+        //       hostiles is the case where locking them down beats
+        //       giving one ally advantage. When no cluster exists the
+        //       gate declines and the buffs below fire exactly as
+        //       before.
+        //
+        //       Also above the damage AoE further down: when both would
+        //       fire, taking three hostiles out of the fight beats
+        //       damaging them, and the scorer both rungs share ranks
+        //       purely by how many bodies the blast catches — which a
+        //       control spell almost never wins against a
+        //       same-or-larger-radius Fireball.
+        if let Some(aei) = try_area_control(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -4544,6 +4576,29 @@ fn try_attack_aoe(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
+    best_burst_placement(encounter, actor_id, |_| true)
+}
+
+/// Shared "where do I drop this burst?" search, used by both burst
+/// pickers: `try_attack_aoe` (any harmful Burst action the actor owns)
+/// and `try_area_control` (only the battlefield-control spells).
+///
+/// `accept` filters which of the actor's Burst actions are eligible,
+/// and is the only thing that differs between the two callers — the
+/// candidate-point enumeration, the friendly-fire gate, the two-enemy
+/// minimum and the deterministic tie-break are identical, and were
+/// duplicated between them before this was factored out.
+///
+/// Returns the placement hitting the most hostiles, ties broken by the
+/// lowest anchor id so the choice is stable across runs. Candidate
+/// points are hostile locations rather than an open search over the
+/// map: a burst that isn't centred on someone is nearly always worse
+/// than one that is.
+fn best_burst_placement(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    accept: impl Fn(&'static (dyn Action + Send + Sync)) -> bool,
+) -> Option<ActionExecutionInfo> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
     let actor = encounter.actors.get(&actor_id)?;
@@ -4554,7 +4609,7 @@ fn try_attack_aoe(
         .actions
         .iter()
         .filter_map(|a| {
-            if !a.is_harmful() {
+            if !a.is_harmful() || !accept(*a) {
                 return None;
             }
             match a.targeting_schema() {
@@ -4659,6 +4714,60 @@ fn try_attack_aoe(
         }
     }
     best.map(|(_, _, aei)| aei)
+}
+
+/// Battlefield-control area spells — Burst-schema concentration spells
+/// whose value is the condition they install, not the damage they do.
+///
+/// These exist on the wizard and druid chassis and the AI never cast
+/// them. `try_attack_aoe` scores every Burst action the actor owns by
+/// one number, how many hostiles the blast catches, so a control spell
+/// only wins when it strictly out-covers every damage spell in the
+/// loadout — and it almost never does, because Fireball's radius is as
+/// large or larger. An integration probe over 40 AI-driven encounters
+/// found Web cast zero times and Stinking Cloud once.
+///
+/// The fix is a separate rung rather than a tweak to the shared
+/// scorer, because the comparison isn't really about coverage: three
+/// hostiles Restrained by a Web are worth more than three hostiles
+/// taking 8d6 and continuing to act, and no enemy-count heuristic
+/// expresses that. This mirrors the way `try_hold_person` already sits
+/// above plain attacks on the single-target lane.
+///
+/// Every entry is concentration, which is what bounds the rung: the
+/// picker declines outright if the caster is already holding
+/// something, so a control spell can never displace a control spell.
+const AREA_CONTROL_SPELLS: &[&str] = &[
+    "web",
+    "hypnotic pattern",
+    "evard's black tentacles",
+    "entangle",
+    "sleet storm",
+];
+
+/// Drop an area-control spell on the densest cluster of hostiles.
+///
+/// Shares `best_burst_placement` with `try_attack_aoe`, so the
+/// candidate points, the friendly-fire gate, the two-enemy minimum and
+/// the tie-break are the same; only the action filter differs. Gated on
+/// the caster not already concentrating — every spell on the registry
+/// is a concentration spell, so firing while one is up would trade a
+/// landed lockdown for an unlanded one.
+///
+/// Slotted above `try_attack_aoe` in the ladder: when both would fire,
+/// the cluster is dense enough that taking the hostiles out of the
+/// fight beats damaging them.
+fn try_area_control(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    best_burst_placement(encounter, actor_id, |a| {
+        AREA_CONTROL_SPELLS.contains(&a.name())
+    })
 }
 
 /// Pick a NoArgs harmful action (Thunderwave / Word of Radiance / Holy
@@ -7320,6 +7429,43 @@ mod tests {
         (e, caster)
     }
 
+    /// Sibling scaffold to `pinned_caster` for the area rungs: hostiles
+    /// bunched together but at range, so the melee-threat rungs higher
+    /// up the ladder don't intercept before the area lane is reached.
+    fn clustered_hostiles(
+        template: &'static crate::actors::actor_template::CreatureTemplate,
+        n: usize,
+    ) -> (EncounterInstance, usize) {
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let caster = e
+            .instantiate_creature(template, Coordinate::new(5, 15), 0, 0)
+            .unwrap();
+        for i in 0..n {
+            let _ = e.instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                Coordinate::new(15, 14 + i as isize),
+                1,
+                i,
+            );
+        }
+        (e, caster)
+    }
+
     /// A pinned ranged caster blinks out, and the destination is
     /// strictly farther from the nearest threat than where it stood.
     #[test]
@@ -7555,6 +7701,91 @@ mod tests {
         assert!(
             try_hypnotic_gaze(&e, plain).is_none(),
             "the baseline wizard has no gaze"
+        );
+    }
+
+
+    /// Area control fires on a cluster, declines on a lone target,
+    /// and declines while the caster is already holding a
+    /// concentration — the gate that keeps one control spell from
+    /// displacing another.
+    #[test]
+    fn area_control_locks_down_a_cluster_and_yields_to_held_concentration() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let (e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 0);
+        assert!(
+            try_area_control(&e, wiz).is_none(),
+            "no hostiles, nothing to lock down"
+        );
+
+        let (e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 1);
+        assert!(
+            try_area_control(&e, wiz).is_none(),
+            "a single hostile isn't worth a concentration slot"
+        );
+
+        let (mut e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 3);
+        let aei = try_area_control(&e, wiz).expect("three clustered hostiles");
+        assert!(
+            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
+            "picked {} which isn't on the control registry",
+            aei.action().name()
+        );
+
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Foresight"));
+        assert!(
+            try_area_control(&e, wiz).is_none(),
+            "a held concentration blocks the rung"
+        );
+    }
+
+    /// The ordering that makes the rung reachable at all. Both
+    /// `try_area_control` and `try_foresight` want the caster's one
+    /// concentration, and Foresight fires on turn one and holds for the
+    /// whole fight — so if it ran first, control would never be cast.
+    /// Pins that `decide` picks the lockdown when a cluster is present,
+    /// and still reaches Foresight when one isn't.
+    #[test]
+    fn a_cluster_outranks_the_apex_ally_buff_for_the_casters_concentration() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let ai = SimpleAi;
+
+        let (mut e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 3);
+        // Both rungs want the same one concentration, which is what
+        // makes their relative order load-bearing rather than cosmetic.
+        assert!(try_area_control(&e, wiz).is_some());
+        assert!(try_foresight(&e, wiz).is_some());
+        // Skip the non-concentration self-buff rungs above both of them
+        // so `decide` lands on the one under test.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::MageArmored, ConditionTimer::Rounds(100));
+        let ControllerDecision::Act(aei) = ai.decide(&e, wiz) else {
+            panic!("expected an action");
+        };
+        assert!(
+            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
+            "a dense cluster should take the concentration, got {}",
+            aei.action().name()
+        );
+
+        // With the cluster spread out past any burst radius, the rung
+        // declines and the buff lane is reachable again.
+        let (e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 0);
+        assert!(
+            try_area_control(&e, wiz).is_none(),
+            "no cluster, no lockdown — the buff lane below is unaffected"
+        );
+        assert!(
+            try_foresight(&e, wiz).is_some(),
+            "and Foresight is still reachable when nothing is clustered"
         );
     }
 
