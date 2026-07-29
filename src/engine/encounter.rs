@@ -1073,6 +1073,23 @@ impl CastContext {
     pub fn is_cantrip_of(&self, school: SpellSchool) -> bool {
         self.school == Some(school) && self.level == 0
     }
+
+    /// True when this frame is a cantrip of *any* school — a spell with
+    /// no slot cost. The school-agnostic gate Potent Cantrip needs
+    /// ("your cantrips", not "your evocation cantrips").
+    ///
+    /// The `school.is_some()` leg is what separates a cantrip from a
+    /// non-spell action: `Action::execute` opens a frame for every
+    /// action it runs, so a weapon swing or a class feature also
+    /// arrives here at level 0. Every cantrip in the engine carries a
+    /// `school()` override and no other action at level 0 does, which is
+    /// exactly the distinction — and
+    /// `every_cantrip_declares_its_school` pins it so a new cantrip
+    /// added without the override is caught rather than silently
+    /// dropping out of every cantrip-gated feature.
+    pub fn is_cantrip(&self) -> bool {
+        self.school.is_some() && self.level == 0
+    }
 }
 
 /// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`
@@ -5384,10 +5401,12 @@ impl EncounterInstance {
     /// (`NoneOnSave` — a `HalfOnSave` effect already leaves half
     /// standing, so firing there would log a no-op).
     ///
-    /// The cantrip gate reads the in-flight cast's level rather than the
-    /// policy, which matters: `NoneOnSave` also carries the handful of
-    /// leveled spells that zero on a save (Disintegrate), and RAW must
-    /// not lift those.
+    /// The cantrip gate reads the in-flight cast's school and level
+    /// rather than the policy, which matters twice: `NoneOnSave` also
+    /// carries the handful of leveled spells that zero on a save
+    /// (Disintegrate) and RAW must not lift those, and `Action::execute`
+    /// opens a frame for non-spell actions too — so `is_cantrip`
+    /// requires a school tag, which only spells carry.
     fn potent_cantrip_applies(
         &self,
         caster_id: usize,
@@ -5395,7 +5414,7 @@ impl EncounterInstance {
     ) -> bool {
         use crate::engine::saves::SaveDamagePolicy;
         policy == SaveDamagePolicy::NoneOnSave
-            && self.current_cast().is_some_and(|c| c.level == 0)
+            && self.current_cast().is_some_and(|c| c.is_cantrip())
             && self.actors.get(&caster_id).is_some_and(|a| {
                 a.has_passive_feature(crate::actions::class_features::POTENT_CANTRIP_TAG)
             })
@@ -61922,5 +61941,68 @@ mod tests {
             "Potent Cantrip never produced a saved-but-damaged Vicious Mockery \
              across 80 seeds — is the cantrip resolver wired up?"
         );
+    }
+
+    /// Every cantrip in the engine declares a `school()`, and no
+    /// non-spell action does. Together those two facts are what makes
+    /// `CastContext::is_cantrip` — and therefore every cantrip-gated
+    /// feature, Potent Cantrip today — able to tell a cantrip apart
+    /// from a weapon swing, given that `Action::execute` opens a cast
+    /// frame at level 0 for both.
+    ///
+    /// A new cantrip added without the override doesn't break anything
+    /// loudly: it just silently stops participating in cantrip-gated
+    /// features. This list is where that gets caught.
+    #[test]
+    fn every_cantrip_declares_its_school() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::*;
+        let cantrips: Vec<&dyn Action> = vec![
+            &*SACRED_FLAME,
+            &*SACRED_BURST,
+            &*FIRE_BOLT,
+            &*RAY_OF_FROST,
+            &*ACID_SPLASH,
+            &*CHILL_TOUCH,
+            &*POISON_SPRAY,
+            &*THORN_WHIP,
+            &*SPARE_THE_DYING,
+            &*TOLL_THE_DEAD,
+            &*VICIOUS_MOCKERY,
+            &*SHOCKING_GRASP,
+            &*ELDRITCH_BLAST,
+            &*MIND_SLIVER,
+            &*TRUE_STRIKE,
+            &*WORD_OF_RADIANCE,
+            &*BOOMING_BLADE,
+            &*MAGIC_STONE,
+            &*FROSTBITE,
+            &*LIGHTNING_LURE,
+            &*SHILLELAGH,
+            &*THUNDERCLAP,
+            &*GUIDANCE,
+            &*SWORD_BURST,
+            &*BLADE_WARD,
+            &*TELEKINETIC,
+            &*GREEN_FLAME_BLADE,
+            &*PRIMAL_SAVAGERY,
+            &*SAPPING_STING,
+            &*PRODUCE_FLAME,
+            &*CREATE_BONFIRE,
+            &*INFESTATION,
+        ];
+        for action in &cantrips {
+            assert!(
+                action.school().is_some(),
+                "cantrip '{}' has no school() override — it will be invisible \
+                 to every cantrip-gated feature",
+                action.name()
+            );
+        }
+        // The other half of the invariant: non-spell actions must stay
+        // untagged, or they'd start reading as cantrips at level 0.
+        use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
+        assert_eq!(LONGSWORD.school(), None);
+        assert_eq!(SCIMITAR.school(), None);
     }
 }

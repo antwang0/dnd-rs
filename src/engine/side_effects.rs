@@ -464,6 +464,7 @@ impl ApplicableSideEffect for DealDamage {
         } else {
             None
         };
+        let ward_before = actor.arcane_ward();
         let (outcome, landed) = actor.take_typed_damage(raw_amount, self.damage_type);
         // Regenerator suppression: flag the actor if this damage type is
         // on their suppressor list (troll vs acid/fire). The flag is
@@ -496,6 +497,15 @@ impl ApplicableSideEffect for DealDamage {
             && actor.has_condition(crate::conditions::Condition::AgathysShielded);
         if agathys_shatters {
             actor.remove_condition(crate::conditions::Condition::AgathysShielded);
+        }
+        // Log the two absorption pools in the order they drained, so a
+        // reader can see why a hit that "should" have landed didn't.
+        let ward_absorbed = ward_before.saturating_sub(actor.arcane_ward());
+        if ward_absorbed > 0 {
+            ei.log(format!(
+                "  {}'s arcane ward absorbs {} damage",
+                name, ward_absorbed
+            ));
         }
         if temp_absorbed > 0 {
             ei.log(format!(
