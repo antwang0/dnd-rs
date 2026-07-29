@@ -27,9 +27,24 @@ pub enum Condition {
     /// Cannot take actions or reactions (movement is still allowed).
     /// Distinct from Stunned — Incapacitated still moves; Stunned can't.
     Incapacitated,
-    /// You have no effect on combat behavior — you can't take hostile
-    /// actions against the charmer. Marker only today; we don't yet
-    /// model the "can't attack the charmer" enforcement.
+    /// 5e Charmed: "A charmed creature can't attack the charmer or
+    /// target the charmer with harmful abilities or magic effects."
+    /// Enforced — the restriction rides on the `charmed_by` link the
+    /// installing spell / monster attack sets alongside the condition,
+    /// and is read through `EncounterInstance::charm_blocks_hostility`
+    /// at all three lanes that can reach hostility: declared actions
+    /// (`Action::validate`, across every target in the list),
+    /// opportunity attacks, and Riposte. Purely defensive reactions
+    /// (Uncanny Dodge, Deflect Missiles, Parry, Warding Flare) stay
+    /// available against the charmer — RAW forbids attacking them, not
+    /// surviving them.
+    ///
+    /// RAW's second clause — the charmer's advantage on social ability
+    /// checks — has no combat surface here and is not modeled.
+    ///
+    /// The `charmed_by` link is cleared when the condition is removed,
+    /// so a charm that lapses mid-fight restores hostility on the same
+    /// tick rather than leaving a stale immunity behind.
     Charmed,
     /// Cannot move; cannot take actions or reactions; auto-fail STR/DEX
     /// saves; attacks against you have advantage; melee crits are

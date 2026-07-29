@@ -230,6 +230,14 @@ pub fn try_fire_riposte(
     ) {
         return;
     }
+    // 5e Charmed: a charmed creature can't attack its charmer. Riposte
+    // is where this lane parts company with the three self-clamp
+    // reducers that share the eligibility gate above — Uncanny Dodge,
+    // Deflect Missiles and Parry only reduce incoming damage, which a
+    // charmed creature may do freely, but Riposte swings back.
+    if encounter.charm_blocks_hostility(target_id, attacker_id) {
+        return;
+    }
     // Find the target's first melee weapon action via the shared
     // `first_melee_weapon_action` predicate — same helper that the
     // opportunity-attack dispatcher uses on the reactor side. Filters

@@ -3443,6 +3443,15 @@ impl EncounterInstance {
                 if !a.can_consume_resource(Resource::Reaction) {
                     return None;
                 }
+                // 5e Charmed: the charmer can walk away from a creature
+                // they charmed without provoking. The OA dispatcher runs
+                // the attack's side-effects directly rather than through
+                // `Action::validate`, so the restriction has to be
+                // re-checked here or it would only bind the charmed
+                // creature on its own turn.
+                if a.has_condition(Condition::Charmed) && a.charmed_by() == Some(mover_id) {
+                    return None;
+                }
                 // Shared "find the first melee weapon action" predicate —
                 // `first_melee_weapon_action` gates on is_harmful (excludes
                 // touch-range buffs / heals like Cure Wounds so an ally
@@ -3923,6 +3932,38 @@ impl EncounterInstance {
             return false;
         };
         a.team() == b.team()
+    }
+
+    /// 5e Charmed: "A charmed creature can't attack the charmer or
+    /// target the charmer with harmful abilities or magic effects."
+    /// True when `actor_id` is under that restriction with respect to
+    /// `target_id`.
+    ///
+    /// Both halves are required — the `Charmed` condition *and* the
+    /// `charmed_by` link — so an actor who is charm-immune (and thus
+    /// never received the condition) is unaffected even if a
+    /// `SetCharmedBy` ran in isolation, and a charm from a source the
+    /// engine didn't link doesn't silently forbid every attack.
+    ///
+    /// Centralized because the restriction has to hold on three lanes
+    /// that reach hostility by different routes, and only the first of
+    /// them runs through action validation:
+    ///   - **Declared actions** (`Action::validate`) — the charmed
+    ///     creature's own turn.
+    ///   - **Opportunity attacks** — the charmer walks out of reach.
+    ///     The OA dispatcher runs the attack's `side_effects` directly
+    ///     and never calls `validate`, so this gate has to be checked
+    ///     at the candidate filter.
+    ///   - **Riposte** — the charmer misses the charmed creature in
+    ///     melee. Same story: a counter-*attack*, dispatched outside
+    ///     validation. Its sibling reactions (Uncanny Dodge, Deflect
+    ///     Missiles, Parry) are deliberately *not* gated on this: they
+    ///     are self-clamps, not attacks, and RAW lets a charmed
+    ///     creature defend itself against its charmer perfectly well.
+    pub fn charm_blocks_hostility(&self, actor_id: usize, target_id: usize) -> bool {
+        self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_condition(Condition::Charmed) && a.charmed_by() == Some(target_id)
+        })
     }
 
     /// Walk every ally-team actor that's `is_combat_active` OR `is_dying`
@@ -63334,6 +63375,152 @@ mod tests {
         assert!(
             !e.viewer_can_see(diviner, goblin),
             "a subject wearing both is hidden on the strength of the Blur"
+        );
+    }
+    /// A charmer can walk away from the creature they charmed without
+    /// provoking. The opportunity-attack dispatcher runs the reactor's
+    /// attack side-effects directly and never calls `Action::validate`,
+    /// so the RAW "can't attack the charmer" restriction used to bind
+    /// the charmed creature only on its own turn — every charm in the
+    /// engine leaked a free swing the moment the charmer disengaged.
+    /// Pinned against the same move made by a *non*-charmer, which must
+    /// still eat the OA.
+    #[test]
+    fn charmed_creature_does_not_opportunity_attack_its_charmer() {
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::engine::side_effects::SetCharmedBy;
+        // Observable is the reactor's *reaction slot*, not HP: the OA
+        // could roll a miss and leave HP untouched for the wrong reason,
+        // but the slot is spent the moment the dispatcher decides the
+        // reactor is a candidate.
+        let reaction_spent = |charm_the_reactor: bool| -> bool {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let charmer = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let reactor = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            if charm_the_reactor {
+                SetCharmedBy {
+                    target_id: reactor,
+                    charmer: Some(charmer),
+                }
+                .apply(&mut e);
+                e.actors
+                    .get_mut(&reactor)
+                    .unwrap()
+                    .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+            }
+            assert!(e.actors[&reactor].has_reaction());
+            e.dispatch_opportunity_attacks(
+                charmer,
+                Coordinate::new(5, 5),
+                Coordinate::new(10, 10),
+            );
+            !e.actors[&reactor].has_reaction()
+        };
+        assert!(
+            reaction_spent(false),
+            "an un-charmed reactor still opportunity-attacks"
+        );
+        assert!(
+            !reaction_spent(true),
+            "the charmer walks away without provoking"
+        );
+    }
+
+    /// Riposte is an attack, so a charmed Battle Master can't fire it at
+    /// their charmer — but the purely defensive reactions that share its
+    /// eligibility gate (Uncanny Dodge, Deflect Missiles, Parry) stay
+    /// available, because RAW forbids attacking the charmer, not
+    /// surviving them. Pins the charge, which is the observable the
+    /// riposte spends.
+    #[test]
+    fn charmed_fighter_does_not_riposte_its_charmer() {
+        use crate::actions::class_features::RIPOSTE_TAG;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::SetCharmedBy;
+        let charge_spent = |charm_the_fighter: bool| -> bool {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let attacker = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            if charm_the_fighter {
+                SetCharmedBy {
+                    target_id: fighter,
+                    charmer: Some(attacker),
+                }
+                .apply(&mut e);
+                e.actors
+                    .get_mut(&fighter)
+                    .unwrap()
+                    .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+            }
+            assert!(e.actors[&fighter].feature_available(RIPOSTE_TAG));
+            crate::engine::attack::try_fire_riposte(&mut e, fighter, attacker);
+            !e.actors[&fighter].feature_available(RIPOSTE_TAG)
+        };
+        assert!(charge_spent(false), "the baseline riposte fires");
+        assert!(
+            !charge_spent(true),
+            "a charmed fighter holds its counter-attack"
+        );
+    }
+
+    /// The "don't target the charmer" clause binds on every name in a
+    /// multi-target action's list, not just the first. The reach / LOS
+    /// clauses beside it in `validate` are deliberately first-target-
+    /// only — a multi-target action measures its envelope off its
+    /// primary — which is exactly why the charm gate had to stop
+    /// borrowing their `.first()`.
+    #[test]
+    fn charm_gate_covers_every_target_in_the_list() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::engine::side_effects::SetCharmedBy;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let charmer = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let charmed = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 2, 0)
+            .unwrap();
+        SetCharmedBy {
+            target_id: charmed,
+            charmer: Some(charmer),
+        }
+        .apply(&mut e);
+        e.actors
+            .get_mut(&charmed)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        assert!(
+            SCIMITAR.validate_input(&e, charmed, Some(&vec![bystander]), None, None),
+            "a list without the charmer is fine"
+        );
+        assert!(
+            !SCIMITAR.validate_input(
+                &e,
+                charmed,
+                Some(&vec![bystander, charmer]),
+                None,
+                None
+            ),
+            "the charmer named second is still the charmer"
+        );
+        assert!(e.charm_blocks_hostility(charmed, charmer));
+        assert!(!e.charm_blocks_hostility(charmed, bystander));
+        assert!(
+            !e.charm_blocks_hostility(charmer, charmed),
+            "the restriction is one-directional"
         );
     }
 }

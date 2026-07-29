@@ -695,16 +695,21 @@ pub trait Action {
             if self.requires_los() && !encounter.actor_has_line_of_sight(caster_id, target_id) {
                 return false;
             }
-            // 5e Charmed: the target of a Charm spell cannot make any
-            // hostile action against their charmer. Block harmful actions
-            // whose declared target is the charmer. We require both the
-            // Charmed condition AND the `charmed_by` link so an actor
-            // who is charm-immune (and thus never received the condition)
-            // is unaffected even if a SetCharmedBy ran in isolation.
+            // 5e Charmed: "a charmed creature can't attack the charmer
+            // or target the charmer with harmful abilities or magic
+            // effects." Checked across *every* declared target, not just
+            // the first: the reach / LOS clauses above are deliberately
+            // first-target-only (a multi-target action measures its
+            // envelope off its primary), but "don't target the charmer"
+            // binds on each name in the list independently, so a
+            // multi-target harmful action naming the charmer second
+            // would otherwise slip through. Shared gate with the
+            // opportunity-attack and Riposte dispatchers, which reach
+            // hostility without passing through validation at all.
             if self.is_harmful()
-                && let Some(caster) = encounter.actors.get(&caster_id)
-                && caster.has_condition(crate::conditions::Condition::Charmed)
-                && caster.charmed_by() == Some(target_id)
+                && targets
+                    .iter()
+                    .any(|&tid| encounter.charm_blocks_hostility(caster_id, tid))
             {
                 return false;
             }
