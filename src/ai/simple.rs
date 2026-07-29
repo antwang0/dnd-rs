@@ -42,6 +42,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2a. Blink out when a ranged actor is genuinely pinned — below
+        //    half HP or with two or more hostiles in contact. Slotted
+        //    after the free one-tile step above and before Disengage
+        //    below because it sits between them in both cost and
+        //    effect: it spends a slot or a charge where the step spends
+        //    nothing, but it actually leaves the melee, where a step
+        //    against a 5-ft-reach enemy with 30 ft of movement usually
+        //    doesn't and a Disengage buys only a walk. Covers Benign
+        //    Transposition, Misty Step and Dimension Door through one
+        //    registry.
+        if let Some(aei) = try_teleport_escape(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 2b. If we're a low-HP ranged caster surrounded by melee, the
         //    safer exit is the Disengage action — gives our retreat free
         //    OA-suppression. We use it only when our HP is below 30% and
@@ -71,6 +85,16 @@ impl Controller for SimpleAi {
         // bonus-action restore. Comes before attacks because the heal
         // is bonus-action and doesn't conflict with this turn's swing.
         if let Some(aei) = try_self_heal(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3a''. Shapechanger — the Transmuter's emergency self-Polymorph.
+        //       Below the heal lane because 30 temp HP on a beast body
+        //       is strictly worse than an actual heal when both are
+        //       available, and because the form costs the wizard their
+        //       concentration. Its own gate carries the "is that trade
+        //       worth it right now?" judgement.
+        if let Some(aei) = try_shapechanger(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -4043,6 +4067,189 @@ fn try_step_away_from_threats(
     ))
 }
 
+/// Self-teleport actions the AI will spend to break out of melee, in
+/// the order it will reach for them: cheapest resource first.
+///
+/// Every entry is a `SinglePoint` self-move with a reach in tiles, no
+/// save, no attack roll, and — RAW, uniformly across teleports — no
+/// opportunity attack, since the caster never traverses the
+/// intervening squares. That last property is the whole reason this
+/// lane exists separately from `try_step_away_from_threats` and
+/// `try_disengage`: a one-tile step off a melee threat that has 5 ft
+/// of reach and 30 ft of movement has not actually escaped anything,
+/// and Disengage buys a walk that costs the whole action. A blink
+/// leaves the melee outright.
+///
+/// Order:
+///   1. **Benign Transposition** (Conjuration Wizard lv6) — a charge
+///      that the conjurer's own casting refills, so it is very nearly
+///      free. Costs the action.
+///   2. **Misty Step** — a 2nd-level slot, but only a bonus action, so
+///      the caster still gets to cast on the turn they escape.
+///   3. **Dimension Door** — a 4th-level slot and an action, with
+///      double the range. The last resort, and the only one that
+///      reliably clears a whole engagement.
+///
+/// A new self-teleport (Thunder Step's damage-on-arrival variant, a
+/// Horizon Walker's Planar Step) drops in as one row.
+const SELF_TELEPORT_ESCAPES: &[&str] = &["benign transposition", "misty step", "dimension door"];
+
+/// The eight unit steps on a Chebyshev grid, used to probe teleport
+/// destinations outward from the caster.
+const COMPASS_DIRECTIONS: [(isize, isize); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
+
+/// Blink out of melee when a ranged actor is genuinely pinned.
+///
+/// Gated three ways, all of which have to hold, because a teleport is
+/// a real resource and the cheaper `try_step_away_from_threats` rung
+/// already handles the ordinary case:
+///
+///   1. **The actor has a ranged attack.** A melee actor that blinks
+///      away has to walk back, so the escape costs it the fight.
+///   2. **It is under melee threat.** Nothing to escape otherwise.
+///   3. **It is actually pinned** — either below half HP, or with two
+///      or more hostiles in contact. One healthy caster with one
+///      adjacent goblin should step and shoot, not burn a slot.
+///
+/// Destination policy is "as far from the nearest threat as this
+/// teleport can reach", found by probing outward along the eight
+/// compass directions rather than by scanning every reachable tile.
+/// The exhaustive scan is the obvious implementation and the wrong
+/// one: Dimension Door's 24-tile reach makes it a 49x49 sweep scored
+/// against every hostile on the map, run for every pinned caster every
+/// turn, and it measurably dominated the AI driver's runtime when
+/// written that way. The probe costs a fixed ~32 candidates and lands
+/// on the same tactical answer, because "blink directly away from what
+/// is hitting you" is what the optimum almost always is.
+///
+/// Candidates are scored by the resulting Chebyshev gap to the closest
+/// hostile footprint and taken best-first; the first one that survives
+/// `validate` wins, so terrain, occupancy and line of sight are all
+/// enforced by the action itself rather than re-derived here. Only the
+/// top handful are validated — `validate` is the expensive part of the
+/// loop, and a blink that can't land among its best few is walled in
+/// well enough that the next-cheapest escape is the better answer.
+fn try_teleport_escape(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    /// How many best-scoring destinations to run through `validate`
+    /// before giving up on an action. Bounds the per-turn cost of the
+    /// search; a blink that can't find a legal landing spot among its
+    /// eight best is walled in well enough that the next-cheapest
+    /// escape is the better answer anyway.
+    const MAX_VALIDATIONS_PER_ACTION: usize = 8;
+
+    if !has_ranged_attack(encounter, actor_id) || !under_melee_threat(encounter, actor_id) {
+        return None;
+    }
+    let pinned = is_low_hp(encounter, actor_id, 0.5)
+        || n_actors_within(encounter, actor_id, 0, false, 2) >= 2;
+    if !pinned {
+        return None;
+    }
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let threats: Vec<(Coordinate, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| **id != actor_id && a.team() != my_team && a.is_combat_active())
+        .map(|(_, a)| (a.location(), get_tiles_from_size(a.size())))
+        .collect();
+    if threats.is_empty() {
+        return None;
+    }
+    let gap_to_nearest_threat = |c: Coordinate| -> isize {
+        threats
+            .iter()
+            .map(|(loc, sz)| footprint_chebyshev(c, my_size, *loc, *sz))
+            .min()
+            .unwrap_or(0)
+    };
+    let current_gap = gap_to_nearest_threat(my_loc);
+
+    for name in SELF_TELEPORT_ESCAPES {
+        let Some(action) = actor.find_action(name) else {
+            continue;
+        };
+        let Some(reach) = action.reach_tiles() else {
+            continue;
+        };
+        let mut candidates: Vec<(isize, Coordinate)> = Vec::new();
+        for (dx, dy) in COMPASS_DIRECTIONS {
+            // Probe from the far end inward: the whole point of a
+            // teleport is the distance, and a shorter hop is only worth
+            // considering when the long one is blocked.
+            for numerator in [4isize, 3, 2, 1] {
+                let dist = reach * numerator / 4;
+                if dist == 0 {
+                    continue;
+                }
+                let cand = Coordinate::new(my_loc.x + dx * dist, my_loc.y + dy * dist);
+                let gap = gap_to_nearest_threat(cand);
+                // Only landing spots that actually improve on standing
+                // still are worth a slot.
+                if gap > current_gap {
+                    candidates.push((gap, cand));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, dest) in candidates.into_iter().take(MAX_VALIDATIONS_PER_ACTION) {
+            let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![dest]), None);
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
+        }
+    }
+    None
+}
+
+/// Shapechanger — the Transmutation Wizard's emergency self-Polymorph.
+/// Thirty temp HP and a beast body, for an action and a per-short-rest
+/// charge.
+///
+/// The gate is where the whole judgement sits, because the form is
+/// itself a concentration and therefore drops whatever the wizard is
+/// currently holding. So there are two thresholds rather than one:
+///
+///   - Not concentrating: fire below 40% HP. The temp HP is pure
+///     upside and the charge refreshes on a short rest.
+///   - Concentrating: fire only below 20%. Giving up a Web or a Hold
+///     Monster is a real cost, and at that point the alternative is
+///     losing the concentration to going down anyway — a wizard at 0
+///     HP holds nothing either.
+///
+/// Never re-fires while already Polymorphed: the second cast would
+/// spend the action to re-apply a condition the wizard already has,
+/// and the temp HP pool doesn't stack.
+fn try_shapechanger(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Polymorphed) {
+        return None;
+    }
+    let threshold = if actor.is_concentrating() { 0.2 } else { 0.4 };
+    if !is_low_hp(encounter, actor_id, threshold) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "shapechanger")
+}
+
 /// Self-targeted heal (e.g. fighter Second Wind, drink healing potion).
 /// Triggers when the actor is below 50% HP. Tries every heal action,
 /// passing self as the target for `SingleActor` schemas (Lay on Hands,
@@ -6969,6 +7176,197 @@ mod tests {
         assert!(
             try_subtle_spell(&e, sorcerer).is_none(),
             "no SP → skip"
+        );
+    }
+
+    /// Test scaffold for the escape / self-preservation pickers: an
+    /// open map with a caster and however many hostiles the caller
+    /// wants pressed up against them.
+    fn pinned_caster(
+        template: &'static crate::actors::actor_template::CreatureTemplate,
+        n_adjacent: usize,
+    ) -> (EncounterInstance, usize) {
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let caster = e
+            .instantiate_creature(template, Coordinate::new(15, 15), 0, 0)
+            .unwrap();
+        for i in 0..n_adjacent {
+            let at = Coordinate::new(16, 14 + i as isize);
+            let _ = e.instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                at,
+                1,
+                i,
+            );
+        }
+        (e, caster)
+    }
+
+    /// A pinned ranged caster blinks out, and the destination is
+    /// strictly farther from the nearest threat than where it stood.
+    #[test]
+    fn teleport_escape_blinks_a_pinned_caster_away_from_melee() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let (e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 2);
+        let aei = try_teleport_escape(&e, wiz).expect("two adjacent hostiles is pinned");
+        assert_eq!(
+            aei.action().name(),
+            "misty step",
+            "the baseline wizard's only teleport"
+        );
+        let dest = aei.target_locations().as_ref().unwrap()[0];
+        let me = &e.actors[&wiz];
+        let my_size = get_tiles_from_size(me.size());
+        let gap = |c| {
+            e.actors
+                .values()
+                .filter(|a| a.team() != me.team() && a.is_combat_active())
+                .map(|a| footprint_chebyshev(c, my_size, a.location(), get_tiles_from_size(a.size())))
+                .min()
+                .unwrap_or(0)
+        };
+        assert!(
+            gap(dest) > gap(me.location()),
+            "the blink has to actually gain distance"
+        );
+    }
+
+    /// The three gates. A healthy caster with a single adjacent goblin
+    /// steps and shoots rather than burning a slot; a caster with no
+    /// hostile in contact has nothing to escape; and a melee actor
+    /// never blinks, because it would only have to walk back.
+    #[test]
+    fn teleport_escape_holds_its_resource_unless_genuinely_pinned() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let (e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 1);
+        assert!(
+            try_teleport_escape(&e, wiz).is_none(),
+            "one adjacent hostile at full HP is not pinned"
+        );
+
+        let (mut e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 1);
+        let max = e.actors[&wiz].max_hitpoints();
+        e.actors.get_mut(&wiz).unwrap().take_damage(max * 3 / 4);
+        assert!(
+            try_teleport_escape(&e, wiz).is_some(),
+            "the same contact below half HP is"
+        );
+
+        let (e, wiz) = pinned_caster(&WIZARD_TEMPLATE, 0);
+        assert!(
+            try_teleport_escape(&e, wiz).is_none(),
+            "nothing in contact, nothing to escape"
+        );
+
+        let (e, barb) = pinned_caster(&BARBARIAN_TEMPLATE, 2);
+        assert!(
+            try_teleport_escape(&e, barb).is_none(),
+            "a melee actor that blinks away only has to walk back"
+        );
+    }
+
+    /// Registry order is cheapest-resource-first, so a Conjuration
+    /// Wizard — which carries both the free rechargeable charge and
+    /// Misty Step's 2nd-level slot — spends the charge. With the charge
+    /// down it falls through to the slot, which is the whole reason the
+    /// picker walks a registry rather than naming one action.
+    #[test]
+    fn teleport_escape_spends_the_cheapest_resource_first() {
+        use crate::actions::class_features::BENIGN_TRANSPOSITION_TAG;
+        use crate::actors::creatures::wizards::CONJURATION_WIZARD_TEMPLATE;
+        let (mut e, wiz) = pinned_caster(&CONJURATION_WIZARD_TEMPLATE, 2);
+        let aei = try_teleport_escape(&e, wiz).expect("pinned");
+        assert_eq!(aei.action().name(), "benign transposition");
+
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .spend_feature(BENIGN_TRANSPOSITION_TAG);
+        let aei = try_teleport_escape(&e, wiz).expect("still pinned");
+        assert_eq!(
+            aei.action().name(),
+            "misty step",
+            "a spent charge falls through to the next row"
+        );
+    }
+
+    /// Shapechanger's two thresholds. The form costs the wizard their
+    /// concentration, so the AI demands a worse position before it will
+    /// trade one away — and it never re-fires while already
+    /// transformed.
+    #[test]
+    fn shapechanger_gate_is_stricter_while_concentrating() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::TRANSMUTATION_WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let hurt_to = |frac_remaining: u32| {
+            let (mut e, wiz) = pinned_caster(&TRANSMUTATION_WIZARD_TEMPLATE, 1);
+            let max = e.actors[&wiz].max_hitpoints();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .take_damage(max - (max * frac_remaining / 100).max(1));
+            (e, wiz)
+        };
+
+        let (e, wiz) = hurt_to(60);
+        assert!(
+            try_shapechanger(&e, wiz).is_none(),
+            "60% HP is not an emergency"
+        );
+
+        let (e, wiz) = hurt_to(30);
+        assert!(
+            try_shapechanger(&e, wiz).is_some(),
+            "30% HP with nothing to lose — take the temp HP"
+        );
+
+        let (mut e, wiz) = hurt_to(30);
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Web"));
+        assert!(
+            try_shapechanger(&e, wiz).is_none(),
+            "30% HP is not worth giving up a Web"
+        );
+
+        let (mut e, wiz) = hurt_to(10);
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Web"));
+        assert!(
+            try_shapechanger(&e, wiz).is_some(),
+            "at 10% the Web is lost either way"
+        );
+
+        // Never re-fires while already transformed.
+        let (mut e, wiz) = hurt_to(10);
+        e.actors.get_mut(&wiz).unwrap().add_condition(
+            Condition::Polymorphed,
+            ConditionTimer::Permanent,
+        );
+        assert!(
+            try_shapechanger(&e, wiz).is_none(),
+            "the temp HP pool doesn't stack — one form is all there is"
         );
     }
 
