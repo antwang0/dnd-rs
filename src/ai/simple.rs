@@ -82,6 +82,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3b*. See Invisibility — level-2 divination self-buff. Only
+        //      fires when an invisible hostile is actually on the map
+        //      and the caster can't already see through it, so the
+        //      slot is never spent speculatively. Placed right after
+        //      Mage Armor because being unable to see the enemy at all
+        //      dominates every offensive pick below: an unseen target
+        //      costs the caster disadvantage on every attack and hands
+        //      the enemy advantage on every swing back.
+        if let Some(aei) = try_see_invisibility(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b'. Armor of Agathys — warlock 1st-level self-buff: 5 temp
         //      HP + 5 cold reflected on melee hit. Pre-buff when an
         //      enemy is near so the retaliation will trigger. Costs
@@ -1224,6 +1236,53 @@ fn try_self_buff_mage_armor(
     // the caster has no Mage Armor spell or the slot is spent.
     try_self_action(encounter, actor_id, "mage armor")
         .or_else(|| try_self_action_inc_items(encounter, actor_id, "drink potion of mage armor"))
+}
+
+/// See Invisibility — level-2 divination self-buff. Fire only when the
+/// spell has something to do: at least one hostile inside the caster's
+/// engagement window is concealed by something the buff would actually
+/// pierce, and the caster can't already see through it.
+///
+/// The gate is the whole point of the picker. See Invisibility is
+/// worthless against every opponent that isn't invisible, so a naive
+/// "cast your buffs at the top of the fight" heuristic would throw away
+/// a level-2 slot in the overwhelming majority of encounters. Checking
+/// `concealment_piercing_of(...).pierces(c)` against the enemy's actual
+/// conditions asks exactly the right question — would this buff change
+/// whether I can see that creature — and answers it the same way the
+/// attack-mode clauses will.
+///
+/// Two short-circuits before the scan: the caster must not already hold
+/// a sight buff (the spell's own `custom_validate_input` also refuses,
+/// but bailing here skips the walk), and the target must be an enemy —
+/// an invisible *ally* is not a problem worth a slot.
+fn try_see_invisibility(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::SeeingInvisible)
+        || actor.has_condition(Condition::TrueSighted)
+    {
+        return None;
+    }
+    let team = actor.team();
+    let blinding_enemy = encounter.actors.iter().any(|(id, other)| {
+        if *id == actor_id || other.team() == team || !other.is_combat_active() {
+            return false;
+        }
+        // Something this enemy is wearing must be both (a) invisibility
+        // the buff would lift and (b) not already pierced.
+        other
+            .conditions()
+            .keys()
+            .any(|c| c.countered_by_see_invisibility())
+            && !encounter.viewer_can_see(actor_id, *id)
+    });
+    if !blinding_enemy {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "see invisibility")
 }
 
 /// Armor of Agathys — warlock signature 1st-level abjuration. Pre-buff
@@ -7343,5 +7402,56 @@ mod tests {
         let aei =
             super::try_self_buff_mage_armor(&e, fighter).expect("expected the potion fallback");
         assert_eq!(aei.action().name(), "drink potion of mage armor");
+    }
+
+    /// The See Invisibility picker fires only when the buff would
+    /// change something. Three cases against the same wizard: a plain
+    /// visible enemy (no cast — the slot would be wasted), an Invisible
+    /// enemy (cast), and an Invisible enemy the caster already sees
+    /// through via True Seeing (no cast — nothing left to lift).
+    #[test]
+    fn see_invisibility_picker_fires_only_against_unseen_enemies() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::condition_template::ConditionTimer;
+        let picked = |goblin_cover: Option<Condition>, wizard_sight: Option<Condition>| -> bool {
+            let mut e = empty_arena();
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            if let Some(c) = goblin_cover {
+                e.actors
+                    .get_mut(&goblin)
+                    .unwrap()
+                    .add_condition(c, ConditionTimer::Rounds(10));
+            }
+            if let Some(c) = wizard_sight {
+                e.actors
+                    .get_mut(&wizard)
+                    .unwrap()
+                    .add_condition(c, ConditionTimer::Rounds(10));
+            }
+            e.actors
+                .get_mut(&wizard)
+                .unwrap()
+                .give_resource(crate::engine::side_effects::Resource::Action);
+            super::try_see_invisibility(&e, wizard).is_some()
+        };
+        assert!(!picked(None, None), "a visible enemy is not worth a slot");
+        assert!(
+            picked(Some(Condition::Invisible), None),
+            "an invisible enemy is exactly what the spell is for"
+        );
+        assert!(
+            !picked(Some(Condition::Invisible), Some(Condition::TrueSighted)),
+            "True Seeing already pierces it — nothing left to buy"
+        );
+        assert!(
+            !picked(Some(Condition::Blurred), None),
+            "Blur is not invisibility; the spell would do nothing"
+        );
     }
 }

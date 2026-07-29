@@ -26350,6 +26350,97 @@ impl Action for TrueSeeing {
 
 pub static TRUE_SEEING: LazyLock<TrueSeeing> = LazyLock::new(|| TrueSeeing {});
 
+/// See Invisibility — level-2 divination (bard / sorcerer / wizard).
+/// **Self**-buff, 1 hour, no concentration: "for the duration, you see
+/// invisible creatures and objects as if they were visible."
+///
+/// The strictly weaker, four-slot-levels cheaper sibling of
+/// `TRUE_SEEING`, and the pair is what the engine's tiered
+/// `ConcealmentPiercing` exists to tell apart. True Seeing pierces the
+/// whole illusion cohort (`Invisible` / `Blurred` / `Displaced`); See
+/// Invisibility pierces `Invisible` alone, so a Blurred or Displaced
+/// opponent is exactly as hard to hit as before. Cast against the wrong
+/// defense it does nothing at all, which is the trade the lv2 price
+/// buys.
+///
+/// Three differences from `TRUE_SEEING` beyond the tier:
+///   - **Self-only.** RAW's target line is "Self", where True Seeing
+///     touches a willing creature. That drops the ally-targeting
+///     helpers and the reach / LOS gates with them.
+///   - **Level 2 rather than 6.** It lands on the wizard's loadout at a
+///     tier where the slot is genuinely spendable mid-fight, which is
+///     the point: a party that meets an invisible stalker at level 5
+///     has this and does not have True Seeing.
+///   - **No ally coverage.** Only the caster sees through the
+///     invisibility, so it answers "I can't hit the thing" and not
+///     "the party can't hit the thing".
+///
+/// Duration capped at 100 rounds like the other long utility buffs, and
+/// on `is_dispellable_buff` via `SeeingInvisible` so Dispel Magic can
+/// rip it.
+pub struct SeeInvisibility {}
+
+impl Action for SeeInvisibility {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
+    fn name(&self) -> &str {
+        "see invisibility"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["si", "see-inv", "seeinvis"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't re-cast over an existing sight buff. True Seeing is a
+        // strict superset, so a target already carrying it has nothing
+        // to gain and the slot would be thrown away.
+        actor_lacks_condition(encounter, caster_id, Condition::SeeingInvisible)
+            && actor_lacks_condition(encounter, caster_id, Condition::TrueSighted)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::SeeingInvisible,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static SEE_INVISIBILITY: LazyLock<SeeInvisibility> = LazyLock::new(|| SeeInvisibility {});
+
 /// Immolation — level-5 transmutation (sorcerer / wizard spell list),
 /// concentration. 90-ft single-target. The target makes a DEX save vs
 /// the caster's spell save DC; on a fail they take 8d6 fire damage AND

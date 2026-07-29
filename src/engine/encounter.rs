@@ -819,6 +819,46 @@ const KILL_TRIGGERED_TEMP_HP_SOURCES: &[KillTriggeredTempHpSource] = &[
     },
 ];
 
+/// How much of a subject's concealment a given viewer sees through.
+/// Produced by `EncounterInstance::concealment_piercing_of` and read at
+/// the concealment-suppression clauses, which need to know not just
+/// *whether* the viewer pierces but *what*: RAW's See Invisibility
+/// lifts `Invisible` and leaves `Blurred` / `Displaced` fully in play,
+/// which the pre-existing bool couldn't say.
+///
+/// The variants are a strict hierarchy — each tier pierces everything
+/// the tier below it does — which is what lets
+/// `concealment_piercing_of` return the first (strongest) source it
+/// finds instead of unioning cohorts. `pierces` is the only place the
+/// tiers meet their condition cohorts, so a new concealment condition
+/// is classified once, on `Condition`, rather than at every consumer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConcealmentPiercing {
+    /// Sees through nothing. The overwhelmingly common answer.
+    None,
+    /// Sees through invisibility and nothing else — See Invisibility,
+    /// the Divination Wizard's Third Eye.
+    Invisibility,
+    /// Sees through the whole illusion cohort — Truesight, Feral
+    /// Senses, Blindsense in range, Blind Fighting in range.
+    All,
+}
+
+impl ConcealmentPiercing {
+    /// True if this tier sees through `c`'s concealment. A condition
+    /// outside the concealment cohort entirely (Dodging, Holy Aura,
+    /// Foreseen — active defenses rather than illusions) is never
+    /// pierced by any tier, which is what keeps the suppression clauses
+    /// from having to re-check cohort membership themselves.
+    pub fn pierces(self, c: Condition) -> bool {
+        match self {
+            ConcealmentPiercing::None => false,
+            ConcealmentPiercing::Invisibility => c.countered_by_see_invisibility(),
+            ConcealmentPiercing::All => c.countered_by_truesight(),
+        }
+    }
+}
+
 /// Lowest foretold face a Divination Wizard will spend on a d20 they
 /// want to land *high* (their own roll, or an ally's). See
 /// `EncounterInstance::try_substitute_portent` for why the spend policy
@@ -1849,8 +1889,8 @@ impl EncounterInstance {
         // same helper lets each new "sees through illusion" tag land as
         // a one-line extension to `pierces_illusion_of` instead of a
         // new suppression clause at every attack-mode caller.
-        let attacker_pierces = self.pierces_illusion_of(attacker_id, target_id);
-        let target_pierces = self.pierces_illusion_of(target_id, attacker_id);
+        let attacker_piercing = self.concealment_piercing_of(attacker_id, target_id);
+        let target_piercing = self.concealment_piercing_of(target_id, attacker_id);
 
         // Attacker-side modifiers. The disadvantage / advantage cohorts
         // live on `Condition` itself (`imposes_attacker_disadvantage` /
@@ -1867,7 +1907,7 @@ impl EncounterInstance {
                     // attacker's invisibility-style concealment advantages
                     // (Invisible, Blurred, Displaced). Hidden / Helped /
                     // Bless / etc. are unaffected — they're not concealment.
-                    let suppressed = target_pierces && c.countered_by_truesight();
+                    let suppressed = target_piercing.pierces(*c);
                     if !suppressed {
                         mode = mode.combine(RollMode::Advantage);
                     }
@@ -1997,7 +2037,7 @@ impl EncounterInstance {
                     // Dodging / Holy Aura / Foreseen / etc. are
                     // unaffected — those are active defenses, not
                     // illusory concealment.
-                    let suppressed = attacker_pierces && c.countered_by_truesight();
+                    let suppressed = attacker_piercing.pierces(*c);
                     if !suppressed {
                         mode = mode.combine(RollMode::Disadvantage);
                     }
@@ -2094,7 +2134,7 @@ impl EncounterInstance {
     /// True if `viewer` can "see" `subject` in the RAW sense used by
     /// "when a creature you can see..." reaction gates (Warding Flare,
     /// Fighting Style: Protection, Fighting Style: Interception, and
-    /// friends). Two clauses in RAW:
+    /// friends). Three clauses in RAW:
     ///
     ///   1. **Viewer isn't Blinded** — a blinded observer sees nothing
     ///      period, regardless of what the subject is doing.
@@ -2102,6 +2142,17 @@ impl EncounterInstance {
     ///      Invisible / Blurred / Displaced subject is unseen UNLESS the
     ///      viewer's piercing lookup (Truesight / Feral Senses /
     ///      Blindsense-in-range) sees through it.
+    ///   3. **Nothing solid in between** — a wall between the two blocks
+    ///      sight in exactly the sense every targeting gate in the engine
+    ///      already means by it, via the footprint-aware
+    ///      `actor_has_line_of_sight`.
+    ///
+    /// Clause 3 is checked last because it is the only one that costs
+    /// more than a flag read: the Bresenham walk runs per footprint-tile
+    /// pair, and this helper sits on the per-attack reaction path
+    /// (Uncanny Dodge, Deflect Missiles, Protection, Interception). The
+    /// two cheap gates reject the common "blinded" / "invisible" cases
+    /// before it.
     ///
     /// Returns false when either actor is unknown. Sibling helper to
     /// `pierces_illusion_of` — that one answers "does the viewer see
@@ -2117,6 +2168,13 @@ impl EncounterInstance {
     /// gate. Pre-refactor Warding Flare only checked `Blinded` on the
     /// cleric, letting an Invisible attacker still draw the flare
     /// charge even though RAW the cleric couldn't see them.
+    ///
+    /// The wall clause landed later, for the same class of reason: the
+    /// helper claimed to answer "can the viewer see the subject" while
+    /// silently ignoring the terrain, so every consumer that isn't
+    /// already downstream of a targeting LOS check — the Divination
+    /// Wizard's Portent substitution is the first — would have reached
+    /// through solid rock.
     pub fn viewer_can_see(&self, viewer_id: usize, subject_id: usize) -> bool {
         let Some(viewer) = self.actors.get(&viewer_id) else {
             return false;
@@ -2131,16 +2189,45 @@ impl EncounterInstance {
         // set the attack-mode suppression clauses read — same cohort so
         // a future addition (a hypothetical Hide-in-Mists condition)
         // lands in one place instead of at every sight-gated caller.
+        // Asked per condition rather than in bulk: a viewer whose
+        // piercing tops out at See Invisibility does see an `Invisible`
+        // subject, but a `Blurred` one is still hidden from them, and a
+        // subject wearing both is hidden on the strength of the Blur.
+        let piercing = self.concealment_piercing_of(viewer_id, subject_id);
         let concealed = subject
             .conditions()
             .keys()
-            .any(|c| c.countered_by_truesight());
-        !concealed || self.pierces_illusion_of(viewer_id, subject_id)
+            .any(|c| c.countered_by_truesight() && !piercing.pierces(*c));
+        if concealed {
+            return false;
+        }
+        self.actor_has_line_of_sight(viewer_id, subject_id)
     }
 
-    /// True if `viewer` sees through `subject`'s illusion / invisibility
-    /// concealment. Unifies the three sources the `compute_attack_mode`
-    /// suppression clauses need to check:
+    /// True if `viewer` sees through *every* concealment in
+    /// `subject`'s illusion cohort — the `ConcealmentPiercing::All`
+    /// answer, kept as a named predicate because "does this viewer have
+    /// full truesight-grade piercing?" is the question most callers
+    /// actually have.
+    ///
+    /// Consumers that must distinguish *which* concealment is being
+    /// pierced (the attack-mode suppression clauses, `viewer_can_see`)
+    /// take `concealment_piercing_of` instead and ask it per condition:
+    /// a See Invisibility holder pierces `Invisible` but not `Blurred`,
+    /// which a bool can't express.
+    pub fn pierces_illusion_of(
+        &self,
+        viewer_id: usize,
+        subject_id: usize,
+    ) -> bool {
+        self.concealment_piercing_of(viewer_id, subject_id) == ConcealmentPiercing::All
+    }
+
+    /// How much of `subject`'s concealment `viewer` sees through.
+    /// Unifies every "sees through illusion" source in the engine into
+    /// one directed lookup, tiered by how much RAW lets each one see:
+    ///
+    /// **`All`** — the whole `countered_by_truesight` cohort:
     ///   - **Truesight** — sense (`SpecialSense::Truesight(_)` on Deva,
     ///     Solar, Pit Fiend, Lich, Kraken, Nalfeshnee, etc.) OR
     ///     transient `TrueSighted` condition (True Seeing spell / Eyes
@@ -2149,31 +2236,44 @@ impl EncounterInstance {
     ///   - **Blindsense** (Rogue lv14 class feature). 10-ft footprint-
     ///     Chebyshev envelope; gated on the viewer not being Deafened
     ///     (RAW: "while able to hear").
+    ///   - **Blind Fighting** (Tasha Fighting Style). Same 10-ft
+    ///     envelope, no hearing gate.
     ///
-    /// Returns false if either actor is unknown, keeping the caller
-    /// free of `is_some_and` chains. Callers pair `pierces_illusion_of`
-    /// against `Condition::countered_by_truesight` at the concealment-
-    /// suppression clauses — the suppression fires when the viewer
-    /// pierces AND the condition is in the illusion cohort.
+    /// **`Invisibility`** — the `countered_by_see_invisibility` cohort
+    /// only (`Invisible`; Blur and Displacement still fool the viewer):
+    ///   - **See Invisibility** (`SeeingInvisible` condition, from the
+    ///     level-2 divination spell). Unbounded range.
+    ///   - **The Third Eye** (Divination Wizard subclass lv10, which
+    ///     RAW grants as See Invisibility). Unbounded range.
+    ///
+    /// **`None`** — everything else, including an unknown actor id, so
+    /// callers stay free of `is_some_and` chains.
+    ///
+    /// Sources are checked strongest-first and the first hit wins:
+    /// a viewer holding both Truesight and See Invisibility is simply
+    /// `All`, which is what the tier ordering means. A new piercing
+    /// source lands as one clause in the tier it belongs to, and every
+    /// consumer picks it up through `ConcealmentPiercing::pierces`
+    /// without touching a `matches!` at the call site.
     ///
     /// The "attacker → target" and "target → attacker" symmetry lives
     /// at the call site (both angles matter in `compute_attack_mode`):
     /// this helper takes an already-directed (viewer, subject) pair
     /// and stays polarity-neutral.
-    pub fn pierces_illusion_of(
+    pub fn concealment_piercing_of(
         &self,
         viewer_id: usize,
         subject_id: usize,
-    ) -> bool {
+    ) -> ConcealmentPiercing {
         let Some(viewer) = self.actors.get(&viewer_id) else {
-            return false;
+            return ConcealmentPiercing::None;
         };
         // Truesight and Feral Senses are unbounded-range so they short-
         // circuit before we look up the subject at all — saves a
         // hashmap lookup on the vastly more common attack-mode path
         // where neither actor holds the flag.
         if viewer.has_truesight() || viewer.has_feral_senses() {
-            return true;
+            return ConcealmentPiercing::All;
         }
         // Range-gated piercers — Blindsense (Rogue lv14) and Blind
         // Fighting (Tasha Fighting Style) both project a 10-ft
@@ -2197,11 +2297,23 @@ impl EncounterInstance {
         if viewer.has_blind_fighting_style() {
             envelope = envelope.max(4);
         }
+        // The invisibility-only tier is unbounded-range too, so it can
+        // be answered before the distance read. It sits *below* the
+        // range-gated `All` sources: a rogue's Blindsense inside its
+        // envelope is strictly better than See Invisibility, so the
+        // envelope check has to come first and only fall through to
+        // this tier on a miss.
+        let sees_invisible = viewer.has_condition(Condition::SeeingInvisible)
+            || viewer.has_passive_feature(crate::actions::class_features::THIRD_EYE_TAG);
         if envelope == 0 {
-            return false;
+            return if sees_invisible {
+                ConcealmentPiercing::Invisibility
+            } else {
+                ConcealmentPiercing::None
+            };
         }
         let Some(subject) = self.actors.get(&subject_id) else {
-            return false;
+            return ConcealmentPiercing::None;
         };
         // Uses footprint distance so a Large / Huge subject's edge
         // counts (a Huge invisible creature 6 ft away pierces even
@@ -2212,7 +2324,13 @@ impl EncounterInstance {
             subject.location(),
             get_tiles_from_size(subject.size()),
         );
-        dist <= envelope
+        if dist <= envelope {
+            ConcealmentPiercing::All
+        } else if sees_invisible {
+            ConcealmentPiercing::Invisibility
+        } else {
+            ConcealmentPiercing::None
+        }
     }
 
     /// Compute the save-roll mode for an actor's ability save.
@@ -62619,15 +62737,18 @@ mod tests {
     }
 
     /// RAW gates the substitution on "a creature that you can see", with
-    /// the diviner's own rolls exempt from the sight clause. Pins all
-    /// three branches: a blinded diviner can't sink an enemy's roll, an
-    /// Invisible enemy is out of reach of the forecast, and neither
-    /// gate touches the diviner's own d20.
+    /// the diviner's own rolls exempt from the sight clause. Pins four
+    /// branches, the last two of which are also the sharpest available
+    /// test of the Third Eye's piercing tier: a blinded diviner can't
+    /// sink an enemy's roll; an *Invisible* enemy is still reachable
+    /// (The Third Eye is permanent See Invisibility); a *Blurred* one is
+    /// not (See Invisibility stops at invisibility, and Blur is a
+    /// different lie); and neither gate touches the diviner's own d20.
     #[test]
     fn portent_needs_sight_of_anyone_but_the_diviner() {
         use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        let seeded = |blind_diviner: bool, invisible_goblin: bool| -> (u32, Vec<u32>) {
+        let seeded = |blind_diviner: bool, goblin_cover: Option<Condition>| -> Vec<u32> {
             let mut e = ei_with_terrain(15, 15, &[]);
             let diviner = e
                 .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -62645,25 +62766,29 @@ mod tests {
                     .unwrap()
                     .add_condition(Condition::Blinded, ConditionTimer::Permanent);
             }
-            if invisible_goblin {
+            if let Some(c) = goblin_cover {
                 e.actors
                     .get_mut(&goblin)
                     .unwrap()
-                    .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+                    .add_condition(c, ConditionTimer::Permanent);
             }
-            let rolled = e.roll_d20_lucky(goblin, RollMode::Normal);
-            (rolled, e.actors[&diviner].portent_pool().to_vec())
+            let _ = e.roll_d20_lucky(goblin, RollMode::Normal);
+            e.actors[&diviner].portent_pool().to_vec()
         };
-        assert_eq!(seeded(false, false), (2, vec![]), "plain sight: the 2 lands");
+        assert!(seeded(false, None).is_empty(), "plain sight: the 2 lands");
         assert_eq!(
-            seeded(true, false).1,
+            seeded(true, None),
             vec![2],
             "a blinded diviner foresees nothing they can act on"
         );
+        assert!(
+            seeded(false, Some(Condition::Invisible)).is_empty(),
+            "The Third Eye is See Invisibility — an Invisible target is still reachable"
+        );
         assert_eq!(
-            seeded(false, true).1,
+            seeded(false, Some(Condition::Blurred)),
             vec![2],
-            "an Invisible target is out of the forecast's reach"
+            "See Invisibility stops at invisibility; Blur still hides the target"
         );
 
         // The sight gates never apply to the diviner's own roll.
@@ -62895,5 +63020,320 @@ mod tests {
                 spell.name()
             );
         }
+    }
+    /// `viewer_can_see` respects walls. The helper answers "can the
+    /// viewer see the subject right now", and terrain is the third way
+    /// that answer can be no — alongside the viewer being Blinded and
+    /// the subject being illusion-concealed. Pinned on both a
+    /// consumer-visible path (a Divination Wizard's Portent, which can
+    /// only reach a creature it can see) and the helper directly, so a
+    /// future refactor can't quietly drop the clause back out.
+    #[test]
+    fn viewer_can_see_is_blocked_by_walls() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        // A full-height wall column at x=3 splits the map in two.
+        let wall: Vec<(isize, isize)> = (0..11).map(|y| (3, y)).collect();
+        let mut e = ei_with_terrain(11, 11, &wall);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(1, 5), 0, 0)
+            .unwrap();
+        let walled_off = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let in_the_open = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(1, 8), 1, 1)
+            .unwrap();
+        assert!(!e.viewer_can_see(diviner, walled_off));
+        assert!(e.viewer_can_see(diviner, in_the_open));
+
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .set_portent_pool(vec![1]);
+        // The goblin behind the wall rolls unmolested...
+        let rolled = e.roll_d20_lucky(walled_off, RollMode::Normal);
+        assert!((1..=20).contains(&rolled));
+        assert_eq!(e.actors[&diviner].portent_pool(), &[1]);
+        // ...while the one in the open eats the foretold 1.
+        assert_eq!(e.roll_d20_lucky(in_the_open, RollMode::Normal), 1);
+        assert!(e.actors[&diviner].portent_pool().is_empty());
+    }
+    /// The piercing tiers are a strict hierarchy, and every tier
+    /// pierces exactly its own cohort. Drift pin on the containment
+    /// invariant `ConcealmentPiercing` relies on to return the first
+    /// (strongest) source it finds rather than unioning cohorts: if a
+    /// future concealment condition were added to
+    /// `countered_by_see_invisibility` without also joining
+    /// `countered_by_truesight`, a Truesight holder would silently stop
+    /// seeing through something a See Invisibility holder does.
+    #[test]
+    fn concealment_piercing_tiers_are_a_strict_hierarchy() {
+        for c in [
+            Condition::Invisible,
+            Condition::Blurred,
+            Condition::Displaced,
+            Condition::Dodging,
+            Condition::Prone,
+        ] {
+            assert!(
+                !c.countered_by_see_invisibility() || c.countered_by_truesight(),
+                "{:?} is pierced by See Invisibility but not by Truesight",
+                c
+            );
+            assert!(
+                !ConcealmentPiercing::None.pierces(c),
+                "the None tier pierces nothing"
+            );
+            assert_eq!(
+                ConcealmentPiercing::All.pierces(c),
+                c.countered_by_truesight()
+            );
+            assert_eq!(
+                ConcealmentPiercing::Invisibility.pierces(c),
+                c.countered_by_see_invisibility()
+            );
+        }
+        assert!(ConcealmentPiercing::None < ConcealmentPiercing::Invisibility);
+        assert!(ConcealmentPiercing::Invisibility < ConcealmentPiercing::All);
+    }
+
+    /// `concealment_piercing_of` reports the strongest source the viewer
+    /// holds. Walks a single viewer up the ladder — nothing, then See
+    /// Invisibility, then True Seeing — and pins that the stronger tier
+    /// wins when both are held, which is what makes "return the first
+    /// hit" correct rather than merely convenient.
+    #[test]
+    fn concealment_piercing_reports_the_strongest_source() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let viewer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        // Far apart so no 10-ft range-gated piercer could be involved.
+        let subject = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.concealment_piercing_of(viewer, subject),
+            ConcealmentPiercing::None
+        );
+        assert!(!e.pierces_illusion_of(viewer, subject));
+
+        e.actors
+            .get_mut(&viewer)
+            .unwrap()
+            .add_condition(Condition::SeeingInvisible, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.concealment_piercing_of(viewer, subject),
+            ConcealmentPiercing::Invisibility
+        );
+        assert!(
+            !e.pierces_illusion_of(viewer, subject),
+            "pierces_illusion_of means the whole cohort, which this tier is not"
+        );
+
+        e.actors
+            .get_mut(&viewer)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.concealment_piercing_of(viewer, subject),
+            ConcealmentPiercing::All,
+            "the stronger source wins when both are held"
+        );
+        assert!(e.pierces_illusion_of(viewer, subject));
+    }
+
+    /// See Invisibility at the attack-mode clauses, on both polarities
+    /// and against both halves of the cohort. The interesting cell is
+    /// the one a boolean piercer got wrong: a See Invisibility holder
+    /// swinging at a Blurred target is still at disadvantage, where a
+    /// True Seeing holder is not.
+    #[test]
+    fn see_invisibility_suppresses_only_the_invisible_row() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mode = |viewer_sight: Option<Condition>, target_cover: Condition| -> RollMode {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let attacker = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+                .unwrap();
+            if let Some(c) = viewer_sight {
+                e.actors
+                    .get_mut(&attacker)
+                    .unwrap()
+                    .add_condition(c, ConditionTimer::Rounds(10));
+            }
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .add_condition(target_cover, ConditionTimer::Rounds(10));
+            e.compute_attack_mode(attacker, target, false)
+        };
+        // Baseline: both concealments impose disadvantage.
+        assert_eq!(mode(None, Condition::Invisible), RollMode::Disadvantage);
+        assert_eq!(mode(None, Condition::Blurred), RollMode::Disadvantage);
+        // See Invisibility lifts one of them and only one.
+        assert_eq!(
+            mode(Some(Condition::SeeingInvisible), Condition::Invisible),
+            RollMode::Normal
+        );
+        assert_eq!(
+            mode(Some(Condition::SeeingInvisible), Condition::Blurred),
+            RollMode::Disadvantage,
+            "Blur is not invisibility — the lv2 spell does nothing here"
+        );
+        // True Seeing lifts both, which is what the extra four slot
+        // levels buy.
+        assert_eq!(
+            mode(Some(Condition::TrueSighted), Condition::Invisible),
+            RollMode::Normal
+        );
+        assert_eq!(
+            mode(Some(Condition::TrueSighted), Condition::Blurred),
+            RollMode::Normal
+        );
+
+        // Target-side polarity: an Invisible attacker's advantage is
+        // suppressed by a defender who can see invisible creatures.
+        // Only `Invisible` is in the `grants_self_attack_advantage`
+        // cohort — Blur and Displacement make you harder to hit without
+        // making you better at hitting — so this polarity has exactly
+        // one row for See Invisibility to act on, and the tier
+        // distinction that mattered on the attacker side is moot here.
+        let target_side = |defender_sight: Option<Condition>, attacker_cover: Condition| -> RollMode {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let attacker = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let defender = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&attacker)
+                .unwrap()
+                .add_condition(attacker_cover, ConditionTimer::Rounds(10));
+            if let Some(c) = defender_sight {
+                e.actors
+                    .get_mut(&defender)
+                    .unwrap()
+                    .add_condition(c, ConditionTimer::Rounds(10));
+            }
+            e.compute_attack_mode(attacker, defender, false)
+        };
+        assert_eq!(
+            target_side(None, Condition::Invisible),
+            RollMode::Advantage,
+            "baseline: an Invisible attacker swings at advantage"
+        );
+        assert_eq!(
+            target_side(Some(Condition::SeeingInvisible), Condition::Invisible),
+            RollMode::Normal,
+            "the defender sees them coming"
+        );
+        assert_eq!(
+            target_side(Some(Condition::SeeingInvisible), Condition::Blurred),
+            RollMode::Normal,
+            "a Blurred attacker never had advantage to suppress"
+        );
+    }
+
+    /// The See Invisibility spell end-to-end through `Action::execute`:
+    /// a level-2 slot, a self-install, and the resulting piercing tier.
+    /// Also pins the anti-waste gate — the spell refuses to fire over an
+    /// existing sight buff, including the strictly stronger True Seeing.
+    #[test]
+    fn see_invisibility_installs_the_invisibility_tier() {
+        use crate::actions::spells::SEE_INVISIBILITY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        assert!(SEE_INVISIBILITY.custom_validate_input(&e, wizard, None, None, None));
+        let l2_before = e.actors[&wizard].spell_slot_manager.spell_slots(2).spell_slots;
+        for ef in SEE_INVISIBILITY.execute(&mut e, wizard, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wizard].has_condition(Condition::SeeingInvisible));
+        assert_eq!(
+            e.actors[&wizard].spell_slot_manager.spell_slots(2).spell_slots,
+            l2_before - 1,
+            "a level-2 slot paid for it"
+        );
+        assert_eq!(
+            e.concealment_piercing_of(wizard, goblin),
+            ConcealmentPiercing::Invisibility
+        );
+        // Already buffed — no double-cast.
+        assert!(!SEE_INVISIBILITY.custom_validate_input(&e, wizard, None, None, None));
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .remove_condition(Condition::SeeingInvisible);
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert!(
+            !SEE_INVISIBILITY.custom_validate_input(&e, wizard, None, None, None),
+            "True Seeing is a strict superset — the lv2 slot would be thrown away"
+        );
+    }
+
+    /// The Divination Wizard's Third Eye reaches the same tier as the
+    /// spell without spending anything, and stops in the same place.
+    /// Pins the passive-feature half of the `Invisibility` tier next to
+    /// the condition half.
+    #[test]
+    fn third_eye_grants_permanent_see_invisibility() {
+        use crate::actors::creatures::wizards::{DIVINATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(1, 3), 0, 1)
+            .unwrap();
+        // Far enough that no 10-ft range-gated piercer can be involved.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.concealment_piercing_of(diviner, goblin),
+            ConcealmentPiercing::Invisibility,
+            "no action, no slot, no condition — the tag alone"
+        );
+        assert_eq!(
+            e.concealment_piercing_of(baseline, goblin),
+            ConcealmentPiercing::None
+        );
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert!(e.viewer_can_see(diviner, goblin));
+        assert!(!e.viewer_can_see(baseline, goblin));
+        // ...and stops at invisibility for both the tag and the spell.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Blurred, ConditionTimer::Rounds(10));
+        assert!(
+            !e.viewer_can_see(diviner, goblin),
+            "a subject wearing both is hidden on the strength of the Blur"
+        );
     }
 }

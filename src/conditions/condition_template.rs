@@ -1266,6 +1266,26 @@ pub enum Condition {
     /// (no condition) and apply unconditionally; True Sight is a
     /// short-duration *buff* a caster can toggle for a specific fight.
     TrueSighted,
+    /// Seeing-Invisible (5e See Invisibility, level-2 divination). The
+    /// strictly weaker sibling of `TrueSighted` and the reason the
+    /// engine's concealment piercing is tiered rather than boolean: the
+    /// holder sees invisible creatures, and *only* invisible creatures.
+    /// A Blurred or Displaced target still fools them completely — RAW
+    /// those aren't invisibility, they distort where you appear to be,
+    /// which is a lie a viewer who can see you still believes.
+    ///
+    /// Mechanically: `concealment_piercing_of` reports
+    /// `ConcealmentPiercing::Invisibility` for the holder, which
+    /// suppresses exactly the `Invisible` row of the attack-mode
+    /// concealment clauses (both polarities — the holder ignores an
+    /// Invisible target's disadvantage, and an Invisible attacker gets
+    /// no advantage against the holder) and lifts the holder's
+    /// `viewer_can_see` gate against an Invisible subject.
+    ///
+    /// Concentration-free RAW (1 hour); installed as a flat `Rounds`
+    /// timer plus the standard `is_dispellable_buff` hook so Dispel
+    /// Magic can strip it, matching `TrueSighted` exactly on both.
+    SeeingInvisible,
     /// Immolated (5e Immolation, level-5 transmutation, concentration).
     /// The target is engulfed in magical flames: they take 4d6 fire damage
     /// at the end of each of their turns (via the standard
@@ -1517,6 +1537,7 @@ impl Condition {
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::TrueSighted => "true-sighted",
+            Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
             Condition::GuidedStriking => "primed with a guided strike",
         }
@@ -1615,6 +1636,7 @@ impl Condition {
                 | Condition::MoilShrouded
                 | Condition::ElementallyWeaponed
                 | Condition::TrueSighted
+                | Condition::SeeingInvisible
                 | Condition::GuidedStriking
         )
     }
@@ -1637,6 +1659,27 @@ impl Condition {
             self,
             Condition::Invisible | Condition::Blurred | Condition::Displaced
         )
+    }
+
+    /// True if this condition's concealment is the **invisibility**
+    /// kind specifically — the strictly narrower cohort that a See
+    /// Invisibility effect pierces, as against the full
+    /// `countered_by_truesight` set that Truesight pierces.
+    ///
+    /// RAW draws the line exactly here: See Invisibility (and the
+    /// Divination Wizard's Third Eye, which grants it) lets you "see
+    /// invisible creatures and objects" and nothing else. Blur and
+    /// Displacement are not invisibility — they distort where you
+    /// appear to be, which a viewer who can see you is still fooled by
+    /// — so a See Invisibility holder attacking a Blurred target still
+    /// swings at disadvantage.
+    ///
+    /// Every member of this cohort must also be in
+    /// `countered_by_truesight`: Truesight is strictly stronger, and
+    /// `ConcealmentPiercing`'s ordering encodes that. A drift test pins
+    /// the containment.
+    pub fn countered_by_see_invisibility(&self) -> bool {
+        matches!(self, Condition::Invisible)
     }
 
     /// True if this condition is one of the **Smite-family** primes —

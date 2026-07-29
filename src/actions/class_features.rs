@@ -9504,6 +9504,33 @@ pub const OVERCHANNEL_TAG: &str = "wizard.overchannel";
 /// the most valuable expended slot in it.
 pub const EXPERT_DIVINATION_TAG: &str = "wizard.expert_divination";
 
+/// Class-feature tag for the Divination Wizard's **The Third Eye**
+/// (School of Divination subclass level 10, PHB). Passive membership
+/// marker read via `has_passive_feature`, never spent.
+///
+/// RAW: an action, once per short rest, to gain one of four benefits
+/// until the next rest — Darkvision, Ethereal Sight, Greater
+/// Comprehension (read any language), or See Invisibility. Three of the
+/// four have no surface at the resolution this engine models: it has no
+/// light level, no Ethereal Plane, and no written text. The fourth is
+/// the only one that touches combat, so the feature collapses to a
+/// permanent, no-action See Invisibility.
+///
+/// Collapsing the choice rather than modeling it is the right trade
+/// here precisely *because* three options are inert: an "action to pick
+/// one of four" surface where three picks do nothing is a worse model
+/// of the feature than a passive that always grants the one that does.
+/// The action cost goes with it — RAW's cost buys the choice, and there
+/// is no choice left to buy.
+///
+/// Read at `EncounterInstance::concealment_piercing_of`, in the
+/// `ConcealmentPiercing::Invisibility` tier next to the
+/// `SeeingInvisible` condition the level-2 spell installs. That tier is
+/// what keeps the collapse honest: a Truesight-shaped approximation
+/// would have handed the diviner free Blur and Displacement piercing
+/// RAW denies them.
+pub const THIRD_EYE_TAG: &str = "wizard.third_eye";
+
 /// Overchannel — Evocation Wizard prime. Free (no action, no bonus
 /// action, no slot): declares that the caster's next damaging spell of
 /// level 1-5 deals maximum damage instead of rolling.

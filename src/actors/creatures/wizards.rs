@@ -579,6 +579,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     defensive-counter half against an illusionist opponent.
     actions.push(&*crate::actions::spells::IMMOLATION);
     actions.push(&*crate::actions::spells::TRUE_SEEING);
+    // See Invisibility — the lv2 half of the same answer. Carried
+    // alongside True Seeing rather than instead of it because the two
+    // are priced four slot levels apart and pierce different amounts:
+    // against a plain Invisible opponent the lv2 self-buff is the right
+    // spend, and the lv6 slot stays free for Globe / Mass Suggestion.
+    actions.push(&*crate::actions::spells::SEE_INVISIBILITY);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -1035,6 +1041,12 @@ pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 ///   - **Expert Divination** (subclass lv6) — casting a divination
 ///     spell of 2nd level or higher refunds one expended slot of a
 ///     lower level (never above 5th).
+///   - **The Third Eye** (subclass lv10) — permanent See Invisibility.
+///
+/// Which is the RAW feature set **complete**, the second subclass in
+/// the engine to ship that way after `EVOCATION_WIZARD_TEMPLATE`. Only
+/// Divination Savant's out-of-combat spellbook-copying discount has no
+/// surface, and it has no combat surface in RAW either.
 ///
 /// The signature "the diviner already knows how this goes" tell. Where
 /// every other wizard tradition changes what a spell *does*, Portent
@@ -1058,19 +1070,15 @@ pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// clear the "divination, 2nd level or higher" gate and each refunds
 /// the best expended slot at or below 5th.
 ///
-/// The RAW feature set ships **complete**, the second subclass in the
-/// engine to do so after `EVOCATION_WIZARD_TEMPLATE`: Divination
-/// Savant's spellbook-copying discount has no combat surface in RAW,
-/// and The Third Eye (subclass lv10) has none either at the resolution
-/// the engine models — its four benefits are darkvision, ethereal
-/// sight, reading any language, and See Invisibility, of which only the
-/// last touches combat and only against the `Invisible` half of the
-/// engine's illusion cohort. `pierces_illusion_of` is all-or-nothing
-/// across that cohort (Invisible / Blurred / Displaced together), so a
-/// faithful Third Eye needs per-condition piercing granularity that no
-/// existing feature has asked for; a Truesight-shaped approximation
-/// would hand the diviner free Blur and Displacement piercing RAW
-/// denies them, which is a worse trade than shipping without it.
+/// The Third Eye collapses RAW's "action, once per short rest, pick one
+/// of four benefits" to a permanent passive because three of the four
+/// (Darkvision, Ethereal Sight, Greater Comprehension) have nothing to
+/// act on at the resolution the engine models — it has no light level,
+/// no Ethereal Plane and no written text. The fourth, See Invisibility,
+/// lands in the `ConcealmentPiercing::Invisibility` tier rather than
+/// being approximated as Truesight, so the diviner sees through an
+/// `Invisible` opponent and stays fooled by `Blurred` / `Displaced`
+/// exactly as RAW intends.
 ///
 /// Distinct from the five sibling wizard-chassis templates:
 /// `WIZARD_TEMPLATE` (subclass-less baseline),
@@ -1096,6 +1104,7 @@ pub static DIVINATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     // uses for its four tags plus an action.
     let mut features = WIZARD_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::EXPERT_DIVINATION_TAG);
+    features.insert(crate::actions::class_features::THIRD_EYE_TAG);
     CreatureTemplate {
         name: "Divination Wizard",
         glyph: 'Ψ',
