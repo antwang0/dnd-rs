@@ -3062,6 +3062,9 @@ pub static SPIRITUAL_WEAPON: LazyLock<SpiritualWeapon> = LazyLock::new(|| Spirit
 pub struct HuntersMark {}
 
 impl Action for HuntersMark {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
     fn name(&self) -> &str {
         "hunters mark"
     }
@@ -12312,6 +12315,9 @@ pub static HOLY_AURA: LazyLock<HolyAura> = LazyLock::new(|| HolyAura {});
 pub struct Foresight {}
 
 impl Action for Foresight {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
     fn name(&self) -> &str {
         "foresight"
     }
@@ -16679,6 +16685,9 @@ pub static SNILLOCS_SNOWBALL_SWARM: LazyLock<SnillocsSnowballSwarm> =
 pub struct MindSpike {}
 
 impl Action for MindSpike {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
     fn name(&self) -> &str {
         "mind spike"
     }
@@ -26266,6 +26275,9 @@ pub static PROTECTION_FROM_POISON: LazyLock<ProtectionFromPoison> =
 pub struct TrueSeeing {}
 
 impl Action for TrueSeeing {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
     fn name(&self) -> &str {
         "true seeing"
     }

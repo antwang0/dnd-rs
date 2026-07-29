@@ -819,6 +819,29 @@ const KILL_TRIGGERED_TEMP_HP_SOURCES: &[KillTriggeredTempHpSource] = &[
     },
 ];
 
+/// Lowest foretold face a Divination Wizard will spend on a d20 they
+/// want to land *high* (their own roll, or an ally's). See
+/// `EncounterInstance::try_substitute_portent` for why the spend policy
+/// is a pair of decisiveness cutoffs rather than a DC comparison.
+///
+/// 18 clears the AC / DC band the engine's mid-tier creatures sit in
+/// once a caster's or martial's modifier is added, so a die at or above
+/// it converts a coin-flip into near-certainty on its own. Below that
+/// the die is worth more banked: with only two or three per long rest,
+/// spending one to turn a likely hit into a slightly likelier hit is
+/// how the feature gets wasted.
+const PORTENT_HIGH_FACE: u32 = 18;
+
+/// Highest foretold face a Divination Wizard will spend on a d20 they
+/// want to land *low* (an enemy's). Mirror of `PORTENT_HIGH_FACE` on
+/// the other end of the die, and deliberately not its exact reflection
+/// (which would be 3): the low end is worth spending slightly wider
+/// because the rolls a diviner most wants to sink — a boss's save
+/// against the party's one control spell, a giant's swing at the
+/// party's downed healer — are the ones where the target's own
+/// modifier is large enough that only a genuinely bad face helps.
+const PORTENT_LOW_FACE: u32 = 5;
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -1538,7 +1561,18 @@ impl EncounterInstance {
     /// taken even if it's worse. Used by every attack / save / check
     /// rolled by an actor with `has_lucky`. Missing actor falls back to
     /// the un-modified roll.
+    ///
+    /// A Divination Wizard's **Portent** gets first refusal on the die,
+    /// ahead of the roll itself: RAW's "you must choose to do so before
+    /// the roll" means the substitution can't look at what would have
+    /// come up, so it has to short-circuit here rather than post-process
+    /// a result. A substituted face therefore bypasses the Lucky reroll
+    /// entirely, which is also the RAW reading — Lucky rerolls "the
+    /// d20", and a foretold face was never rolled.
     pub fn roll_d20_lucky(&mut self, actor_id: usize, mode: RollMode) -> u32 {
+        if let Some(foretold) = self.try_substitute_portent(actor_id) {
+            return foretold;
+        }
         let raw = self.roll_d20_with_mode(mode);
         if raw != 1 {
             return raw;
@@ -1562,6 +1596,142 @@ impl EncounterInstance {
             name, reroll
         ));
         reroll
+    }
+
+    /// 5e Divination Wizard **Portent** (subclass level 2): offer every
+    /// diviner in the encounter the chance to replace `roller_id`'s
+    /// incoming d20 with one of their banked foretold faces. Returns
+    /// `Some(face)` when one is spent — the caller then skips the roll
+    /// entirely — and `None` on the overwhelmingly common no-diviner /
+    /// no-worthwhile-die path.
+    ///
+    /// RAW: "You can replace any attack roll, saving throw, or ability
+    /// check made by you or a creature that you can see with one of
+    /// these foretold rolls. You must choose to do so before the roll."
+    /// Every one of those roll kinds funnels through `roll_d20_lucky`,
+    /// so the hook needs exactly one site.
+    ///
+    /// **Direction.** A diviner wants their own and their allies' rolls
+    /// to land high and their enemies' to land low, so the pool is read
+    /// from opposite ends depending on whose die is in flight
+    /// (`want_high`). The diviner is always eligible against their own
+    /// roll regardless of sight — RAW's "made by you" clause is not
+    /// gated on seeing yourself.
+    ///
+    /// **Thresholds.** RAW leaves the spend decision to the player, who
+    /// knows the DC, the stakes, and how many rounds are left. The
+    /// engine has none of that at this site — `roll_d20_lucky` is
+    /// deliberately context-free, taking only a roller and a mode — so
+    /// the policy is a pair of decisiveness cutoffs: burn a die only
+    /// when it is near-certain to swing the outcome on its own
+    /// (`>= PORTENT_HIGH_FACE` for a roll the diviner wants to succeed,
+    /// `<= PORTENT_LOW_FACE` for one they want to fail). A middling
+    /// forecast is held rather than wasted, which is also how the
+    /// feature is played at the table. With a two-die bank the policy
+    /// caps the feature at two swings per long rest, so the cutoffs
+    /// bound the blast radius without needing any of the context.
+    ///
+    /// Diviners are polled in ascending id order so a hypothetical
+    /// two-diviner party spends dice deterministically under a fixed
+    /// seed. The first one holding a decisive die wins; the rest keep
+    /// theirs, matching RAW's one-replacement-per-roll rule.
+    fn try_substitute_portent(&mut self, roller_id: usize) -> Option<u32> {
+        // Cheapest possible bail on the hot path: this runs on every
+        // d20 the engine rolls, and no encounter without a diviner in
+        // it should pay more than a scan of a flag per actor.
+        if !self.actors.values().any(|a| a.has_portent()) {
+            return None;
+        }
+        for diviner_id in self.sorted_actor_ids() {
+            let Some(diviner) = self.actors.get(&diviner_id) else {
+                continue;
+            };
+            if !diviner.has_portent() || !diviner.is_combat_active() {
+                continue;
+            }
+            let is_self = diviner_id == roller_id;
+            if !is_self && !self.viewer_can_see(diviner_id, roller_id) {
+                continue;
+            }
+            self.forecast_portent(diviner_id);
+            let want_high = is_self || self.actors_allied(diviner_id, roller_id);
+            let Some(face) = self
+                .actors
+                .get(&diviner_id)
+                .and_then(|d| d.peek_portent_die(want_high))
+            else {
+                continue;
+            };
+            let decisive = if want_high {
+                face >= PORTENT_HIGH_FACE
+            } else {
+                face <= PORTENT_LOW_FACE
+            };
+            if !decisive {
+                continue;
+            }
+            let taken = self
+                .actors
+                .get_mut(&diviner_id)
+                .and_then(|d| d.take_portent_die(want_high))?;
+            let diviner_name = self.actor_name(diviner_id);
+            let remaining = self
+                .actors
+                .get(&diviner_id)
+                .map(|d| d.portent_pool().len())
+                .unwrap_or(0);
+            if is_self {
+                self.log(format!(
+                    "  portent: {} substitutes a foretold {} ({} left)",
+                    diviner_name, taken, remaining
+                ));
+            } else {
+                self.log(format!(
+                    "  portent: {} substitutes a foretold {} for {} ({} left)",
+                    diviner_name,
+                    taken,
+                    self.actor_name(roller_id),
+                    remaining
+                ));
+            }
+            return Some(taken);
+        }
+        None
+    }
+
+    /// Roll this diviner's banked foretold faces if they haven't been
+    /// rolled since their last long rest. No-op for non-holders and for
+    /// an already-forecast (even fully-spent) pool.
+    ///
+    /// RAW rolls the dice at the end of the long rest. We roll them at
+    /// the first substitution opportunity instead, because
+    /// `ActorInstance::long_rest` takes no roller and threading one
+    /// through every rest call site would buy nothing observable — the
+    /// pool is opaque until it is read, and rolling off the encounter's
+    /// seeded roller keeps the values reproducible by seed either way.
+    /// The `portent_forecast` latch on the actor is what makes the fill
+    /// happen exactly once per rest.
+    fn forecast_portent(&mut self, diviner_id: usize) {
+        let count = self
+            .actors
+            .get(&diviner_id)
+            .filter(|d| !d.portent_forecast())
+            .map(|d| d.portent_dice_max())
+            .unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+        let faces: Vec<u32> = (0..count).map(|_| self.roll_d20_with_mode(RollMode::Normal)).collect();
+        let rendered = faces
+            .iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if let Some(diviner) = self.actors.get_mut(&diviner_id) {
+            diviner.set_portent_pool(faces);
+        }
+        let name = self.actor_name(diviner_id);
+        self.log(format!("  portent: {} foresees {}", name, rendered));
     }
 
     /// Compute the attack mode with all per-attack riders folded in:
@@ -6180,7 +6350,60 @@ impl EncounterInstance {
         ));
         effects.append(&mut self.trigger_overchannel_backlash(caster_id, spell_level));
         self.trigger_arcane_ward(caster_id, spell_level, school);
+        self.trigger_expert_divination(caster_id, spell_level, school);
         effects
+    }
+
+    /// 5e Divination Wizard **Expert Divination** (subclass level 6)
+    /// post-cast hook: casting a divination spell of 2nd level or higher
+    /// refunds one expended slot of a *lower* level, never above 5th.
+    ///
+    /// Three gates, cheapest first, mirroring `trigger_arcane_ward`: the
+    /// school must be `Some(SpellSchool::Divination)` (an untagged spell
+    /// reads `None` and fails closed), the slot level must be at least 2
+    /// (RAW excludes cantrips and 1st-level casts — there is no lower
+    /// band to refund into), and the caster must hold the feature.
+    ///
+    /// The RAW band is `1..=min(spell_level - 1, 5)`; the
+    /// highest-expended-first pick inside it lives on the slot manager,
+    /// so this hook stays a gate plus a log line. A cast with nothing
+    /// expended in the band logs nothing, the same way a top-up against
+    /// a full Arcane Ward does.
+    ///
+    /// The band excludes the cast's own level by construction, which is
+    /// what makes the hook's position in `execute` irrelevant: post-cast
+    /// triggers are dispatched before the `ConsumeResource` tail that
+    /// charges the slot, so the in-flight slot still reads as available
+    /// here — and it is out of the refund band anyway. A 9th-level
+    /// Foresight refunds at most a 5th, never the 9th it is paying for.
+    fn trigger_expert_divination(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        school: Option<SpellSchool>,
+    ) {
+        use crate::actions::class_features::EXPERT_DIVINATION_TAG;
+        if school != Some(SpellSchool::Divination) || spell_level < 2 {
+            return;
+        }
+        let cap = (spell_level - 1).min(5);
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        if !caster.has_passive_feature(EXPERT_DIVINATION_TAG) {
+            return;
+        }
+        let Some(level) = caster
+            .spell_slot_manager
+            .restore_highest_expended_slot_up_to(cap)
+        else {
+            return;
+        };
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  expert divination: {} regains a level-{} spell slot",
+            name, level
+        ));
     }
 
     /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) post-cast
@@ -62284,5 +62507,393 @@ mod tests {
         e.actors.get_mut(&evoker).unwrap().long_rest();
         assert_eq!(e.actors[&evoker].overchannel_uses(), 0);
         assert_eq!(overchannel_once(&mut e, 1), None);
+    }
+    /// A Divination Wizard's Portent pool is dormant until something
+    /// actually rolls a d20 in the encounter: the template flag alone
+    /// hands out no forecast, and a baseline wizard never gets one at
+    /// all. Pins the lazy fill's two ends — `has_portent` is template
+    /// state, `portent_forecast` is run state — so a future eager fill
+    /// at instantiation time can't slip in unnoticed and shift every
+    /// seeded encounter's RNG stream by three rolls.
+    #[test]
+    fn portent_is_dormant_until_the_first_d20() {
+        use crate::actors::creatures::wizards::{DIVINATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        assert!(e.actors[&diviner].has_portent());
+        assert!(!e.actors[&baseline].has_portent());
+        assert_eq!(e.actors[&diviner].portent_dice_max(), 3);
+        // Nothing forecast yet, and nothing banked.
+        assert!(!e.actors[&diviner].portent_forecast());
+        assert!(e.actors[&diviner].portent_pool().is_empty());
+
+        // The first d20 anyone rolls fills the bank. The triggering roll
+        // is itself a substitution candidate, so the bank lands at
+        // either 3 (nothing was decisive) or 2 (the best face was worth
+        // spending on the diviner's own roll) — never 0 or 1.
+        let _ = e.roll_d20_lucky(diviner, RollMode::Normal);
+        assert!(e.actors[&diviner].portent_forecast());
+        let banked = e.actors[&diviner].portent_pool().len();
+        assert!(
+            banked == 3 || banked == 2,
+            "the forecast banks 3 faces, at most one of which the triggering \
+             roll can immediately consume; got {}",
+            banked
+        );
+    }
+
+    /// A high foretold face is spent on a roll the diviner wants to
+    /// succeed — their own, or an ally's — and the substituted value is
+    /// returned verbatim in place of the d20. Also pins that the die
+    /// leaves the pool exactly once, that the *highest* eligible face is
+    /// the one chosen, and that a second roll can't reuse it.
+    #[test]
+    fn portent_substitutes_its_best_face_on_a_friendly_roll() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        // Seed the bank directly rather than letting the lazy fill roll
+        // it, so the assertion is about the spend policy and not about
+        // what the seeded roller happened to produce.
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .set_portent_pool(vec![11, 20, 18]);
+
+        // The ally's roll takes the best face, not merely a good one.
+        assert_eq!(e.roll_d20_lucky(ally, RollMode::Normal), 20);
+        assert_eq!(e.actors[&diviner].portent_pool(), &[11, 18]);
+        // The diviner's own roll takes the next best.
+        assert_eq!(e.roll_d20_lucky(diviner, RollMode::Normal), 18);
+        assert_eq!(e.actors[&diviner].portent_pool(), &[11]);
+        // 11 is not decisive, so it stays banked and a real d20 is rolled.
+        let rolled = e.roll_d20_lucky(ally, RollMode::Normal);
+        assert!((1..=20).contains(&rolled));
+        assert_eq!(e.actors[&diviner].portent_pool(), &[11]);
+    }
+
+    /// A low foretold face is spent on an enemy's roll — the direction
+    /// flip that makes Portent the first feature in the engine to reach
+    /// into another actor's d20. Pins that the *lowest* face is chosen
+    /// (not the highest, which would be catastrophically backwards) and
+    /// that a merely-mediocre face is held rather than wasted.
+    #[test]
+    fn portent_substitutes_its_worst_face_on_an_enemy_roll() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .set_portent_pool(vec![4, 20, 1]);
+
+        assert_eq!(e.roll_d20_lucky(goblin, RollMode::Normal), 1);
+        assert_eq!(e.actors[&diviner].portent_pool(), &[4, 20]);
+        assert_eq!(e.roll_d20_lucky(goblin, RollMode::Normal), 4);
+        assert_eq!(e.actors[&diviner].portent_pool(), &[20]);
+        // The 20 is worthless against an enemy — it stays banked even
+        // though the pool is non-empty.
+        let rolled = e.roll_d20_lucky(goblin, RollMode::Normal);
+        assert!((1..=20).contains(&rolled));
+        assert_eq!(e.actors[&diviner].portent_pool(), &[20]);
+        // ...and is still there for the ally who needs it.
+        assert_eq!(e.roll_d20_lucky(diviner, RollMode::Normal), 20);
+        assert!(e.actors[&diviner].portent_pool().is_empty());
+    }
+
+    /// RAW gates the substitution on "a creature that you can see", with
+    /// the diviner's own rolls exempt from the sight clause. Pins all
+    /// three branches: a blinded diviner can't sink an enemy's roll, an
+    /// Invisible enemy is out of reach of the forecast, and neither
+    /// gate touches the diviner's own d20.
+    #[test]
+    fn portent_needs_sight_of_anyone_but_the_diviner() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let seeded = |blind_diviner: bool, invisible_goblin: bool| -> (u32, Vec<u32>) {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let diviner = e
+                .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&diviner)
+                .unwrap()
+                .set_portent_pool(vec![2]);
+            if blind_diviner {
+                e.actors
+                    .get_mut(&diviner)
+                    .unwrap()
+                    .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+            }
+            if invisible_goblin {
+                e.actors
+                    .get_mut(&goblin)
+                    .unwrap()
+                    .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+            }
+            let rolled = e.roll_d20_lucky(goblin, RollMode::Normal);
+            (rolled, e.actors[&diviner].portent_pool().to_vec())
+        };
+        assert_eq!(seeded(false, false), (2, vec![]), "plain sight: the 2 lands");
+        assert_eq!(
+            seeded(true, false).1,
+            vec![2],
+            "a blinded diviner foresees nothing they can act on"
+        );
+        assert_eq!(
+            seeded(false, true).1,
+            vec![2],
+            "an Invisible target is out of the forecast's reach"
+        );
+
+        // The sight gates never apply to the diviner's own roll.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .set_portent_pool(vec![19]);
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(e.roll_d20_lucky(diviner, RollMode::Normal), 19);
+    }
+
+    /// End-to-end through `roll_save`: a foretold 1 sinks an enemy's
+    /// saving throw outright. The value matters as much as the pass /
+    /// fail — a substituted face is the save's d20, so the modifier
+    /// stack still applies on top of it, and a target whose bonus is
+    /// large enough would still pass on a foretold 1.
+    #[test]
+    fn portent_sinks_an_enemy_save_through_roll_save() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&diviner)
+            .unwrap()
+            .set_portent_pool(vec![1]);
+        // A goblin's +2 DEX save clears DC 8 on any natural 6 or better,
+        // so the failure is unlikely without the substitution — and the
+        // emptied pool below is what actually proves the foretold 1 was
+        // the die that got used.
+        assert!(
+            !e.roll_save(goblin, AbilityScoreType::Dexterity, 8).passed(),
+            "a foretold 1 sinks the save"
+        );
+        assert!(e.actors[&diviner].portent_pool().is_empty());
+    }
+
+    /// The forecast is rolled once and only once per long rest, and the
+    /// long rest re-arms it. Pins the latch semantics the lazy fill
+    /// depends on: `set_portent_pool` is a no-op against an already-
+    /// forecast holder (so a mid-encounter re-entry can't refill a spent
+    /// bank), and `long_rest` clears both the pool and the latch.
+    #[test]
+    fn portent_forecasts_once_per_long_rest() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&diviner).unwrap();
+            a.set_portent_pool(vec![9, 9, 9]);
+            // Second seeding bounces off the latch.
+            a.set_portent_pool(vec![20, 20, 20]);
+            assert_eq!(a.portent_pool(), &[9, 9, 9]);
+            // Spending down to empty leaves the latch set, so the lazy
+            // fill won't hand out a fresh bank mid-run.
+            while a.take_portent_die(true).is_some() {}
+            assert!(a.portent_forecast());
+        }
+        e.forecast_portent(diviner);
+        assert!(e.actors[&diviner].portent_pool().is_empty());
+
+        // A long rest re-arms the forecast, and the next d20 fills it.
+        e.actors.get_mut(&diviner).unwrap().long_rest();
+        assert!(!e.actors[&diviner].portent_forecast());
+        e.forecast_portent(diviner);
+        assert!(e.actors[&diviner].portent_forecast());
+        assert_eq!(e.actors[&diviner].portent_pool().len(), 3);
+        assert!(
+            e.actors[&diviner]
+                .portent_pool()
+                .iter()
+                .all(|f| (1..=20).contains(f)),
+            "every foretold face is a legal d20 result"
+        );
+    }
+
+    /// A substituted roll consumes no randomness. RAW's "you must
+    /// choose to do so before the roll" means the d20 is never thrown —
+    /// and because every roll in the engine comes off one seeded
+    /// roller, "never thrown" has to mean the roller doesn't advance,
+    /// or a spent portent would silently reshuffle every subsequent
+    /// die in the encounter.
+    ///
+    /// Two identically-seeded encounters differing only in whether the
+    /// diviner's bank holds a decisive face: the roll *after* the
+    /// substitution in the first must be the roll that the second gets
+    /// first.
+    #[test]
+    fn portent_substitution_does_not_advance_the_roller() {
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        let stream = |bank: Vec<u32>| -> Vec<u32> {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let diviner = e
+                .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Seeding the bank — even with an empty vec — latches the
+            // forecast, so neither run pays for a lazy fill and the two
+            // rollers stay in lockstep.
+            e.actors.get_mut(&diviner).unwrap().set_portent_pool(bank);
+            (0..4)
+                .map(|_| e.roll_d20_lucky(diviner, RollMode::Normal))
+                .collect()
+        };
+        let substituted = stream(vec![20]);
+        let untouched = stream(Vec::new());
+        assert_eq!(substituted[0], 20, "the foretold face is returned verbatim");
+        assert_eq!(
+            &substituted[1..],
+            &untouched[..3],
+            "the roller picks up exactly where it would have without the spend"
+        );
+    }
+
+    /// Expert Divination refunds the best expended slot below the cast's
+    /// level. Pins the band arithmetic (`1..=min(level - 1, 5)`),
+    /// highest-first selection inside it, and the three gates: wrong
+    /// school, too low a level, and no feature.
+    #[test]
+    fn expert_divination_refunds_the_best_lower_slot() {
+        use crate::actors::creatures::wizards::{DIVINATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::SpellSchool;
+        let spent = |e: &EncounterInstance, id: usize, lvl: u32| -> u32 {
+            let ssi = e.actors[&id].spell_slot_manager.spell_slots(lvl);
+            ssi.max_spell_slots - ssi.spell_slots
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        for id in [diviner, baseline] {
+            let a = e.actors.get_mut(&id).unwrap();
+            for lvl in 1..=7 {
+                a.spell_slot_manager.consume_spell_slot(lvl);
+            }
+        }
+        // A level-3 divination cast refunds the best slot at or below 2.
+        e.trigger_expert_divination(diviner, 3, Some(SpellSchool::Divination));
+        assert_eq!(spent(&e, diviner, 2), 0, "the level-2 slot came back");
+        assert_eq!(spent(&e, diviner, 1), 1, "the level-1 slot did not");
+
+        // A level-9 cast caps the band at 5 — it can't refund the 7.
+        e.trigger_expert_divination(diviner, 9, Some(SpellSchool::Divination));
+        assert_eq!(spent(&e, diviner, 5), 0);
+        assert_eq!(spent(&e, diviner, 7), 1, "the band never reaches above 5th");
+
+        // Gates: wrong school, cantrip / 1st level, and no feature.
+        let before = spent(&e, diviner, 4);
+        e.trigger_expert_divination(diviner, 5, Some(SpellSchool::Evocation));
+        e.trigger_expert_divination(diviner, 5, None);
+        e.trigger_expert_divination(diviner, 1, Some(SpellSchool::Divination));
+        e.trigger_expert_divination(diviner, 0, Some(SpellSchool::Divination));
+        assert_eq!(spent(&e, diviner, 4), before, "every gate held");
+        e.trigger_expert_divination(baseline, 3, Some(SpellSchool::Divination));
+        assert_eq!(spent(&e, baseline, 2), 1, "a baseline wizard gets no refund");
+    }
+
+    /// Expert Divination end-to-end through `Action::execute`: casting
+    /// Mind Spike (level 2, divination) refunds a level-1 slot. Proves
+    /// the school tag, the post-cast registry wiring, and the band
+    /// arithmetic line up on a real cast rather than only at the hook.
+    #[test]
+    fn expert_divination_fires_through_action_execute() {
+        use crate::actions::spells::MIND_SPIKE;
+        use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let diviner = e
+            .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&diviner).unwrap();
+            a.give_resource(crate::engine::side_effects::Resource::Action);
+            a.spell_slot_manager.consume_spell_slot(1);
+        }
+        let l1_before = e.actors[&diviner].spell_slot_manager.spell_slots(1).spell_slots;
+        for ef in MIND_SPIKE.execute(&mut e, diviner, Some(&vec![goblin]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&diviner].spell_slot_manager.spell_slots(1).spell_slots,
+            l1_before + 1,
+            "the level-1 slot came back off the level-2 divination cast"
+        );
+    }
+
+    /// Drift pin on the divination `school()` tags. Expert Divination is
+    /// the only consumer today and it fails closed on an untagged spell,
+    /// so an un-tagged divination pickup would silently stop refunding
+    /// slots with nothing else to notice.
+    #[test]
+    fn divination_spells_report_their_school() {
+        use crate::actions::spells::{
+            FORESIGHT, GUIDANCE, HUNTERS_MARK, MIND_SPIKE, TRUE_SEEING, TRUE_STRIKE,
+        };
+        use crate::engine::types::SpellSchool;
+        let divinations: Vec<&'static dyn crate::actions::action_template::Action> = vec![
+            &*TRUE_STRIKE,
+            &*GUIDANCE,
+            &*HUNTERS_MARK,
+            &*MIND_SPIKE,
+            &*TRUE_SEEING,
+            &*FORESIGHT,
+        ];
+        for spell in divinations {
+            assert_eq!(
+                spell.school(),
+                Some(SpellSchool::Divination),
+                "{} must report the divination school",
+                spell.name()
+            );
+        }
     }
 }

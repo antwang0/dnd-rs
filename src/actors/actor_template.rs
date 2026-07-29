@@ -2056,6 +2056,18 @@ pub struct CreatureTemplate {
     /// that ships `crit_threshold: 19` flat on the Champion rather than
     /// gating it behind a level check.
     pub arcane_ward_base: u32,
+    /// 5e Divination Wizard **Portent** (subclass level 2) — how many
+    /// foretold d20 faces the holder banks per long rest. 0 (the
+    /// default, and every non-diviner) disables the feature. RAW ships
+    /// 2 at subclass level 2 and 3 at level 14 (**Greater Portent**),
+    /// so the level-14 upgrade is expressible as a one-field bump on
+    /// this term rather than a second flag.
+    ///
+    /// Carried as a template constant rather than derived from the
+    /// actor's `level` for the same reason `arcane_ward_base` is:
+    /// `level` tracks in-run XP progression from 1, not the build level
+    /// a class template targets.
+    pub portent_dice: u32,
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves for half damage, take 0
     /// on a pass and half on a fail instead of half / full.
     pub has_evasion: bool,
@@ -2888,6 +2900,7 @@ impl CreatureTemplate {
             regen_suppressors: HashSet::new(),
             legendary_resistances: 0,
             arcane_ward_base: 0,
+            portent_dice: 0,
             has_evasion: false,
             has_uncanny_dodge: false,
             has_deflect_missiles: false,
@@ -3055,6 +3068,20 @@ impl SpellSlotManager {
         }
     }
 
+    /// Restore one expended slot at the highest level that is `<= cap`
+    /// and currently below its maximum, returning that level. `None`
+    /// when no slot in the `1..=cap` band is expended (or `cap == 0`).
+    ///
+    /// Highest-first rather than lowest-first because every caller is a
+    /// "you regain one expended spell slot of a level lower than X"
+    /// feature (Divination Wizard's Expert Divination today), and the
+    /// most valuable slot in the eligible band is always the one the
+    /// holder would pick. Distinct from `restore_spell_slot`, which
+    /// targets one named level and fails if that level is already full.
+    pub fn restore_highest_expended_slot_up_to(&mut self, cap: u32) -> Option<u32> {
+        (1..=cap).rev().find(|&lvl| self.restore_spell_slot(lvl, 1))
+    }
+
     pub fn increase_max_spell_slot(&mut self, lvl: u32, qty: u32) {
         let Some(i_usize) = Self::idx(lvl) else {
             return;
@@ -3142,6 +3169,34 @@ pub struct ActorInstance {
     /// ward-formation time, so the full RAW maximum is
     /// `arcane_ward_base + INT mod`.
     arcane_ward_base: u32,
+    /// 5e Divination Wizard **Portent** (subclass level 2) — the
+    /// foretold d20 faces still unspent, one entry per banked die.
+    /// Empty means either "no feature" or "all dice spent"; the two are
+    /// told apart by `portent_dice_max` and `portent_forecast` rather
+    /// than by this vec's length.
+    ///
+    /// Order is not significant — the spend path picks by *value*
+    /// (highest face for a roll the diviner wants to succeed, lowest
+    /// for one they want to fail), so the pool behaves as a multiset.
+    portent_pool: Vec<u32>,
+    /// Whether the foretold dice have been rolled since the last long
+    /// rest. Distinguishes "not forecast yet" from "forecast and fully
+    /// spent", which the lazy fill needs to tell apart: an un-forecast
+    /// holder rolls a fresh `portent_dice_max` faces on first use, a
+    /// spent-out one rolls nothing until the next long rest.
+    ///
+    /// The fill is lazy rather than done inside `long_rest` because
+    /// `long_rest` takes no roller — the dice are rolled off the
+    /// encounter's seeded roller at the first substitution opportunity
+    /// instead, which keeps the values reproducible by seed without
+    /// threading a roller through every rest call site. Nothing can
+    /// observe the difference: the pool is opaque until it is read.
+    portent_forecast: bool,
+    /// RAW count of foretold dice the holder banks per long rest (2 at
+    /// Portent, 3 at Greater Portent). 0 disables the feature entirely
+    /// — the overwhelming majority of actors. Template constant for the
+    /// same reason `arcane_ward_base` is one.
+    portent_dice_max: u32,
     /// 5e Evocation Wizard **Overchannel** (subclass level 14) — how
     /// many times the holder has maximized a spell since their last long
     /// rest. Drives the escalating backlash: the first use is free, the
@@ -3533,6 +3588,9 @@ impl ActorInstance {
             arcane_ward: 0,
             arcane_ward_formed: false,
             arcane_ward_base: ct.arcane_ward_base,
+            portent_pool: Vec::new(),
+            portent_forecast: false,
+            portent_dice_max: ct.portent_dice,
             overchannel_uses: 0,
             overchannel_backlash_pending: false,
             level: 1,
@@ -4563,6 +4621,14 @@ impl ActorInstance {
         // trickling twice-the-slot-level onto a stale one.
         self.arcane_ward = 0;
         self.arcane_ward_formed = false;
+        // 5e Portent RAW: "When you finish a long rest, roll two d20s
+        // and record the numbers rolled." Dropping the pool *and* the
+        // forecast latch is what re-arms the lazy fill — the next
+        // substitution opportunity rolls a fresh set off the encounter
+        // roller. Clearing only the pool would leave the latch set and
+        // strand the diviner without a forecast for the rest of the run.
+        self.portent_pool.clear();
+        self.portent_forecast = false;
         // RAW: the Overchannel backlash escalates "if you use this
         // feature again before you finish a long rest", so the rest
         // resets the escalation to its free first use.
@@ -4799,6 +4865,76 @@ impl ActorInstance {
         }
         self.arcane_ward = target;
         Some((gained, self.arcane_ward))
+    }
+
+    /// True if this actor carries the 5e Divination Wizard **Portent**
+    /// feature at all (`portent_dice > 0` on their template) — not
+    /// whether any foretold die is currently unspent. Cheapest gate on
+    /// the substitution path, which runs on *every* d20 the engine
+    /// rolls, so it stays a single scalar compare.
+    pub fn has_portent(&self) -> bool {
+        self.portent_dice_max > 0
+    }
+
+    /// How many foretold dice this actor banks per long rest (2 at
+    /// Portent, 3 at Greater Portent; 0 for non-diviners).
+    pub fn portent_dice_max(&self) -> u32 {
+        self.portent_dice_max
+    }
+
+    /// The foretold faces still unspent, in bank order. Read by the UI
+    /// gauge and by tests; the spend path uses `peek_portent_die` /
+    /// `take_portent_die` instead so the "highest or lowest" policy
+    /// lives in one place.
+    pub fn portent_pool(&self) -> &[u32] {
+        &self.portent_pool
+    }
+
+    /// Whether the foretold dice have been rolled since the last long
+    /// rest. False means the lazy fill still owes this actor a
+    /// forecast; true with an empty `portent_pool` means every die has
+    /// been spent and none come back before the next long rest.
+    pub fn portent_forecast(&self) -> bool {
+        self.portent_forecast
+    }
+
+    /// Bank a fresh set of foretold faces. Called by the encounter-side
+    /// lazy fill with `portent_dice_max` d20 rolls off the seeded
+    /// roller. Idempotent guard: a second call while the forecast latch
+    /// is already set is a no-op, so a mid-encounter re-entry can't
+    /// silently refill a spent pool.
+    pub fn set_portent_pool(&mut self, faces: Vec<u32>) {
+        if self.portent_forecast || !self.has_portent() {
+            return;
+        }
+        self.portent_forecast = true;
+        self.portent_pool = faces;
+    }
+
+    /// The face this actor would spend on a roll they want to go
+    /// `want_high ? well : badly` — the highest banked face when the
+    /// diviner wants the roll to succeed, the lowest when they want it
+    /// to fail. `None` when the pool is empty.
+    ///
+    /// Split from `take_portent_die` so the caller can apply its
+    /// "is this die decisive enough to be worth burning?" threshold
+    /// before committing to the spend.
+    pub fn peek_portent_die(&self, want_high: bool) -> Option<u32> {
+        if want_high {
+            self.portent_pool.iter().copied().max()
+        } else {
+            self.portent_pool.iter().copied().min()
+        }
+    }
+
+    /// Spend the face `peek_portent_die` would have returned, removing
+    /// it from the pool. `None` (and no mutation) when the pool is
+    /// empty. Removes exactly one entry even when the pool holds
+    /// duplicates of the chosen face.
+    pub fn take_portent_die(&mut self, want_high: bool) -> Option<u32> {
+        let face = self.peek_portent_die(want_high)?;
+        let idx = self.portent_pool.iter().position(|&f| f == face)?;
+        Some(self.portent_pool.remove(idx))
     }
 
     /// Returns the post-modifier damage value (immunity → 0, resistance

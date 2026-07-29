@@ -9484,6 +9484,26 @@ pub const POTENT_CANTRIP_TAG: &str = "wizard.potent_cantrip";
 /// damage per level increases by 1d12."
 pub const OVERCHANNEL_TAG: &str = "wizard.overchannel";
 
+/// Class-feature tag for the Divination Wizard's **Expert Divination**
+/// (School of Divination subclass level 6, PHB). Passive, at-will, no
+/// per-rest charge — same membership-marker shape as
+/// `SCULPT_SPELLS_TAG` / `EMPOWERED_EVOCATION_TAG` / `POTENT_CANTRIP_TAG`.
+///
+/// RAW: "When you cast a divination spell of 2nd level or higher using
+/// a spell slot, you regain one expended spell slot. The slot you
+/// regain must be of a level lower than the spell you cast and can't be
+/// higher than 5th level."
+///
+/// Read at `EncounterInstance::trigger_expert_divination`, a post-cast
+/// registry hook next to Arcane Ward's form / recharge. The two are
+/// siblings in shape — both school-gated, both mutate the caster and
+/// emit no side-effects — and differ only on which school they key off
+/// and what resource they refill. The RAW band (`1..=min(level - 1, 5)`)
+/// is resolved at the hook and handed to
+/// `SpellSlotManager::restore_highest_expended_slot_up_to`, which picks
+/// the most valuable expended slot in it.
+pub const EXPERT_DIVINATION_TAG: &str = "wizard.expert_divination";
+
 /// Overchannel — Evocation Wizard prime. Free (no action, no bonus
 /// action, no slot): declares that the caster's next damaging spell of
 /// level 1-5 deals maximum damage instead of rolling.

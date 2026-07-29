@@ -372,6 +372,27 @@ pub fn render_sideinfo(
             Style::default().fg(Color::LightBlue),
         ));
     }
+    // 5e Divination Wizard Portent — the banked foretold faces, shown
+    // as "(portent 19, 3)" so the player can see both how many
+    // substitutions are left and, crucially, *which* ones: a 19 and a 3
+    // in the bank tell them entirely different things about the next
+    // few rounds than a 12 and an 11 would. Rendered only once the
+    // forecast exists and only while dice remain — unlike the ward,
+    // an empty pool really is gone until the next long rest.
+    if !curr_actor.portent_pool().is_empty() {
+        hp_spans.push(Span::styled(
+            format!(
+                " (portent {})",
+                curr_actor
+                    .portent_pool()
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Style::default().fg(Color::LightMagenta),
+        ));
+    }
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),

@@ -1020,3 +1020,87 @@ pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Divination Wizard — Arcane Tradition **School of Divination**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// the two mechanically-surfaced School of Divination features layered
+/// on:
+///
+///   - **Portent / Greater Portent** (subclass lv2 / lv14) — a bank of
+///     foretold d20 faces rolled once per long rest, any one of which
+///     can replace an attack roll or saving throw made by the diviner
+///     or a creature they can see.
+///   - **Expert Divination** (subclass lv6) — casting a divination
+///     spell of 2nd level or higher refunds one expended slot of a
+///     lower level (never above 5th).
+///
+/// The signature "the diviner already knows how this goes" tell. Where
+/// every other wizard tradition changes what a spell *does*, Portent
+/// changes what the dice do, and it does so on rolls the diviner is not
+/// making: the boss's save against the party's one control spell, the
+/// giant's swing at the downed healer, the ally's death save. It is the
+/// first feature in the engine that reaches into another actor's d20.
+///
+/// **Portent ships at 3 dice (Greater Portent, subclass lv14)** rather
+/// than the lv2 pair, matching the way the sibling
+/// `EVOCATION_WIZARD_TEMPLATE` ships its own lv14 feature and the way
+/// the shared wizard chassis carries a level-17 spell list: these
+/// templates target a balanced playable build, not lockstep PHB
+/// progression. The RAW lv2 version is the same template with
+/// `portent_dice: 2` — the field *is* the count, so the level-14
+/// upgrade needed no second flag.
+///
+/// Expert Divination has real fuel on this chassis without any extra
+/// pickups: the baseline wizard already carries Mind Spike (lv2), True
+/// Seeing (lv6) and Foresight (lv9), so three of the loadout's spells
+/// clear the "divination, 2nd level or higher" gate and each refunds
+/// the best expended slot at or below 5th.
+///
+/// The RAW feature set ships **complete**, the second subclass in the
+/// engine to do so after `EVOCATION_WIZARD_TEMPLATE`: Divination
+/// Savant's spellbook-copying discount has no combat surface in RAW,
+/// and The Third Eye (subclass lv10) has none either at the resolution
+/// the engine models — its four benefits are darkvision, ethereal
+/// sight, reading any language, and See Invisibility, of which only the
+/// last touches combat and only against the `Invisible` half of the
+/// engine's illusion cohort. `pierces_illusion_of` is all-or-nothing
+/// across that cohort (Invisible / Blurred / Displaced together), so a
+/// faithful Third Eye needs per-condition piercing granularity that no
+/// existing feature has asked for; a Truesight-shaped approximation
+/// would hand the diviner free Blur and Displacement piercing RAW
+/// denies them, which is a worse trade than shipping without it.
+///
+/// Distinct from the five sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline),
+/// `NECROMANCY_WIZARD_TEMPLATE` (passive necrotic resistance),
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (passive +INT-mod initiative),
+/// `ABJURATION_WIZARD_TEMPLATE` (the rechargeable Arcane Ward
+/// absorption pool), and `EVOCATION_WIZARD_TEMPLATE` (blast-shaping and
+/// damage augmentation). Six templates, six distinct axes: nothing, a
+/// typed damage halver, an initiative augment, an absorption pool, an
+/// offensive blast-shaper, and a d20 substitution bank. RAW allows
+/// exactly one Arcane Tradition pick per wizard, so no two ever legally
+/// co-occur on a single build.
+///
+/// Glyph 'Ψ' — the diviner's third eye. Distinct from baseline wizard
+/// 'M' (mage), Necromancy 'N', War Magic 'Σ', Abjuration 'Θ', and
+/// Evocation 'Δ'; collides with no other template glyph in the engine.
+pub static DIVINATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Mixed tag-plus-struct-field subclass, so neither the tag-only
+    // `with_subclass_tag` helper nor a bare field override fits:
+    // Expert Divination is a membership tag, Portent is a scalar pool
+    // size with nowhere to live in a `HashSet<&'static str>`. Same
+    // explicit clone-and-override shape `EVOCATION_WIZARD_TEMPLATE`
+    // uses for its four tags plus an action.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::EXPERT_DIVINATION_TAG);
+    CreatureTemplate {
+        name: "Divination Wizard",
+        glyph: 'Ψ',
+        features,
+        portent_dice: 3,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

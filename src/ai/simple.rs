@@ -5454,11 +5454,22 @@ mod tests {
             // The Abjuration Wizard exercises the Arcane Ward weave /
             // recharge / absorb cycle off its own Shield and Mage Armor
             // casts.
+            // The Divination Wizard drives the newest engine path of
+            // the three: Portent reaches into the `roll_d20_lucky`
+            // chokepoint and substitutes a foretold face for a d20 the
+            // diviner is *not* rolling, which is the only place in the
+            // engine where one actor's feature short-circuits another
+            // actor's roll. Placed on team 0 with enemies in sight so
+            // both directions of the substitution (high faces onto
+            // allies, low faces onto enemies) are reachable, plus the
+            // Expert Divination slot refund off its Mind Spike / True
+            // Seeing / Foresight pickups.
             use crate::actors::creatures::wizards::{
-                ABJURATION_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
+                ABJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
             };
             let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
             let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
+            let _ = e.instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 26);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
