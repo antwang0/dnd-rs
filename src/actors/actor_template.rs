@@ -2817,8 +2817,8 @@ impl CreatureTemplate {
     ///     Djinni / Efreeti).
     ///   - **Sorcerer** (3 tag-only Sorcerous Origin subclass templates —
     ///     Aberrant Mind, Divine Soul, Shadow Magic).
-    ///   - **Wizard** (2 tag-only Arcane Tradition subclass templates —
-    ///     Necromancy, War Magic).
+    ///   - **Wizard** (3 tag-only Arcane Tradition subclass templates —
+    ///     Necromancy, War Magic, Illusion).
     ///   - **Cleric** (3 tag-only Divine Domain subclass templates —
     ///     Life, Forge, Twilight).
     ///   - **Monk** (1 tag-only Monastic Tradition subclass template —

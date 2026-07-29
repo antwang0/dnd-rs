@@ -612,19 +612,22 @@ pub fn resolve_attack_outcome(
         }
         return (Vec::new(), 0);
     }
-    // 5e Mirror Image: a hit may instead strike a decoy. Shared with
-    // spell attacks via `EncounterInstance::mirror_image_deflect` so
-    // the deflection rule applies to any attack roll, not just weapon
-    // swings (RAW: "any attack roll against you").
-    if encounter.mirror_image_deflect(p.target_id, is_crit) {
+    // Post-hit interception: a connecting swing may still land on
+    // something that isn't the target — a Mirror Image decoy, or the
+    // Illusion Wizard's Illusory Self duplicate. Shared with spell
+    // attacks via `EncounterInstance::attack_intercepted` so every row
+    // of the cohort applies to any attack roll, not just weapon swings
+    // (RAW, uniformly: "any attack roll against you").
+    if encounter.attack_intercepted(p.target_id, p.caster_id, is_crit) {
         return (Vec::new(), 0);
     }
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // record that this attacker has now landed a connecting swing on
     // the target's own body — RAW's trigger is "when a creature hits
-    // you" so a Mirror Image redirect (which lands on a decoy, not
-    // the target) doesn't count and the mark is written after the
-    // deflect check. Uncanny Dodge and Deflect Missiles run below;
+    // you" so an intercepted swing (which lands on a Mirror Image
+    // decoy or an Illusory Self duplicate, not the target) doesn't
+    // count and the mark is written after the interception cohort.
+    // Uncanny Dodge and Deflect Missiles run below;
     // both are reactive damage-reducers that don't cancel the hit
     // itself, so the mark IS written even if damage lands as zero.
     // Written even if the target doesn't currently hold the tag; the

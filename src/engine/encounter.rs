@@ -7057,6 +7057,102 @@ impl EncounterInstance {
         true
     }
 
+    /// Shared post-hit interception chokepoint. Called by both attack
+    /// paths — `engine::attack::resolve_attack_outcome` (weapon swings)
+    /// and `spells::spell_attack_outcome` (spell attacks) — once a
+    /// swing is known to connect but before any damage is rolled or any
+    /// "you were hit" bookkeeping is written. A `true` return means
+    /// some target-side effect ate the swing whole: the caller treats
+    /// it as a miss, rolls no damage, fires no riders, and does not
+    /// mark the target as hit.
+    ///
+    /// This is the "the blow lands on something that isn't you" lane,
+    /// distinct from the two neighbouring defensive lanes:
+    ///
+    ///   - **Pre-roll attack-mode taxes** (Protection, Warding Flare,
+    ///     Entropic Ward) run before the d20 and only bend the odds.
+    ///   - **Post-hit damage reducers** (Uncanny Dodge, Deflect
+    ///     Missiles, Parry) run after this and clamp the number; the
+    ///     hit still counts as a hit for every rider that reads it.
+    ///
+    /// Interception sits between them and is the only lane that
+    /// retroactively un-hits a connected swing.
+    ///
+    /// Rows are consulted in order and the first to fire wins — every
+    /// row fully negates the attack, so running a second would spend a
+    /// resource for nothing. Cheapest-resource-first is therefore the
+    /// ordering rule:
+    ///
+    ///   1. **Mirror Image** — decoys already paid for by a cast spell,
+    ///      consumed passively, several available per cast. Cannot stop
+    ///      a crit.
+    ///   2. **Illusory Self** (Illusion Wizard lv10) — one charge per
+    ///      short rest *and* the target's reaction for the round. Stops
+    ///      anything, crits included.
+    ///
+    /// So a decoy soaks the swing when one is available and the hit
+    /// isn't a crit, and the illusionist's per-rest charge is held for
+    /// what gets through. A future interception ("Instinctive Charm",
+    /// a Shield Guardian's redirect) drops in as a third row.
+    pub fn attack_intercepted(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+        is_crit: bool,
+    ) -> bool {
+        self.mirror_image_deflect(target_id, is_crit)
+            || self.illusory_self_deflect(target_id, attacker_id)
+    }
+
+    /// 5e Illusion Wizard **Illusory Self** (subclass level 10) — the
+    /// illusionist interposes a duplicate of themselves and the attack
+    /// automatically misses. Second row of the `attack_intercepted`
+    /// cohort; see `ILLUSORY_SELF_TAG` for the RAW text and for why
+    /// this fires after the hit is known rather than before the roll.
+    ///
+    /// Gates, in order: the target holds the passive tag, has an
+    /// unspent per-rest charge, and has an unspent reaction. Both the
+    /// charge and the reaction are spent on fire.
+    ///
+    /// Deliberately **not** gated on sight. The three sibling reactive
+    /// defenses (Warding Flare, Entropic Ward, Uncanny Dodge) route
+    /// through `viewer_can_see` because each RAW text keys off
+    /// perceiving the attacker; Illusory Self's does not — the
+    /// duplicate is a standing illusion of the wizard, and RAW asks
+    /// only that an attack roll be made. An illusionist ambushed by an
+    /// invisible attacker still has the decoy standing beside them.
+    ///
+    /// Returns `true` iff the charge fired and the caller should treat
+    /// the connecting swing as a miss.
+    pub fn illusory_self_deflect(&mut self, target_id: usize, attacker_id: usize) -> bool {
+        let tag = crate::actions::class_features::ILLUSORY_SELF_TAG;
+        let Some(target) = self.actors.get(&target_id) else {
+            return false;
+        };
+        if !target.is_combat_active()
+            || !target.has_passive_feature(tag)
+            || !target.feature_available(tag)
+            || !target.has_reaction()
+        {
+            return false;
+        }
+        let target_name = target.name().to_string();
+        if let Some(t) = self.actors.get_mut(&target_id) {
+            t.spend_feature(tag);
+            t.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+        let attacker_name = self
+            .actors
+            .get(&attacker_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        self.log(format!(
+            "  illusory self: {} interposes an illusory duplicate \u{2014} {}'s attack automatically misses",
+            target_name, attacker_name
+        ));
+        true
+    }
+
     /// 5e Mirror Image deflection check. With N duplicates remaining on
     /// the target, roll a d20 against a threshold (RAW: 6+ for 3, 8+ for
     /// 2, 11+ for 1) to determine whether the swing pops a decoy and
@@ -32730,6 +32826,329 @@ mod tests {
         let crit_deflected = e.mirror_image_deflect(target, true);
         assert!(!crit_deflected, "crits bypass Mirror Image");
     }
+
+    /// Illusory Self (Illusion Wizard lv10) no-sells a connecting swing
+    /// outright: the deflect helper returns `true`, the per-rest charge
+    /// is spent, and the wizard's reaction goes with it. The baseline
+    /// wizard — same chassis, same everything but the one tag — takes
+    /// the hit, which is what pins the effect on the feature rather
+    /// than on the chassis.
+    #[test]
+    fn illusory_self_negates_a_connecting_attack() {
+        use crate::actions::class_features::ILLUSORY_SELF_TAG;
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let illusionist = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 2), 0, 1)
+            .unwrap();
+
+        assert!(
+            e.actors[&illusionist].feature_available(ILLUSORY_SELF_TAG),
+            "a fresh Illusion Wizard starts with the charge up"
+        );
+        assert!(
+            e.illusory_self_deflect(illusionist, attacker),
+            "an unspent charge + an unspent reaction must eat the swing"
+        );
+        assert!(
+            !e.actors[&illusionist].feature_available(ILLUSORY_SELF_TAG),
+            "firing spends the per-rest charge"
+        );
+        assert!(
+            !e.actors[&illusionist].has_reaction(),
+            "firing spends the reaction for the round"
+        );
+        assert!(
+            e.messages().iter().any(|m| m.contains("illusory self")),
+            "the deflection is logged"
+        );
+
+        // The baseline wizard carries neither tag nor charge.
+        assert!(
+            !e.illusory_self_deflect(plain, attacker),
+            "a wizard without the subclass tag has no duplicate to interpose"
+        );
+        assert!(
+            e.actors[&plain].has_reaction(),
+            "a non-firing gate must not eat the reaction"
+        );
+    }
+
+    /// The clause that separates Illusory Self from every other defense
+    /// in the engine: RAW's "the attack automatically misses you"
+    /// carries no critical-hit carve-out, so a confirmed crit is erased
+    /// just like an ordinary hit. Mirror Image — checked here on the
+    /// same actor for contrast — explicitly cannot do this.
+    #[test]
+    fn illusory_self_erases_a_crit_that_mirror_image_cannot() {
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let illusionist = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // A full screen of decoys cannot stop a crit...
+        e.actors.get_mut(&illusionist).unwrap().set_mirror_images(3);
+        assert!(
+            !e.mirror_image_deflect(illusionist, true),
+            "Mirror Image explicitly bypasses on a crit"
+        );
+        // ...so the cohort falls through to the charge, which can.
+        assert!(
+            e.attack_intercepted(illusionist, attacker, true),
+            "Illusory Self has no crit carve-out"
+        );
+        assert_eq!(
+            e.actors[&illusionist].mirror_images(),
+            3,
+            "the crit-bypassed decoys are left standing"
+        );
+    }
+
+    /// Cohort ordering: Mirror Image is the cheaper resource (decoys
+    /// already paid for by a cast spell, several per cast, consumed
+    /// without a reaction), so `attack_intercepted` spends it first and
+    /// holds the once-per-short-rest charge back for what gets through.
+    /// Seed-swept because the decoy check rides a d20 — the assertion
+    /// is on the rounds where a decoy actually popped.
+    #[test]
+    fn illusory_self_is_held_back_while_a_decoy_absorbs_the_swing() {
+        use crate::actions::class_features::ILLUSORY_SELF_TAG;
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut saw_decoy_absorb = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let attacker = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+                .unwrap();
+            let illusionist = e
+                .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&illusionist).unwrap().set_mirror_images(3);
+            let images_before = e.actors[&illusionist].mirror_images();
+            assert!(
+                e.attack_intercepted(illusionist, attacker, false),
+                "with 3 decoys AND a charge up, something must eat the swing"
+            );
+            if e.actors[&illusionist].mirror_images() < images_before {
+                saw_decoy_absorb = true;
+                assert!(
+                    e.actors[&illusionist].feature_available(ILLUSORY_SELF_TAG),
+                    "a decoy absorbing the swing must leave the per-rest charge up"
+                );
+                assert!(
+                    e.actors[&illusionist].has_reaction(),
+                    "a decoy costs no reaction"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_decoy_absorb,
+            "40 seeds at the 3-image (6+) threshold should pop a decoy at least once"
+        );
+    }
+
+    /// The three gates, each checked in isolation against an actor that
+    /// clears the other two: no passive tag, no unspent charge, no
+    /// reaction. Each must leave the swing to land.
+    #[test]
+    fn illusory_self_gates_on_tag_charge_and_reaction() {
+        use crate::actions::class_features::ILLUSORY_SELF_TAG;
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+
+        // Gate 1: the feature itself. A baseline wizard — identical
+        // chassis, no tradition — has no duplicate to interpose, and
+        // granting it the feature is what turns the gate on. The
+        // positive control is the point: it pins the gate on the
+        // tag rather than on anything else that differs between the
+        // two templates.
+        let untagged = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.illusory_self_deflect(untagged, attacker),
+            "a wizard without the tradition has no duplicate to interpose"
+        );
+        e.actors
+            .get_mut(&untagged)
+            .unwrap()
+            .grant_feature_for_test(ILLUSORY_SELF_TAG);
+        assert!(
+            e.illusory_self_deflect(untagged, attacker),
+            "the tag alone is what the gate reads"
+        );
+
+        // Gate 2: charge already spent this rest.
+        let spent = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(6, 2), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&spent).unwrap().spend_feature(ILLUSORY_SELF_TAG);
+        assert!(
+            !e.illusory_self_deflect(spent, attacker),
+            "one duplicate per short rest"
+        );
+        assert!(
+            e.actors[&spent].has_reaction(),
+            "a spent charge must not also eat the reaction"
+        );
+
+        // Gate 3: reaction already used this round.
+        let reactionless = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+            .unwrap();
+        e.actors
+            .get_mut(&reactionless)
+            .unwrap()
+            .consume_resource(Resource::Reaction);
+        assert!(
+            !e.illusory_self_deflect(reactionless, attacker),
+            "interposing the duplicate costs a reaction"
+        );
+        assert!(
+            e.actors[&reactionless].feature_available(ILLUSORY_SELF_TAG),
+            "a missing reaction must not burn the per-rest charge"
+        );
+    }
+
+    /// End-to-end through the weapon-attack chokepoint: a connecting
+    /// swing against the illusionist deals no damage and is not
+    /// recorded as a hit, which is what keeps every downstream
+    /// on-hit rider (Multiattack Defense's mark, smite follow-ups,
+    /// once-per-turn dice) from firing on an intercepted attack.
+    /// Driven with an absurd attack bonus so every roll connects and
+    /// the test doesn't have to sweep seeds for a hit.
+    #[test]
+    fn illusory_self_zeroes_damage_at_the_weapon_attack_chokepoint() {
+        use crate::actions::class_features::ILLUSORY_SELF_TAG;
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+        use crate::engine::types::DamageType;
+        let swing = |e: &mut EncounterInstance, attacker: usize, target: usize| -> u32 {
+            resolve_attack_outcome(
+                e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "test swing",
+                    attack_bonus: 50,
+                    damage_dice: crate::engine::dice::Dice::new(1, 8),
+                    damage_bonus: 0,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            )
+            .1
+        };
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let illusionist = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+
+        assert_eq!(
+            swing(&mut e, attacker, illusionist),
+            0,
+            "the first connecting swing is intercepted outright"
+        );
+        assert!(
+            !e.actors[&illusionist].feature_available(ILLUSORY_SELF_TAG),
+            "the interception spent the charge"
+        );
+        assert!(
+            !e.actors[&attacker].has_hit_target_this_turn(illusionist),
+            "an intercepted swing is not a hit for on-hit rider purposes"
+        );
+
+        // Charge gone; the second swing this rest lands for real.
+        let mut landed = 0u32;
+        for _ in 0..10 {
+            landed += swing(&mut e, attacker, illusionist);
+        }
+        assert!(
+            landed > 0,
+            "with the charge spent, subsequent swings deal damage"
+        );
+    }
+
+    /// Illusory Self is registered in `SHORT_REST_FEATURES`, so the
+    /// charge comes back between engagements rather than only on a long
+    /// rest — the cadence the two sibling reactive per-rest defenses
+    /// (Warding Flare, Entropic Ward) already use.
+    #[test]
+    fn illusory_self_refreshes_on_a_short_rest() {
+        use crate::actions::class_features::{ILLUSORY_SELF_TAG, SHORT_REST_FEATURES};
+        use crate::actors::creatures::wizards::ILLUSION_WIZARD_TEMPLATE;
+        assert!(
+            SHORT_REST_FEATURES.contains(&ILLUSORY_SELF_TAG),
+            "the tag must be registered for `short_rest` to walk it"
+        );
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let illusionist = e
+            .instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&illusionist)
+            .unwrap()
+            .spend_feature(ILLUSORY_SELF_TAG);
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
+        e.actors
+            .get_mut(&illusionist)
+            .unwrap()
+            .short_rest(&mut roller);
+        assert!(
+            e.actors[&illusionist].feature_available(ILLUSORY_SELF_TAG),
+            "the duplicate is back after a short rest"
+        );
+    }
+
+    /// Template drift pin: the Illusion Wizard is the baseline wizard
+    /// plus exactly one tag. Locks the `with_subclass_tag` clone tail
+    /// so a future pickup on `WIZARD_TEMPLATE` reaches this tradition
+    /// too, and so the tradition never silently grows a second feature.
+    #[test]
+    fn illusion_wizard_inherits_baseline_features() {
+        use crate::actions::class_features::{ARCANE_RECOVERY_TAG, ILLUSORY_SELF_TAG};
+        use crate::actors::creatures::wizards::{ILLUSION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let base = &*WIZARD_TEMPLATE;
+        let sub = &*ILLUSION_WIZARD_TEMPLATE;
+        assert!(sub.features.contains(ILLUSORY_SELF_TAG));
+        assert!(
+            sub.features.contains(ARCANE_RECOVERY_TAG),
+            "the chassis feature survives the clone"
+        );
+        let extra: Vec<_> = sub.features.difference(&base.features).collect();
+        assert_eq!(
+            extra,
+            vec![&ILLUSORY_SELF_TAG],
+            "exactly one feature separates the tradition from the baseline"
+        );
+        assert_eq!(
+            sub.actions.len(),
+            base.actions.len(),
+            "Illusory Self is reactive — it adds no action surface"
+        );
+        assert_ne!(sub.glyph, base.glyph, "the tradition renders distinctly");
+    }
+
 
     /// Storm Giant is immune to lightning and thunder, resistant to cold.
     /// Validates the damage-modifier envelope so the giant lives up to

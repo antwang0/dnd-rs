@@ -246,17 +246,19 @@ fn spell_attack_outcome(
     if !hit {
         return (Vec::new(), 0);
     }
-    // 5e Mirror Image: spell attack rolls trigger the deflection too
-    // (RAW: "any attack roll against you"). Shared with weapon swings
-    // via the engine's `mirror_image_deflect` helper.
-    if encounter.mirror_image_deflect(target_id, is_crit) {
+    // Post-hit interception (Mirror Image decoys, Illusory Self): spell
+    // attack rolls trigger every row of the cohort too (RAW, uniformly:
+    // "any attack roll against you"). Shared with weapon swings via the
+    // engine's `attack_intercepted` helper.
+    if encounter.attack_intercepted(target_id, caster_id, is_crit) {
         return (Vec::new(), 0);
     }
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // record the connecting spell hit so subsequent spell / weapon
     // attacks from this caster against the same target this turn eat
-    // the +4 AC penalty above. Written after Mirror Image so a decoy
-    // redirect doesn't count as a "hit on you" per RAW. Shared with
+    // the +4 AC penalty above. Written after the interception cohort so
+    // a swing that landed on a decoy or an illusory duplicate doesn't
+    // count as a "hit on you" per RAW. Shared with
     // the weapon-attack path in `engine::attack::resolve_attack_outcome`.
     if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
         attacker.mark_hit_target_this_turn(target_id);

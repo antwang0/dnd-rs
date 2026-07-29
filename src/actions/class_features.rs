@@ -158,6 +158,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // (Turn Undead / Preserve Life / Guided Strike / Radiance of the
     // Dawn / Warding Flare / Wrath of the Storm).
     PATH_TO_THE_GRAVE_TAG,
+    // 5e Illusion Wizard level-10 subclass feature — Illusory Self.
+    // Reactive per-rest auto-miss on an incoming attack roll that
+    // would otherwise connect. RAW: refreshes on a short or long rest
+    // — the same cadence as the two sibling reactive per-rest
+    // defenses (Warding Flare, Entropic Ward), and a strictly stronger
+    // one, which is why it sits at subclass level 10 rather than 1/6.
+    ILLUSORY_SELF_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -9572,6 +9579,44 @@ pub const SPLIT_ENCHANTMENT_TAG: &str = "wizard.split_enchantment";
 /// to attack the enchanter's allies, and only together do they match
 /// RAW's "out of the fight, and specifically out of *your* fight".
 pub const HYPNOTIC_GAZE_TAG: &str = "wizard.hypnotic_gaze";
+
+/// Class-feature tag for the Illusion Wizard's **Illusory Self**
+/// (School of Illusion subclass level 10, PHB). Once-per-short-rest
+/// reactive charge, registered in `SHORT_REST_FEATURES`.
+///
+/// RAW: "When a creature makes an attack roll against you, you can use
+/// your reaction to interpose the illusory duplicate between the
+/// attacker and yourself. The attack automatically misses you, then
+/// the illusion dissipates."
+///
+/// Read at `EncounterInstance::illusory_self_deflect`, the second row
+/// of the shared `attack_intercepted` cohort that both attack
+/// chokepoints (`engine::attack::resolve_attack_outcome` for weapon
+/// swings, `spells::spell_attack_outcome` for spell attacks) consult
+/// once a swing is known to connect. Firing it *after* the hit is
+/// known is a deliberate departure from RAW's declaration window —
+/// RAW makes the illusionist commit before the d20 lands, and a
+/// charge spent on a swing that would have missed anyway is pure
+/// waste. The engine has no "would you like to spend this?" channel,
+/// so it spends optimally instead of guessing; the same simplification
+/// `apply_bend_luck_penalty` already makes one block up.
+///
+/// Two clauses separate it from Mirror Image, the cohort row above it:
+///
+///   1. **It beats crits.** Mirror Image explicitly cannot deflect a
+///      critical hit; Illusory Self's "the attack automatically misses"
+///      carries no such carve-out. It is the only defense in the engine
+///      that erases a confirmed crit outright.
+///   2. **It costs a reaction.** Mirror Image's decoys soak swings
+///      passively and can absorb several per round. Illusory Self
+///      competes with Shield, Absorb Elements, opportunity attacks and
+///      every other reactive lane for a single slot per round.
+///
+/// The cohort ordering falls out of that: Mirror Image is tried first
+/// because its decoys are the cheaper resource and are already paid
+/// for, and the per-rest charge is held back for the swing the decoys
+/// let through.
+pub const ILLUSORY_SELF_TAG: &str = "wizard.illusory_self";
 
 /// Overchannel — Evocation Wizard prime. Free (no action, no bonus
 /// action, no slot): declares that the caster's next damaging spell of

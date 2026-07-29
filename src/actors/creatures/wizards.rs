@@ -1200,3 +1200,83 @@ pub static ENCHANTMENT_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Illusion Wizard — Arcane Tradition **School of Illusion** subclass
+/// build (PHB). Identical envelope to the baseline `WIZARD_TEMPLATE`
+/// (INT-primary full-caster with the archmage-tier spell loadout,
+/// Arcane Recovery for mid-encounter slot regen) with the one
+/// mechanically-surfaced School of Illusion feature layered on:
+///
+///   - **Illusory Self** (subclass lv10) — a reaction, once per short
+///     rest: an attack that would hit the illusionist instead hits a
+///     duplicate of them, and automatically misses.
+///
+/// The signature "the swing that should have killed you didn't touch
+/// you" tell. Every other defensive feature on the caster chassis moves
+/// a number — Shield's +5 AC, Blur's disadvantage, Uncanny Dodge's
+/// halving, Arcane Ward's absorption pool. Illusory Self doesn't
+/// negotiate with the number at all: the attack that landed is simply
+/// declared not to have landed. On a 2d6+2-per-die frame with the
+/// engine's lowest HP totals, one guaranteed no-sell per rest is worth
+/// more than any of them, which is why it sits at subclass level 10.
+///
+/// It is also the only defense in the engine that erases a **critical
+/// hit**. Mirror Image — the illusionist's other decoy, and one the
+/// baseline wizard loadout already carries — explicitly cannot deflect
+/// a crit, so the two compose into a layered screen with a natural
+/// division of labour: the decoys soak the ordinary swings for free,
+/// and the per-rest charge waits for the one that would otherwise be
+/// doubled dice. The shared `EncounterInstance::attack_intercepted`
+/// cohort encodes exactly that ordering.
+///
+/// The price is the reaction. On a chassis that also carries Shield,
+/// Absorb Elements and Counterspell, one round's reaction is genuinely
+/// contested, and Illusory Self spends it defensively without stopping
+/// the *rest* of the attacker's turn the way Shield's +5 AC can.
+///
+/// The other three School of Illusion features are left out because
+/// none has a combat surface in RAW. Improved Minor Illusion (lv2)
+/// grants a cantrip that creates a sound or an image — the engine
+/// models neither. Malleable Illusions (lv6) lets a standing illusion
+/// be reshaped as an action, which needs a standing illusion the engine
+/// doesn't track. Illusory Reality (lv14) makes one illusory object
+/// briefly real; there are no illusory objects to promote. Illusory
+/// Self is not a partial shipment of the subclass so much as the whole
+/// of its combat-facing half.
+///
+/// Distinct from the seven sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline),
+/// `NECROMANCY_WIZARD_TEMPLATE` (passive necrotic resistance),
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (passive +INT-mod initiative),
+/// `ABJURATION_WIZARD_TEMPLATE` (the rechargeable Arcane Ward
+/// absorption pool), `EVOCATION_WIZARD_TEMPLATE` (blast-shaping and
+/// damage augmentation), `DIVINATION_WIZARD_TEMPLATE` (the d20
+/// substitution bank), and `ENCHANTMENT_WIZARD_TEMPLATE` (slot-free
+/// lockdown plus free single-target doubling). Eight templates, eight
+/// distinct axes — and this is the only one whose axis is a flat denial
+/// of an attack that already connected. RAW allows exactly one Arcane
+/// Tradition pick per wizard, so no two ever legally co-occur on a
+/// single build.
+///
+/// Glyph 'Λ' — the illusionist's duplicate, two strokes meeting where
+/// one figure stood. Distinct from baseline wizard 'M' (mage),
+/// Necromancy 'N', War Magic 'Σ', Abjuration 'Θ', Evocation 'Δ',
+/// Divination 'Ψ', and Enchantment 'Φ'; collides with no other template
+/// glyph in the engine.
+pub static ILLUSION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Tag-only subclass — Illusory Self needs no action surface (it
+    // fires reactively at the shared interception chokepoint) and no
+    // struct field (the once-per-short-rest cadence rides
+    // `features_remaining` via the `SHORT_REST_FEATURES` registration),
+    // so the cross-class `with_subclass_tag` helper is the exact fit.
+    // First wizard-chassis user of the helper since
+    // `WAR_MAGIC_WIZARD_TEMPLATE` — the four traditions in between all
+    // needed either an extra action (Enchantment's Hypnotic Gaze,
+    // Evocation's Overchannel) or a scalar field (Divination's
+    // `portent_dice`) and stayed on the explicit clone-and-insert body.
+    WIZARD_TEMPLATE.with_subclass_tag(
+        "Illusion Wizard",
+        'Λ',
+        crate::actions::class_features::ILLUSORY_SELF_TAG,
+    )
+});

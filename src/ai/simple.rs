@@ -5531,15 +5531,25 @@ mod tests {
             // also puts a `charmed_by` link on a hostile mid-fight,
             // which is the AI-side exercise of the charm restriction on
             // declared actions, opportunity attacks and Riposte alike.
+            // The Illusion Wizard drives the interception cohort from
+            // the target side: sitting on team 0 it is swung at by the
+            // hostiles, so a connecting attack walks the shared
+            // `attack_intercepted` rows and — once per short rest —
+            // spends the wizard's reaction to no-sell the hit. Its
+            // baseline loadout also carries Mirror Image, so the AI
+            // reaches the layered case the cohort ordering exists for:
+            // decoys first, per-rest charge for what gets through.
             use crate::actors::creatures::wizards::{
                 ABJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE,
-                ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
+                ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
             };
             let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
             let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
             let _ = e.instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 26);
             let _ =
                 e.instantiate_creature(&ENCHANTMENT_WIZARD_TEMPLATE, Coordinate::new(4, 12), 0, 27);
+            let _ =
+                e.instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 14), 0, 28);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
