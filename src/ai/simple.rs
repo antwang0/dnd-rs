@@ -5545,10 +5545,17 @@ mod tests {
             // then has to resolve back to a school by name, and every
             // levelled conjuration it casts re-arms Benign Transposition
             // through the post-cast trigger registry.
+            // The Transmutation Wizard runs the stone's save-proficiency
+            // grant through the AI's own concentration saves, and its
+            // Shapechanger puts a second concentration source on the
+            // chassis — so the driver exercises the case where an
+            // emergency self-Polymorph displaces a control spell the AI
+            // was already holding.
             use crate::actors::creatures::wizards::{
                 ABJURATION_WIZARD_TEMPLATE, CONJURATION_WIZARD_TEMPLATE,
                 DIVINATION_WIZARD_TEMPLATE, ENCHANTMENT_WIZARD_TEMPLATE,
                 EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
+                TRANSMUTATION_WIZARD_TEMPLATE,
             };
             let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
             let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
@@ -5559,6 +5566,12 @@ mod tests {
                 e.instantiate_creature(&ILLUSION_WIZARD_TEMPLATE, Coordinate::new(4, 14), 0, 28);
             let _ =
                 e.instantiate_creature(&CONJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 16), 0, 29);
+            let _ = e.instantiate_creature(
+                &TRANSMUTATION_WIZARD_TEMPLATE,
+                Coordinate::new(6, 6),
+                0,
+                30,
+            );
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

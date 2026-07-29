@@ -165,6 +165,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // defenses (Warding Flare, Entropic Ward), and a strictly stronger
     // one, which is why it sits at subclass level 10 rather than 1/6.
     ILLUSORY_SELF_TAG,
+    // 5e Transmutation Wizard level-10 subclass feature — Shapechanger.
+    // RAW: "you can cast the polymorph spell without expending a spell
+    // slot... Once you do so, you can't use this feature again until
+    // you finish a short or long rest."
+    SHAPECHANGER_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -10016,3 +10021,127 @@ impl Action for HypnoticGaze {
 }
 
 pub static HYPNOTIC_GAZE: LazyLock<HypnoticGaze> = LazyLock::new(|| HypnoticGaze {});
+
+/// Class-feature tag for the Transmutation Wizard's **Transmuter's
+/// Stone** (School of Transmutation subclass level 6, PHB). A pure
+/// membership marker: the stone's *benefit* lives on the
+/// `transmuters_stone` template field, since RAW's pick-one-of-four is
+/// a choice and a `HashSet<&'static str>` can only record a yes/no.
+///
+/// The tag is what a "does this wizard carry a stone at all?" read
+/// should consult; the field is what the three benefit cohorts
+/// (`PASSIVE_FEATURE_SPEED_BONUSES`, `FLAG_DRIVEN_SAVE_PROFICIENCIES`,
+/// and the Warding OR in `has_passive_typed_resistance`) each match on.
+/// Keeping both means the UI and any future "the stone shatters"
+/// effect have a marker to read without having to spell out every
+/// benefit variant.
+pub const TRANSMUTERS_STONE_TAG: &str = "wizard.transmuters_stone";
+
+/// Class-feature tag for the Transmutation Wizard's **Shapechanger**
+/// (School of Transmutation subclass level 10, PHB). Gates the
+/// `SHAPECHANGER` action and carries its once-per-short-rest charge,
+/// registered in `SHORT_REST_FEATURES`.
+///
+/// RAW: "you can cast the polymorph spell without expending a spell
+/// slot. When you do so, you can transform only into a beast with a
+/// challenge rating of 1 or lower."
+pub const SHAPECHANGER_TAG: &str = "wizard.shapechanger";
+
+/// Shapechanger — Transmutation Wizard lv10 free self-Polymorph.
+///
+/// Mechanically the self-targeted half of the `POLYMORPH` spell with
+/// the slot swapped for a per-short-rest charge: the same
+/// `Polymorphed` condition, the same 30 temp HP, the same
+/// concentration mark. The willing-target branch of Polymorph already
+/// skips the WIS save, so a self-cast has nothing to roll and this
+/// action has no randomness at all.
+///
+/// It is an emergency button rather than an opener. Thirty temp HP is
+/// roughly triple a wizard's remaining margin at the point they'd want
+/// it, and the beast form's own concentration means it costs whatever
+/// control spell the wizard was holding — so the choice it poses is
+/// "keep the Web up, or survive the round". RAW's CR-1-or-lower
+/// restriction on the form has no surface here for the same reason
+/// the base spell's form choice doesn't: `Polymorphed` is modelled as
+/// a condition plus a temp-HP pool rather than a full stat-block swap.
+///
+/// Targets the caster unconditionally rather than taking a target, so
+/// there is no way to point it at an ally — RAW's "you can cast the
+/// polymorph spell" is explicitly a self-transformation clause.
+pub struct Shapechanger {}
+
+impl Action for Shapechanger {
+    fn name(&self) -> &str {
+        "shapechanger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["shift", "beastform"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.feature_available(SHAPECHANGER_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_feature(SHAPECHANGER_TAG);
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Polymorphed,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: 30,
+            }),
+            Box::new(crate::engine::side_effects::StartConcentration {
+                caster_id,
+                data: crate::actors::actor_template::ConcentrationData::with_conditions(
+                    "Polymorph",
+                    vec![(caster_id, Condition::Polymorphed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static SHAPECHANGER: LazyLock<Shapechanger> = LazyLock::new(|| Shapechanger {});

@@ -1365,3 +1365,109 @@ pub static CONJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Transmutation Wizard — Arcane Tradition **School of Transmutation**
+/// subclass build (PHB), and the **eighth and final** Arcane Tradition
+/// on the wizard chassis. Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// the two mechanically-surfaced School of Transmutation features
+/// layered on:
+///
+///   - **Transmuter's Stone** (subclass lv6) — a carried stone granting
+///     one of three benefits. This build attunes it to **Resilience**:
+///     proficiency in Constitution saving throws.
+///   - **Shapechanger** (subclass lv10) — an action, once per short
+///     rest, no slot: cast Polymorph on yourself.
+///
+/// The signature "the wizard is harder to shift than a wizard should
+/// be" tell. Both features answer the same question — what happens
+/// when something finally connects with the d6-hit-die caster — and
+/// they answer it at two different depths. The stone's Constitution
+/// proficiency is the shallow, always-on answer: the damage-driven
+/// concentration save is the one an unproficient wizard fails most, and
+/// it is the one that costs them the spell they spent the turn on.
+/// Shapechanger is the deep answer, and an expensive one: 30 temp HP
+/// arrives roughly tripling the wizard's remaining margin, but the
+/// beast form is itself a concentration, so the button that saves the
+/// wizard is the button that drops whatever they were holding. "Keep
+/// the Web up, or survive the round" is a real choice, and the stone
+/// exists to make it come up less often.
+///
+/// Which is a deliberately different shape from the sibling
+/// `CONJURATION_WIZARD_TEMPLATE`, the other tradition whose axis is
+/// staying power: Focused Conjuration protects the *spell*
+/// unconditionally within one school, where the stone protects the
+/// *caster's roll* conditionally across all of them. A conjurer never
+/// loses a Web; a transmuter loses fewer of everything.
+///
+/// **The stone's attunement is a template axis, not a runtime choice.**
+/// RAW offers four benefits — darkvision, +10 ft speed, Constitution
+/// save proficiency, or resistance to one of acid / cold / fire /
+/// lightning / thunder — chosen on a long rest and changeable on any
+/// levelled transmutation cast. Darkvision is dropped (the engine has
+/// no light level for it to act on, the same reason the Diviner's
+/// Third Eye drops its own darkvision option); the other three are
+/// live, each read by the cohort that already owns its effect. A
+/// Swiftness or Warding transmuter is this template with
+/// `transmuters_stone` changed and nothing else, exactly the way
+/// `portent_dice: 2` gives the subclass-level-2 Diviner and the way the
+/// three Storm Herald Barbarians are three templates over one aura.
+///
+/// Resilience is the shipped attunement because it is the only one of
+/// the three that improves a roll the wizard is already making every
+/// round they hold a spell. Swiftness competes with a chassis that
+/// carries Misty Step, and Warding is a bet on a damage type the build
+/// can't know in advance.
+///
+/// Minor Alchemy (subclass lv2) and Master Transmuter (lv14) are left
+/// out. Minor Alchemy transmutes one material into another over ten
+/// minutes and has no combat surface in RAW at all. Master Transmuter
+/// spends the stone on one of four out-of-combat effects — removing a
+/// curse, restoring youth, creating a magic item, or a full-heal
+/// panacea; only the last has any combat shape, and shipping it alone
+/// would turn the capstone into "a second Shapechanger that heals",
+/// which is not what the feature is.
+///
+/// Distinct from the nine sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline),
+/// `NECROMANCY_WIZARD_TEMPLATE` (passive necrotic resistance),
+/// `WAR_MAGIC_WIZARD_TEMPLATE` (passive +INT-mod initiative),
+/// `ABJURATION_WIZARD_TEMPLATE` (the rechargeable Arcane Ward
+/// absorption pool), `EVOCATION_WIZARD_TEMPLATE` (blast-shaping and
+/// damage augmentation), `DIVINATION_WIZARD_TEMPLATE` (the d20
+/// substitution bank), `ENCHANTMENT_WIZARD_TEMPLATE` (slot-free
+/// lockdown plus free single-target doubling), `ILLUSION_WIZARD_TEMPLATE`
+/// (the per-rest auto-miss), and `CONJURATION_WIZARD_TEMPLATE`
+/// (unbreakable conjuration concentration plus a self-recharging
+/// blink). Ten templates, ten distinct axes, and with this one the
+/// eight PHB Arcane Traditions are complete. RAW allows exactly one
+/// Arcane Tradition pick per wizard, so no two ever legally co-occur on
+/// a single build.
+///
+/// Glyph '◊' — the transmuter's stone. Distinct from baseline wizard 'M' (mage),
+/// Necromancy 'N', War Magic 'Σ', Abjuration 'Θ', Evocation 'Δ',
+/// Divination 'Ψ', Enchantment 'Φ', Illusion 'Λ', and Conjuration 'Γ'.
+pub static TRANSMUTATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Mixed tag-plus-action-plus-struct-field subclass — the widest of
+    // the ten wizard templates on plumbing, and the reason neither the
+    // tag-only `with_subclass_tag` helper nor a bare field override
+    // fits: Shapechanger is a tag plus an action, Transmuter's Stone is
+    // a tag plus an enum field with nowhere to live in a
+    // `HashSet<&'static str>`.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::TRANSMUTERS_STONE_TAG);
+    features.insert(crate::actions::class_features::SHAPECHANGER_TAG);
+    let mut actions = WIZARD_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::class_features::SHAPECHANGER);
+    CreatureTemplate {
+        name: "Transmutation Wizard",
+        glyph: '◊',
+        features,
+        actions,
+        transmuters_stone: Some(
+            crate::actors::actor_template::TransmutersStoneBenefit::Resilience,
+        ),
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

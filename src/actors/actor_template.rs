@@ -925,6 +925,41 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
     },
 ];
 
+/// 5e Transmutation Wizard **Transmuter's Stone** (subclass level 6) —
+/// which of the stone's benefits its holder currently carries.
+///
+/// RAW offers four: darkvision 60 ft, +10 ft walking speed,
+/// proficiency in Constitution saving throws, or resistance to one of
+/// acid / cold / fire / lightning / thunder. Three are modelled here.
+/// Darkvision is dropped for the same reason the Diviner's Third Eye
+/// drops its own darkvision option — the engine has no light level for
+/// it to act on, so it would be a variant that does nothing.
+///
+/// Each surviving variant is read by the cohort that already owns its
+/// effect, rather than by a Transmuter's-Stone-specific branch:
+/// `Swiftness` by `PASSIVE_FEATURE_SPEED_BONUSES`, `Resilience` by
+/// `FLAG_DRIVEN_SAVE_PROFICIENCIES`, `Warding` by
+/// `PASSIVE_TYPED_RESISTANCES`. One feature, one field, three
+/// pre-existing tables — which is why the stone costs three one-line
+/// rows rather than three new engine surfaces.
+///
+/// `Warding` carries its damage type rather than fixing one, because
+/// RAW's choice is per-attunement and the five options are not
+/// interchangeable in play: fire resistance is worth far more against
+/// a red dragon than thunder resistance is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransmutersStoneBenefit {
+    /// +10 ft walking speed.
+    Swiftness,
+    /// Proficiency in Constitution saving throws — on a d6-hit-die
+    /// INT-caster this is mostly a concentration-holding buff, and
+    /// secondarily the poison / paralysis lane.
+    Resilience,
+    /// Resistance to one damage type (RAW: acid, cold, fire, lightning
+    /// or thunder).
+    Warding(DamageType),
+}
+
 /// One row in the `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort — a single
 /// passive-feature flag that grants proficiency in a specific saving
 /// throw ability. Sibling to `FlagDrivenImmunity` on the passive-
@@ -984,6 +1019,20 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
     FlagDrivenSaveProficiency {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ELEGANT_COURTIER_TAG),
         ability: AbilityScoreType::Wisdom,
+    },
+    // 5e Transmutation Wizard **Transmuter's Stone** (subclass level 6),
+    // attuned to Resilience: proficiency in Constitution saving throws.
+    // The only row in this cohort keyed off a struct field carrying a
+    // *choice* rather than a boolean — the transmuter always has the
+    // stone, and this row fires only while it is set to Resilience.
+    //
+    // On a d6-hit-die INT-caster the grant is mostly a concentration
+    // buff: the damage-driven CON save is the one an unproficient
+    // wizard fails most, and it is the one that costs them the Web or
+    // the Hold Monster they spent the turn on.
+    FlagDrivenSaveProficiency {
+        flag: |a| a.transmuters_stone == Some(TransmutersStoneBenefit::Resilience),
+        ability: AbilityScoreType::Constitution,
     },
 ];
 
@@ -1253,7 +1302,23 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
         flag: |a| a.has_passive_feature(crate::actions::class_features::AURA_OF_ALACRITY_TAG),
         bonus_ft: crate::actions::class_features::AURA_OF_ALACRITY_SPEED_BONUS,
     },
+    // 5e Transmutation Wizard **Transmuter's Stone** (subclass level 6),
+    // attuned to Swiftness: +10 ft walking speed. Keys off the stone
+    // field rather than a feature tag — the tag marks that the wizard
+    // *has* a stone, the field says which benefit it is set to, and
+    // only this row's benefit grants speed. Same +10 magnitude as Fast
+    // Movement / Unarmored Movement / Superior Mobility / Aura of
+    // Alacrity, on a sixth chassis; stacks additively through this
+    // cohort like every other row.
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.transmuters_stone == Some(TransmutersStoneBenefit::Swiftness),
+        bonus_ft: TRANSMUTERS_STONE_SPEED_BONUS,
+    },
 ];
+
+/// The Transmuter's Stone Swiftness attunement's walking-speed bump, in
+/// feet. RAW: "+10 feet to the holder's walking speed."
+pub const TRANSMUTERS_STONE_SPEED_BONUS: f32 = 10.0;
 
 /// One row in the `CONDITION_SPEED_BONUSES` cohort — a single
 /// condition-driven speed bump. `flag` is any predicate on the actor
@@ -2068,6 +2133,25 @@ pub struct CreatureTemplate {
     /// `level` tracks in-run XP progression from 1, not the build level
     /// a class template targets.
     pub portent_dice: u32,
+    /// 5e Transmutation Wizard **Transmuter's Stone** (subclass level
+    /// 6) — which of the stone's benefits the holder currently carries.
+    /// `None` (the default, and every non-transmuter) means no stone.
+    ///
+    /// A template axis rather than a runtime choice, for the same
+    /// reason `portent_dice` is a scalar and the three Storm Herald
+    /// Barbarians are three templates: RAW's pick-one-of-four is a
+    /// build decision, and the engine's action layer has no channel
+    /// for "cast this, but with option C". A Swiftness or Warding
+    /// transmuter is this template with one field changed, exactly the
+    /// way `portent_dice: 2` gives the subclass-level-2 Diviner.
+    ///
+    /// RAW's re-attunement clause ("you can change the effect when you
+    /// cast a transmutation spell of 1st level or higher") is what this
+    /// collapses. Modelling it would need either a free action that
+    /// cycles blindly through the options or a prompt channel the AI
+    /// can't answer, and both are worse models of the feature than a
+    /// stone the wizard has already settled on.
+    pub transmuters_stone: Option<TransmutersStoneBenefit>,
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves for half damage, take 0
     /// on a pass and half on a fail instead of half / full.
     pub has_evasion: bool,
@@ -2901,6 +2985,7 @@ impl CreatureTemplate {
             legendary_resistances: 0,
             arcane_ward_base: 0,
             portent_dice: 0,
+            transmuters_stone: None,
             has_evasion: false,
             has_uncanny_dodge: false,
             has_deflect_missiles: false,
@@ -3197,6 +3282,12 @@ pub struct ActorInstance {
     /// — the overwhelming majority of actors. Template constant for the
     /// same reason `arcane_ward_base` is one.
     portent_dice_max: u32,
+    /// 5e Transmutation Wizard **Transmuter's Stone** — the benefit the
+    /// holder's stone is attuned to, copied from the template at
+    /// instantiation. `None` for every actor without the subclass.
+    /// Read by three separate cohorts (speed, save proficiency, typed
+    /// resistance) which each match on the variant they serve.
+    transmuters_stone: Option<TransmutersStoneBenefit>,
     /// 5e Evocation Wizard **Overchannel** (subclass level 14) — how
     /// many times the holder has maximized a spell since their last long
     /// rest. Drives the escalating backlash: the first use is free, the
@@ -3591,6 +3682,7 @@ impl ActorInstance {
             portent_pool: Vec::new(),
             portent_forecast: false,
             portent_dice_max: ct.portent_dice,
+            transmuters_stone: ct.transmuters_stone,
             overchannel_uses: 0,
             overchannel_backlash_pending: false,
             level: 1,
@@ -5159,6 +5251,25 @@ impl ActorInstance {
         PASSIVE_TYPED_RESISTANCES
             .iter()
             .any(|entry| entry.types.contains(&dt) && (entry.flag)(self))
+            || self.transmuters_stone_resists(dt)
+    }
+
+    /// 5e Transmutation Wizard **Transmuter's Stone** (subclass level
+    /// 6), attuned to Warding: resistance to the one damage type the
+    /// stone is set to.
+    ///
+    /// The stone's other two attunements ride cohort rows
+    /// (`PASSIVE_FEATURE_SPEED_BONUSES`, `FLAG_DRIVEN_SAVE_PROFICIENCIES`);
+    /// this one can't. `PassiveTypedResistance::types` is a
+    /// `&'static [DamageType]` — a compile-time list — and Warding's
+    /// type is a runtime value carried in the variant, chosen per
+    /// attunement. Enumerating five rows (one per RAW-legal type)
+    /// would express it, but at the cost of five near-identical
+    /// entries whose only difference is the type they compare against,
+    /// which is the same shape the cohort exists to collapse. One OR
+    /// against the field is the smaller change.
+    fn transmuters_stone_resists(&self, dt: DamageType) -> bool {
+        self.transmuters_stone == Some(TransmutersStoneBenefit::Warding(dt))
     }
 
     /// Test-only setter for an actor's per-type damage modifier. Lets tests

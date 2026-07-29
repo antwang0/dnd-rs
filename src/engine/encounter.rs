@@ -33508,6 +33508,233 @@ mod tests {
         );
     }
 
+
+    /// Transmuter's Stone, Resilience attunement: proficiency in
+    /// Constitution saving throws, granted through the shared
+    /// `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort rather than the actor's
+    /// explicit `proficient_saves` set. The baseline wizard is the
+    /// control — the two templates differ only in the stone.
+    #[test]
+    fn transmuters_stone_resilience_grants_con_save_proficiency() {
+        use crate::actors::creatures::wizards::{TRANSMUTATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let transmuter = e
+            .instantiate_creature(&TRANSMUTATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        assert!(
+            e.actors[&transmuter].is_save_proficient(AbilityScoreType::Constitution),
+            "the shipped attunement is Resilience"
+        );
+        assert!(
+            !e.actors[&plain].is_save_proficient(AbilityScoreType::Constitution),
+            "the baseline wizard has no stone"
+        );
+        // The grant is CON-specific, not a blanket save buff.
+        assert_eq!(
+            e.actors[&transmuter].is_save_proficient(AbilityScoreType::Strength),
+            e.actors[&plain].is_save_proficient(AbilityScoreType::Strength),
+            "the stone touches exactly one ability"
+        );
+    }
+
+    /// The other two live attunements, exercised on their own cohorts.
+    /// Both are one-field variants of the shipped template, so the
+    /// engine surfaces they read have to work even though no shipped
+    /// template currently selects them — a Swiftness or Warding
+    /// transmuter is meant to be a one-line change, and this is what
+    /// keeps that true.
+    #[test]
+    fn transmuters_stone_swiftness_and_warding_attunements_read_their_cohorts() {
+        use crate::actors::actor_template::{CreatureTemplate, TransmutersStoneBenefit};
+        use crate::actors::creatures::wizards::{TRANSMUTATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // `instantiate_creature` takes a `&'static CreatureTemplate`,
+        // which every shipped template satisfies via `LazyLock`. These
+        // two exist only for the length of this test, so they are
+        // leaked to borrow them for as long — the point is precisely
+        // that a variant attunement is a one-field change over the
+        // shipped template, so building them from it is the assertion.
+        let variant = |benefit: TransmutersStoneBenefit| -> &'static CreatureTemplate {
+            Box::leak(Box::new(CreatureTemplate {
+                transmuters_stone: Some(benefit),
+                ..TRANSMUTATION_WIZARD_TEMPLATE.clone()
+            }))
+        };
+        let swift = variant(TransmutersStoneBenefit::Swiftness);
+        let warded = variant(TransmutersStoneBenefit::Warding(DamageType::Fire));
+        let plain = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let s = e
+            .instantiate_creature(swift, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let w = e
+            .instantiate_creature(warded, Coordinate::new(6, 2), 0, 2)
+            .unwrap();
+
+        assert!(
+            e.actors[&s].speed() > e.actors[&plain].speed(),
+            "Swiftness rides the passive speed-bonus cohort"
+        );
+        // Asserted through `effective_damage` rather than a resistance
+        // predicate, so the test rides the same path a real hit takes.
+        let fire = |id: usize, e: &EncounterInstance| e.actors[&id].effective_damage(10, DamageType::Fire);
+        assert_eq!(fire(w, &e), 5, "Warding(Fire) halves fire damage");
+        assert_eq!(
+            e.actors[&w].effective_damage(10, DamageType::Cold),
+            10,
+            "Warding names exactly one type"
+        );
+        // Each attunement grants only its own benefit — the stone is a
+        // choice, not a bundle.
+        assert_eq!(fire(s, &e), 10, "Swiftness is not also Warding");
+        assert_eq!(fire(plain, &e), 10, "and the baseline has no stone at all");
+        assert_eq!(
+            e.actors[&w].speed(),
+            e.actors[&plain].speed(),
+            "Warding is not also Swiftness"
+        );
+    }
+
+    /// Shapechanger: an action and a per-short-rest charge, no slot.
+    /// Installs the same payload a self-cast Polymorph would —
+    /// `Polymorphed`, 30 temp HP, and a concentration mark on the
+    /// caster — and the concentration is the price, since it displaces
+    /// whatever the wizard was already holding.
+    #[test]
+    fn shapechanger_self_polymorphs_for_a_charge_not_a_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{SHAPECHANGER, SHAPECHANGER_TAG};
+        use crate::actors::creatures::wizards::TRANSMUTATION_WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let transmuter = e
+            .instantiate_creature(&TRANSMUTATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+
+        assert!(SHAPECHANGER.custom_validate_input(&e, transmuter, None, None, None));
+        let cost = SHAPECHANGER.cost(&e, transmuter, None, None, None);
+        assert_eq!(cost, vec![Resource::Action], "an action, and no slot");
+
+        let slots = |e: &EncounterInstance| -> Vec<u32> {
+            (1..=9)
+                .map(|l| e.actors[&transmuter].spell_slot_manager.spell_slots(l).spell_slots)
+                .collect()
+        };
+        let slots_before = slots(&e);
+        let effects = SHAPECHANGER.side_effects(&mut e, transmuter, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&transmuter].has_condition(Condition::Polymorphed));
+        assert!(
+            e.actors[&transmuter].temp_hp() >= 30,
+            "30 temp HP arrive with the form"
+        );
+        assert_eq!(
+            e.actors[&transmuter]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Polymorph"),
+            "the beast form is itself a concentration"
+        );
+        assert_eq!(slots(&e), slots_before, "no slot was expended");
+        assert!(
+            !e.actors[&transmuter].feature_available(SHAPECHANGER_TAG),
+            "the charge is spent"
+        );
+        assert!(
+            !SHAPECHANGER.custom_validate_input(&e, transmuter, None, None, None),
+            "a spent charge fails validation"
+        );
+
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
+        e.actors
+            .get_mut(&transmuter)
+            .unwrap()
+            .short_rest(&mut roller);
+        assert!(
+            e.actors[&transmuter].feature_available(SHAPECHANGER_TAG),
+            "the form comes back on a short rest"
+        );
+    }
+
+    /// Template drift pin for the tenth and final wizard tradition.
+    #[test]
+    fn transmutation_wizard_inherits_baseline_features() {
+        use crate::actions::class_features::{
+            ARCANE_RECOVERY_TAG, SHAPECHANGER_TAG, SHORT_REST_FEATURES, TRANSMUTERS_STONE_TAG,
+        };
+        use crate::actors::actor_template::TransmutersStoneBenefit;
+        use crate::actors::creatures::wizards::{TRANSMUTATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let base = &*WIZARD_TEMPLATE;
+        let sub = &*TRANSMUTATION_WIZARD_TEMPLATE;
+        assert!(sub.features.contains(ARCANE_RECOVERY_TAG));
+        let mut extra: Vec<_> = sub.features.difference(&base.features).copied().collect();
+        extra.sort();
+        assert_eq!(extra, vec![SHAPECHANGER_TAG, TRANSMUTERS_STONE_TAG]);
+        assert_eq!(
+            sub.actions.len(),
+            base.actions.len() + 1,
+            "Shapechanger is the tradition's only action surface"
+        );
+        assert_eq!(
+            sub.transmuters_stone,
+            Some(TransmutersStoneBenefit::Resilience),
+            "the shipped attunement"
+        );
+        assert_eq!(base.transmuters_stone, None, "no stone on the baseline");
+        assert!(SHORT_REST_FEATURES.contains(&SHAPECHANGER_TAG));
+        assert!(
+            !SHORT_REST_FEATURES.contains(&TRANSMUTERS_STONE_TAG),
+            "the stone is a permanent passive, not a charge"
+        );
+    }
+
+    /// All eight PHB Arcane Traditions plus the baseline and War Magic
+    /// render distinctly. Each template's doc comment asserts its glyph
+    /// collides with none of its siblings; this is that claim as a
+    /// test, so the tenth tradition can't be added on a glyph the ninth
+    /// already took. Sibling in shape to
+    /// `all_dragonborn_variants_have_distinct_glyphs`.
+    #[test]
+    fn every_wizard_tradition_has_a_distinct_glyph() {
+        use crate::actors::creatures::wizards::{
+            ABJURATION_WIZARD_TEMPLATE, CONJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE,
+            ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
+            NECROMANCY_WIZARD_TEMPLATE, TRANSMUTATION_WIZARD_TEMPLATE, WAR_MAGIC_WIZARD_TEMPLATE,
+            WIZARD_TEMPLATE,
+        };
+        let family = [
+            &*WIZARD_TEMPLATE,
+            &*ABJURATION_WIZARD_TEMPLATE,
+            &*CONJURATION_WIZARD_TEMPLATE,
+            &*DIVINATION_WIZARD_TEMPLATE,
+            &*ENCHANTMENT_WIZARD_TEMPLATE,
+            &*EVOCATION_WIZARD_TEMPLATE,
+            &*ILLUSION_WIZARD_TEMPLATE,
+            &*NECROMANCY_WIZARD_TEMPLATE,
+            &*TRANSMUTATION_WIZARD_TEMPLATE,
+            &*WAR_MAGIC_WIZARD_TEMPLATE,
+        ];
+        let mut glyphs: Vec<char> = family.iter().map(|t| t.glyph).collect();
+        glyphs.sort();
+        let distinct = glyphs.len();
+        glyphs.dedup();
+        assert_eq!(distinct, glyphs.len(), "wizard tradition glyphs collide");
+        let mut names: Vec<&str> = family.iter().map(|t| t.name).collect();
+        names.sort();
+        let named = names.len();
+        names.dedup();
+        assert_eq!(named, names.len(), "wizard tradition names collide");
+    }
+
     /// Storm Giant is immune to lightning and thunder, resistant to cold.
     /// Validates the damage-modifier envelope so the giant lives up to
     /// its anti-caster reputation against Lightning Bolt / Thunderwave.

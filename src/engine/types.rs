@@ -175,13 +175,25 @@ impl fmt::Display for Size {
 /// fails the gate closed (no ward recharge, no damage bump) rather than
 /// firing on the wrong school.
 ///
-/// Tagged today: **Abjuration** (read by the Abjuration Wizard's Arcane
-/// Ward form/recharge hook) and **Evocation** (read by the Evocation
-/// Wizard's Sculpt Spells / Potent Cantrip / Empowered Evocation trio).
-/// The other six variants exist so a future Illusion / Enchantment /
-/// Divination / Necromancy / Conjuration / Transmutation subclass
-/// feature lands as spell-side `school()` overrides plus one consumer,
-/// with no enum churn.
+/// Four variants have consumers today:
+///
+///   - **Abjuration** — the Abjuration Wizard's Arcane Ward
+///     form/recharge hook.
+///   - **Conjuration** — the Conjuration Wizard's Focused Conjuration
+///     (unbreakable concentration) and Benign Transposition recharge.
+///   - **Divination** — the Divination Wizard's Expert Divination slot
+///     refund.
+///   - **Enchantment** — the Enchantment Wizard's Split Enchantment
+///     doubling.
+///   - **Evocation** — the Evocation Wizard's Sculpt Spells / Potent
+///     Cantrip / Empowered Evocation trio.
+///
+/// Illusion, Necromancy and Transmutation are declared but unread: the
+/// three wizard traditions that carry those names key off reactions,
+/// passives and a carried stone rather than off the school of what
+/// they cast, so tagging their spells would add rows nothing consults.
+/// A future feature that does read one lands as spell-side `school()`
+/// overrides plus one consumer, with no enum churn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpellSchool {
     Abjuration,
