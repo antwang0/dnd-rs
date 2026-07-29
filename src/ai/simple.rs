@@ -5438,6 +5438,27 @@ mod tests {
             let _ = e.instantiate_creature(&MAGMA_MEPHIT_TEMPLATE, Coordinate::new(0, 10), 1, 70);
             let _ = e.instantiate_creature(&ICE_MEPHIT_TEMPLATE, Coordinate::new(0, 12), 1, 71);
             let _ = e.instantiate_creature(&STEAM_MEPHIT_TEMPLATE, Coordinate::new(0, 14), 1, 72);
+            // Newest additions: the two new Arcane Tradition subclass
+            // templates. The Evocation Wizard is the interesting one for
+            // this smoke test — it drives four new engine paths the AI
+            // can reach mid-encounter: the Sculpt Spells branch of the
+            // AoE picker's friendly-fire gate (it will fire blasts into
+            // its own team, which no other template does), the Potent
+            // Cantrip upgrade at the post-save chokepoint, the Empowered
+            // Evocation bonus on the shared damage roll, and the
+            // Overchannel prime plus its escalating necrotic backlash,
+            // which is the only path in the engine where an actor can
+            // knock *itself* down as a scheduled consequence of its own
+            // cast. Placed on team 0 next to real allies so the sculpt
+            // path is actually exercised rather than trivially empty.
+            // The Abjuration Wizard exercises the Arcane Ward weave /
+            // recharge / absorb cycle off its own Shield and Mage Armor
+            // casts.
+            use crate::actors::creatures::wizards::{
+                ABJURATION_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE,
+            };
+            let _ = e.instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 24);
+            let _ = e.instantiate_creature(&ABJURATION_WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 25);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
