@@ -4812,7 +4812,7 @@ impl Action for HornOfBlastingItem {
         // chokepoint; we re-route to it for parity with every other
         // burst item.
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let shielded = encounter.careful_spell_shielded(caster_id, center, RADIUS);
+        let shielded = encounter.auto_pass_shielded_allies(caster_id, center, RADIUS);
         for tid in encounter.neutral_burst_targets(caster_id, center, RADIUS) {
             if shielded.contains(&tid) {
                 continue;

@@ -1026,6 +1026,53 @@ pub struct EncounterInstance {
     /// when Multi is on cooldown) still chain correctly because depth
     /// is 0.
     multiattack_depth: u32,
+    /// Stack of in-flight spell casts. `Action::execute` pushes a frame
+    /// before building the action's side-effects and pops it after, so
+    /// any resolution site nested inside — a burst's per-target save
+    /// loop, a shared damage roll, an ally-shield sweep — can ask what
+    /// spell it is currently resolving without every helper in the call
+    /// chain growing two more parameters.
+    ///
+    /// A stack rather than a single slot because casts nest: a
+    /// Counterspell reaction resolves inside the cast it answers, and a
+    /// Twinned Spell re-issues its `side_effects` builder within the
+    /// enclosing `execute`. `current_cast` always reads the innermost
+    /// frame, which is the cast a nested site is actually part of.
+    cast_stack: Vec<CastContext>,
+}
+
+/// One frame of the in-flight spell-cast stack — the resolved identity
+/// of the spell whose effects are being built right now.
+///
+/// Both fields come straight off the `Action` being executed:
+/// `school` is its `school()` (None for non-spells and untagged spells)
+/// and `level` is the `SpellSlot(n)` entry sniffed off its resolved
+/// cost (0 for cantrips and slot-less actions). Consumers gate on both
+/// — "an evocation spell of 1st level or higher", "a cantrip" — so the
+/// frame carries exactly the two facts every school-keyed feature in
+/// 5e keys off and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CastContext {
+    pub school: Option<SpellSchool>,
+    pub level: u32,
+}
+
+impl CastContext {
+    /// True when this frame is a spell of `school` at 1st level or
+    /// higher — the RAW shape of essentially every school-keyed
+    /// subclass feature ("when you cast an abjuration spell of 1st
+    /// level or higher…", "when you cast a wizard evocation spell…").
+    pub fn is_leveled_spell_of(&self, school: SpellSchool) -> bool {
+        self.school == Some(school) && self.level > 0
+    }
+
+    /// True when this frame is a cantrip of `school`. The complement of
+    /// `is_leveled_spell_of` on the same school axis — Potent Cantrip
+    /// is the mirror image of Empowered Evocation, one gating on level
+    /// 0 and the other on level 1+.
+    pub fn is_cantrip_of(&self, school: SpellSchool) -> bool {
+        self.school == Some(school) && self.level == 0
+    }
 }
 
 /// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`
@@ -1275,11 +1322,61 @@ impl EncounterInstance {
         values
     }
 
-    /// Sum variant of `roll_empowered`. Most callers just want the total
-    /// damage and don't need the per-die breakdown — this saves the
-    /// `.iter().sum()` boilerplate at every call site.
+    /// Sum variant of `roll_empowered`, plus the flat-bonus half of the
+    /// spell-damage roll: the 5e Evocation Wizard **Empowered Evocation**
+    /// (subclass lv10) adds the caster's Intelligence modifier to one
+    /// damage roll of a wizard evocation spell.
+    ///
+    /// The flat bonus lives here rather than in `roll_empowered` because
+    /// it is a property of the *roll total*, not of any individual die —
+    /// per-die callers (a chain-lightning arc that applies each die
+    /// separately, say) would otherwise multiply it. RAW's "one damage
+    /// roll" is enforced naturally by the chokepoint's shape: burst
+    /// spells roll once and share the value across the blast, so the
+    /// bonus lands once per cast rather than once per target.
+    ///
+    /// Stacks with Empowered Spell (the sorcerer metamagic inside
+    /// `roll_empowered`, which rerolls low dice) — different features,
+    /// different classes, neither aware of the other.
     pub fn roll_empowered_sum(&mut self, caster_id: usize, count: u32, faces: u32) -> u32 {
-        self.roll_empowered(caster_id, count, faces).iter().sum()
+        let base: u32 = self.roll_empowered(caster_id, count, faces).iter().sum();
+        base + self.empowered_evocation_bonus(caster_id)
+    }
+
+    /// The Empowered Evocation flat damage bonus for `caster_id` on the
+    /// cast currently in flight: the caster's Intelligence modifier when
+    /// they hold `EMPOWERED_EVOCATION_TAG` and the in-flight cast is an
+    /// evocation spell, and 0 otherwise.
+    ///
+    /// Gated on the cast stack rather than on anything the caster is
+    /// holding, so it is inert outside a cast and on every non-evocation
+    /// spell — a Fireball from an evoker gets the bonus, the same
+    /// evoker's Vampiric Touch (necromancy) does not. Cantrips qualify:
+    /// RAW says "any wizard evocation spell", with no level floor, which
+    /// is what makes the feature a real cantrip-scaling boost.
+    ///
+    /// Floors at 0 so a negative-INT caster can't turn the feature into
+    /// a damage penalty.
+    fn empowered_evocation_bonus(&mut self, caster_id: usize) -> u32 {
+        use crate::engine::types::AbilityScoreType;
+        if !self
+            .current_cast()
+            .is_some_and(|c| c.school == Some(SpellSchool::Evocation))
+        {
+            return 0;
+        }
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return 0;
+        };
+        if !caster.has_passive_feature(crate::actions::class_features::EMPOWERED_EVOCATION_TAG) {
+            return 0;
+        }
+        let bonus = caster.ability_modifier(AbilityScoreType::Intelligence).max(0) as u32;
+        if bonus > 0 {
+            let name = self.actor_name(caster_id);
+            self.log(format!("  empowered evocation: {} adds +{}", name, bonus));
+        }
+        bonus
     }
 
     /// Roll a single d20 with advantage / disadvantage applied. `Advantage`
@@ -3713,6 +3810,7 @@ impl EncounterInstance {
             messages: Vec::new(),
             outcome_tracker: OutcomeTracker::new(),
             multiattack_depth: 0,
+            cast_stack: Vec::new(),
         }
     }
 
@@ -3740,6 +3838,45 @@ impl EncounterInstance {
         if self.multiattack_depth > 0 {
             self.multiattack_depth -= 1;
         }
+    }
+
+    /// Push the cast frame for the spell whose effects are about to be
+    /// built. Paired with `exit_cast` by `Action::execute` around the
+    /// `side_effects` call — the symmetric-guard shape
+    /// `enter_multiattack` / `exit_multiattack` already use.
+    pub fn enter_cast(&mut self, school: Option<SpellSchool>, level: u32) {
+        self.cast_stack.push(CastContext { school, level });
+    }
+
+    /// Pop the innermost cast frame. Tolerates an empty stack so a panic
+    /// inside a spell's `side_effects` builder still leaves a well-formed
+    /// stack when the test harness moves on — same defensive shape as
+    /// `exit_multiattack`.
+    pub fn exit_cast(&mut self) {
+        self.cast_stack.pop();
+    }
+
+    /// The spell currently being resolved, or `None` outside any cast
+    /// (a weapon swing, a class feature, an item use, or a side-effect
+    /// applied after `execute` already returned).
+    ///
+    /// This is the read side of the cast stack: it lets a resolution
+    /// site deep inside a spell — the shared burst save loop, the shared
+    /// damage roll, the ally-shield sweep — ask "what school and level
+    /// am I part of?" without threading the answer through every helper
+    /// signature between here and `Action::execute`.
+    pub fn current_cast(&self) -> Option<CastContext> {
+        self.cast_stack.last().copied()
+    }
+
+    /// Whether the innermost in-flight cast is a spell of `school` at
+    /// 1st level or higher. Convenience for the common gate shape;
+    /// `false` outside any cast, on a cantrip, and on a different
+    /// school — so a feature reading this fails closed everywhere it
+    /// shouldn't fire.
+    pub fn casting_leveled_spell_of(&self, school: SpellSchool) -> bool {
+        self.current_cast()
+            .is_some_and(|c| c.is_leveled_spell_of(school))
     }
 
     fn template_pool() -> Vec<&'static CreatureTemplate> {
@@ -5183,53 +5320,105 @@ impl EncounterInstance {
         Some(twin_id)
     }
 
-    /// 5e Sorcerer Careful Spell metamagic — if the caster has the prime
-    /// up, return the set of ally ids inside `(point, radius)` that should
-    /// be spared from the burst (up to CHA-mod allies, chosen by ascending
-    /// id for determinism). The prime is consumed iff any ally is actually
-    /// shielded — RAW: "you choose a number of those creatures up to your
-    /// Charisma modifier (minimum of one creature)." On an empty shield
-    /// list we leave the prime up so the sorcerer's next AoE still
-    /// benefits (mirrors the Empowered "consume on damage roll, not on
-    /// every spell cast" pattern).
+    /// The set of ally ids inside `(point, radius)` that this cast spares
+    /// entirely: they don't roll a save, take no damage, and are recorded
+    /// as having passed so per-target riders skip them too.
     ///
-    /// Called from the burst-save chokepoints to determine which ids to
-    /// skip; protected allies don't roll a save and don't take damage.
-    pub fn careful_spell_shielded(
+    /// Two features feed the set and their results union, so a caster
+    /// holding both shields the larger group:
+    ///
+    ///   - **Careful Spell** (Sorcerer metamagic) — a consumable prime
+    ///     (`CarefulSpelling`) that works on *any* spell and shields up
+    ///     to CHA-mod allies. RAW: "you choose a number of those
+    ///     creatures up to your Charisma modifier (minimum of one)." The
+    ///     prime is consumed iff at least one ally was actually shielded
+    ///     — an empty blast leaves it up for the next AoE, mirroring the
+    ///     Empowered "consume on damage roll, not on every cast" pattern.
+    ///   - **Sculpt Spells** (Evocation Wizard lv2) — an always-on
+    ///     passive that shields `1 + spell level` allies but only on
+    ///     evocation casts. Nothing to consume; the gate is the school
+    ///     of the in-flight cast, read off the cast stack.
+    ///
+    /// Allies are taken nearest-first from `ally_burst_targets`, which is
+    /// how the engine collapses RAW's "you choose a number of them" — the
+    /// only choice a sane caster makes, and the simplification Careful
+    /// Spell already shipped under.
+    ///
+    /// Called from the burst-save chokepoints (`burst_save_damage`,
+    /// `resolve_burst_save_damage`, the Fireball-scroll item factor).
+    /// Returns an empty set for casters holding neither feature, which is
+    /// almost every caster — both gates short-circuit before any
+    /// footprint math runs.
+    pub fn auto_pass_shielded_allies(
         &mut self,
         caster_id: usize,
         point: Coordinate,
         radius: isize,
     ) -> std::collections::HashSet<usize> {
         use std::collections::HashSet;
-        let primed = self
+        let mut shielded: HashSet<usize> = HashSet::new();
+        // Resolve the ally list once and share it between the two lanes —
+        // both pick a prefix of the same nearest-first ordering, so the
+        // union is just "the longer prefix wins".
+        let mut allies: Option<Vec<usize>> = None;
+        let mut ally_ids = |this: &mut Self| -> Vec<usize> {
+            allies
+                .get_or_insert_with(|| this.ally_burst_targets(caster_id, point, radius))
+                .clone()
+        };
+
+        let careful_primed = self
             .actors
             .get(&caster_id)
             .is_some_and(|a| a.has_condition(Condition::CarefulSpelling));
-        if !primed {
-            return HashSet::new();
+        if careful_primed {
+            let cha_mod = self
+                .actors
+                .get(&caster_id)
+                .map(|a| {
+                    a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
+                        .max(1) as usize
+                })
+                .unwrap_or(1);
+            let picked: Vec<usize> = ally_ids(self).into_iter().take(cha_mod).collect();
+            if !picked.is_empty() {
+                let caster_name = self.actor_name(caster_id);
+                self.log(format!(
+                    "  careful spell: {} shields {} ally/-ies from the blast",
+                    caster_name,
+                    picked.len()
+                ));
+                if let Some(caster) = self.actors.get_mut(&caster_id) {
+                    caster.remove_condition(Condition::CarefulSpelling);
+                }
+                shielded.extend(picked);
+            }
         }
-        let (cha_mod, caster_name) = match self.actors.get(&caster_id) {
-            Some(a) => (
-                a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
-                    .max(1) as usize,
-                a.name().to_string(),
-            ),
-            None => return HashSet::new(),
-        };
-        let allies = self.ally_burst_targets(caster_id, point, radius);
-        if allies.is_empty() {
-            return HashSet::new();
+
+        // Sculpt Spells: gated on the school of the cast currently being
+        // resolved rather than on anything the caster is holding, so it
+        // is inert outside a cast and on every non-evocation spell.
+        let sculpts = self
+            .current_cast()
+            .is_some_and(|c| c.school == Some(SpellSchool::Evocation))
+            && self.actors.get(&caster_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::SCULPT_SPELLS_TAG)
+            });
+        if sculpts {
+            // RAW "1 + the spell's level" — a cantrip shields one ally,
+            // a Fireball four.
+            let count = 1 + self.current_cast().map(|c| c.level).unwrap_or(0) as usize;
+            let picked: Vec<usize> = ally_ids(self).into_iter().take(count).collect();
+            if !picked.is_empty() {
+                let caster_name = self.actor_name(caster_id);
+                self.log(format!(
+                    "  sculpt spells: {} carves {} ally/-ies out of the blast",
+                    caster_name,
+                    picked.len()
+                ));
+                shielded.extend(picked);
+            }
         }
-        let shielded: HashSet<usize> = allies.into_iter().take(cha_mod).collect();
-        if let Some(caster) = self.actors.get_mut(&caster_id) {
-            caster.remove_condition(Condition::CarefulSpelling);
-        }
-        self.log(format!(
-            "  careful spell: {} shields {} ally/-ies from the blast",
-            caster_name,
-            shielded.len()
-        ));
         shielded
     }
 
@@ -13035,7 +13224,7 @@ mod tests {
         );
     }
 
-    /// `careful_spell_shielded` consumes the prime and returns ally ids
+    /// `auto_pass_shielded_allies` consumes the prime and returns ally ids
     /// in the burst when the caster has Careful Spell up. Without the
     /// prime it returns empty. The shield cap is the caster's CHA mod.
     #[test]
@@ -13059,7 +13248,7 @@ mod tests {
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 2)
             .unwrap();
         // No prime → empty shield list.
-        let none = e.careful_spell_shielded(sorcerer, Coordinate::new(9, 9), 3);
+        let none = e.auto_pass_shielded_allies(sorcerer, Coordinate::new(9, 9), 3);
         assert!(none.is_empty(), "no prime → no shield");
         assert!(
             !e.actors[&sorcerer].has_condition(Condition::CarefulSpelling),
@@ -13071,7 +13260,7 @@ mod tests {
             .get_mut(&sorcerer)
             .unwrap()
             .add_condition(Condition::CarefulSpelling, ConditionTimer::Rounds(2));
-        let shielded = e.careful_spell_shielded(sorcerer, Coordinate::new(9, 9), 3);
+        let shielded = e.auto_pass_shielded_allies(sorcerer, Coordinate::new(9, 9), 3);
         assert!(
             !shielded.is_empty(),
             "primed careful spell shields at least one ally in the burst"
@@ -61215,5 +61404,255 @@ mod tests {
         use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::LONGSWORD;
         assert_eq!(LONGSWORD.school(), None);
+    }
+
+    /// The cast stack is empty outside any cast, carries the resolving
+    /// spell's school and slot level inside one, and unwinds cleanly on
+    /// the way out. Pins the push/pop symmetry in `Action::execute` — a
+    /// leaked frame would make every later weapon swing look like a
+    /// spell to the school-keyed features that read it.
+    #[test]
+    fn cast_context_opens_and_closes_around_execute() {
+        use crate::actions::spells::MAGE_ARMOR;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.current_cast(), None);
+        {
+            let actor = e.actors.get_mut(&wizard).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            actor.spell_slot_manager.restore_spell_slots();
+        }
+        for ef in MAGE_ARMOR.execute(&mut e, wizard, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.current_cast(),
+            None,
+            "cast frame leaked past the end of execute"
+        );
+        // The gate helpers agree with an empty stack.
+        assert!(!e.casting_leveled_spell_of(SpellSchool::Abjuration));
+        // And read the frame correctly when one is open.
+        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        assert!(e.casting_leveled_spell_of(SpellSchool::Evocation));
+        assert!(!e.casting_leveled_spell_of(SpellSchool::Abjuration));
+        // Nesting: the innermost frame wins, and unwinding restores the
+        // outer one rather than clearing the stack.
+        e.enter_cast(Some(SpellSchool::Abjuration), 0);
+        assert!(!e.casting_leveled_spell_of(SpellSchool::Evocation));
+        assert!(
+            e.current_cast()
+                .unwrap()
+                .is_cantrip_of(SpellSchool::Abjuration)
+        );
+        e.exit_cast();
+        assert!(e.casting_leveled_spell_of(SpellSchool::Evocation));
+        e.exit_cast();
+        assert_eq!(e.current_cast(), None);
+        // Over-popping is tolerated (a panic mid-cast must not corrupt
+        // the stack for whatever runs next).
+        e.exit_cast();
+        assert_eq!(e.current_cast(), None);
+    }
+
+    /// Sculpt Spells carves `1 + spell level` allies out of an evocation
+    /// blast: they take no damage while an unshielded ally in the same
+    /// blast does. Runs the same Fireball twice — once from a baseline
+    /// wizard, once from an evoker — so the assertion isolates the
+    /// feature rather than the spell.
+    #[test]
+    fn sculpt_spells_carves_allies_out_of_an_evocation_blast() {
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::wizards::{EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        // Returns the total HP the two allies lost to the caster's blast.
+        let ally_damage = |template: &'static CreatureTemplate| -> u32 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let a1 = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+                .unwrap();
+            let a2 = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 9), 0, 2)
+                .unwrap();
+            {
+                let actor = e.actors.get_mut(&caster).unwrap();
+                actor.give_resource(crate::engine::side_effects::Resource::Action);
+                actor.spell_slot_manager.restore_spell_slots();
+            }
+            let before: u32 = e.actors[&a1].hitpoints() + e.actors[&a2].hitpoints();
+            let point = vec![Coordinate::new(9, 9)];
+            for ef in FIREBALL.execute(&mut e, caster, None, Some(&point), None) {
+                ef.apply(&mut e);
+            }
+            before - (e.actors[&a1].hitpoints() + e.actors[&a2].hitpoints())
+        };
+
+        assert!(
+            ally_damage(&WIZARD_TEMPLATE) > 0,
+            "baseline wizard's Fireball should hurt its own allies"
+        );
+        assert_eq!(
+            ally_damage(&EVOCATION_WIZARD_TEMPLATE),
+            0,
+            "Sculpt Spells should spare both allies from a level-3 blast \
+             (1 + 3 = 4 shields available)"
+        );
+    }
+
+    /// Sculpt Spells is gated on the school of the spell being resolved,
+    /// not on the caster: the same evoker's Hypnotic Pattern
+    /// (enchantment) shields nobody. Guards against the gate degrading
+    /// into "this caster protects allies from everything".
+    #[test]
+    fn sculpt_spells_does_not_shield_on_non_evocation_casts() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        // Evocation: the ally is carved out.
+        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        assert_eq!(
+            e.auto_pass_shielded_allies(evoker, Coordinate::new(9, 9), 3)
+                .len(),
+            1
+        );
+        e.exit_cast();
+        // Enchantment: nobody is.
+        e.enter_cast(Some(SpellSchool::Enchantment), 3);
+        assert!(
+            e.auto_pass_shielded_allies(evoker, Coordinate::new(9, 9), 3)
+                .is_empty()
+        );
+        e.exit_cast();
+        // Outside any cast: nobody is.
+        assert!(
+            e.auto_pass_shielded_allies(evoker, Coordinate::new(9, 9), 3)
+                .is_empty()
+        );
+    }
+
+    /// Empowered Evocation adds the caster's INT modifier to an
+    /// evocation damage roll exactly once, and nothing to a
+    /// non-evocation roll. Uses the shared roll chokepoint directly so
+    /// the assertion is exact rather than statistical: a 0d6 pool rolls
+    /// 0, leaving only the flat bonus.
+    #[test]
+    fn empowered_evocation_adds_int_mod_to_evocation_damage_only() {
+        use crate::actors::creatures::wizards::{EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let int_mod = e.actors[&evoker].ability_modifier(AbilityScoreType::Intelligence) as u32;
+        assert!(int_mod > 0, "the wizard chassis should have a positive INT mod");
+
+        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        assert_eq!(e.roll_empowered_sum(evoker, 0, 6), int_mod);
+        assert_eq!(
+            e.roll_empowered_sum(baseline, 0, 6),
+            0,
+            "a wizard without the feature gets no bonus"
+        );
+        e.exit_cast();
+
+        e.enter_cast(Some(SpellSchool::Necromancy), 3);
+        assert_eq!(
+            e.roll_empowered_sum(evoker, 0, 6),
+            0,
+            "Empowered Evocation fired on a necromancy cast"
+        );
+        e.exit_cast();
+
+        // Cantrips qualify per RAW ("any wizard evocation spell").
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        assert_eq!(e.roll_empowered_sum(evoker, 0, 6), int_mod);
+        e.exit_cast();
+
+        // Outside a cast the bonus is inert — a weapon swing routed
+        // through this helper must not pick it up.
+        assert_eq!(e.roll_empowered_sum(evoker, 0, 6), 0);
+    }
+
+    /// Every spell the engine tags as Evocation must actually report it
+    /// through the `&dyn Action` the engine holds. Drift-prevention for
+    /// the evocation half of the `school()` lane, mirroring
+    /// `abjuration_spells_report_their_school` — a spell added to the
+    /// evoker's loadout without the override silently stops feeding
+    /// Sculpt Spells and Empowered Evocation.
+    #[test]
+    fn evocation_spells_report_their_school() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{
+            BURNING_HANDS, CONE_OF_COLD, FIREBALL, FIRE_BOLT, LIGHTNING_BOLT, MAGIC_MISSILE,
+            METEOR_SWARM, SHATTER, THUNDERWAVE,
+        };
+        let tagged: Vec<&dyn Action> = vec![
+            &*FIRE_BOLT,
+            &*MAGIC_MISSILE,
+            &*BURNING_HANDS,
+            &*THUNDERWAVE,
+            &*SHATTER,
+            &*FIREBALL,
+            &*LIGHTNING_BOLT,
+            &*CONE_OF_COLD,
+            &*METEOR_SWARM,
+        ];
+        for action in tagged {
+            assert_eq!(
+                action.school(),
+                Some(SpellSchool::Evocation),
+                "{} lost its evocation school tag",
+                action.name()
+            );
+        }
+    }
+
+    /// The two shielding features union rather than override: a caster
+    /// holding both Careful Spell (primed) and Sculpt Spells shields the
+    /// larger of the two prefixes, and the Careful Spell prime is still
+    /// consumed. Pins the "an evoker/sorcerer multiclass gets both"
+    /// contract on `auto_pass_shielded_allies`.
+    #[test]
+    fn careful_spell_and_sculpt_spells_union() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::EVOCATION_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let evoker = e
+            .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for (i, x) in [9isize, 10, 11].into_iter().enumerate() {
+            e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(x, 9), 0, i + 1)
+                .unwrap();
+        }
+        e.actors
+            .get_mut(&evoker)
+            .unwrap()
+            .add_condition(Condition::CarefulSpelling, ConditionTimer::Rounds(10));
+        // A cantrip-level evocation cast: Sculpt Spells alone would
+        // shield 1 (1 + 0). Careful Spell shields CHA-mod (min 1). The
+        // union is still at least one, and the prime is spent.
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        let shielded = e.auto_pass_shielded_allies(evoker, Coordinate::new(10, 9), 3);
+        e.exit_cast();
+        assert!(!shielded.is_empty());
+        assert!(
+            !e.actors[&evoker].has_condition(Condition::CarefulSpelling),
+            "the Careful Spell prime should be consumed when it shields someone"
+        );
     }
 }

@@ -227,7 +227,7 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // 5e Sorcerer Metamagic — Careful Spell. Burns 1 sorcery point
     // + a Bonus Action; the next AoE auto-passes saves AND zeroes
     // damage on up to CHA-mod allies caught in the blast. Engine reads
-    // the prime via `EncounterInstance::careful_spell_shielded`, which
+    // the prime via `EncounterInstance::auto_pass_shielded_allies`, which
     // the burst-save chokepoints consult to find protected ids.
     actions.push(&crate::actions::metamagic::CAREFUL_SPELL);
     // 5e Sorcerer Metamagic — Distant Spell. Burns 1 sorcery point

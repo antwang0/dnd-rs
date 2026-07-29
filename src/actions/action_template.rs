@@ -13,13 +13,15 @@ use crate::engine::{
 /// rolls a caster-aware save (so Sorcerer Heightened Spell fires on the
 /// first target per RAW), applies Rogue / Monk / Ranger Evasion on DEX
 /// saves, and emits a `DealDamage` side-effect for every non-zero hit.
-/// Ids in `shielded` (Sorcerer Careful Spell) auto-pass with 0 damage
-/// and skip the roll entirely.
+/// Ids in `shielded` (Sorcerer Careful Spell / Evocation Wizard Sculpt
+/// Spells — see `auto_pass_shielded_allies`) auto-pass with 0 damage and
+/// skip the roll entirely.
 ///
 /// Extracted so `resolve_burst_save_damage` (neutral) and
 /// `resolve_enemy_burst_save_damage` (enemy-only) share the loop body
 /// verbatim — the only per-variant difference is the target-id source
-/// (neutral vs enemy) and whether Careful Spell can shield anyone.
+/// (neutral vs enemy) and whether the ally-shield sweep can spare
+/// anyone.
 /// Every save/damage rule change lands in one place. Sibling to
 /// `burst_save_damage` in `spells.rs`, which layers a shared damage
 /// roll + logging on top of the same per-target semantics.
@@ -94,11 +96,11 @@ pub fn resolve_burst_save_damage(
     damage: u32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    // 5e Sorcerer Careful Spell metamagic: protected allies in the burst
-    // auto-pass the save AND take 0 damage. Resolved up-front so the shared
-    // per-target loop can skip them cleanly; the prime is consumed inside
-    // the helper.
-    let shielded = encounter.careful_spell_shielded(caster_id, center, radius);
+    // Shielded allies in the burst auto-pass the save AND take 0 damage
+    // (Sorcerer Careful Spell, Evocation Wizard Sculpt Spells). Resolved
+    // up-front so the shared per-target loop can skip them cleanly; the
+    // Careful Spell prime is consumed inside the helper.
+    let shielded = encounter.auto_pass_shielded_allies(caster_id, center, radius);
     // `neutral_burst_targets` shares the "caster-excluded, combat-active,
     // footprint in radius" filter with the rest of the engine — folding it
     // here keeps the caster-exclusion / footprint-Chebyshev / sorted-ids
@@ -118,9 +120,9 @@ pub fn resolve_burst_save_damage(
 
 /// Enemy-only sibling of `resolve_burst_save_damage`. Every combat-active
 /// enemy inside `radius` of `center` makes a save vs `dc` for half of a
-/// pre-rolled `damage`. Same shape as the neutral variant — Sorcerer
-/// Careful Spell auto-passes are a no-op here since Careful Spell only
-/// protects allies (enemy bursts already exclude them). Same Evasion
+/// pre-rolled `damage`. Same shape as the neutral variant — the
+/// ally-shield sweep is a no-op here since both features on it only
+/// protect allies (enemy bursts already exclude them). Same Evasion
 /// handling for DEX saves.
 ///
 /// Used by class features whose RAW target set is "hostile creatures
@@ -139,9 +141,9 @@ pub fn resolve_enemy_burst_save_damage(
     damage: u32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    // Enemy bursts skip allies at the target-list step, so Careful Spell
-    // has nothing left to shield — pass an empty set through instead of
-    // re-running the shielded lookup.
+    // Enemy bursts skip allies at the target-list step, so the
+    // ally-shield sweep has nothing left to spare — pass an empty set
+    // through instead of re-running the lookup.
     let shielded: HashSet<usize> = HashSet::new();
     let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
     resolve_burst_targets(
@@ -804,6 +806,30 @@ pub trait Action {
         {
             encounter.consume_distant_spell(caster_id);
         }
+        // Open the cast frame before any of the action's own logic runs,
+        // so every resolution site nested inside `side_effects` — burst
+        // save loops, shared damage rolls, ally-shield sweeps — can read
+        // the school and slot level off `encounter.current_cast()`
+        // instead of taking two more parameters from every helper
+        // between here and there. The slot level is sniffed off the
+        // resolved cost the same way the post-cast trigger dispatch
+        // below does it; `cost` takes `&EncounterInstance`, so resolving
+        // it early is side-effect free.
+        //
+        // Closed by `exit_cast` after the Twinned Spell block, which
+        // re-enters `side_effects` for the twin and must see the same
+        // frame. Everything past that point (cost resolution, post-cast
+        // triggers, the ConsumeResource tail) is "after the spell" per
+        // RAW and deliberately sits outside the frame.
+        let cast_level = crate::engine::side_effects::spell_slot_level(&self.cost(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        ))
+        .unwrap_or(0);
+        encounter.enter_cast(self.school(), cast_level);
         let mut side_effects = self.side_effects(
             encounter,
             caster_id,
@@ -899,6 +925,10 @@ pub trait Action {
                 side_effects.append(&mut twin_effects);
             }
         }
+        // Close the cast frame: the spell's own effects (original and
+        // twin) are fully built. Everything below resolves "after the
+        // spell" per RAW and must not read as part of it.
+        encounter.exit_cast();
         let costs = self.cost(
             encounter,
             caster_id,

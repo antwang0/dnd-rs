@@ -67,7 +67,7 @@ fn install_prime(
 /// One struct + one static per metamagic keeps the file ~80% shorter than
 /// the previous six-struct shape without losing any behavior — each
 /// per-spell consumer (`roll_empowered`, `roll_save_against_caster`,
-/// `careful_spell_shielded`, `extra_spell_reach`, `consume_extended_spell`,
+/// `auto_pass_shielded_allies`, `extra_spell_reach`, `consume_extended_spell`,
 /// `reroll_seeking_spell`) reads the same condition tag it always did.
 ///
 /// **Quickened** (grants an Action instead of installing a condition) and
@@ -172,7 +172,7 @@ pub static HEIGHTENED_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
 /// 5e Sorcerer **Careful Spell** metamagic. Bonus action — spend one
 /// sorcery point so up to CHA-mod allies caught in the next AoE
 /// auto-pass their save AND take no damage (RAW). Engine reads the prime
-/// via `EncounterInstance::careful_spell_shielded`, which the burst-save
+/// via `EncounterInstance::auto_pass_shielded_allies`, which the burst-save
 /// chokepoints consult to find protected ids.
 pub static CAREFUL_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
     display_name: "careful spell",

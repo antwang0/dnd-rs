@@ -921,3 +921,85 @@ pub static ABJURATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Evocation Wizard — Arcane Tradition **School of Evocation** subclass
+/// build (PHB). Identical envelope to the baseline `WIZARD_TEMPLATE`
+/// (INT-primary full-caster with the archmage-tier spell loadout,
+/// Arcane Recovery for mid-encounter slot regen) with the two
+/// mechanically-surfaced School of Evocation features layered on:
+///
+///   - **Sculpt Spells** (subclass lv2) — `1 + spell level` allies
+///     inside the evoker's own blast automatically succeed on their
+///     save and take no damage.
+///   - **Empowered Evocation** (subclass lv10) — +INT modifier to one
+///     damage roll of any evocation spell.
+///
+/// The signature "the evoker drops a Fireball on the melee and their
+/// own front line walks out of it" tell. This is the template that
+/// makes the baseline wizard's biggest liability go away: a
+/// `WIZARD_TEMPLATE` holding Fireball / Lightning Bolt / Cone of Cold /
+/// Ice Storm / Thunderwave / Burning Hands can only fire them where no
+/// ally stands, which in a corridor-heavy generated map is often
+/// nowhere. Sculpt Spells converts every one of those into a
+/// friend-or-foe blast the evoker can drop on a melee scrum, and
+/// Empowered Evocation pays a flat +3 on top of each.
+///
+/// Both features route through chokepoints that already existed for
+/// the sorcerer's metamagic, which is what keeps the template's diff
+/// small: Sculpt Spells joins Careful Spell on
+/// `EncounterInstance::auto_pass_shielded_allies`, and Empowered
+/// Evocation joins Empowered Spell on `roll_empowered_sum`. The two
+/// pairs are deliberately not merged — each pair shares a lane but
+/// differs on gate (consumable prime vs. always-on passive), scaling
+/// axis (CHA-mod vs. `1 + spell level`; reroll-low-dice vs. flat +INT),
+/// and applicability (any spell vs. evocation only) — and a caster
+/// holding one of each stacks both.
+///
+/// Where the sibling wizard subclasses are passive one-liners, this is
+/// the first wizard template whose features read the **cast context**
+/// (`EncounterInstance::current_cast`): both gate on the school and
+/// level of the spell being resolved, not on anything the caster is
+/// holding, so they are inert on the evoker's non-evocation casts —
+/// Sculpt Spells doesn't carve allies out of a Hypnotic Pattern
+/// (enchantment), and Empowered Evocation adds nothing to a Vampiric
+/// Touch (necromancy).
+///
+/// Distinct from the four sibling wizard-chassis templates:
+/// `WIZARD_TEMPLATE` (subclass-less baseline), `NECROMANCY_WIZARD_TEMPLATE`
+/// (passive necrotic resistance), `WAR_MAGIC_WIZARD_TEMPLATE` (passive
+/// +INT-mod initiative), and `ABJURATION_WIZARD_TEMPLATE` (the
+/// rechargeable Arcane Ward absorption pool). Five templates, five
+/// distinct axes: nothing, a typed damage halver, an initiative
+/// augment, an absorption pool, and an offensive blast-shaper. RAW
+/// allows exactly one Arcane Tradition pick per wizard, so no two ever
+/// legally co-occur on a single build.
+///
+/// RAW's School of Evocation picks up two features not shipped here —
+/// **Potent Cantrip** (lv6: a creature that succeeds on a save against
+/// your cantrip still takes half damage; needs a save-or-nothing
+/// chokepoint that the dozen cantrip impls currently hand-roll as
+/// "return early on a passed save") and **Overchannel** (lv14: maximize
+/// the damage dice of a lv1-5 spell, at escalating necrotic self-damage
+/// after the first use per rest; needs a per-rest use counter plus a
+/// maximize-this-roll prime). Both are real future work on chokepoints
+/// this change already moves toward — `roll_empowered_sum` is where an
+/// Overchannel maximize would land, next to the Empowered Evocation
+/// bonus — matching the way `NECROMANCY_WIZARD_TEMPLATE` ships only
+/// Inured to Undeath and `WAR_MAGIC_WIZARD_TEMPLATE` only Tactical Wit.
+///
+/// Glyph 'Δ' — the evoker's raw elemental burst. Distinct from baseline
+/// wizard 'M' (mage), Necromancy 'N', War Magic 'Σ', and Abjuration
+/// 'Θ'; collides with no other template glyph in the engine.
+pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Two-tag subclass, so not the single-tag `with_subclass_tag`
+    // helper: clone the baseline feature set and insert both rows.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::SCULPT_SPELLS_TAG);
+    features.insert(crate::actions::class_features::EMPOWERED_EVOCATION_TAG);
+    CreatureTemplate {
+        name: "Evocation Wizard",
+        glyph: 'Δ',
+        features,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

@@ -387,18 +387,25 @@ fn burst_save_damage(
     targets: BurstTargets,
     outcome: SaveDamagePolicy,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
-    let raw = encounter.roll(&dice);
+    // Caster-aware damage roll: routes through the shared chokepoint so
+    // the Sorcerer's Empowered Spell metamagic (reroll low dice) and the
+    // Evocation Wizard's Empowered Evocation (+INT mod) both apply to
+    // burst spells. Previously this site called `roll` directly, which
+    // meant both features silently bypassed every spell that resolves
+    // its blast through this helper.
+    let raw = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
     encounter.log(format!(
         "  {}: {}({}) shared {:?}",
         action_name, dice, raw, damage_type
     ));
-    // 5e Sorcerer Careful Spell — pre-compute the shielded ally set so
-    // we can skip protected ids in the per-target loop below. Only
-    // meaningful for Neutral bursts (Enemy bursts already exclude
-    // allies); the helper returns empty when no prime is up.
+    // Pre-compute the shielded ally set (Sorcerer Careful Spell,
+    // Evocation Wizard Sculpt Spells) so we can skip protected ids in
+    // the per-target loop below. Only meaningful for Neutral bursts
+    // (Enemy bursts already exclude allies); the helper returns empty
+    // when neither feature is in play.
     let shielded = match targets {
         BurstTargets::Enemy => std::collections::HashSet::new(),
-        BurstTargets::Neutral => encounter.careful_spell_shielded(caster_id, point, radius),
+        BurstTargets::Neutral => encounter.auto_pass_shielded_allies(caster_id, point, radius),
     };
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     let mut saves: Vec<(usize, bool)> = Vec::new();
@@ -407,7 +414,10 @@ fn burst_save_damage(
             // Protected allies auto-pass with 0 damage; record the save
             // so callers that key per-target riders off the saves vec
             // (Tidal Wave Prone, Earth Tremor Prone, etc.) see the ally
-            // as "passed" and skip their rider too.
+            // as "passed" and skip their rider too. RAW for both
+            // shielding features is "automatically succeed on their
+            // saving throws", so the recorded pass is the rule, not an
+            // approximation.
             saves.push((tid, true));
             continue;
         }
@@ -708,7 +718,8 @@ pub(crate) fn save_for_half_damage(
     damage_type: DamageType,
     action_name: &str,
 ) -> (u32, bool) {
-    let raw = encounter.roll(&dice);
+    // Same caster-aware roll as the burst helper — see `burst_save_damage`.
+    let raw = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
     let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
     let dmg = if save.passed() { raw / 2 } else { raw };
     encounter.log(format!(
@@ -1069,6 +1080,9 @@ fn concentration_burst_condition_only(
 pub struct SacredFlame {}
 
 impl Action for SacredFlame {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "sacred flame"
     }
@@ -1154,6 +1168,9 @@ pub struct HealSpell {
 }
 
 impl Action for HealSpell {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         self.display_name
     }
@@ -1451,6 +1468,9 @@ pub static CURE_WOUNDS: LazyLock<HealSpell> = LazyLock::new(|| HealSpell {
 pub struct FireBolt {}
 
 impl Action for FireBolt {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "fire bolt"
     }
@@ -1649,6 +1669,9 @@ pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
 pub struct BurningHands {}
 
 impl Action for BurningHands {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "burning hands"
     }
@@ -1728,6 +1751,9 @@ pub static BURNING_HANDS: LazyLock<BurningHands> = LazyLock::new(|| BurningHands
 pub struct MagicMissile {}
 
 impl Action for MagicMissile {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "magic missile"
     }
@@ -1946,6 +1972,9 @@ pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
 pub struct GuidingBolt {}
 
 impl Action for GuidingBolt {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "guiding bolt"
     }
@@ -2350,6 +2379,9 @@ pub static FAERIE_FIRE: LazyLock<FaerieFire> = LazyLock::new(|| FaerieFire {});
 pub struct RayOfFrost {}
 
 impl Action for RayOfFrost {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "ray of frost"
     }
@@ -2417,6 +2449,9 @@ pub static RAY_OF_FROST: LazyLock<RayOfFrost> = LazyLock::new(|| RayOfFrost {});
 pub struct Thunderwave {}
 
 impl Action for Thunderwave {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "thunderwave"
     }
@@ -3706,6 +3741,9 @@ pub static HEROISM: LazyLock<Heroism> = LazyLock::new(|| Heroism {});
 pub struct MassHealingWord {}
 
 impl Action for MassHealingWord {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "mass healing word"
     }
@@ -3837,6 +3875,9 @@ pub static MASS_HEALING_WORD: LazyLock<MassHealingWord> = LazyLock::new(|| MassH
 pub struct ShockingGrasp {}
 
 impl Action for ShockingGrasp {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "shocking grasp"
     }
@@ -3899,6 +3940,9 @@ pub static SHOCKING_GRASP: LazyLock<ShockingGrasp> = LazyLock::new(|| ShockingGr
 pub struct Shatter {}
 
 impl Action for Shatter {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "shatter"
     }
@@ -4526,6 +4570,9 @@ pub static COMMAND: LazyLock<Command> = LazyLock::new(|| Command {});
 pub struct Fireball {}
 
 impl Action for Fireball {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "fireball"
     }
@@ -4679,6 +4726,9 @@ pub static MAGIC_WEAPON: LazyLock<MagicWeapon> = LazyLock::new(|| MagicWeapon {}
 pub struct ScorchingRay {}
 
 impl Action for ScorchingRay {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "scorching ray"
     }
@@ -4758,6 +4808,9 @@ pub static SCORCHING_RAY: LazyLock<ScorchingRay> = LazyLock::new(|| ScorchingRay
 pub struct LightningBolt {}
 
 impl Action for LightningBolt {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "lightning bolt"
     }
@@ -5785,6 +5838,9 @@ pub static SLOW: LazyLock<Slow> = LazyLock::new(|| Slow {});
 pub struct ConeOfCold {}
 
 impl Action for ConeOfCold {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "cone of cold"
     }
@@ -5861,6 +5917,9 @@ pub static CONE_OF_COLD: LazyLock<ConeOfCold> = LazyLock::new(|| ConeOfCold {});
 pub struct MassCureWounds {}
 
 impl Action for MassCureWounds {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "mass cure wounds"
     }
@@ -6288,6 +6347,9 @@ pub static GREATER_INVISIBILITY: LazyLock<GreaterInvisibility> =
 pub struct IceStorm {}
 
 impl Action for IceStorm {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "ice storm"
     }
@@ -6771,6 +6833,9 @@ pub static CLOUD_OF_DAGGERS: LazyLock<CloudOfDaggers> = LazyLock::new(|| CloudOf
 pub struct WitchBolt {}
 
 impl Action for WitchBolt {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "witch bolt"
     }
@@ -7118,6 +7183,9 @@ pub static TASHAS_HIDEOUS_LAUGHTER: LazyLock<TashasHideousLaughter> =
 pub struct HealSpellHigh {}
 
 impl Action for HealSpellHigh {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "heal"
     }
@@ -7609,6 +7677,9 @@ pub static CROWN_OF_MADNESS: LazyLock<CrownOfMadness> = LazyLock::new(|| CrownOf
 pub struct WordOfRadiance {}
 
 impl Action for WordOfRadiance {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "word of radiance"
     }
@@ -7937,6 +8008,9 @@ pub static MASS_SUGGESTION: LazyLock<MassSuggestion> = LazyLock::new(|| MassSugg
 pub struct Sunburst {}
 
 impl Action for Sunburst {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "sunburst"
     }
@@ -8225,6 +8299,9 @@ pub static POWER_WORD_KILL: LazyLock<PowerWordKill> = LazyLock::new(|| PowerWord
 pub struct MeteorSwarm {}
 
 impl Action for MeteorSwarm {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "meteor swarm"
     }
@@ -8342,6 +8419,9 @@ pub static METEOR_SWARM: LazyLock<MeteorSwarm> = LazyLock::new(|| MeteorSwarm {}
 pub struct PrayerOfHealing {}
 
 impl Action for PrayerOfHealing {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "prayer of healing"
     }
@@ -8422,6 +8502,9 @@ pub static PRAYER_OF_HEALING: LazyLock<PrayerOfHealing> = LazyLock::new(|| Praye
 pub struct Sunbeam {}
 
 impl Action for Sunbeam {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "sunbeam"
     }
@@ -8779,6 +8862,9 @@ pub static DIMENSION_DOOR: LazyLock<DimensionDoor> = LazyLock::new(|| DimensionD
 pub struct WallOfFire {}
 
 impl Action for WallOfFire {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "wall of fire"
     }
@@ -9017,6 +9103,9 @@ pub static INSECT_PLAGUE: LazyLock<InsectPlague> = LazyLock::new(|| InsectPlague
 pub struct Daylight {}
 
 impl Action for Daylight {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "daylight"
     }
@@ -9088,6 +9177,9 @@ pub static DAYLIGHT: LazyLock<Daylight> = LazyLock::new(|| Daylight {});
 pub struct FireShield {}
 
 impl Action for FireShield {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "fire shield"
     }
@@ -9473,6 +9565,9 @@ pub static AURA_OF_VITALITY: LazyLock<AuraOfVitality> = LazyLock::new(|| AuraOfV
 pub struct WallOfForce {}
 
 impl Action for WallOfForce {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "wall of force"
     }
@@ -9981,6 +10076,9 @@ pub static COUNTERSPELL: LazyLock<Counterspell> = LazyLock::new(|| Counterspell 
 pub struct BoomingBlade {}
 
 impl Action for BoomingBlade {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "booming blade"
     }
@@ -10188,6 +10286,9 @@ pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| Crusad
 pub struct Earthquake {}
 
 impl Action for Earthquake {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "earthquake"
     }
@@ -11062,6 +11163,9 @@ pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &ZEPHY
 pub struct FlameStrike {}
 
 impl Action for FlameStrike {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "flame strike"
     }
@@ -11233,6 +11337,9 @@ pub static HEAT_METAL: LazyLock<HeatMetal> = LazyLock::new(|| HeatMetal {});
 pub struct ChainLightning {}
 
 impl Action for ChainLightning {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "chain lightning"
     }
@@ -11429,6 +11536,9 @@ pub static GOODBERRY: LazyLock<Goodberry> = LazyLock::new(|| Goodberry {});
 pub struct Moonbeam {}
 
 impl Action for Moonbeam {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "moonbeam"
     }
@@ -11897,6 +12007,9 @@ pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
 pub struct HellishRebuke {}
 
 impl Action for HellishRebuke {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "hellish rebuke"
     }
@@ -13170,6 +13283,9 @@ pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 pub struct PrismaticSpray {}
 
 impl Action for PrismaticSpray {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "prismatic spray"
     }
@@ -13522,6 +13638,9 @@ pub static MAZE: LazyLock<Maze> = LazyLock::new(|| Maze {});
 pub struct FireStorm {}
 
 impl Action for FireStorm {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "fire storm"
     }
@@ -14076,6 +14195,9 @@ pub static MASS_POLYMORPH: LazyLock<MassPolymorph> = LazyLock::new(|| MassPolymo
 pub struct MordenkainensSword {}
 
 impl Action for MordenkainensSword {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "mordenkainen's sword"
     }
@@ -14163,6 +14285,9 @@ pub static MORDENKAINENS_SWORD: LazyLock<MordenkainensSword> =
 pub struct Frostbite {}
 
 impl Action for Frostbite {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "frostbite"
     }
@@ -14398,6 +14523,9 @@ pub static ARMOR_OF_AGATHYS: LazyLock<ArmorOfAgathys> = LazyLock::new(|| ArmorOf
 pub struct SickeningRadiance {}
 
 impl Action for SickeningRadiance {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "sickening radiance"
     }
@@ -14503,6 +14631,9 @@ pub static SICKENING_RADIANCE: LazyLock<SickeningRadiance> =
 pub struct BigbysHand {}
 
 impl Action for BigbysHand {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "bigby's hand"
     }
@@ -14759,6 +14890,9 @@ pub static AURA_OF_PURITY: LazyLock<AuraOfPurity> = LazyLock::new(|| AuraOfPurit
 pub struct AganazzarsScorcher {}
 
 impl Action for AganazzarsScorcher {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "aganazzar's scorcher"
     }
@@ -15020,6 +15154,9 @@ pub static TIDAL_WAVE: LazyLock<TidalWave> = LazyLock::new(|| TidalWave {});
 pub struct Dawn {}
 
 impl Action for Dawn {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "dawn"
     }
@@ -15515,6 +15652,9 @@ pub static GUARDIAN_OF_FAITH: LazyLock<GuardianOfFaith> = LazyLock::new(|| Guard
 pub struct BladeBarrier {}
 
 impl Action for BladeBarrier {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "blade barrier"
     }
@@ -15597,6 +15737,9 @@ pub static BLADE_BARRIER: LazyLock<BladeBarrier> = LazyLock::new(|| BladeBarrier
 pub struct WindWall {}
 
 impl Action for WindWall {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "wind wall"
     }
@@ -15838,6 +15981,9 @@ pub static OTILUKES_RESILIENT_SPHERE: LazyLock<OtilukesResilientSphere> =
 pub struct LightningLure {}
 
 impl Action for LightningLure {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "lightning lure"
     }
@@ -16141,6 +16287,9 @@ pub static MAXIMILIANS_EARTHEN_GRASP: LazyLock<MaximiliansEarthenGrasp> =
 pub struct VitriolicSphere {}
 
 impl Action for VitriolicSphere {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "vitriolic sphere"
     }
@@ -16261,6 +16410,9 @@ fn pick_damage_type_against_target(
 pub struct ChromaticOrb {}
 
 impl Action for ChromaticOrb {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "chromatic orb"
     }
@@ -16359,6 +16511,9 @@ pub static CHROMATIC_ORB: LazyLock<ChromaticOrb> = LazyLock::new(|| ChromaticOrb
 pub struct SnillocsSnowballSwarm {}
 
 impl Action for SnillocsSnowballSwarm {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "snowball swarm"
     }
@@ -16616,6 +16771,9 @@ pub static PSYCHIC_LANCE: LazyLock<PsychicLance> = LazyLock::new(|| PsychicLance
 pub struct Thunderclap {}
 
 impl Action for Thunderclap {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "thunderclap"
     }
@@ -17604,6 +17762,9 @@ pub static FOG_CLOUD: LazyLock<FogCloud> = LazyLock::new(|| FogCloud {});
 pub struct GustOfWind {}
 
 impl Action for GustOfWind {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "gust of wind"
     }
@@ -18677,6 +18838,9 @@ pub static TELEKINETIC: LazyLock<Telekinetic> = LazyLock::new(|| Telekinetic {})
 pub struct GreenFlameBlade {}
 
 impl Action for GreenFlameBlade {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "green-flame blade"
     }
@@ -25358,6 +25522,9 @@ pub static RAISE_DEAD: LazyLock<RaiseDead> = LazyLock::new(|| RaiseDead {});
 pub struct Darkness {}
 
 impl Action for Darkness {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "darkness"
     }
@@ -26083,6 +26250,9 @@ pub static TRUE_SEEING: LazyLock<TrueSeeing> = LazyLock::new(|| TrueSeeing {});
 pub struct Immolation {}
 
 impl Action for Immolation {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "immolation"
     }

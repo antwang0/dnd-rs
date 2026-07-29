@@ -9396,3 +9396,47 @@ pub const AURA_OF_THE_SENTINEL_TAG: &str = "paladin.aura_of_the_sentinel";
 /// class templates target a balanced playable level, not lockstep PHB
 /// progression.
 pub const ELEGANT_COURTIER_TAG: &str = "fighter.elegant_courtier";
+
+/// Class-feature tag for the Evocation Wizard's **Sculpt Spells**
+/// (School of Evocation subclass level 2, PHB). Passive, at-will, no
+/// per-rest charge — the tag is a pure membership marker read via
+/// `has_passive_feature`, never spent through `feature_available` /
+/// `spend_feature`.
+///
+/// RAW: "When you cast an evocation spell that affects other creatures
+/// you can see, you can choose a number of them equal to 1 + the
+/// spell's level. The chosen creatures automatically succeed on their
+/// saving throws against the spell, and they take no damage if they
+/// would normally take half damage."
+///
+/// Read at `EncounterInstance::auto_pass_shielded_allies`, the shared
+/// ally-shield sweep that already backed the Sorcerer's Careful Spell
+/// metamagic. The two features land on the same lane with three
+/// differences the helper keeps straight: Careful Spell is a consumable
+/// prime (a condition, burned on use) shielding CHA-mod allies on any
+/// spell, while Sculpt Spells is an always-on passive shielding
+/// `1 + spell level` allies but only on evocation casts. Their shielded
+/// sets union, so an evoker/sorcerer multiclass gets both.
+///
+/// The engine's "choose creatures you can see" collapses to "the allies
+/// in the blast, nearest first" — the only choice a sane caster makes,
+/// and the same simplification Careful Spell already ships.
+pub const SCULPT_SPELLS_TAG: &str = "wizard.sculpt_spells";
+
+/// Class-feature tag for the Evocation Wizard's **Empowered Evocation**
+/// (School of Evocation subclass level 10, PHB). Passive, at-will, no
+/// per-rest charge — same membership-marker shape as
+/// `SCULPT_SPELLS_TAG`.
+///
+/// RAW: "you can add your Intelligence modifier to one damage roll of
+/// any wizard evocation spell you cast."
+///
+/// Read at `EncounterInstance::roll_empowered`, the caster-aware
+/// spell-damage roll chokepoint that already backs the Sorcerer's
+/// Empowered Spell metamagic. The two stack cleanly on the same roll —
+/// Empowered Spell rerolls low dice, Empowered Evocation adds a flat
+/// modifier on top — and neither is aware of the other. RAW's "one
+/// damage roll" is naturally enforced by the chokepoint's shape: burst
+/// spells roll damage once and share it across the blast, so the bonus
+/// lands once per cast rather than once per target.
+pub const EMPOWERED_EVOCATION_TAG: &str = "wizard.empowered_evocation";
