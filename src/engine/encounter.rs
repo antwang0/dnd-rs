@@ -53548,6 +53548,166 @@ mod tests {
         );
     }
 
+    /// Arcane Trickster template drift pin, and the rogue-family
+    /// name/glyph uniqueness claim its doc comment makes.
+    #[test]
+    fn arcane_trickster_ships_its_kit_and_inherits_the_rogue_chassis() {
+        use crate::actions::class_features::{MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG};
+        use crate::actors::creatures::rogues::{
+            ARCANE_TRICKSTER_ROGUE_TEMPLATE, ASSASSIN_ROGUE_TEMPLATE, ROGUE_TEMPLATE,
+            SCOUT_ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ARCANE_TRICKSTER_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for tag in [MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG] {
+            assert!(
+                e.actors[&rogue].has_passive_feature(tag),
+                "Arcane Trickster should carry {}",
+                tag
+            );
+        }
+        // The whole rogue chassis rides through the clone tail.
+        assert!(e.actors[&rogue].has_evasion());
+        assert!(e.actors[&rogue].has_uncanny_dodge());
+        for name in [
+            "shortsword",
+            "cunning hide",
+            "steady aim",
+            "mind sliver",
+            "ray of frost",
+            "sleep",
+            "color spray",
+            "tasha's hideous laughter",
+            "invisibility",
+            "mirror image",
+            "versatile trickster",
+        ] {
+            assert!(
+                e.actors[&rogue].find_action(name).is_some(),
+                "Arcane Trickster should carry the {} action",
+                name
+            );
+        }
+        assert_eq!(
+            ARCANE_TRICKSTER_ROGUE_TEMPLATE.spell_slots_by_level,
+            vec![4, 3],
+            "third-caster progression"
+        );
+        assert!(
+            ARCANE_TRICKSTER_ROGUE_TEMPLATE.intelligence > ROGUE_TEMPLATE.intelligence,
+            "INT rises above the baseline rogue's to anchor the spell DC"
+        );
+        assert_eq!(
+            ARCANE_TRICKSTER_ROGUE_TEMPLATE.dexterity, ROGUE_TEMPLATE.dexterity,
+            "DEX is untouched — the shortsword and Sneak Attack stay as-is"
+        );
+
+        let templates = [
+            &*ROGUE_TEMPLATE,
+            &*ASSASSIN_ROGUE_TEMPLATE,
+            &*SWASHBUCKLER_ROGUE_TEMPLATE,
+            &*SCOUT_ROGUE_TEMPLATE,
+            &*ARCANE_TRICKSTER_ROGUE_TEMPLATE,
+        ];
+        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
+        assert_eq!(names.len(), templates.len(), "rogue names collide");
+        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
+        assert_eq!(glyphs.len(), templates.len(), "rogue glyphs collide");
+    }
+
+    /// Magical Ambush bends the first save against a Hidden trickster's
+    /// spell and spends the concealment doing it. A trickster who isn't
+    /// hidden, and a hidden rogue without the tag, both read clean.
+    #[test]
+    fn magical_ambush_fires_only_while_hidden_and_spends_the_hiding() {
+        use crate::actors::creatures::rogues::{ARCANE_TRICKSTER_ROGUE_TEMPLATE, ROGUE_TEMPLATE};
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let trickster = e
+            .instantiate_creature(&ARCANE_TRICKSTER_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+
+        // Not hidden: nothing fires.
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, trickster);
+
+        // Hidden trickster: the rider fires and burns the concealment,
+        // the same way an attack roll would.
+        e.actors
+            .get_mut(&trickster)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Rounds(5));
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, trickster);
+        assert!(
+            !e.actors[&trickster].has_condition(Condition::Hidden),
+            "casting from hiding gives the position away"
+        );
+
+        // Hidden, but no tag: the concealment survives, because nothing
+        // consumed it.
+        e.actors
+            .get_mut(&plain)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Rounds(5));
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, plain);
+        assert!(
+            e.actors[&plain].has_condition(Condition::Hidden),
+            "a rogue without the tag doesn't fire the rider, so nothing is spent"
+        );
+    }
+
+    /// Versatile Trickster installs the self-help-grant that
+    /// `attack_mode_with_riders` turns into advantage on the next swing,
+    /// and the grant is single-use.
+    #[test]
+    fn versatile_trickster_grants_advantage_on_the_next_swing() {
+        use crate::actions::class_features::VERSATILE_TRICKSTER;
+        use crate::actors::creatures::rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ARCANE_TRICKSTER_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+        let targets = vec![target];
+        assert!(VERSATILE_TRICKSTER.validate_input(&e, rogue, Some(&targets), None, None));
+        let effects = VERSATILE_TRICKSTER.execute(&mut e, rogue, Some(&targets), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&rogue].help_grant(target),
+            "the designation lands as a self-help-grant"
+        );
+        assert_eq!(
+            e.attack_mode_with_riders(rogue, target, true, true),
+            RollMode::Advantage,
+            "and reads as advantage on the swing that follows"
+        );
+        assert!(
+            !e.actors[&rogue].help_grant_any(),
+            "consumed by the swing — a second attack doesn't re-use it"
+        );
+    }
+
     /// Weapon Bond bounces the Disarmed install — but only while the
     /// knight is on their feet. Incapacitating them (RAW's carve-out)
     /// hands the disarm straight back.

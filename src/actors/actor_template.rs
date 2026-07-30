@@ -7075,6 +7075,17 @@ impl ActorInstance {
         self.help_grants.values().any(|t| *t == target_id)
     }
 
+    /// True iff *any* Help grant is standing on this actor, whoever it
+    /// names. Read by the AI pickers that install a self-grant
+    /// (Versatile Trickster, and any future sibling on the Feinting
+    /// Attack lane) so they don't spend a bonus action overwriting a
+    /// grant that is already going to fire — `set_help_grant` replaces
+    /// rather than accumulates, so a second designation is strictly a
+    /// loss.
+    pub fn help_grant_any(&self) -> bool {
+        !self.help_grants.is_empty()
+    }
+
     /// Set or clear a Help grant on this actor.
     /// `Some(g)` overwrites any prior grant; `None` clears all grants.
     pub fn set_help_grant(&mut self, grant: Option<HelpGrant>) {

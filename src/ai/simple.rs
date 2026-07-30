@@ -747,6 +747,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p'''''''''. Versatile Trickster — Arcane Trickster rogue
+        //              bonus action. Same help-grant lane as Feinting
+        //              Attack, at-will and at 30 ft instead of per-rest
+        //              and at arm's length. Sits immediately after it
+        //              because it is the same decision, and below every
+        //              Cunning Action rung above because those spend the
+        //              same bonus action on things the rogue needs more
+        //              often — the gate is what keeps this from
+        //              crowding them out.
+        if let Some(aei) = try_versatile_trickster(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3p*. Action Surge — free, once per short rest, hands the
         //      fighter a second Action. Sits with the other free primes
         //      because it costs nothing to take: firing it here never
@@ -1863,38 +1876,37 @@ fn try_feinting_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
+    // Feint is melee-touch range — same envelope as Help.
+    try_action_on_nearest_enemy(encounter, actor_id, "feinting attack", |gap| gap <= 1)
+}
+
+/// Arcane Trickster Versatile Trickster — bonus action at 30 ft that
+/// grants self-advantage on the next attack against the designated
+/// enemy, through the same help-grant lane as Feinting Attack.
+///
+/// Two extra gates beyond the action's own validator, both about not
+/// wasting the rogue's scarcest resource:
+///   1. Skip if a help-grant is already up. The grant is single-slot —
+///      re-designating would overwrite an existing one for no gain, and
+///      would burn the bonus action doing it.
+///   2. Require an enemy inside the rogue's own melee reach, not just
+///      inside the action's 30 ft. Advantage is only worth a bonus
+///      action if the rogue is going to *swing* this turn, and the
+///      shortsword that carries Sneak Attack is a melee weapon. The
+///      designated target is then the same nearest enemy, so the
+///      advantage lands on the swing that follows.
+fn try_versatile_trickster(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("feinting attack")?;
-    let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
-    let mut best: Option<(isize, ActionExecutionInfo)> = None;
-    for tid in encounter.sorted_actor_ids() {
-        let Some(t) = encounter.actors.get(&tid) else {
-            continue;
-        };
-        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
-            continue;
-        }
-        let dist = footprint_chebyshev(
-            my_loc,
-            my_size,
-            t.location(),
-            get_tiles_from_size(t.size()),
-        );
-        // Feint is melee-touch range — same envelope as Help.
-        if dist > 1 {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
-            best = Some((dist, aei));
-        }
+    if actor.help_grant_any() {
+        return None;
     }
-    best.map(|(_, aei)| aei)
+    if !any_enemy_within(encounter, actor_id, 1) {
+        return None;
+    }
+    try_action_on_nearest_enemy(encounter, actor_id, "versatile trickster", |gap| gap <= 12)
 }
 
 /// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force
@@ -2666,40 +2678,12 @@ fn try_telekinetic(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("telekinetic")?;
-    let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
     // Closest enemy in the 2-24 tile sweet spot. Skip already-adjacent
     // (gap 0-1) because the pull does nothing; cap at 24 (60ft) per
     // RAW range.
-    let mut best: Option<(isize, ActionExecutionInfo)> = None;
-    for tid in encounter.sorted_actor_ids() {
-        let Some(t) = encounter.actors.get(&tid) else {
-            continue;
-        };
-        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
-            continue;
-        }
-        let dist = footprint_chebyshev(
-            my_loc,
-            my_size,
-            t.location(),
-            get_tiles_from_size(t.size()),
-        );
-        if !(2..=24).contains(&dist) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
-            best = Some((dist, aei));
-        }
-    }
-    best.map(|(_, aei)| aei)
+    try_action_on_nearest_enemy(encounter, actor_id, "telekinetic", |gap| {
+        (2..=24).contains(&gap)
+    })
 }
 
 /// Cleric Preserve Life — once-per-rest Channel Divinity mass-heal. The
@@ -3038,6 +3022,65 @@ fn try_self_action_when_enemy_within(
         return None;
     }
     try_self_action(encounter, actor_id, action_name)
+}
+
+/// Fire `action_name` at the *closest* combat-active hostile whose
+/// footprint gap from `actor_id` satisfies `gap_ok`, and return the
+/// validated `ActionExecutionInfo`. `None` when the actor doesn't carry
+/// the action, no hostile is in band, or every candidate fails the
+/// action's own validator.
+///
+/// Enemy-side counterpart to `try_self_action` for the single-target
+/// bonus-action lane, and the shared body for the pickers that each
+/// open-coded the same walk: iterate `sorted_actor_ids` (for
+/// determinism), skip self / allies / downed, measure the footprint
+/// Chebyshev gap, filter by band, build the AEI, validate, keep the
+/// nearest survivor.
+///
+/// The band is a closure rather than a `max_gap` scalar because the
+/// interesting pickers on this lane aren't all "within N": Telekinetic
+/// wants a *donut* (2..=24 — an adjacent enemy can't be pulled any
+/// closer), where Feinting Attack and Versatile Trickster want plain
+/// ceilings at melee reach and 30 ft. A scalar would have forced the
+/// donut case back into an open-coded loop, which is the duplication
+/// this helper exists to remove.
+fn try_action_on_nearest_enemy(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action_name: &str,
+    gap_ok: impl Fn(isize) -> bool,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action(action_name)?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let mut best: Option<(isize, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        if !gap_ok(dist) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
+            best = Some((dist, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Same as `try_self_action`, but searches `available_actions()` —

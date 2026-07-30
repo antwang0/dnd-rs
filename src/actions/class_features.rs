@@ -4950,6 +4950,133 @@ pub const ELDRITCH_STRIKE_TAG: &str = "fighter.eldritch_strike";
 /// spending their concealment rather than holding it.
 pub const MAGICAL_AMBUSH_TAG: &str = "rogue.magical_ambush";
 
+/// Class-feature tag for the Arcane Trickster Rogue's **Versatile
+/// Trickster** (subclass level 13). RAW: "you can use a bonus action on
+/// your turn to designate a creature within 5 feet of the [mage] hand.
+/// Doing so gives you advantage on attack rolls against that creature
+/// until the end of the turn."
+///
+/// At-will, no charge — the resource is the bonus action, which the
+/// rogue's Cunning Action lane already competes hard for. That
+/// competition is the feature: spending it here means not spending it
+/// on Hide, which is what arms Magical Ambush on the same build.
+///
+/// The mage hand is elided. The engine has no summoned-object layer, so
+/// modelling it would mean tracking a second entity purely to gate a
+/// range check that the action's own `reach_tiles` already expresses.
+/// RAW's reach is "within 5 ft of the hand" and the hand is cast within
+/// 30 ft, so the action ships at the 30 ft (12-tile) envelope — the
+/// outer bound of where the pair could legally reach, and the same
+/// range Rally and Bardic Inspiration use.
+pub const VERSATILE_TRICKSTER_TAG: &str = "rogue.versatile_trickster";
+
+/// Versatile Trickster — Arcane Trickster bonus action, at-will, one
+/// enemy within 30 ft. Grants the rogue advantage on their next attack
+/// roll against that target.
+///
+/// Mechanically the twin of the Battle Master's Feinting Attack: both
+/// install a self-help-grant (`HelpGrant { helper_id: self, against:
+/// target }`) that `attack_mode_with_riders` folds in and consumes on
+/// the next swing. The two differ on cost rather than effect — Feinting
+/// Attack spends a per-rest maneuver charge and reaches only as far as
+/// the fighter can swing, where this is at-will at 30 ft.
+///
+/// Which is the right trade for the chassis it sits on. The rogue's
+/// Sneak Attack already keys off advantage, so a rogue with a reliable
+/// advantage button doesn't need a flanking ally — the same problem
+/// Steady Aim solves by zeroing the rogue's speed and Rakish Audacity
+/// solves by requiring a solo duel. Versatile Trickster solves it
+/// without either restriction, which is why RAW gates it to lv13 and
+/// why it competes with Hide for the bonus action rather than stacking
+/// with it.
+pub struct VersatileTrickster {}
+
+impl Action for VersatileTrickster {
+    fn name(&self) -> &str {
+        "versatile trickster"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vt", "trickster"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles — the mage hand's own cast range, which is
+        // the outer bound of where the hand-plus-rogue pair could
+        // legally designate a target.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.has_passive_feature(VERSATILE_TRICKSTER_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() != actor.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            // Self-help-grant — identical shape to Feinting Attack's.
+            // `attack_mode_with_riders` reads it and `consume_help_for`
+            // pops it on the next swing, so the advantage lands once
+            // and doesn't leak onto a follow-up attack.
+            actor.set_help_grant(Some(crate::actors::actor_template::HelpGrant {
+                helper_id: caster_id,
+                against: target_id,
+            }));
+        }
+        encounter.log(
+            "  versatile trickster: the spectral hand jabs; advantage on the next attack vs the target."
+                .to_string(),
+        );
+        Vec::new()
+    }
+}
+
+pub static VERSATILE_TRICKSTER: LazyLock<VersatileTrickster> =
+    LazyLock::new(|| VersatileTrickster {});
+
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,
 /// recover spell slots whose combined levels equal half the wizard's

@@ -1,10 +1,14 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::class_features::{
     ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE,
-    CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, STEADY_AIM,
-    SUPERIOR_MOBILITY_TAG,
+    CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, MAGICAL_AMBUSH_TAG,
+    STEADY_AIM, SUPERIOR_MOBILITY_TAG, VERSATILE_TRICKSTER, VERSATILE_TRICKSTER_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::spells::{
+    COLOR_SPRAY, INVISIBILITY, MIND_SLIVER, MIRROR_IMAGE, RAY_OF_FROST, SLEEP,
+    TASHAS_HIDEOUS_LAUGHTER,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -294,6 +298,106 @@ pub static SCOUT_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Scout Rogue",
         glyph: 'K',
         features: HashSet::from([SUPERIOR_MOBILITY_TAG]),
+        ..ROGUE_TEMPLATE.clone()
+    }
+});
+
+/// Arcane Trickster Rogue — Roguish Archetype **Arcane Trickster**
+/// subclass build (PHB). The second of the two casting third-casters in
+/// the engine, alongside `ELDRITCH_KNIGHT_FIGHTER_TEMPLATE`, and the
+/// one that casts to *set up* rather than to supplement.
+///
+/// Two subclass features ship:
+///
+///   - **Magical Ambush** (lv9) — cast while Hidden and the target's
+///     save against the spell is at disadvantage.
+///   - **Versatile Trickster** (lv13) — bonus action, one enemy within
+///     30 ft: advantage on your next attack against them.
+///
+/// The two are the same feature pointed at the rogue's two win
+/// conditions, and they compete for the same resource. The bonus action
+/// is the rogue's scarcest slot — Cunning Action already wants it for
+/// Hide, Dash and Disengage, and the Cunning Strike primes want it too.
+/// Spending it on Hide arms Magical Ambush, which makes the *spell*
+/// land; spending it on Versatile Trickster makes the *swing* land.
+/// Neither is strictly better, and the rogue has to decide before
+/// knowing which one the turn will need.
+///
+/// That is a genuinely different shape from the three Roguish
+/// Archetypes already in the tree, which all converge on "reliable
+/// Sneak Attack" from different angles — Assassin via first-turn
+/// advantage, Swashbuckler via the solo-duelist path, Scout via
+/// repositioning speed, and the baseline via Steady Aim's
+/// speed-for-advantage trade. The Trickster is the only one whose
+/// answer to "how do I get advantage" costs the same resource as its
+/// answer to "how do I land control", so it is the only one where the
+/// two halves of the turn are in tension.
+///
+/// **The spell list honors RAW's enchantment / illusion restriction**
+/// (plus the two free picks), the same way the Eldritch Knight honors
+/// its abjuration / evocation one — a flavor rule that is also a
+/// balance rule. Ray of Frost is one free pick, and it is the load-
+/// bearing one: without a cantrip that just deals damage, a Trickster
+/// whose slots are spent has no ranged turn at all. Mind Sliver is the
+/// other, and it is the setup cantrip — its own −1d4 rider on the
+/// target's next save stacks with Magical Ambush's disadvantage, so a
+/// Hidden Trickster who opens with Mind Sliver is casting the follow-up
+/// lv1 into a save the target is rolling twice and subtracting from.
+///
+/// Level 1 is Sleep (the HP-threshold no-save lockdown — the one spell
+/// on the list Magical Ambush does *nothing* for, which is the point:
+/// it is the answer when the rogue isn't hidden), Color Spray (the same
+/// shape in a cone) and Tasha's Hideous Laughter (the save-based
+/// single-target lock that Magical Ambush most wants). Level 2 is
+/// Invisibility and Mirror Image — the survival pair for a d8 chassis
+/// that has to walk into melee to sneak-attack.
+///
+/// **Stats.** Third-caster slots `[4, 3]`, matching the Eldritch
+/// Knight, which puts this at roughly rogue level 13 — where Versatile
+/// Trickster comes online. INT rises from the baseline rogue's 12 to
+/// 16, which is both the spell DC anchor (8 + 3 prof + 3 = 14) and the
+/// stat every spell on the list rolls off; DEX stays 16 so the
+/// shortsword and Sneak Attack are untouched. Everything else —
+/// AC 14, the shortsword, the whole Cunning Action and Cunning Strike
+/// suite, Evasion, Uncanny Dodge, Elusive, Slippery Mind, Blindsense —
+/// inherits through the `..ROGUE_TEMPLATE.clone()` tail.
+///
+/// Mage Hand Legerdemain (lv3) and Spell Thief (lv17) are left out.
+/// The first is a pure out-of-combat ribbon — RAW's combat surface for
+/// it is exactly the Versatile Trickster clause, which ships. The
+/// second needs a counterspell-shaped intercept that also *transfers*
+/// the stolen spell onto the rogue's own list for a rest, which the
+/// engine's action lists (compile-time `&'static` slices) can't
+/// express without a per-actor override layer.
+///
+/// Glyph 'T' — for **T**rickster. Distinct from baseline rogue 'R',
+/// Assassin 'A', Swashbuckler 'S' and Scout 'K'.
+pub static ARCANE_TRICKSTER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the tag-only clone the Assassin / Scout use: this subclass
+    // adds seven spells, a bonus action, two tags, a slot table and an
+    // INT bump. The `..ROGUE_TEMPLATE.clone()` tail still carries the
+    // whole rogue chassis — shortsword, Cunning Action / Cunning Strike
+    // suites, Steady Aim, Evasion, Uncanny Dodge, Elusive, Slippery
+    // Mind, Blindsense — without an N-line field-by-field copy.
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&*MIND_SLIVER);
+    actions.push(&*RAY_OF_FROST);
+    actions.push(&*SLEEP);
+    actions.push(&*COLOR_SPRAY);
+    actions.push(&*TASHAS_HIDEOUS_LAUGHTER);
+    actions.push(&*INVISIBILITY);
+    actions.push(&*MIRROR_IMAGE);
+    actions.push(&*VERSATILE_TRICKSTER);
+    CreatureTemplate {
+        name: "Arcane Trickster Rogue",
+        glyph: 'T',
+        // INT 16 (+3) anchors every spell on the list — Mind Sliver,
+        // Hideous Laughter and Ray of Frost all read Intelligence
+        // directly — and puts the save DC at 14.
+        intelligence: 16,
+        spell_slots_by_level: vec![4, 3],
+        actions,
+        features: HashSet::from([MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG]),
         ..ROGUE_TEMPLATE.clone()
     }
 });
