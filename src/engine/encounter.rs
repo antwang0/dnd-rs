@@ -53644,6 +53644,71 @@ mod tests {
         );
     }
 
+    /// Conditions that bar casting bar *cantrips* too. The only gate for
+    /// this used to live on the `SpellSlot` resource lane, which
+    /// cantrips never touch — so a Silenced caster could Fire Bolt out
+    /// of a zone of magical silence, and a wild-shaped druid (a bear)
+    /// could cast Poison Spray. Both conditions' RAW text is
+    /// unqualified.
+    ///
+    /// Driven from both sides of the split so the fix can't regress by
+    /// half: a levelled spell (Fireball, which the old resource gate
+    /// already caught) and a cantrip (Fire Bolt, which it didn't).
+    #[test]
+    fn silence_and_wild_shape_block_cantrips_not_just_slots() {
+        use crate::actions::spells::{FIRE_BOLT, FIREBALL};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        for blocker in [Condition::Silenced, Condition::WildShaped] {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let caster = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            let ids = vec![target];
+            let point = vec![Coordinate::new(6, 2)];
+            // Baseline: both casts are legal.
+            assert!(
+                FIRE_BOLT.validate_input(&e, caster, Some(&ids), None, None),
+                "{:?}: cantrip legal before the block",
+                blocker
+            );
+            assert!(
+                FIREBALL.validate_input(&e, caster, None, Some(&point), None),
+                "{:?}: levelled spell legal before the block",
+                blocker
+            );
+
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .add_condition(blocker, ConditionTimer::Rounds(5));
+
+            assert!(
+                !FIREBALL.validate_input(&e, caster, None, Some(&point), None),
+                "{:?} should block a levelled spell",
+                blocker
+            );
+            assert!(
+                !FIRE_BOLT.validate_input(&e, caster, Some(&ids), None, None),
+                "{:?} should block a cantrip too",
+                blocker
+            );
+            // Non-spell actions are untouched — the gate keys off
+            // `school()`, not off being an action.
+            assert!(
+                e.actors[&caster].find_action("dodge").is_some_and(|a| a
+                    .validate_input(&e, caster, None, None, None)),
+                "{:?} shouldn't stop the caster from Dodging",
+                blocker
+            );
+        }
+    }
+
     /// Every PC class family renders unambiguously *within itself*: no
     /// two templates in a family share a name or a map glyph.
     ///

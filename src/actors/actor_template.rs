@@ -7097,6 +7097,18 @@ impl ActorInstance {
     /// A future "burn a slot for something that isn't a spell" feature
     /// (a Divine Smite variant priced off the pool, an arcane-recovery
     /// sibling) reads the same way.
+    /// True iff some held condition bars this actor from casting at all
+    /// (`Condition::blocks_spellcasting` — Silence, Wild Shape). Read by
+    /// `Action::validate_input` against actions that declare a
+    /// `school()`, which is the engine's marker for "is a spell".
+    ///
+    /// Distinct from the `SpellSlot` lane of `can_consume_resource`,
+    /// which bounces slot-costing spells and therefore can't see
+    /// cantrips at all.
+    pub fn blocked_from_casting(&self) -> bool {
+        self.conditions.keys().any(|c| c.blocks_spellcasting())
+    }
+
     pub fn lowest_available_spell_slot(&self) -> Option<u32> {
         (1..=9).find(|lvl| self.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)
     }

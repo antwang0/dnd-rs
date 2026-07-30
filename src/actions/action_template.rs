@@ -667,6 +667,23 @@ pub trait Action {
         if !schema_ok {
             return false;
         }
+        // Can the caster cast at all? `Silenced` and `WildShaped` both
+        // say no in RAW without qualification, but the only gate that
+        // used to enforce it lived on the `SpellSlot` resource lane —
+        // which cantrips never touch, so a silenced caster could Fire
+        // Bolt and a wild-shaped druid could Poison Spray. A `school()`
+        // is the engine's marker for "this action is a spell" (same one
+        // `CastContext::is_cantrip` reads, kept complete for cantrips by
+        // `every_cantrip_declares_its_school`), so the check belongs
+        // here at the action layer where cantrips are visible.
+        if self.school().is_some()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.blocked_from_casting())
+        {
+            return false;
+        }
         // Reach + LOS check. SingleActor measures from caster to target
         // actor; Burst / SinglePoint measure from caster to the target
         // tile. Either way we check both reach (if declared) and LOS

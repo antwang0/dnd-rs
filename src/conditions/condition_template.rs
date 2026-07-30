@@ -2102,6 +2102,35 @@ impl Condition {
         matches!(self, Condition::Silenced | Condition::WildShaped)
     }
 
+    /// True if the holder can't cast **any** spell while this condition
+    /// is up — cantrips included. Read at the action layer by
+    /// `Action::validate_input`, which identifies a spell as an action
+    /// with a `school()` (the same marker `CastContext::is_cantrip`
+    /// uses, kept complete for cantrips by
+    /// `every_cantrip_declares_its_school`).
+    ///
+    /// Strictly stronger than `blocks_spell_slots`, and a superset of
+    /// it: that gate lives on the `SpellSlot` resource lane, so it can
+    /// only ever reach spells that cost a slot. Cantrips cost none, so
+    /// nothing stopped a `Silenced` caster from Fire Bolting or a
+    /// wild-shaped druid — a bear — from casting Poison Spray. Both
+    /// conditions' RAW text is unqualified: Silence blocks verbal
+    /// components, and every SRD cantrip in the engine has one; Wild
+    /// Shape says "you can't cast spells" flat.
+    ///
+    /// Kept as a separate cohort rather than folded into
+    /// `blocks_spell_slots` because the two fire at different layers
+    /// and the resource lane still has to bounce a slot-costing spell
+    /// on its own (a caster can be handed a `SpellSlot` cost from
+    /// paths that don't route through `validate_input`). A future
+    /// condition that blocks only *levelled* casting — an
+    /// anti-magic-field variant that leaves cantrips alone — would sit
+    /// on `blocks_spell_slots` alone, which is why the narrower gate
+    /// stays meaningful.
+    pub fn blocks_spellcasting(&self) -> bool {
+        matches!(self, Condition::Silenced | Condition::WildShaped)
+    }
+
     /// True if the holder auto-fails STR and DEX saving throws.
     /// 5e Paralyzed / Stunned / Petrified / Unconscious / Asleep all
     /// share this clause: a creature physically locked out of the
