@@ -3,6 +3,7 @@ use crate::actions::class_features::{
     CHARM_ANIMALS_AND_PLANTS_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_POISON,
     DIVINE_STRIKE_POISON_TAG, INVOKE_DUPLICITY, INVOKE_DUPLICITY_TAG,
+    POTENT_SPELLCASTING_TAG,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
     SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
@@ -338,6 +339,15 @@ pub static WAR_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// radiant-type advantage against fiends / undead (both commonly
 /// vulnerable or non-resistant to radiant).
 ///
+/// - **Potent Spellcasting** (lv8) — +WIS on every cleric cantrip,
+///   read at `EncounterInstance::potent_spellcasting_bonus`. RAW's
+///   level-8 feature for this domain, and it replaces rather than joins
+///   the chassis's radiant Divine Strike: each Divine Domain gets
+///   exactly one. The swap suits the build — Light's whole identity is
+///   radiant cantrip pressure, and a permanent bump to the free attack
+///   compounds with that in a way a once-a-rest melee prime never did
+///   on a caster that rarely swings.
+///
 /// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and
 /// `WAR_CLERIC_TEMPLATE` (War Domain subclass) so a Light-vs-War-vs-
 /// baseline encounter renders unambiguously by name. Glyph 'L' so the
@@ -349,10 +359,17 @@ pub static LIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     // action + feature tag. The `..CLERIC_TEMPLATE.clone()` tail picks
     // up the full spell ladder, save profs, stats, and slots without
     // an N-line field-by-field copy.
-    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    // Light's RAW level-8 feature is Potent Spellcasting, not a Divine
+    // Strike, so the chassis's radiant strike comes back off before the
+    // passive goes on — see `cleric_chassis_without_divine_strike`. The
+    // swap suits the domain: Light's whole identity is radiant cantrip
+    // pressure (Sacred Flame at will, Radiance of the Dawn once a
+    // rest), and +WIS on every cantrip compounds with that in a way a
+    // once-a-rest melee prime never did on a caster that rarely swings.
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
     actions.push(&*RADIANCE_OF_THE_DAWN);
-    let mut features = CLERIC_TEMPLATE.features.clone();
     features.insert(RADIANCE_OF_THE_DAWN_TAG);
+    features.insert(POTENT_SPELLCASTING_TAG);
     // Warding Flare (lv1 Light subclass): passive reaction that imposes
     // disadvantage on an incoming attack from within 30 ft. No action
     // surface — the trigger fires automatically at every attack
@@ -813,14 +830,19 @@ pub static TWILIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// advantage on every save is very hard to lock down, which is precisely
 /// the failure mode that kills the other seven domain builds.
 ///
+/// **Potent Spellcasting** (lv8) ships as of the Knowledge Domain's
+/// arrival, which built the cantrip-damage-bonus lane this domain used
+/// to be waiting on: +WIS on every cleric cantrip, read at
+/// `EncounterInstance::potent_spellcasting_bonus`. It replaces rather
+/// than joins the chassis's radiant Divine Strike — RAW gives each
+/// domain exactly one level-8 feature, and Arcana's is this one.
+///
 /// RAW's other Arcana features are left out for the usual reasons.
 /// Arcane Initiate (lv1) grants two wizard cantrips — the baseline cleric
 /// already carries Sacred Flame and Toll the Dead, and the engine has no
 /// per-class spell-list gate for the grant to be interesting against.
-/// Potent Spellcasting (lv8) adds WIS to cantrip damage, which needs a
-/// cantrip-damage-bonus lane nothing else in the engine wants yet. Arcane
-/// Mastery (lv17) grants 6th-9th level spells the CR-0.5 chassis has no
-/// slots for.
+/// Arcane Mastery (lv17) grants 6th-9th level spells the CR-0.5 chassis
+/// has no slots for.
 ///
 /// Glyph 'A' — for **A**rcana. Distinct from baseline cleric 'C', War
 /// 'W', Light 'L', Tempest 'S', Life 'V', Grave 'G', Forge 'F' and
@@ -837,10 +859,13 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // spell ladder, save profs, stats, slots, and the baseline
     // TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE / DESTROY_UNDEAD
     // feature set.
-    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    // Arcana's RAW level-8 feature is Potent Spellcasting, so the
+    // chassis's radiant Divine Strike comes back off before the passive
+    // goes on — see `cleric_chassis_without_divine_strike`.
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
     actions.push(&*ARCANE_ABJURATION);
-    let mut features = CLERIC_TEMPLATE.features.clone();
     features.insert(ARCANE_ABJURATION_TAG);
+    features.insert(POTENT_SPELLCASTING_TAG);
     CreatureTemplate {
         name: "Arcana Cleric",
         glyph: 'A',
@@ -1005,24 +1030,9 @@ pub static NATURE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// class templates target a balanced playable level, not lockstep PHB
 /// progression.
 pub static TRICKERY_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // The one domain that *removes* something from the inherited
-    // chassis. RAW gives every cleric exactly one Divine Strike and
-    // varies its typing by domain, so the radiant baseline arm is
-    // filtered out of the cloned action list (and its tag out of the
-    // cloned feature set) before the poison arm goes in — otherwise
-    // the Trickery cleric would carry two level-8 per-rest primes and
-    // every other domain would carry one.
-    let mut actions: Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)> =
-        CLERIC_TEMPLATE
-            .actions
-            .iter()
-            .copied()
-            .filter(|a| a.name() != DIVINE_STRIKE.name)
-            .collect();
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
     actions.push(&*INVOKE_DUPLICITY);
     actions.push(&*DIVINE_STRIKE_POISON);
-    let mut features = CLERIC_TEMPLATE.features.clone();
-    features.remove(DIVINE_STRIKE_TAG);
     features.insert(INVOKE_DUPLICITY_TAG);
     features.insert(DIVINE_STRIKE_POISON_TAG);
     CreatureTemplate {
@@ -1030,6 +1040,111 @@ pub static TRICKERY_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         glyph: 'K',
         actions,
         features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// The baseline cleric chassis with the radiant **Divine Strike**
+/// removed — both the action and its feature tag — ready for a domain
+/// to install whatever RAW puts in that level-8 slot instead.
+///
+/// RAW gives each Divine Domain exactly one level-8 feature, and there
+/// are only two of them: a Divine Strike in the domain's own damage
+/// type (War, Tempest, Life, Nature, Forge, Grave, Twilight, Trickery)
+/// or Potent Spellcasting (Knowledge, Light, Arcana). The engine's
+/// baseline chassis carries the radiant strike because it is the
+/// majority case and the subclass-less cleric needs *something*, which
+/// means the minority domains have to take it back off before adding
+/// their own — otherwise they'd carry two level-8 features and every
+/// sibling would carry one.
+///
+/// Returning the pair rather than a whole `CreatureTemplate` keeps the
+/// call sites in the shape every other domain already uses: mutate the
+/// two collections, then spread `..CLERIC_TEMPLATE.clone()` over the
+/// rest. The filter matches on the action's canonical name because a
+/// `Vec<&'static dyn Action>` has no identity to compare — and the name
+/// is the same handle the prompt parser and the drift-pin tests use.
+fn cleric_chassis_without_divine_strike() -> (
+    Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)>,
+    HashSet<&'static str>,
+) {
+    let actions = CLERIC_TEMPLATE
+        .actions
+        .iter()
+        .copied()
+        .filter(|a| a.name() != DIVINE_STRIKE.name)
+        .collect();
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.remove(DIVINE_STRIKE_TAG);
+    (actions, features)
+}
+
+/// Knowledge Domain Cleric — Divine Domain **Knowledge Domain**
+/// subclass build (PHB). The twelfth cleric domain in the engine, and
+/// with it every PHB Divine Domain has a build: Knowledge, Life, Light,
+/// Nature, Tempest, Trickery, War.
+///
+/// One subclass feature ships, and it is the whole build:
+///
+///   - **Potent Spellcasting** (lv8) — add the cleric's Wisdom modifier
+///     to the damage of every cleric cantrip.
+///
+/// That is a smaller surface than any sibling domain and a larger
+/// effect than most of them. Every other domain's signature is a button
+/// with a charge — one Radiance of the Dawn per rest, one Invoke
+/// Duplicity, one Divine Strike prime. Potent Spellcasting has no
+/// charge, no action, and no off switch: on the CR-0.5 chassis Sacred
+/// Flame is 2d8 and Toll the Dead is 2d12, so +3 from WIS 16 is
+/// roughly a third again on the cleric's *free* attack, every round of
+/// every fight, forever.
+///
+/// The consequence is a domain that plays differently rather than
+/// hitting harder at peak. A War or Light cleric's best round is its
+/// first — the charge is spent and the rest of the fight is baseline.
+/// A Knowledge cleric has no best round. It is the only cleric build
+/// whose damage output is flat across a long encounter, which makes it
+/// the one that wins attrition fights and the one that contributes
+/// least to a burst opening.
+///
+/// **The level-8 slot is a swap, not an addition.** RAW hands each
+/// domain either a Divine Strike or Potent Spellcasting and never both;
+/// the baseline chassis carries the radiant strike, so this template
+/// takes it back off through `cleric_chassis_without_divine_strike`
+/// before installing the passive. Same shape as Trickery swapping the
+/// radiant arm for the poison one, and it is why that helper exists.
+///
+/// RAW's other Knowledge features are left out, and for once none of
+/// them is a near miss. **Blessings of Knowledge** (lv1) grants two
+/// languages and two skill proficiencies with expertise — pure
+/// out-of-combat surface. **Knowledge of the Ages** (lv2 Channel
+/// Divinity) grants proficiency with a tool or skill for ten minutes,
+/// which the engine's combat model never reads. **Read Thoughts** (lv6
+/// Channel Divinity) grants advantage on Wisdom (Insight) and Charisma
+/// checks against one creature and the ability to cast Suggestion on
+/// it — the check half has no combat surface and the Suggestion half
+/// would make the domain's Channel Divinity a spell it already can't
+/// cast at this tier. **Visions of the Past** (lv17) is a divination
+/// ribbon. The Knowledge Domain is, mechanically, a skill domain with
+/// one combat feature, and shipping the one is shipping the domain.
+///
+/// Glyph 'B' — for the **B**lessings of Knowledge, since 'K' went to
+/// Trickery. Distinct from baseline cleric 'C', War 'W', Light 'L',
+/// Tempest 'S', Life 'V', Grave 'G', Forge 'F', Twilight 'X', Arcana
+/// 'A', Nature 'N' and Trickery 'K'.
+pub static KNOWLEDGE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let (actions, mut features) = cleric_chassis_without_divine_strike();
+    features.insert(POTENT_SPELLCASTING_TAG);
+    let mut skills = CLERIC_TEMPLATE.skills.clone();
+    // Blessings of Knowledge's only legible half: two knowledge-skill
+    // proficiencies. Arcana and History are the on-the-nose picks.
+    skills.insert(Skill::Arcana);
+    skills.insert(Skill::History);
+    CreatureTemplate {
+        name: "Knowledge Cleric",
+        glyph: 'B',
+        actions,
+        features,
+        skills,
         ..CLERIC_TEMPLATE.clone()
     }
 });

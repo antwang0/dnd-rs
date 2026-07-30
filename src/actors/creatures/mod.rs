@@ -327,6 +327,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*clerics::ARCANA_CLERIC_TEMPLATE,
                     &*clerics::NATURE_CLERIC_TEMPLATE,
                     &*clerics::TRICKERY_CLERIC_TEMPLATE,
+                    &*clerics::KNOWLEDGE_CLERIC_TEMPLATE,
                 ],
             ),
             (

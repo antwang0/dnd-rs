@@ -1569,7 +1569,60 @@ impl EncounterInstance {
             Some(maxed) => maxed,
             None => self.roll_empowered(caster_id, count, faces).iter().sum(),
         };
-        base + self.empowered_evocation_bonus(caster_id)
+        // Two flat damage bonuses hang off this chokepoint, and they are
+        // deliberately additive rather than exclusive: they belong to
+        // different classes reading different stats on different halves
+        // of the spell list (Empowered Evocation is a wizard's INT on
+        // levelled evocations, Potent Spellcasting a cleric's WIS on
+        // cantrips), so no build can hold both and the sum is never a
+        // stack in practice. Each gates itself on the in-flight cast.
+        base + self.empowered_evocation_bonus(caster_id) + self.potent_spellcasting_bonus(caster_id)
+    }
+
+    /// The Potent Spellcasting flat damage bonus for `caster_id` on the
+    /// cast currently in flight: the caster's Wisdom modifier when they
+    /// hold `POTENT_SPELLCASTING_TAG` and the in-flight cast is a
+    /// cantrip, and 0 otherwise.
+    ///
+    /// 5e gives Potent Spellcasting to the Knowledge, Light and Nature
+    /// Domain Clerics at level 8 (and Divine Soul Sorcerers a CHA-based
+    /// cousin) with the same text every time: "you add your Wisdom
+    /// modifier to the damage you deal with any cleric cantrip." It is
+    /// the cantrip-tier sibling of the Warlock's Agonizing Blast and of
+    /// the Evocation Wizard's Empowered Evocation, and it shares the
+    /// latter's chokepoint for the same reason: the bonus is a property
+    /// of the *roll total*, not of any individual die, so a per-die
+    /// application would multiply it across a multi-die cantrip.
+    ///
+    /// **Gated on the cast stack, not on the holder**, via the shared
+    /// `CastContext::is_cantrip` — which is both halves of the gate in
+    /// one place: level 0 makes it a cantrip bonus rather than a
+    /// blanket damage buff (a Knowledge Cleric's Guiding Bolt and Flame
+    /// Strike get nothing), and `school.is_some()` separates a cantrip
+    /// from the level-0 frame `Action::execute` opens for every weapon
+    /// swing and Move. Without the second leg the cleric's mace would
+    /// quietly carry the feature too.
+    ///
+    /// Floors at 0 so a negative-WIS holder can't invert the feature
+    /// into a damage penalty — same guard `empowered_evocation_bonus`
+    /// carries.
+    fn potent_spellcasting_bonus(&mut self, caster_id: usize) -> u32 {
+        use crate::engine::types::AbilityScoreType;
+        if !self.current_cast().is_some_and(|c| c.is_cantrip()) {
+            return 0;
+        }
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return 0;
+        };
+        if !caster.has_passive_feature(crate::actions::class_features::POTENT_SPELLCASTING_TAG) {
+            return 0;
+        }
+        let bonus = caster.ability_modifier(AbilityScoreType::Wisdom).max(0) as u32;
+        if bonus > 0 {
+            let name = self.actor_name(caster_id);
+            self.log(format!("  potent spellcasting: {} adds +{}", name, bonus));
+        }
+        bonus
     }
 
     /// 5e Evocation Wizard **Overchannel** (subclass lv14): if the caster
@@ -57835,8 +57888,8 @@ mod tests {
     #[test]
     fn arcana_cleric_ships_its_kit_and_inherits_the_cleric_chassis() {
         use crate::actions::class_features::{
-            ARCANE_ABJURATION_TAG, DESTROY_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG,
-            TURN_UNDEAD_TAG,
+            ARCANE_ABJURATION_TAG, DESTROY_UNDEAD_TAG, DIVINE_STRIKE_TAG, POTENT_SPELLCASTING_TAG,
+            PRESERVE_LIFE_TAG, TURN_UNDEAD_TAG,
         };
         use crate::actors::creatures::clerics::{ARCANA_CLERIC_TEMPLATE, CLERIC_TEMPLATE};
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -57849,12 +57902,14 @@ mod tests {
             e.actors[&cleric].find_action("arcane abjuration").is_some(),
             "the Channel Divinity needs an action surface"
         );
-        for tag in [
-            TURN_UNDEAD_TAG,
-            DIVINE_STRIKE_TAG,
-            PRESERVE_LIFE_TAG,
-            DESTROY_UNDEAD_TAG,
-        ] {
+        // Arcana's RAW level-8 feature is Potent Spellcasting, so the
+        // chassis's radiant Divine Strike is swapped out rather than
+        // inherited — one level-8 feature per domain, as for every
+        // sibling.
+        assert!(e.actors[&cleric].has_passive_feature(POTENT_SPELLCASTING_TAG));
+        assert!(!e.actors[&cleric].has_passive_feature(DIVINE_STRIKE_TAG));
+        assert!(e.actors[&cleric].find_action("divine strike").is_none());
+        for tag in [TURN_UNDEAD_TAG, PRESERVE_LIFE_TAG, DESTROY_UNDEAD_TAG] {
             assert!(
                 e.actors[&cleric].has_passive_feature(tag),
                 "Arcana Cleric should inherit baseline Cleric tag {}",
@@ -67734,6 +67789,101 @@ mod tests {
         assert!(
             e.actors[&monk].best_spell_save_dc(candidates)
                 > e.actors[&monk].spell_save_dc(AbilityScoreType::Intelligence)
+        );
+    }
+
+    /// Potent Spellcasting adds the cleric's WIS to cantrip damage and
+    /// to nothing else. The three assertions that matter are the two
+    /// negatives: a levelled spell gets no bonus (the gate is
+    /// `is_cantrip`, not "the holder is a cleric"), and a cleric
+    /// without the tag gets no bonus (the feature is a template
+    /// property, not a class one).
+    #[test]
+    fn potent_spellcasting_lifts_cantrips_and_only_cantrips() {
+        use crate::actions::class_features::POTENT_SPELLCASTING_TAG;
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, KNOWLEDGE_CLERIC_TEMPLATE};
+        use crate::engine::types::SpellSchool;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knowing = e
+            .instantiate_creature(&KNOWLEDGE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        assert!(e.actors[&knowing].has_passive_feature(POTENT_SPELLCASTING_TAG));
+        assert!(!e.actors[&plain].has_passive_feature(POTENT_SPELLCASTING_TAG));
+        let wis = e.actors[&knowing]
+            .ability_modifier(AbilityScoreType::Wisdom)
+            .max(0) as u32;
+        assert!(wis > 0, "the chassis has to have a positive WIS for this to say anything");
+
+        // Zero dice isolate the flat bonus from the roll, so the
+        // assertions are exact rather than statistical.
+        let mut rolled = |caster: usize, level: u32| {
+            e.enter_cast(Some(SpellSchool::Evocation), level);
+            let out = e.roll_empowered_sum(caster, 0, 8);
+            e.exit_cast();
+            out
+        };
+        assert_eq!(rolled(knowing, 0), wis);
+        assert_eq!(rolled(knowing, 3), 0, "RAW is cantrips only");
+        assert_eq!(rolled(plain, 0), 0, "a cleric without the tag gets nothing");
+        // Outside any cast frame — a weapon swing — the feature is
+        // inert. The `is_cantrip` gate fails closed on `None`.
+        assert_eq!(e.roll_empowered_sum(knowing, 0, 8), 0);
+    }
+
+    /// Knowledge Domain template drift pin, and the RAW rule the domain
+    /// exists to demonstrate: each Divine Domain gets exactly one
+    /// level-8 feature. Knowledge, Light and Arcana take Potent
+    /// Spellcasting *instead of* the chassis's radiant Divine Strike;
+    /// every other domain keeps the strike.
+    #[test]
+    fn the_level_eight_slot_holds_exactly_one_feature_per_domain() {
+        use crate::actions::class_features::{DIVINE_STRIKE_TAG, POTENT_SPELLCASTING_TAG};
+        use crate::actors::creatures::clerics::{
+            ARCANA_CLERIC_TEMPLATE, CLERIC_TEMPLATE, FORGE_CLERIC_TEMPLATE,
+            KNOWLEDGE_CLERIC_TEMPLATE, LIGHT_CLERIC_TEMPLATE, NATURE_CLERIC_TEMPLATE,
+            TEMPEST_CLERIC_TEMPLATE, TRICKERY_CLERIC_TEMPLATE, WAR_CLERIC_TEMPLATE,
+        };
+        for template in [
+            &*KNOWLEDGE_CLERIC_TEMPLATE,
+            &*LIGHT_CLERIC_TEMPLATE,
+            &*ARCANA_CLERIC_TEMPLATE,
+        ] {
+            assert!(
+                template.features.contains(POTENT_SPELLCASTING_TAG),
+                "{} takes Potent Spellcasting at level 8",
+                template.name
+            );
+            assert!(
+                !template.features.contains(DIVINE_STRIKE_TAG),
+                "{} must not also carry the chassis's Divine Strike",
+                template.name
+            );
+        }
+        for template in [
+            &*CLERIC_TEMPLATE,
+            &*WAR_CLERIC_TEMPLATE,
+            &*TEMPEST_CLERIC_TEMPLATE,
+            &*FORGE_CLERIC_TEMPLATE,
+            &*NATURE_CLERIC_TEMPLATE,
+        ] {
+            assert!(
+                template.features.contains(DIVINE_STRIKE_TAG),
+                "{} keeps the chassis's Divine Strike",
+                template.name
+            );
+            assert!(!template.features.contains(POTENT_SPELLCASTING_TAG));
+        }
+        // Trickery is the third shape: it swaps the strike's *typing*
+        // rather than the feature, so it carries neither the radiant
+        // tag nor the passive.
+        assert!(!TRICKERY_CLERIC_TEMPLATE.features.contains(DIVINE_STRIKE_TAG));
+        assert!(
+            !TRICKERY_CLERIC_TEMPLATE
+                .features
+                .contains(POTENT_SPELLCASTING_TAG)
         );
     }
 }

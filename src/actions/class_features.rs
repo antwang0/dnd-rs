@@ -5041,6 +5041,26 @@ pub static FLURRY_OF_BLOWS: LazyLock<FlurryOfBlows> = LazyLock::new(|| FlurryOfB
 /// Channel Divinity: Turn Undead lane.
 pub const DIVINE_STRIKE_TAG: &str = "cleric.divine_strike";
 
+/// Class-feature tag for **Potent Spellcasting** (5e cleric subclass
+/// level 8 — Knowledge, Light and Nature Domains all get the same
+/// text): "you add your Wisdom modifier to the damage you deal with any
+/// cleric cantrip."
+///
+/// A pure passive with no charge and no action surface — the whole
+/// feature is a flat bonus read at
+/// `EncounterInstance::potent_spellcasting_bonus`, the chokepoint that
+/// already carries the Evocation Wizard's Empowered Evocation. The two
+/// are the same shape on opposite halves of the spell list: INT on
+/// levelled evocations, WIS on cantrips.
+///
+/// The bonus is quiet per cast and large in aggregate. A cleric's
+/// Sacred Flame is 2d8 on the CR-0.5 chassis, so +3 from a WIS 16 is
+/// roughly a third again on every cantrip, every round, for free and
+/// forever — which is exactly why the domains that get it get little
+/// else at level 8, and why the Trickery and Tempest domains take a
+/// Divine Strike instead.
+pub const POTENT_SPELLCASTING_TAG: &str = "cleric.potent_spellcasting";
+
 /// Class-feature tag for the Trickery Domain Cleric's **Divine Strike
 /// (poison)** (5e level-8 subclass feature; once per long rest in our
 /// model, matching the baseline `DIVINE_STRIKE_TAG` cadence).
