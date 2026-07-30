@@ -381,6 +381,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*rangers::HORIZON_WALKER_RANGER_TEMPLATE,
                     &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
                     &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
+                    &*rangers::BEAST_MASTER_RANGER_TEMPLATE,
                 ],
             ),
             (

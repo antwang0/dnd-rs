@@ -8097,6 +8097,119 @@ impl Action for InvokeDuplicity {
 
 pub static INVOKE_DUPLICITY: LazyLock<InvokeDuplicity> = LazyLock::new(|| InvokeDuplicity {});
 
+/// Class-feature tag for the **Beast Master Ranger**'s *Ranger's
+/// Companion* (5e PHB, subclass level 3). Once per long rest — the
+/// beast is a permanent bond in RAW, and the per-rest charge is the
+/// engine's way of saying "you get one, and if it dies you don't get
+/// another this fight."
+pub const RANGERS_COMPANION_TAG: &str = "ranger.rangers_companion";
+
+/// Ranger's Companion — Beast Master Ranger action. Calls the bonded
+/// beast to a free tile beside the ranger, on the ranger's team, once
+/// per long rest.
+///
+/// **Not a summoning spell**, and the differences are the feature.
+/// Conjure Animals and Animate Dead cost a slot, hold concentration,
+/// and evaporate when the caster's concentration breaks — they are
+/// temporary allies rented with the caster's attention. The companion
+/// costs no slot, no concentration, and stays until it drops. What it
+/// costs instead is the ranger's Action on the turn they spend calling
+/// it, and the once-per-rest charge: a Beast Master who loses the beast
+/// has lost the subclass for the rest of the day.
+///
+/// That trade puts the timing decision squarely on the player. Spent
+/// on round one it is an Action not swung and a body that fights for
+/// the whole encounter; held back it is a full ranger turn and a
+/// companion arriving into a fight that may already be decided.
+///
+/// Declares `summons_allies` so the AI's summon rung picks it up
+/// without a name to remember — the same hook Conjure Animals and
+/// Animate Dead use. The validator owns the part the AI shouldn't
+/// guess at: whether a Medium creature fits anywhere nearby.
+pub struct RangersCompanion {}
+
+impl Action for RangersCompanion {
+    fn name(&self) -> &str {
+        "ranger's companion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["companion", "beast", "rc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the beast deals the damage, on its own turns.
+        false
+    }
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, RANGERS_COMPANION_TAG)
+            && encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
+                .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE;
+        // Spend the charge before the spawn attempt, not after: the
+        // validator has already confirmed a free tile, and a partial
+        // failure inside `spawn_adjacent_summons` (the arena filled in
+        // between) should still cost the ranger the call rather than
+        // leaving a charge to retry with the same result.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(RANGERS_COMPANION_TAG);
+        }
+        // Instance ids from 70 — a private band that doesn't collide
+        // with the summon spells' 90+ range.
+        crate::actions::spells::spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &RANGERS_COMPANION_TEMPLATE,
+            crate::engine::types::Size::Medium,
+            1,
+            2,
+            70,
+            "ranger's companion",
+        );
+        // No side-effects to queue: unlike the conjuration spells there
+        // is no `Conjured` marker and no `StartConcentration` anchor to
+        // hang the beast's lifetime on. It stays until it drops, which
+        // is the whole distinction from a summoning spell.
+        Vec::new()
+    }
+}
+
+pub static RANGERS_COMPANION: LazyLock<RangersCompanion> = LazyLock::new(|| RangersCompanion {});
+
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered
 /// radiant burst — every enemy in range makes a CON save vs the cleric's

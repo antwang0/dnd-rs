@@ -575,6 +575,30 @@ pub trait Action {
         false
     }
 
+    /// True if this action's load-bearing effect is putting new
+    /// friendly bodies on the board — Conjure Animals, Conjure
+    /// Elemental, Animate Dead, Animate Objects, the Ranger's
+    /// Companion.
+    ///
+    /// Exists because summons fit none of the AI's existing lanes and
+    /// were therefore invisible to it. They are `is_harmful` (they end
+    /// fights faster) but hurt nobody directly; they `deals_damage`
+    /// only through a creature that doesn't exist yet; they declare no
+    /// `damage_types`; and their targeting schema is `NoArgs`, so the
+    /// burst picker's "harmful NoArgs with a damage type or an explicit
+    /// no-damage flag" filter excluded every one of them. The result
+    /// was that no AI-driven caster ever summoned anything, on any
+    /// template, at any point — a whole category of spell that existed
+    /// only for a human player to type.
+    ///
+    /// A trait method rather than a name list in the AI for the reason
+    /// the metamagic gates already give: the next summon spell should
+    /// be picked up by declaring what it is, not by someone remembering
+    /// to add a string somewhere else.
+    fn summons_allies(&self) -> bool {
+        false
+    }
+
     /// Damage types this action can deal (for actor-side resistance /
     /// immunity hints in the prompt UI). Empty for non-damaging actions
     /// or those whose typing depends on runtime data.

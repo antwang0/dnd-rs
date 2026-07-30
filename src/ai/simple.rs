@@ -1014,6 +1014,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a'''. Summons — Conjure Animals / Conjure Elemental /
+        //        Animate Dead / Animate Objects / the Ranger's
+        //        Companion. Before this rung existed, no AI-driven
+        //        caster ever summoned anything on any template: a
+        //        summon declares no damage types and targets nothing,
+        //        so every picker above filtered it out and the spells
+        //        were reachable only by a human typing their name.
+        //
+        //        Placed at the bottom of the concentration lane rather
+        //        than the top, which is the opposite of where a
+        //        summon's raw value would put it. Everything above —
+        //        area control, the apex ally buffs, Spirit Guardians,
+        //        Hold Person, Cause Fear, Dominate Monster — holds the
+        //        same single concentration slot, and all of them act on
+        //        the fight *now*. A pack of wolves is worth more over
+        //        six rounds and less over one, and the caster can't
+        //        know which fight this is. Ranking it under the
+        //        immediate effects means the summon fires exactly when
+        //        nothing more urgent wants the slot, which is also when
+        //        the fight is most likely to be the long kind that
+        //        pays for it.
+        //
+        //        Still above the damage lane below: two extra bodies
+        //        out-damage one Fireball across any fight that lasts
+        //        long enough for the question to matter.
+        if let Some(aei) = try_summon_allies(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -5090,6 +5119,57 @@ const AREA_CONTROL_SPELLS: &[&str] = &[
     "sleet storm",
 ];
 
+/// Put a friendly body on the board — Conjure Animals, Conjure
+/// Elemental, Animate Dead, Animate Objects, the Ranger's Companion.
+///
+/// The action set comes off `Action::summons_allies` rather than a
+/// name list, so a summon added tomorrow is picked up by declaring
+/// what it is. Before this rung existed no AI-driven caster ever
+/// summoned anything: summons declare no damage types and target
+/// nothing, so every picker in the ladder filtered them out, and the
+/// spells were reachable only by a human typing their name.
+///
+/// Three gates, in cheapest-first order:
+///
+///   1. **Not already concentrating.** Every summon on the list except
+///      the Ranger's Companion holds concentration, and the picker
+///      declines wholesale rather than per-action — a caster who traded
+///      a landed Web for an unlanded pack of wolves has made the fight
+///      worse, and the same argument `try_area_control` makes.
+///   2. **A fight is actually on** (24 tiles ≈ 60 ft). Summons are the
+///      most expensive thing in the ladder to waste: a concentration
+///      slot, an Action, and a spell slot, all spent on bodies that
+///      time out before anything walks into range.
+///   3. **The action's own validator**, which owns the part the AI
+///      shouldn't guess at — whether there is a free adjacent tile of
+///      the right size to put the creature on.
+///
+/// Ties break by list order within the actor's own action list, which
+/// puts whichever summon the template author listed first ahead of the
+/// rest. That is deliberate: the templates order their kits by intent,
+/// and there is no cross-summon quality metric worth inventing (a
+/// conjured elemental and two wolves are good in different fights).
+fn try_summon_allies(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    actor
+        .actions
+        .iter()
+        .filter(|a| a.summons_allies())
+        .find_map(|a| {
+            let aei = ActionExecutionInfo::new(*a, actor_id, None, None, None);
+            aei.validate(encounter).then_some(aei)
+        })
+}
+
 /// Drop an area-control spell on the densest cluster of hostiles.
 ///
 /// Shares `best_burst_placement` with `try_attack_aoe`, so the
@@ -5560,6 +5640,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The AI reaches summons at all — the behavioural half of the
+    /// `summons_allies` contract.
+    ///
+    /// Regression pin for a silent hole rather than a preference: for
+    /// as long as the summon spells have existed, no AI-driven caster
+    /// had ever cast one. They are `is_harmful` but declare no damage
+    /// types and target nothing, so the burst picker's "harmful NoArgs
+    /// with a damage type or an explicit no-damage flag" filter dropped
+    /// every one of them, and no other rung looked. Nothing failed; the
+    /// spells were simply never chosen, on any template, in any fight.
+    ///
+    /// Driven through the Beast Master because its companion is the
+    /// cleanest case — no slot to be out of, no concentration to be
+    /// holding, so a decline can only mean the rung isn't reached.
+    #[test]
+    fn the_ai_reaches_the_summon_rung() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rangers::BEAST_MASTER_RANGER_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let ranger = e
+            .instantiate_creature(&BEAST_MASTER_RANGER_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        // Inside the 24-tile engagement gate, outside melee — the
+        // ranger has no reason to do anything else first.
+        let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
+        assert!(
+            try_summon_allies(&e, ranger).is_some(),
+            "an engaged Beast Master with an unspent bond should call the beast"
+        );
+        // The engagement gate is load-bearing: with nothing to fight,
+        // the charge stays in hand.
+        let mut empty = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let alone = empty
+            .instantiate_creature(&BEAST_MASTER_RANGER_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        assert!(try_summon_allies(&empty, alone).is_none());
     }
 
     fn run_to_completion(seed: u64) -> EncounterInstance {

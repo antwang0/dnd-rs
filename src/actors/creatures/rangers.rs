@@ -1,6 +1,7 @@
 use crate::actions::class_features::{
     COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, GATHERED_SWARM_TAG,
-    MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
+    MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, RANGERS_COMPANION, RANGERS_COMPANION_TAG,
+    ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -834,4 +835,75 @@ pub static SWARMKEEPER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     // `WATCHERS_PALADIN_TEMPLATE`, `FEY_WANDERER_RANGER_TEMPLATE`,
     // `HORIZON_WALKER_RANGER_TEMPLATE`, `MONSTER_SLAYER_RANGER_TEMPLATE`.
     RANGER_TEMPLATE.with_subclass_tag("Swarmkeeper Ranger", 'K', GATHERED_SWARM_TAG)
+});
+
+/// Beast Master Ranger — Ranger Conclave **Beast Master** subclass build
+/// (PHB), and with it every PHB Ranger Conclave has a build in the
+/// engine: Hunter and this one.
+///
+/// One subclass feature ships, and it is the only feature in the whole
+/// class tree that puts a second body on the board:
+///
+///   - **Ranger's Companion** (lv3) — an Action, once per long rest: the
+///     bonded beast arrives on a free tile beside the ranger and fights
+///     on their team until it drops.
+///
+/// Every other ranger conclave in the engine sharpens the ranger — the
+/// Hunter's Colossus Slayer adds a die, the Gloom Stalker opens harder,
+/// the Horizon Walker's Planar Warrior retypes a swing, the Monster
+/// Slayer reads its quarry. The Beast Master doesn't sharpen anything.
+/// It trades a turn for a second combatant, which is a different kind
+/// of upgrade and the only one on the chassis that changes the action
+/// economy rather than the damage roll.
+///
+/// **The companion is a wolf**, and the reason is the bite rather than
+/// the beast. `WOLF_BITE` carries a STR-save trip rider, so the
+/// companion's real contribution isn't its damage — it is that whatever
+/// it bites tends to end up prone, and a prone target is one the
+/// ranger's own longbow, and every melee ally, then swings at with
+/// advantage. A CR-1/4 beast that reliably sets up the party is worth
+/// more than a slightly bigger one that doesn't, which is exactly the
+/// choice RAW puts in front of a Beast Master picking their companion.
+///
+/// The companion arrives pre-upgraded rather than being buffed in
+/// place — see `RANGERS_COMPANION_TEMPLATE` for why, and for the AC /
+/// hit-point / Extra Attack numbers RAW's proficiency-bonus and
+/// four-times-level clauses come to on this chassis.
+///
+/// **The cost is the turn, and it is a real one.** Spent on round one
+/// the call is an Action not swung and a body that fights the whole
+/// encounter; held back it is a full ranger turn spent on a companion
+/// arriving into a fight that may already be decided. Once per long
+/// rest, so a Beast Master whose beast drops has lost the subclass for
+/// the day — which is RAW's actual criticism of the conclave, kept
+/// rather than smoothed away.
+///
+/// Exceptional Training (lv7) and Share Spells (lv15) are left out.
+/// The first lets the companion Dash / Disengage / Dodge with the
+/// ranger's bonus action, which needs a command lane the engine has no
+/// shape for — a summoned ally is an independent actor here, not a
+/// puppet the summoner spends resources on. The second extends the
+/// ranger's self-buffs to the beast, which needs the same lane.
+///
+/// Glyph 'A' — 'A' for the **A**nimal at the ranger's side. Distinct
+/// from baseline ranger 'R', Hunter 'H', Gloom Stalker 'G', Fey
+/// Wanderer 'Y', Horizon Walker 'Z', Monster Slayer 'M' and
+/// Swarmkeeper 'K'.
+pub static BEAST_MASTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner the other four conclaves
+    // use: this one adds an action as well as a tag. The
+    // `..RANGER_TEMPLATE.clone()` tail still carries the whole ranger
+    // chassis — longbow, scimitar, the half-caster spell list, Vanish,
+    // and every baseline passive.
+    let mut actions = RANGER_TEMPLATE.actions.clone();
+    actions.push(&*RANGERS_COMPANION);
+    let mut features = RANGER_TEMPLATE.features.clone();
+    features.insert(RANGERS_COMPANION_TAG);
+    CreatureTemplate {
+        name: "Beast Master Ranger",
+        glyph: 'A',
+        actions,
+        features,
+        ..RANGER_TEMPLATE.clone()
+    }
 });

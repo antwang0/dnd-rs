@@ -68112,4 +68112,83 @@ mod tests {
             offenders.join("\n")
         );
     }
+
+    /// Beast Master template drift pin plus the behaviour that makes it
+    /// a subclass rather than a flavour text: the call actually puts a
+    /// friendly body on the board, on the ranger's team, and burns the
+    /// once-per-rest charge doing it.
+    #[test]
+    fn rangers_companion_puts_a_beast_on_the_rangers_team() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{RANGERS_COMPANION, RANGERS_COMPANION_TAG};
+        use crate::actors::creatures::rangers::{BEAST_MASTER_RANGER_TEMPLATE, RANGER_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ranger = e
+            .instantiate_creature(&BEAST_MASTER_RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&ranger].has_passive_feature(RANGERS_COMPANION_TAG));
+        assert!(
+            !RANGER_TEMPLATE.features.contains(RANGERS_COMPANION_TAG),
+            "the baseline ranger must not already carry the bond"
+        );
+        assert!(RANGERS_COMPANION.custom_validate_input(&e, ranger, None, None, None));
+        let before = e.actors.len();
+        for ef in RANGERS_COMPANION.side_effects(&mut e, ranger, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors.len(), before + 1, "the beast should be on the board");
+        let beast = *e
+            .actors
+            .keys()
+            .find(|id| **id != ranger)
+            .expect("a companion");
+        assert_eq!(
+            e.actors[&beast].team(),
+            e.actors[&ranger].team(),
+            "the companion fights for the ranger"
+        );
+        // Bestial Fury, and the proficiency-bonus AC bump.
+        assert!(e.actors[&beast].has_extra_attack());
+        assert!(e.actors[&beast].armor_class() > 13);
+        // The charge is spent, so a second call is refused — a Beast
+        // Master whose beast drops has lost the subclass for the day.
+        assert!(!e.actors[&ranger].feature_available(RANGERS_COMPANION_TAG));
+        assert!(!RANGERS_COMPANION.custom_validate_input(&e, ranger, None, None, None));
+    }
+
+    /// Every summoning action declares itself through
+    /// `Action::summons_allies`, which is the hook the AI's summon rung
+    /// reads.
+    ///
+    /// Before that rung existed no AI-driven caster ever summoned
+    /// anything: a summon is `is_harmful` but declares no damage types
+    /// and targets nothing, so every picker in the ladder filtered it
+    /// out and the spells were reachable only by a human typing their
+    /// name. This pins the declaration rather than the ladder position
+    /// — the position is a judgement call that may be re-tuned, the
+    /// declaration is the contract a new summon has to honor to be
+    /// visible at all.
+    #[test]
+    fn every_summoning_action_declares_itself() {
+        use crate::actions::action_template::Action;
+        let summons: &[&'static (dyn Action + Send + Sync)] = &[
+            &*crate::actions::spells::CONJURE_ANIMALS,
+            &*crate::actions::spells::CONJURE_ELEMENTAL,
+            &*crate::actions::spells::ANIMATE_DEAD,
+            &*crate::actions::spells::ANIMATE_OBJECTS,
+            &*crate::actions::class_features::RANGERS_COMPANION,
+        ];
+        for action in summons {
+            assert!(
+                action.summons_allies(),
+                "{} puts bodies on the board and has to say so",
+                action.name()
+            );
+        }
+        // The default is false, and it stays false for things that
+        // merely make allies better — otherwise the summon rung would
+        // start firing on buffs.
+        assert!(!crate::actions::spells::BLESS.summons_allies());
+        assert!(!crate::actions::spells::FIREBALL.summons_allies());
+    }
 }

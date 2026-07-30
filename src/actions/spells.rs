@@ -938,7 +938,7 @@ fn ally_aura_concentration_effects(
 /// Animals uses radius 3 for the 30 ft RAW range; Animate Dead uses
 /// radius 2 for the touch-range envelope.
 #[allow(clippy::too_many_arguments)]
-fn spawn_adjacent_summons(
+pub(crate) fn spawn_adjacent_summons(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     template: &'static crate::actors::actor_template::CreatureTemplate,
@@ -12655,6 +12655,9 @@ pub static HAIL_OF_THORNS: LazyLock<HailOfThorns> = LazyLock::new(|| HailOfThorn
 pub struct AnimateDead {}
 
 impl Action for AnimateDead {
+    fn summons_allies(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "animate dead"
     }
@@ -14123,6 +14126,9 @@ pub static EYEBITE: LazyLock<Eyebite> = LazyLock::new(|| Eyebite {});
 pub struct ConjureAnimals {}
 
 impl Action for ConjureAnimals {
+    fn summons_allies(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -14219,6 +14225,9 @@ pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureA
 pub struct ConjureElemental {}
 
 impl Action for ConjureElemental {
+    fn summons_allies(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -26168,6 +26177,9 @@ pub static SHADOW_OF_MOIL: LazyLock<ShadowOfMoil> = LazyLock::new(|| ShadowOfMoi
 pub struct AnimateObjects {}
 
 impl Action for AnimateObjects {
+    fn summons_allies(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "animate objects"
     }
