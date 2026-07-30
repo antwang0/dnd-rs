@@ -67980,6 +67980,16 @@ mod tests {
             &*crate::actions::spells::THUNDERCLAP,
             &*crate::actions::spells::SWORD_BURST,
             &*crate::actions::spells::LIGHTNING_LURE,
+            // The attack-roll lane. Added after a review found the
+            // sweep was all-saves, which is exactly the blind spot that
+            // let `spell_attack_outcome` keep rolling outside the
+            // chokepoint: a Knowledge Cleric's Sacred Flame collected
+            // Potent Spellcasting and the same cleric's Thorn Whip did
+            // not, and nothing here noticed.
+            &*crate::actions::spells::THORN_WHIP,
+            &*crate::actions::spells::FIRE_BOLT,
+            &*crate::actions::spells::RAY_OF_FROST,
+            &*crate::actions::spells::CHILL_TOUCH,
         ];
         for action in cantrips {
             let mut reached = false;

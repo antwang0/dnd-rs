@@ -5139,6 +5139,14 @@ fn try_summon_allies(
     if actor.is_concentrating() {
         return None;
     }
+    // One call for help per fight. The concentration check above caps
+    // three of the five summons and the per-rest charge caps a fourth,
+    // but Animate Dead has neither — RAW it is a permanent minion, so
+    // without this a wizard spends every third-level slot it owns on
+    // skeletons and never casts anything else. See `Condition::Summoner`.
+    if actor.has_condition(Condition::Summoner) {
+        return None;
+    }
     if !any_enemy_within(encounter, actor_id, 24) {
         return None;
     }
@@ -5672,6 +5680,69 @@ mod tests {
             .instantiate_creature(&BEAST_MASTER_RANGER_TEMPLATE, Coordinate::new(4, 8), 0, 0)
             .unwrap();
         assert!(try_summon_allies(&empty, alone).is_none());
+    }
+
+    /// The summon rung fires once per fight and then stops.
+    ///
+    /// The concentration check caps most of the roster, but Animate
+    /// Dead holds no concentration and carries no per-rest charge —
+    /// RAW it is a permanent minion — so before the `Summoner` marker
+    /// a wizard would have spent every third-level slot it owned on
+    /// consecutive skeletons and never cast anything else. Driven
+    /// through the wizard for exactly that reason.
+    #[test]
+    fn the_summon_rung_fires_once_per_fight() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
+        let aei = try_summon_allies(&e, wizard).expect("an engaged wizard should summon");
+        assert_eq!(aei.action().name(), "animate dead");
+        for ef in aei.execute(&mut e) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wizard].has_condition(Condition::Summoner),
+            "the spawn helper marks the caster"
+        );
+        assert!(
+            try_summon_allies(&e, wizard).is_none(),
+            "a second summon in the same fight would eat the whole slot pool"
+        );
+        // The action itself is untouched — the cap is one AI picker's
+        // judgement, not a rule. Refill what the first cast spent so
+        // the assertion reads the marker rather than an empty slot.
+        {
+            let w = e.actors.get_mut(&wizard).unwrap();
+            w.give_resource(crate::engine::side_effects::Resource::Action);
+            w.spell_slot_manager.restore_spell_slots();
+        }
+        assert!(
+            ActionExecutionInfo::new(
+                e.actors[&wizard].find_action("animate dead").unwrap(),
+                wizard,
+                None,
+                None,
+                None,
+            )
+            .validate(&e),
+            "a human player can still cast it again"
+        );
     }
 
     fn run_to_completion(seed: u64) -> EncounterInstance {

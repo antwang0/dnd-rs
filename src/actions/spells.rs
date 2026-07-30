@@ -252,7 +252,26 @@ fn spell_attack_outcome(
     if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
         attacker.mark_hit_target_this_turn(target_id);
     }
-    let dmg = encounter.roll(&damage_dice) as i32;
+    // Route the base damage roll through the shared caster-aware
+    // chokepoint, the same one every save-based spell uses. Spell
+    // *attacks* were the last damage lane in the file rolling outside
+    // it, which meant the Sorcerer's Empowered Spell reroll, the
+    // Evocation Wizard's Empowered Evocation and the cleric's Potent
+    // Spellcasting all silently skipped every attack-roll spell — Fire
+    // Bolt, Guiding Bolt, Scorching Ray, Chill Touch, Ray of Frost,
+    // Eldritch Blast, Thorn Whip, Vampiric Touch and the rest. RAW
+    // names Fire Bolt's own school in Empowered Evocation's text, so
+    // this was the lane the feature most obviously meant to cover.
+    //
+    // Multi-ray spells (Scorching Ray, Eldritch Blast) call this helper
+    // once per beam; the once-per-cast latch on the cast frame is what
+    // keeps the flat bonuses from being paid per ray.
+    let dmg = encounter.roll_empowered_sum(caster_id, damage_dice.count, damage_dice.faces) as i32;
+    // The crit dice stay a plain roll. RAW doubles the *dice* on a
+    // crit and adds flat bonuses once, so folding this through the
+    // chokepoint would be asking for a second payout the latch would
+    // refuse anyway — and would consume nothing, since Empowered
+    // Spell's prime is already spent on the roll above.
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
     // Fold in the caster-side flat damage bonuses (item-passive +
     // spell-installed buff) so spell attacks see the same `+N weapon`
@@ -974,6 +993,19 @@ pub(crate) fn spawn_adjacent_summons(
                 break;
             }
         }
+    }
+    // Mark the caster as having called for reinforcements. Read only by
+    // the AI's summon rung, which declines while it is up — see
+    // `Condition::Summoner` for why the marker lives on the caster and
+    // why the concentration check the rung already does isn't enough
+    // (Animate Dead holds no concentration and has no charge).
+    if !spawned.is_empty()
+        && let Some(caster) = encounter.actors.get_mut(&caster_id)
+    {
+        caster.add_condition(
+            crate::conditions::Condition::Summoner,
+            crate::conditions::ConditionTimer::Rounds(100),
+        );
     }
     spawned
 }
@@ -3140,8 +3172,16 @@ impl Action for SpiritualWeapon {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spellcasting_attack_modifier();
-        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
+        // RAW: "a melee spell attack ... 1d8 force damage plus your
+        // spellcasting ability modifier." Both halves read the *same*
+        // ability, so they resolve it once and share it — attacking off
+        // one stat and adding damage off another would be a caster with
+        // two spellcasting abilities, which is not a thing.
+        let ability = caster.best_spellcasting_ability(
+            crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+        );
+        let attack_bonus = caster.spell_attack_modifier(ability);
+        let damage_bonus = caster.ability_modifier(ability);
         spell_attack_with_bonus(
             encounter,
             caster_id,
@@ -3149,7 +3189,7 @@ impl Action for SpiritualWeapon {
             "spiritual weapon",
             attack_bonus,
             Dice::new(1, 8),
-            wis_mod,
+            damage_bonus,
             DamageType::Force,
             true,
         )
@@ -7305,12 +7345,9 @@ impl Action for Banishment {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // Use the caster's strongest spellcasting modifier (INT for
-        // wizards, WIS for clerics) so the DC scales with whichever
-        // school is firing it.
-        let int_dc = caster.spellcasting_save_dc();
-        let wis_dc = caster.spellcasting_save_dc();
-        let dc = int_dc.max(wis_dc);
+        // Use the caster's own spellcasting ability (INT for wizards,
+        // CHA for warlocks) so the DC scales with whoever is firing it.
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell can force disadvantage.
         let save =
             encounter.roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id);

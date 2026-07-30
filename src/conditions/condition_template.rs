@@ -563,6 +563,38 @@ pub enum Condition {
     /// feature, not a spell, so Dispel Magic has nothing to grab —
     /// the same call `WildShaped` makes.
     Duplicity,
+    /// Has already called for reinforcements this encounter.
+    ///
+    /// Pure bookkeeping, installed on the *caster* by
+    /// `spawn_adjacent_summons` the first time any summon actually puts
+    /// a body on the board, and read by exactly one consumer: the AI's
+    /// summon rung, which declines while it is up.
+    ///
+    /// It exists because the summons disagree about what stops them
+    /// from being cast again. Conjure Animals, Conjure Elemental and
+    /// Animate Objects hold concentration, so one is the natural cap;
+    /// the Ranger's Companion has a per-rest charge. **Animate Dead has
+    /// neither** — RAW it is a permanent minion with no concentration,
+    /// which is correct for the spell and catastrophic for a rung that
+    /// only knows how to ask "am I concentrating?". A wizard would
+    /// spend every third-level slot it owned on skeletons and never
+    /// cast anything else.
+    ///
+    /// Deliberately on the caster rather than counted off the minions:
+    /// a summoned ally that dies (or a concentration that drops) leaves
+    /// the marker in place, so the caster doesn't respond to losing its
+    /// wolves by immediately conjuring more while the fight is going
+    /// badly. That is the conservative direction, and it is the right
+    /// one for a resource this expensive.
+    ///
+    /// Not a restriction on the player: it gates one AI picker, and the
+    /// action itself validates and executes exactly as before. A human
+    /// who wants a second skeleton can still ask for one.
+    ///
+    /// `Rounds(100)` — longer than any encounter the engine runs, which
+    /// is the honest way to spell "for this fight" in a timer model
+    /// that has no such unit.
+    Summoner,
     /// Divine Strike primed (5e Cleric Channel Divinity flavor; we model
     /// the level-8-and-above feature as a once-per-rest prime that lands
     /// on the caster's next melee hit for +1d8 radiant damage. Mirrors
@@ -1628,6 +1660,7 @@ impl Condition {
             Condition::BigbysHanded => "guarded by bigby's hand",
             Condition::Transformed => "transformed",
             Condition::Duplicity => "shadowed by an illusory double",
+            Condition::Summoner => "attended by summoned allies",
             Condition::DivineStriking => "primed with divine strike",
             Condition::DivineStrikingPoison => "primed with envenomed divine strike",
             Condition::FangsOfTheFireSnake => "wreathed in the fire snake's fangs",

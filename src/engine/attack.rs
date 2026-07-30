@@ -1091,7 +1091,22 @@ pub fn resolve_attack_outcome(
             .actors
             .get(&p.caster_id)
             .is_some_and(|a| a.has_great_weapon_fighting());
-    let raw_damage = encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32;
+    // Spell attacks that come through this chokepoint (Fire Bolt, Ray
+    // of Frost, the two monster spell-attacks) roll their base damage
+    // through the caster-aware spell chokepoint instead, so the
+    // Sorcerer's Empowered Spell reroll, the Evocation Wizard's
+    // Empowered Evocation and the cleric's Potent Spellcasting reach
+    // them — RAW names Fire Bolt's own school in Empowered Evocation's
+    // text, and a Knowledge Cleric's Sacred Flame collecting +WIS while
+    // the same cleric's Thorn Whip didn't was the tell that this lane
+    // had been missed. Great Weapon Fighting is deliberately not
+    // considered on that branch: RAW gates it to melee weapons, and
+    // `apply_gwf` is already false for every spell here.
+    let raw_damage = if p.is_spell {
+        encounter.roll_empowered_sum(p.caster_id, p.damage_dice.count, p.damage_dice.faces) as i32
+    } else {
+        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
+    };
     let crit_extra = if is_crit {
         encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
     } else {
