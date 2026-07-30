@@ -33970,43 +33970,6 @@ mod tests {
         );
     }
 
-    /// All eight PHB Arcane Traditions plus the baseline and War Magic
-    /// render distinctly. Each template's doc comment asserts its glyph
-    /// collides with none of its siblings; this is that claim as a
-    /// test, so the tenth tradition can't be added on a glyph the ninth
-    /// already took. Sibling in shape to
-    /// `all_dragonborn_variants_have_distinct_glyphs`.
-    #[test]
-    fn every_wizard_tradition_has_a_distinct_glyph() {
-        use crate::actors::creatures::wizards::{
-            ABJURATION_WIZARD_TEMPLATE, CONJURATION_WIZARD_TEMPLATE, DIVINATION_WIZARD_TEMPLATE,
-            ENCHANTMENT_WIZARD_TEMPLATE, EVOCATION_WIZARD_TEMPLATE, ILLUSION_WIZARD_TEMPLATE,
-            NECROMANCY_WIZARD_TEMPLATE, TRANSMUTATION_WIZARD_TEMPLATE, WAR_MAGIC_WIZARD_TEMPLATE,
-            WIZARD_TEMPLATE,
-        };
-        let family = [
-            &*WIZARD_TEMPLATE,
-            &*ABJURATION_WIZARD_TEMPLATE,
-            &*CONJURATION_WIZARD_TEMPLATE,
-            &*DIVINATION_WIZARD_TEMPLATE,
-            &*ENCHANTMENT_WIZARD_TEMPLATE,
-            &*EVOCATION_WIZARD_TEMPLATE,
-            &*ILLUSION_WIZARD_TEMPLATE,
-            &*NECROMANCY_WIZARD_TEMPLATE,
-            &*TRANSMUTATION_WIZARD_TEMPLATE,
-            &*WAR_MAGIC_WIZARD_TEMPLATE,
-        ];
-        let mut glyphs: Vec<char> = family.iter().map(|t| t.glyph).collect();
-        glyphs.sort();
-        let distinct = glyphs.len();
-        glyphs.dedup();
-        assert_eq!(distinct, glyphs.len(), "wizard tradition glyphs collide");
-        let mut names: Vec<&str> = family.iter().map(|t| t.name).collect();
-        names.sort();
-        let named = names.len();
-        names.dedup();
-        assert_eq!(named, names.len(), "wizard tradition names collide");
-    }
 
     /// Storm Giant is immune to lightning and thunder, resistant to cold.
     /// Validates the damage-modifier envelope so the giant lives up to
@@ -53400,29 +53363,6 @@ mod tests {
         );
     }
 
-    /// Every fighter-chassis template renders unambiguously: no two
-    /// share a name or a glyph. The per-template doc comments each claim
-    /// their glyph collides with no sibling; this is that claim.
-    #[test]
-    fn fighter_templates_have_distinct_names_and_glyphs() {
-        use crate::actors::creatures::fighters::{
-            CHAMPION_TEMPLATE, ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
-            SAMURAI_FIGHTER_TEMPLATE,
-        };
-        let templates = [
-            &*FIGHTER_TEMPLATE,
-            &*CHAMPION_TEMPLATE,
-            &*SAMURAI_FIGHTER_TEMPLATE,
-            &*ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
-        ];
-        let names: std::collections::HashSet<&str> =
-            templates.iter().map(|t| t.name).collect();
-        assert_eq!(names.len(), templates.len(), "fighter names collide");
-        let glyphs: std::collections::HashSet<char> =
-            templates.iter().map(|t| t.glyph).collect();
-        assert_eq!(glyphs.len(), templates.len(), "fighter glyphs collide");
-    }
-
     /// Eldritch Strike stamps the mark plus its back-link on any
     /// connecting weapon hit. Driven over a seed sweep so at least one
     /// swing lands; a knight without the tag never stamps.
@@ -53704,6 +53644,200 @@ mod tests {
         );
     }
 
+    /// Every PC class family renders unambiguously *within itself*: no
+    /// two templates in a family share a name or a map glyph.
+    ///
+    /// This replaces five near-identical per-family checks that had
+    /// accumulated one subclass at a time (the wizard traditions, plus
+    /// an inline block inside each of the fighter / monk / rogue / druid
+    /// drift pins). Each was the same twelve lines with a different
+    /// import list, and each only covered the family whose newest member
+    /// prompted it — so barbarian, bard, cleric, paladin, ranger,
+    /// sorcerer and warlock were never checked at all despite carrying
+    /// thirteen, five, eight, seven, seven, six and ten templates.
+    ///
+    /// The scope is deliberately per-family rather than global.
+    /// Cross-family glyph collisions are an explicit policy of the
+    /// template docs — Samurai Fighter 'S' shares with Tempest Cleric
+    /// 'S', Scout Rogue 'K' with Killer Whale, Assassin Rogue 'A' with
+    /// Ape — because the team colour and team id disambiguate them on
+    /// the map. What is *not* acceptable is two members of one class
+    /// family colliding, since those are exactly the templates a player
+    /// sets against each other by name and reads side by side in an
+    /// initiative list.
+    ///
+    /// A new subclass template lands as one row on the family it joins.
+    #[test]
+    fn every_pc_class_family_renders_unambiguously() {
+        use crate::actors::creatures::{
+            barbarians, bards, clerics, druids, fighters, monks, paladins, rangers, rogues,
+            sorcerers, warlocks, wizards,
+        };
+        let families: Vec<(&str, Vec<&'static CreatureTemplate>)> = vec![
+            (
+                "barbarian",
+                vec![
+                    &*barbarians::BARBARIAN_TEMPLATE,
+                    &*barbarians::TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLVERINE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::PANTHER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::BERSERKER_BARBARIAN_TEMPLATE,
+                    &*barbarians::ZEALOT_BARBARIAN_TEMPLATE,
+                ],
+            ),
+            (
+                "bard",
+                vec![
+                    &*bards::BARD_TEMPLATE,
+                    &*bards::VALOR_BARD_TEMPLATE,
+                    &*bards::SWORDS_BARD_TEMPLATE,
+                    &*bards::LORE_BARD_TEMPLATE,
+                    &*bards::WHISPERS_BARD_TEMPLATE,
+                ],
+            ),
+            (
+                "cleric",
+                vec![
+                    &*clerics::CLERIC_TEMPLATE,
+                    &*clerics::WAR_CLERIC_TEMPLATE,
+                    &*clerics::LIGHT_CLERIC_TEMPLATE,
+                    &*clerics::TEMPEST_CLERIC_TEMPLATE,
+                    &*clerics::LIFE_CLERIC_TEMPLATE,
+                    &*clerics::GRAVE_CLERIC_TEMPLATE,
+                    &*clerics::FORGE_CLERIC_TEMPLATE,
+                    &*clerics::TWILIGHT_CLERIC_TEMPLATE,
+                ],
+            ),
+            (
+                "druid",
+                vec![
+                    &*druids::DRUID_TEMPLATE,
+                    &*druids::LAND_DRUID_TEMPLATE,
+                    &*druids::MOON_DRUID_TEMPLATE,
+                ],
+            ),
+            (
+                "fighter",
+                vec![
+                    &*fighters::FIGHTER_TEMPLATE,
+                    &*fighters::CHAMPION_TEMPLATE,
+                    &*fighters::SAMURAI_FIGHTER_TEMPLATE,
+                    &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                ],
+            ),
+            (
+                "monk",
+                vec![
+                    &*monks::MONK_TEMPLATE,
+                    &*monks::OPEN_HAND_MONK_TEMPLATE,
+                    &*monks::LONG_DEATH_MONK_TEMPLATE,
+                    &*monks::SHADOW_MONK_TEMPLATE,
+                ],
+            ),
+            (
+                "paladin",
+                vec![
+                    &*paladins::PALADIN_TEMPLATE,
+                    &*paladins::DEVOTION_PALADIN_TEMPLATE,
+                    &*paladins::ANCIENTS_PALADIN_TEMPLATE,
+                    &*paladins::VENGEANCE_PALADIN_TEMPLATE,
+                    &*paladins::OATHBREAKER_PALADIN_TEMPLATE,
+                    &*paladins::GLORY_PALADIN_TEMPLATE,
+                    &*paladins::WATCHERS_PALADIN_TEMPLATE,
+                ],
+            ),
+            (
+                "ranger",
+                vec![
+                    &*rangers::RANGER_TEMPLATE,
+                    &*rangers::HUNTER_RANGER_TEMPLATE,
+                    &*rangers::GLOOM_STALKER_RANGER_TEMPLATE,
+                    &*rangers::FEY_WANDERER_RANGER_TEMPLATE,
+                    &*rangers::HORIZON_WALKER_RANGER_TEMPLATE,
+                    &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
+                    &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
+                ],
+            ),
+            (
+                "rogue",
+                vec![
+                    &*rogues::ROGUE_TEMPLATE,
+                    &*rogues::ASSASSIN_ROGUE_TEMPLATE,
+                    &*rogues::SWASHBUCKLER_ROGUE_TEMPLATE,
+                    &*rogues::SCOUT_ROGUE_TEMPLATE,
+                    &*rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE,
+                ],
+            ),
+            (
+                "sorcerer",
+                vec![
+                    &*sorcerers::SORCERER_TEMPLATE,
+                    &*sorcerers::DRACONIC_SORCERER_TEMPLATE,
+                    &*sorcerers::STORM_SORCERER_TEMPLATE,
+                    &*sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE,
+                    &*sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE,
+                    &*sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE,
+                ],
+            ),
+            (
+                "warlock",
+                vec![
+                    &*warlocks::WARLOCK_TEMPLATE,
+                    &*warlocks::FIEND_WARLOCK_TEMPLATE,
+                    &*warlocks::UNDYING_WARLOCK_TEMPLATE,
+                    &*warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+                    &*warlocks::ARCHFEY_WARLOCK_TEMPLATE,
+                    &*warlocks::CELESTIAL_WARLOCK_TEMPLATE,
+                    &*warlocks::MARID_WARLOCK_TEMPLATE,
+                    &*warlocks::DAO_WARLOCK_TEMPLATE,
+                    &*warlocks::DJINNI_WARLOCK_TEMPLATE,
+                    &*warlocks::EFREETI_WARLOCK_TEMPLATE,
+                ],
+            ),
+            (
+                "wizard",
+                vec![
+                    &*wizards::WIZARD_TEMPLATE,
+                    &*wizards::NECROMANCY_WIZARD_TEMPLATE,
+                    &*wizards::WAR_MAGIC_WIZARD_TEMPLATE,
+                    &*wizards::ABJURATION_WIZARD_TEMPLATE,
+                    &*wizards::EVOCATION_WIZARD_TEMPLATE,
+                    &*wizards::DIVINATION_WIZARD_TEMPLATE,
+                    &*wizards::ENCHANTMENT_WIZARD_TEMPLATE,
+                    &*wizards::ILLUSION_WIZARD_TEMPLATE,
+                    &*wizards::CONJURATION_WIZARD_TEMPLATE,
+                    &*wizards::TRANSMUTATION_WIZARD_TEMPLATE,
+                ],
+            ),
+        ];
+        for (label, family) in families {
+            let names: std::collections::HashSet<&str> =
+                family.iter().map(|t| t.name).collect();
+            assert_eq!(
+                names.len(),
+                family.len(),
+                "two {} templates share a name",
+                label
+            );
+            let glyphs: std::collections::HashSet<char> =
+                family.iter().map(|t| t.glyph).collect();
+            assert_eq!(
+                glyphs.len(),
+                family.len(),
+                "two {} templates share a glyph: {:?}",
+                label,
+                family.iter().map(|t| (t.name, t.glyph)).collect::<Vec<_>>()
+            );
+        }
+    }
+
     /// The second hole in the same invariant: an actor who dies on their
     /// own turn vacates their initiative index without an
     /// `advance_initiative`, and `InitiativeTracker::remove_actor` lets
@@ -53778,8 +53912,9 @@ mod tests {
         );
     }
 
-    /// Moon Druid template drift pin, plus the druid-family name/glyph
-    /// uniqueness claim its doc comment makes. The Moon Druid is the
+    /// Moon Druid template drift pin. Name / glyph uniqueness across the
+    /// druid family is covered family-wide by
+    /// `every_pc_class_family_renders_unambiguously`. The Moon Druid is the
     /// baseline caster plus three actions and one tag — nothing about
     /// the stat block or the spell list moves, which is both RAW and
     /// the reason the form's numbers live on the form.
@@ -53787,7 +53922,7 @@ mod tests {
     fn moon_druid_ships_its_kit_and_leaves_the_caster_chassis_alone() {
         use crate::actions::class_features::COMBAT_WILD_SHAPE_TAG;
         use crate::actors::creatures::druids::{
-            DRUID_TEMPLATE, LAND_DRUID_TEMPLATE, MOON_DRUID_TEMPLATE,
+            DRUID_TEMPLATE, MOON_DRUID_TEMPLATE,
         };
         let mut e = ei_with_terrain(15, 15, &[]);
         let druid = e
@@ -53809,15 +53944,6 @@ mod tests {
             DRUID_TEMPLATE.spell_slots_by_level
         );
 
-        let templates = [
-            &*DRUID_TEMPLATE,
-            &*LAND_DRUID_TEMPLATE,
-            &*MOON_DRUID_TEMPLATE,
-        ];
-        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
-        assert_eq!(names.len(), templates.len(), "druid names collide");
-        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
-        assert_eq!(glyphs.len(), templates.len(), "druid glyphs collide");
     }
 
     /// Wild Shape hands over the beast body and takes the spell list in
@@ -53998,8 +54124,9 @@ mod tests {
         );
     }
 
-    /// Shadow Monk template drift pin, plus the monk-family name/glyph
-    /// uniqueness claim its doc comment makes.
+    /// Shadow Monk template drift pin. Name / glyph uniqueness across
+    /// the monk family is covered family-wide by
+    /// `every_pc_class_family_renders_unambiguously`.
     #[test]
     fn shadow_monk_ships_its_kit_and_inherits_the_monk_chassis() {
         use crate::actions::class_features::{
@@ -54007,7 +54134,7 @@ mod tests {
             UNARMORED_MOVEMENT_TAG,
         };
         use crate::actors::creatures::monks::{
-            LONG_DEATH_MONK_TEMPLATE, MONK_TEMPLATE, OPEN_HAND_MONK_TEMPLATE, SHADOW_MONK_TEMPLATE,
+            MONK_TEMPLATE, SHADOW_MONK_TEMPLATE,
         };
         let mut e = ei_with_terrain(15, 15, &[]);
         let monk = e
@@ -54049,16 +54176,6 @@ mod tests {
             "the baseline monk stays slotless"
         );
 
-        let templates = [
-            &*MONK_TEMPLATE,
-            &*OPEN_HAND_MONK_TEMPLATE,
-            &*LONG_DEATH_MONK_TEMPLATE,
-            &*SHADOW_MONK_TEMPLATE,
-        ];
-        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
-        assert_eq!(names.len(), templates.len(), "monk names collide");
-        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
-        assert_eq!(glyphs.len(), templates.len(), "monk glyphs collide");
     }
 
     /// Shadow Step teleports the monk and arms the melee-only advantage
@@ -54144,14 +54261,14 @@ mod tests {
         );
     }
 
-    /// Arcane Trickster template drift pin, and the rogue-family
-    /// name/glyph uniqueness claim its doc comment makes.
+    /// Arcane Trickster template drift pin. Name / glyph uniqueness
+    /// across the rogue family is covered family-wide by
+    /// `every_pc_class_family_renders_unambiguously`.
     #[test]
     fn arcane_trickster_ships_its_kit_and_inherits_the_rogue_chassis() {
         use crate::actions::class_features::{MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG};
         use crate::actors::creatures::rogues::{
-            ARCANE_TRICKSTER_ROGUE_TEMPLATE, ASSASSIN_ROGUE_TEMPLATE, ROGUE_TEMPLATE,
-            SCOUT_ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE,
+            ARCANE_TRICKSTER_ROGUE_TEMPLATE, ROGUE_TEMPLATE,
         };
         let mut e = ei_with_terrain(15, 15, &[]);
         let rogue = e
@@ -54200,17 +54317,6 @@ mod tests {
             "DEX is untouched — the shortsword and Sneak Attack stay as-is"
         );
 
-        let templates = [
-            &*ROGUE_TEMPLATE,
-            &*ASSASSIN_ROGUE_TEMPLATE,
-            &*SWASHBUCKLER_ROGUE_TEMPLATE,
-            &*SCOUT_ROGUE_TEMPLATE,
-            &*ARCANE_TRICKSTER_ROGUE_TEMPLATE,
-        ];
-        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
-        assert_eq!(names.len(), templates.len(), "rogue names collide");
-        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
-        assert_eq!(glyphs.len(), templates.len(), "rogue glyphs collide");
     }
 
     /// Magical Ambush bends the first save against a Hidden trickster's
