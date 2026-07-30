@@ -53341,6 +53341,193 @@ mod tests {
         assert!(e.actors[&samurai].has_extra_attack());
     }
 
+    /// Cavalier template drift pin: two subclass tags, a CON bump for
+    /// Warding Maneuver's RAW sizing, and the whole baseline Fighter kit
+    /// inherited through the `..FIGHTER_TEMPLATE.clone()` tail.
+    #[test]
+    fn cavalier_ships_its_kit_and_inherits_the_fighter_chassis() {
+        use crate::actions::class_features::{
+            ACTION_SURGE_TAG, INDOMITABLE_TAG, PARRY_TAG, RIPOSTE_TAG, SECOND_WIND_TAG,
+            TRIP_ATTACK_TAG, UNWAVERING_MARK_TAG, WARDING_MANEUVER_TAG,
+        };
+        use crate::actors::creatures::fighters::{CAVALIER_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cav = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for tag in [UNWAVERING_MARK_TAG, WARDING_MANEUVER_TAG] {
+            assert!(
+                e.actors[&cav].has_passive_feature(tag),
+                "Cavalier should carry its own subclass tag {}",
+                tag
+            );
+        }
+        assert!(
+            e.actors[&cav].feature_available(WARDING_MANEUVER_TAG),
+            "the warding maneuver charge should start available"
+        );
+        for tag in [
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            INDOMITABLE_TAG,
+            PARRY_TAG,
+            RIPOSTE_TAG,
+            TRIP_ATTACK_TAG,
+        ] {
+            assert!(
+                e.actors[&cav].has_passive_feature(tag),
+                "Cavalier should inherit baseline Fighter tag {}",
+                tag
+            );
+        }
+        assert!(e.actors[&cav].has_extra_attack());
+        assert!(
+            CAVALIER_FIGHTER_TEMPLATE.constitution > FIGHTER_TEMPLATE.constitution,
+            "the Cavalier's CON rises above the baseline to size Warding Maneuver"
+        );
+        assert_eq!(
+            CAVALIER_FIGHTER_TEMPLATE.actions.len(),
+            FIGHTER_TEMPLATE.actions.len(),
+            "the Cavalier's shipped features are passive, not actions"
+        );
+    }
+
+    /// Unwavering Mark stamps `Dueled` plus its `dueled_by` back-link on
+    /// every connecting melee swing, which is what makes the marked
+    /// creature attack anyone else at disadvantage. Verifies the mark
+    /// lands through the real attack chokepoint, not just the cohort row.
+    #[test]
+    fn unwavering_mark_locks_the_target_onto_the_cavalier() {
+        use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cav = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let mut marked = false;
+        for _ in 0..60 {
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: cav,
+                    target_id: ogre,
+                    action_name: "scimitar",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            let hit = !effects.is_empty();
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Keep the ogre standing so the mark has somewhere to land.
+            let ogre_max = e.actors[&ogre].max_hitpoints();
+            e.actors.get_mut(&ogre).unwrap().heal(ogre_max);
+            if hit {
+                marked = true;
+                break;
+            }
+        }
+        assert!(marked, "expected at least one hit in 60 swings");
+        assert!(
+            e.actors[&ogre].has_condition(Condition::Dueled),
+            "a connecting melee swing should stamp the mark"
+        );
+        assert_eq!(
+            e.actors[&ogre].dueled_by(),
+            Some(cav),
+            "the mark must link back to the cavalier"
+        );
+    }
+
+    /// The mark is melee-only per RAW ("hit a creature with a melee
+    /// weapon attack"), so a ranged swing from the same cavalier leaves
+    /// the target unmarked. Pins the `melee_only` column on the shared
+    /// on-hit-mark cohort — Eldritch Strike, the other row, deliberately
+    /// has it clear.
+    #[test]
+    fn unwavering_mark_skips_ranged_swings() {
+        use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cav = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .unwrap();
+        for _ in 0..60 {
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: cav,
+                    target_id: ogre,
+                    action_name: "longbow",
+                    attack_bonus: 8,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Piercing,
+                    is_melee: false,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let ogre_max = e.actors[&ogre].max_hitpoints();
+            e.actors.get_mut(&ogre).unwrap().heal(ogre_max);
+            assert!(
+                !e.actors[&ogre].has_condition(Condition::Dueled),
+                "a ranged swing must not stamp the melee-only mark"
+            );
+        }
+    }
+
+    /// Warding Maneuver halves damage aimed at an adjacent ally and burns
+    /// its short-rest charge doing it. Sits on the same `HolderOrAlly`
+    /// scope as Protective Field but at adjacency and with a
+    /// proportional formula.
+    #[test]
+    fn warding_maneuver_halves_damage_for_an_adjacent_ally() {
+        use crate::actions::class_features::WARDING_MANEUVER_TAG;
+        use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let cav = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Ranged lane so no self-clamp on the wizard can pre-empt the row.
+        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false);
+        assert_eq!(reduced, 10, "the maneuver halves the incoming damage");
+        assert!(!e.actors[&cav].feature_available(WARDING_MANEUVER_TAG));
+        assert!(!e.actors[&cav].can_consume_resource(Resource::Reaction));
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false),
+            20,
+            "the charge is spent for the rest of the short rest"
+        );
+    }
+
     /// Psi Warrior template drift pin. Two subclass tags, a psychic
     /// resistance entry and an INT bump — and the whole baseline Fighter
     /// kit inherited through the `..FIGHTER_TEMPLATE.clone()` tail.
@@ -54220,6 +54407,7 @@ mod tests {
                     &*fighters::SAMURAI_FIGHTER_TEMPLATE,
                     &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
                     &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
+                    &*fighters::CAVALIER_FIGHTER_TEMPLATE,
                 ],
             ),
             (

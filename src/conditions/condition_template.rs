@@ -1538,7 +1538,11 @@ impl Condition {
             Condition::CrownOfStars => "haloed by stars",
             Condition::Smiting => "smiting",
             Condition::Sacred => "wielding a sacred weapon",
-            Condition::Dueled => "compelled to duel",
+            // Source-neutral wording: the condition is installed both by
+            // the Compelled Duel spell and by the Cavalier's Unwavering
+            // Mark, so "compelled to duel" would misdescribe half its
+            // holders.
+            Condition::Dueled => "locked into a duel",
             Condition::SearingSmiting => "primed to sear",
             Condition::WrathfulSmiting => "primed with wrath",
             Condition::BrandingSmiting => "primed to brand",

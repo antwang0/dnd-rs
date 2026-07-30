@@ -449,6 +449,7 @@ mod tests {
                     &*fighters::SAMURAI_FIGHTER_TEMPLATE,
                     &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
                     &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
+                    &*fighters::CAVALIER_FIGHTER_TEMPLATE,
                 ],
             ),
             (

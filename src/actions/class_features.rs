@@ -182,6 +182,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // above. The engine collapses RAW's four-plus dice to one charge;
     // the cadence stays exact.
     PROTECTIVE_FIELD_TAG,
+    // 5e Cavalier Fighter **Warding Maneuver** — RAW grants uses equal
+    // to the cavalier's CON modifier, refreshed on a long rest. The
+    // engine collapses the pool to one charge and moves the refresh to
+    // the short-rest cadence the rest of the per-rest reaction family
+    // (Parry, Warding Flare, Protective Field) shares, so a cavalier
+    // doesn't lose the maneuver between engagements.
+    WARDING_MANEUVER_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2789,6 +2796,73 @@ pub const PSIONIC_STRIKE_TAG: &str = "fighter.psionic_strike";
 /// field only when parry is already gone — which is the ordering a
 /// player would pick anyway, the cheaper die first.
 pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
+
+/// 5e Fighter **Cavalier** subclass — **Unwavering Mark** (level 3,
+/// XGtE). Passive weapon-hit mark: when the cavalier hits with a melee
+/// weapon attack, the target is marked until the end of the cavalier's
+/// next turn, and while marked it has disadvantage on any attack roll
+/// that doesn't target the cavalier.
+///
+/// Ships as a row on the shared `ON_HIT_CONDITION_MARKS` cohort in
+/// `engine::attack`, stamping `Condition::Dueled` with `Rounds(2)` and
+/// the `dueled_by` back-link. That condition already exists — it's what
+/// the Compelled Duel spell installs, and its "disadvantage on attacks
+/// that don't target the anchor" clause is Unwavering Mark's RAW clause
+/// verbatim. So the Cavalier's headline feature *is* a Compelled Duel
+/// that costs no action, no slot and no concentration, and instead of a
+/// WIS save asks only that the cavalier land a hit. Reusing the
+/// condition rather than minting a parallel one keeps the engine at one
+/// implementation of the rule and means the two sources compose: a
+/// paladin/cavalier who casts the spell and then swings just refreshes
+/// the same lock.
+///
+/// The `Rounds(2)` timer, not `UntilStartOfNextTurn`, for the same
+/// reason Eldritch Strike uses it: RAW's window closes at the end of
+/// the *marker's* next turn, and an until-start-of-next-turn timer
+/// decays on the marked creature's clock instead.
+///
+/// RAW's second clause — the marked creature damaging someone other
+/// than the cavalier lets the cavalier make a special bonus-action
+/// melee attack on their next turn — is not modeled. It needs a
+/// per-mark "the mark was violated" ledger written at the damage site
+/// and read at the cavalier's next turn start, plus a conditional
+/// bonus-action grant; the disadvantage clause is the half that makes
+/// the mark worth applying, and it lands at a chokepoint the engine
+/// already has.
+pub const UNWAVERING_MARK_TAG: &str = "fighter.unwavering_mark";
+
+/// 5e Fighter **Cavalier** subclass — **Warding Maneuver** (level 7,
+/// XGtE). Reactive damage clamp: when the cavalier or a creature within
+/// 5 ft of them is hit by an attack, the cavalier may spend their
+/// reaction to roll 1d8 and add it to the target's AC against that
+/// attack; if the attack still hits, the target gains resistance to its
+/// damage.
+///
+/// Ships as a row on the shared `REACTIVE_DAMAGE_CLAMPS` cohort with
+/// `ClampScope::HolderOrAlly(0)` and `ClampFormula::Halve`, gated on one
+/// charge per short rest.
+///
+/// The AC half of RAW is collapsed into the resistance half. The clamp
+/// cohort runs *after* a hit is confirmed and its damage rolled, so a
+/// retroactive AC bump has nowhere to attach — the engine would need a
+/// second reaction hook at attack-roll time, which is where the
+/// reactive-*disadvantage* cohort lives and which can't express "+1d8 to
+/// AC" either. Between the two RAW outcomes (the attack misses outright,
+/// or the target resists it) always-halve sits in the middle: strictly
+/// weaker than the good case, strictly better than the bad one.
+///
+/// The charge, and the `Halve` formula, are what keep this from
+/// duplicating Fighting Style: Interception, the engine's other adjacent-
+/// ally clamp. Interception is free and rolls `1d10 + proficiency` —
+/// a flat ~7 that shines against small hits; Warding Maneuver is
+/// rationed and proportional, so it wants to be spent on the biggest
+/// swing of the fight. RAW's uses-equal-to-CON-modifier collapse to one
+/// charge, the same collapse the Channel Divinity family takes.
+///
+/// RAW ranks this at subclass level 7; it ships on the CR-3 Cavalier
+/// template for the same reason the Champion's Survivor (lv18) rides
+/// there — class templates target a balanced playable level.
+pub const WARDING_MANEUVER_TAG: &str = "fighter.warding_maneuver";
 
 /// 5e Ranger **Monster Slayer** subclass — **Slayer's Prey** (level 3,
 /// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay

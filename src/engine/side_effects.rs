@@ -1424,13 +1424,17 @@ impl ApplicableSideEffect for SetEldritchStruckBy {
 
 /// Single source of truth for "which conditions carry a back-link to
 /// the actor that applied them, and what `Set*By` side-effect installs
-/// that link." Returns `Some(boxed_side_effect)` for the four flag-plus-
-/// link conditions (Dueled / Goaded / Distracted / Sworn); returns
-/// `None` for conditions that stand alone with just `ApplyCondition`.
+/// that link." Returns `Some(boxed_side_effect)` for the five flag-plus-
+/// link conditions (Dueled / Goaded / Distracted / Sworn /
+/// EldritchStruck); returns `None` for conditions that stand alone with
+/// just `ApplyCondition`.
 ///
 /// Used by:
 ///   - `engine::attack::attacker_link_side_effect` (weapon on-hit rider
 ///     chain for Goaded / Distracted),
+///   - `engine::attack::push_on_hit_condition_marks` (the passive
+///     weapon-hit mark cohort — Eldritch Strike installs
+///     EldritchStruck, Unwavering Mark installs Dueled),
 ///   - direct-cast actions that install a flag-plus-link condition
 ///     without going through the rider chain (Compelled Duel installs
 ///     Dueled; Vow of Enmity installs Sworn).
@@ -1460,6 +1464,10 @@ pub fn condition_link_side_effect(
         Condition::Sworn => Some(Box::new(SetSwornBy {
             target_id,
             swearer: Some(caster_id),
+        })),
+        Condition::EldritchStruck => Some(Box::new(SetEldritchStruckBy {
+            target_id,
+            striker: Some(caster_id),
         })),
         _ => None,
     }

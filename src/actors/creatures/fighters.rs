@@ -6,8 +6,8 @@ use crate::actions::class_features::{
     MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PROTECTIVE_FIELD_TAG,
     PSIONIC_STRIKE_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG,
     SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG,
-    SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG, WAR_MAGIC_STRIKE,
-    WAR_MAGIC_TAG, WEAPON_BOND_TAG,
+    SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG, UNWAVERING_MARK_TAG,
+    WAR_MAGIC_STRIKE, WAR_MAGIC_TAG, WARDING_MANEUVER_TAG, WEAPON_BOND_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -620,6 +620,82 @@ pub static PSI_WARRIOR_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         // mind-spike spell family), so the resistance is a genuine but
         // situational defense rather than a broad one.
         damage_modifiers: HashMap::from([(DamageType::Psychic, DamageModifier::Resistance)]),
+        features,
+        ..FIGHTER_TEMPLATE.clone()
+    }
+});
+
+/// Cavalier Fighter — Martial Archetype **Cavalier** subclass build
+/// (XGtE). The sixth fighter build in the engine, and the one whose
+/// features exist to make enemies fight *it* instead of whoever they
+/// would rather be hitting.
+///
+/// Two subclass features ship, both as rows on cohorts that already
+/// existed:
+///
+///   - **Unwavering Mark** (lv3) — every connecting melee swing locks
+///     the target onto the cavalier: while marked, it attacks anyone
+///     else at disadvantage. A row on `ON_HIT_CONDITION_MARKS`.
+///   - **Warding Maneuver** (lv7) — a reaction that halves damage taken
+///     by the cavalier or an adjacent ally. A row on
+///     `REACTIVE_DAMAGE_CLAMPS`, one charge per short rest.
+///
+/// Both halves point the same direction, which is what separates this
+/// from the other five builds. The Champion and the Samurai make the
+/// fighter's own turn better; the Battle Master and the Eldritch Knight
+/// buy options; the Psi Warrior protects at range. The Cavalier is the
+/// only build that changes what the *enemy* wants to do — the mark makes
+/// hitting anyone else expensive, and the maneuver punishes them for
+/// trying anyway. A Cavalier standing in a doorway is doing more work
+/// than its damage numbers suggest.
+///
+/// Unwavering Mark reuses `Condition::Dueled`, which the Compelled Duel
+/// spell already installs — RAW's "disadvantage on any attack roll that
+/// doesn't target you" is that condition's clause word for word. Which
+/// makes the feature a Compelled Duel that costs no action, no slot and
+/// no concentration, and asks only for a hit instead of a failed WIS
+/// save. Being free is also why it lands on a *hit* rather than on
+/// declaration: the cavalier has to earn the lock every round.
+///
+/// It stacks unusually well with the chassis's inherited maneuvers. Trip
+/// Attack and Menacing Attack both impose their own disadvantage on the
+/// target's attacks; a marked, prone, frightened enemy that wants to
+/// swing at the wizard is rolling into a wall. And because the mark
+/// re-stamps on every hit, Extra Attack and Action Surge extend the lock
+/// rather than wasting swings on a target that is already marked.
+///
+/// **Stats.** CON rises to 16 from the baseline's 14 — RAW sizes Warding
+/// Maneuver's uses by CON modifier, and a build whose job is to be
+/// attacked wants the hit points besides. That bumps HP from 24 to 27
+/// (3d10 + 9) through the inherited `3d10+6`-shaped roll being re-rolled
+/// against the higher score. Everything else — AC 16 chain mail, STR 16,
+/// every maneuver, Parry / Riposte, Second Wind / Action Surge /
+/// Indomitable, Extra Attack, the Dueling style — inherits from the
+/// baseline through the `..FIGHTER_TEMPLATE.clone()` tail.
+///
+/// Left out: Born to the Saddle (lv3) has no combat surface without
+/// mounts; Unwavering Mark's bonus-action retaliation swing needs a
+/// per-mark "the mark was violated" ledger (see `UNWAVERING_MARK_TAG`);
+/// Ferocious Charger (lv10) gates on having moved 10+ ft in a straight
+/// line this turn, which the engine doesn't track; Hold the Line (lv18)
+/// needs an opportunity-attack trigger on movement *within* reach rather
+/// than out of it.
+///
+/// Glyph 'V' — for Ca**v**alier, since 'C' is the Champion's. Distinct
+/// from baseline Fighter 'F', Champion 'C', Samurai 'S', Eldritch Knight
+/// 'E' and Psi Warrior 'P'.
+pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Two tags and a CON bump; no new actions, since both shipped
+    // features are passive rows on shared engine cohorts.
+    let mut features = FIGHTER_TEMPLATE.features.clone();
+    features.insert(UNWAVERING_MARK_TAG);
+    features.insert(WARDING_MANEUVER_TAG);
+    CreatureTemplate {
+        name: "Cavalier",
+        glyph: 'V',
+        // CON 16 (+3): RAW sizes Warding Maneuver by CON modifier, and
+        // the build's whole plan is to be the one getting hit.
+        constitution: 16,
         features,
         ..FIGHTER_TEMPLATE.clone()
     }

@@ -3,7 +3,7 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetEldritchStruckBy,
+    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
 
@@ -339,10 +339,20 @@ struct ReactiveDamageClamp {
 ///     attacks only, self, burns a `PARRY_TAG` charge.
 ///   - **Interception** (Fighting Style, XGtE): 1d10 + proficiency, any
 ///     attack, adjacent ally.
+///   - **Warding Maneuver** (Cavalier Fighter lv7, XGtE): halve, any
+///     attack, self *or* an adjacent ally, burns a
+///     `WARDING_MANEUVER_TAG` charge.
 ///   - **Protective Field** (Psi Warrior Fighter lv3, TCE): 1d8 + INT,
 ///     any attack, self *or* an ally within 30 ft, burns a
-///     `PROTECTIVE_FIELD_TAG` charge. Last row so its scarce charge is
-///     only spent on damage the free clamps couldn't already absorb.
+///     `PROTECTIVE_FIELD_TAG` charge.
+///
+/// The two charge-gated rows come last, so a scarce charge is only spent
+/// on damage the free clamps above couldn't already absorb. Warding
+/// Maneuver precedes Protective Field because it halves what remains
+/// while the field subtracts a fixed amount — halving the larger number
+/// first leaves less damage than the reverse, and both rows belong to
+/// different subclasses, so the ordering only ever matters to a
+/// multiclass.
 const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
     ReactiveDamageClamp {
         flag: |a| a.has_uncanny_dodge(),
@@ -386,6 +396,14 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         },
     },
     ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::WARDING_MANEUVER_TAG),
+        tag: Some(crate::actions::class_features::WARDING_MANEUVER_TAG),
+        label: "warding maneuver",
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::HolderOrAlly(0),
+        formula: ClampFormula::Halve,
+    },
+    ReactiveDamageClamp {
         flag: |a| a.has_passive_feature(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
         tag: Some(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
         label: "protective field",
@@ -398,6 +416,114 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         },
     },
 ];
+
+/// Cohort row shape for a passive weapon-hit condition mark: a feature
+/// whose holder stamps a condition — plus whatever back-link that
+/// condition carries — onto every target their weapon connects with.
+///
+/// These are deliberately *not* once-per-turn. Every connecting swing
+/// re-stamps the mark, which is a no-op while one is already up
+/// (`add_condition` keeps the longer timer) and refreshes a window that
+/// has partly decayed, matching RAW on both current rows: each fires "when
+/// you hit", not "the first time you hit".
+struct OnHitConditionMark {
+    /// Passive-feature tag the mark keys off, read via
+    /// `has_passive_feature`. No per-rest charge — every row here is
+    /// always-on.
+    tag: &'static str,
+    /// Condition stamped on the target. If it appears in
+    /// `condition_link_side_effect`'s dispatch, the paired `Set*By`
+    /// back-link is queued alongside it automatically.
+    condition: Condition,
+    /// Lifetime of the stamp. Both current rows use `Rounds(2)`: their
+    /// RAW windows end "at the end of your next turn", and a
+    /// `UntilStartOfNextTurn` timer would decay on the *target's* clock
+    /// rather than the marker's.
+    timer: ConditionTimer,
+    /// `true` if RAW restricts the trigger to melee weapon attacks
+    /// (Unwavering Mark's "hit a creature with a melee weapon attack");
+    /// `false` if any weapon attack qualifies (Eldritch Strike's "hit a
+    /// creature with a weapon attack" — the knight's longbow counts).
+    /// Spell attacks never qualify for either row, so the walker gates
+    /// on `!is_spell` unconditionally.
+    melee_only: bool,
+    /// Full log line for the stamp, minus the leading indent.
+    log: &'static str,
+}
+
+/// Cohort of passive weapon-hit condition marks, walked by
+/// `push_on_hit_condition_marks` from `resolve_attack_outcome`.
+///
+/// Entries:
+///   - **Eldritch Strike** (Eldritch Knight Fighter lv10): stamps
+///     `EldritchStruck`, so the target's next save against a spell the
+///     knight casts is at disadvantage. Any weapon attack.
+///   - **Unwavering Mark** (Cavalier Fighter lv3): stamps `Dueled`, so
+///     the target attacks anyone other than the cavalier at
+///     disadvantage. Melee weapon attacks only.
+///
+/// Both rows lean on a condition that already existed for a spell —
+/// `EldritchStruck` has no other source, and `Dueled` is Compelled
+/// Duel's. That the Cavalier's headline feature is mechanically a
+/// free, at-will, no-concentration Compelled Duel is a fair reading of
+/// RAW, and the reason the two share a condition rather than each
+/// getting one.
+const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
+    OnHitConditionMark {
+        tag: crate::actions::class_features::ELDRITCH_STRIKE_TAG,
+        condition: Condition::EldritchStruck,
+        timer: ConditionTimer::Rounds(2),
+        melee_only: false,
+        log: "eldritch strike: the blow rattles the target's guard",
+    },
+    OnHitConditionMark {
+        tag: crate::actions::class_features::UNWAVERING_MARK_TAG,
+        condition: Condition::Dueled,
+        timer: ConditionTimer::Rounds(2),
+        melee_only: true,
+        log: "unwavering mark: the target is locked onto its attacker",
+    },
+];
+
+/// Walk `ON_HIT_CONDITION_MARKS` and queue every mark the swing earns.
+/// Called from `resolve_attack_outcome` once the hit and its damage
+/// riders are settled, so a mark lands even if the target dies to the
+/// same swing (the condition is then dropped with the actor — harmless,
+/// and cheaper than predicting lethality here).
+fn push_on_hit_condition_marks(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    p: &AttackParams,
+) {
+    if p.is_spell {
+        return;
+    }
+    for row in ON_HIT_CONDITION_MARKS {
+        if row.melee_only && !p.is_melee {
+            continue;
+        }
+        let holds = encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_passive_feature(row.tag));
+        if !holds {
+            continue;
+        }
+        encounter.log(format!("  {}", row.log));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: p.target_id,
+            condition: row.condition,
+            timer: row.timer,
+        }));
+        // Conditions that carry a back-link to whoever applied them get
+        // their `Set*By` install from the central dispatch in
+        // side_effects.rs — the same one Compelled Duel and Vow of
+        // Enmity use — so a new linked condition needs no change here.
+        if let Some(link) = attacker_link_side_effect(row.condition, p.target_id, p.caster_id) {
+            effects.push(link);
+        }
+    }
+}
 
 /// Resolve which actor (if any) spends a reaction for `row` against this
 /// swing. `&self`-only so the caller can keep reading actor stats before
@@ -1288,48 +1414,12 @@ pub fn resolve_attack_outcome(
             caster.mark_divine_fury_used();
         }
     }
-    // 5e Eldritch Knight Fighter **Eldritch Strike** (subclass lv10) —
-    // passive weapon-hit mark. RAW: "When you hit a creature with a
-    // weapon attack, that creature has disadvantage on the next saving
-    // throw it makes against a spell you cast before the end of your
-    // next turn."
-    //
-    // Two gates: not a spell attack (RAW: "with a weapon attack" — the
-    // knight's own Fire Bolt doesn't arm the next Fire Bolt), and the
-    // caster holds the tag. No melee gate — RAW says "a weapon attack",
-    // which covers the knight's longbow as readily as their longsword.
-    //
-    // The mark rides `Rounds(2)` rather than the one-round tick-down
-    // envelope its `UntilStartOfNextTurn` siblings use, because RAW's
-    // window is explicitly "before the end of your **next** turn": a
-    // knight who hits on turn N and casts on turn N+1 is inside the
-    // window, and a `UntilStartOfNextTurn` timer on the *target* would
-    // decay on the wrong actor's clock entirely. The cohort in
-    // `roll_save_against_caster` consumes the mark on the first save it
-    // bends, so the timer only ever matters for a mark that never gets
-    // cashed.
-    //
-    // Unlike the die-riders above this is not once-per-turn: every
-    // connecting swing re-stamps the mark, which is a no-op when one is
-    // already up (`add_condition` keeps the longer timer) and refreshes
-    // the window when it has partly decayed — matching RAW, where the
-    // clause fires on each hit rather than on the first.
-    if !p.is_spell
-        && encounter.actors.get(&p.caster_id).is_some_and(|a| {
-            a.has_passive_feature(crate::actions::class_features::ELDRITCH_STRIKE_TAG)
-        })
-    {
-        encounter.log("  eldritch strike: the blow rattles the target's guard".to_string());
-        effects.push(Box::new(ApplyCondition {
-            actor_id: p.target_id,
-            condition: Condition::EldritchStruck,
-            timer: ConditionTimer::Rounds(2),
-        }));
-        effects.push(Box::new(SetEldritchStruckBy {
-            target_id: p.target_id,
-            striker: Some(p.caster_id),
-        }));
-    }
+    // Passive weapon-hit condition marks — Eldritch Strike (Eldritch
+    // Knight lv10) and Unwavering Mark (Cavalier lv3). Both are rows on
+    // the shared `ON_HIT_CONDITION_MARKS` cohort; the walker owns the
+    // spell / melee lane gates, the tag check, the log, and the
+    // condition-plus-back-link push.
+    push_on_hit_condition_marks(encounter, &mut effects, &p);
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
     // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each
