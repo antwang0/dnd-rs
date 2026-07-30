@@ -54538,158 +54538,7 @@ mod tests {
     /// A new subclass template lands as one row on the family it joins.
     #[test]
     fn every_pc_class_family_renders_unambiguously() {
-        use crate::actors::creatures::{
-            barbarians, bards, clerics, druids, fighters, monks, paladins, rangers, rogues,
-            sorcerers, warlocks, wizards,
-        };
-        let families: Vec<(&str, Vec<&'static CreatureTemplate>)> = vec![
-            (
-                "barbarian",
-                vec![
-                    &*barbarians::BARBARIAN_TEMPLATE,
-                    &*barbarians::TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::WOLVERINE_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::PANTHER_TOTEM_BARBARIAN_TEMPLATE,
-                    &*barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
-                    &*barbarians::DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
-                    &*barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
-                    &*barbarians::BERSERKER_BARBARIAN_TEMPLATE,
-                    &*barbarians::ZEALOT_BARBARIAN_TEMPLATE,
-                ],
-            ),
-            (
-                "bard",
-                vec![
-                    &*bards::BARD_TEMPLATE,
-                    &*bards::VALOR_BARD_TEMPLATE,
-                    &*bards::SWORDS_BARD_TEMPLATE,
-                    &*bards::LORE_BARD_TEMPLATE,
-                    &*bards::WHISPERS_BARD_TEMPLATE,
-                ],
-            ),
-            (
-                "cleric",
-                vec![
-                    &*clerics::CLERIC_TEMPLATE,
-                    &*clerics::WAR_CLERIC_TEMPLATE,
-                    &*clerics::LIGHT_CLERIC_TEMPLATE,
-                    &*clerics::TEMPEST_CLERIC_TEMPLATE,
-                    &*clerics::LIFE_CLERIC_TEMPLATE,
-                    &*clerics::GRAVE_CLERIC_TEMPLATE,
-                    &*clerics::FORGE_CLERIC_TEMPLATE,
-                    &*clerics::TWILIGHT_CLERIC_TEMPLATE,
-                    &*clerics::ARCANA_CLERIC_TEMPLATE,
-                    &*clerics::NATURE_CLERIC_TEMPLATE,
-                ],
-            ),
-            (
-                "druid",
-                vec![
-                    &*druids::DRUID_TEMPLATE,
-                    &*druids::LAND_DRUID_TEMPLATE,
-                    &*druids::MOON_DRUID_TEMPLATE,
-                ],
-            ),
-            (
-                "fighter",
-                vec![
-                    &*fighters::FIGHTER_TEMPLATE,
-                    &*fighters::CHAMPION_TEMPLATE,
-                    &*fighters::SAMURAI_FIGHTER_TEMPLATE,
-                    &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
-                    &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
-                    &*fighters::CAVALIER_FIGHTER_TEMPLATE,
-                ],
-            ),
-            (
-                "monk",
-                vec![
-                    &*monks::MONK_TEMPLATE,
-                    &*monks::OPEN_HAND_MONK_TEMPLATE,
-                    &*monks::LONG_DEATH_MONK_TEMPLATE,
-                    &*monks::SHADOW_MONK_TEMPLATE,
-                ],
-            ),
-            (
-                "paladin",
-                vec![
-                    &*paladins::PALADIN_TEMPLATE,
-                    &*paladins::DEVOTION_PALADIN_TEMPLATE,
-                    &*paladins::ANCIENTS_PALADIN_TEMPLATE,
-                    &*paladins::VENGEANCE_PALADIN_TEMPLATE,
-                    &*paladins::OATHBREAKER_PALADIN_TEMPLATE,
-                    &*paladins::GLORY_PALADIN_TEMPLATE,
-                    &*paladins::WATCHERS_PALADIN_TEMPLATE,
-                ],
-            ),
-            (
-                "ranger",
-                vec![
-                    &*rangers::RANGER_TEMPLATE,
-                    &*rangers::HUNTER_RANGER_TEMPLATE,
-                    &*rangers::GLOOM_STALKER_RANGER_TEMPLATE,
-                    &*rangers::FEY_WANDERER_RANGER_TEMPLATE,
-                    &*rangers::HORIZON_WALKER_RANGER_TEMPLATE,
-                    &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
-                    &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
-                ],
-            ),
-            (
-                "rogue",
-                vec![
-                    &*rogues::ROGUE_TEMPLATE,
-                    &*rogues::ASSASSIN_ROGUE_TEMPLATE,
-                    &*rogues::SWASHBUCKLER_ROGUE_TEMPLATE,
-                    &*rogues::SCOUT_ROGUE_TEMPLATE,
-                    &*rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE,
-                ],
-            ),
-            (
-                "sorcerer",
-                vec![
-                    &*sorcerers::SORCERER_TEMPLATE,
-                    &*sorcerers::DRACONIC_SORCERER_TEMPLATE,
-                    &*sorcerers::STORM_SORCERER_TEMPLATE,
-                    &*sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE,
-                    &*sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE,
-                    &*sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE,
-                ],
-            ),
-            (
-                "warlock",
-                vec![
-                    &*warlocks::WARLOCK_TEMPLATE,
-                    &*warlocks::FIEND_WARLOCK_TEMPLATE,
-                    &*warlocks::UNDYING_WARLOCK_TEMPLATE,
-                    &*warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE,
-                    &*warlocks::ARCHFEY_WARLOCK_TEMPLATE,
-                    &*warlocks::CELESTIAL_WARLOCK_TEMPLATE,
-                    &*warlocks::MARID_WARLOCK_TEMPLATE,
-                    &*warlocks::DAO_WARLOCK_TEMPLATE,
-                    &*warlocks::DJINNI_WARLOCK_TEMPLATE,
-                    &*warlocks::EFREETI_WARLOCK_TEMPLATE,
-                ],
-            ),
-            (
-                "wizard",
-                vec![
-                    &*wizards::WIZARD_TEMPLATE,
-                    &*wizards::NECROMANCY_WIZARD_TEMPLATE,
-                    &*wizards::WAR_MAGIC_WIZARD_TEMPLATE,
-                    &*wizards::ABJURATION_WIZARD_TEMPLATE,
-                    &*wizards::EVOCATION_WIZARD_TEMPLATE,
-                    &*wizards::DIVINATION_WIZARD_TEMPLATE,
-                    &*wizards::ENCHANTMENT_WIZARD_TEMPLATE,
-                    &*wizards::ILLUSION_WIZARD_TEMPLATE,
-                    &*wizards::CONJURATION_WIZARD_TEMPLATE,
-                    &*wizards::TRANSMUTATION_WIZARD_TEMPLATE,
-                ],
-            ),
-        ];
+        let families = crate::actors::creatures::pc_template_families();
         for (label, family) in families {
             let names: std::collections::HashSet<&str> =
                 family.iter().map(|t| t.name).collect();
@@ -67592,5 +67441,149 @@ mod tests {
         assert!(!e.actors[&primary].has_condition(Condition::Heroic));
         assert!(!e.actors[&twin].has_condition(Condition::Heroic));
         assert!(!e.actors[&sorcerer].is_concentrating());
+    }
+
+    /// Trickery Domain template drift pin. The domain is the only one
+    /// that *removes* something from the inherited chassis — RAW gives
+    /// every cleric exactly one Divine Strike and varies its typing —
+    /// so the assertion that matters most here is the negative one: no
+    /// radiant arm, no radiant tag, exactly one level-8 prime.
+    #[test]
+    fn trickery_cleric_swaps_divine_strike_rather_than_stacking_it() {
+        use crate::actions::class_features::{
+            DESTROY_UNDEAD_TAG, DIVINE_STRIKE_POISON_TAG, DIVINE_STRIKE_TAG,
+            INVOKE_DUPLICITY_TAG, PRESERVE_LIFE_TAG, TURN_UNDEAD_TAG,
+        };
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, TRICKERY_CLERIC_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&TRICKERY_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // The poison arm is present and charged; the radiant arm is gone
+        // in both of the places it could linger.
+        assert!(e.actors[&cleric].has_passive_feature(DIVINE_STRIKE_POISON_TAG));
+        assert!(e.actors[&cleric].feature_available(DIVINE_STRIKE_POISON_TAG));
+        assert!(
+            e.actors[&cleric].find_action("divine strike poison").is_some(),
+            "the poison arm needs an action surface"
+        );
+        assert!(
+            !e.actors[&cleric].has_passive_feature(DIVINE_STRIKE_TAG),
+            "the radiant tag must be dropped, not merely shadowed"
+        );
+        assert!(
+            e.actors[&cleric].find_action("divine strike").is_none(),
+            "the radiant action must be filtered out of the inherited list"
+        );
+        assert!(
+            CLERIC_TEMPLATE.features.contains(DIVINE_STRIKE_TAG),
+            "the baseline chassis must actually carry the tag this template removes"
+        );
+        // Channel Divinity ships and is charged.
+        assert!(e.actors[&cleric].has_passive_feature(INVOKE_DUPLICITY_TAG));
+        assert!(e.actors[&cleric].feature_available(INVOKE_DUPLICITY_TAG));
+        assert!(e.actors[&cleric].find_action("invoke duplicity").is_some());
+        // Everything else on the baseline chassis still arrives.
+        for tag in [TURN_UNDEAD_TAG, PRESERVE_LIFE_TAG, DESTROY_UNDEAD_TAG] {
+            assert!(
+                e.actors[&cleric].has_passive_feature(tag),
+                "Trickery Cleric should inherit baseline Cleric tag {}",
+                tag
+            );
+        }
+    }
+
+    /// Invoke Duplicity buys advantage on the cleric's attack rolls and
+    /// spends the short-rest charge doing it — and, unlike every
+    /// one-shot prime on the same cohort, the flag survives the swing
+    /// that uses it. That persistence is the entire feature: a version
+    /// consumed on first attack would be a worse Guided Strike.
+    #[test]
+    fn invoke_duplicity_grants_persistent_attack_advantage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{INVOKE_DUPLICITY, INVOKE_DUPLICITY_TAG};
+        use crate::actors::creatures::clerics::TRICKERY_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&TRICKERY_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        assert_eq!(e.compute_attack_mode(cleric, goblin, true), RollMode::Normal);
+        assert!(INVOKE_DUPLICITY.custom_validate_input(&e, cleric, None, None, None));
+        for ef in INVOKE_DUPLICITY.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&cleric].has_condition(Condition::Duplicity));
+        assert!(!e.actors[&cleric].feature_available(INVOKE_DUPLICITY_TAG));
+        assert_eq!(e.compute_attack_mode(cleric, goblin, true), RollMode::Advantage);
+        // Re-priming a live illusion is refused, so the charge can't be
+        // burned refreshing a timer.
+        assert!(!INVOKE_DUPLICITY.custom_validate_input(&e, cleric, None, None, None));
+        // A swing does not eat the flag: `Duplicity` is deliberately off
+        // `CONSUMED_ON_ATTACK`.
+        e.clear_attack_advantage_riders(cleric, goblin);
+        assert!(
+            e.actors[&cleric].has_condition(Condition::Duplicity),
+            "the double stays out for its full duration"
+        );
+        assert_eq!(e.compute_attack_mode(cleric, goblin, true), RollMode::Advantage);
+    }
+
+    /// Both new `ON_HIT_RIDERS` rows land, and land as themselves.
+    ///
+    /// Driven by installing the flag directly on a monk rather than
+    /// through either owning class, because the rider table is keyed by
+    /// condition and nothing else — that is the contract worth pinning.
+    /// The Trickery cleric's own path (action → flag) is covered by
+    /// `trickery_cleric_swaps_divine_strike_rather_than_stacking_it`
+    /// and `invoke_duplicity_grants_persistent_attack_advantage`.
+    ///
+    /// Sweeps seeds so at least one swing connects. A row that silently
+    /// kept a neighbour's damage typing or label would pass every
+    /// structural assertion elsewhere and fail only here.
+    #[test]
+    fn the_new_on_hit_riders_land_with_their_own_typing() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        for (prime, label) in [
+            (Condition::DivineStrikingPoison, "divine strike (poison)"),
+            (Condition::FangsOfTheFireSnake, "fangs of the fire snake"),
+        ] {
+            let mut saw_rider = false;
+            for seed in 0..40 {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = FastRandRoller::with_seed(seed);
+                let monk = e
+                    .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let goblin = e
+                    .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                e.actors
+                    .get_mut(&monk)
+                    .unwrap()
+                    .add_condition(prime, ConditionTimer::Rounds(2));
+                let strike = e.actors[&monk]
+                    .find_action("martial arts")
+                    .expect("the monk chassis carries its unarmed strike");
+                for ef in strike.execute(&mut e, monk, Some(&vec![goblin]), None, None) {
+                    ef.apply(&mut e);
+                }
+                if e.messages().iter().any(|m| m.contains(label)) {
+                    saw_rider = true;
+                    assert!(
+                        !e.actors[&monk].has_condition(prime),
+                        "{} is a one-shot prime and must burn off on the hit",
+                        label
+                    );
+                    break;
+                }
+            }
+            assert!(saw_rider, "40 seeds should land at least one {} swing", label);
+        }
     }
 }

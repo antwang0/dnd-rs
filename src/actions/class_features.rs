@@ -201,6 +201,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Nature Domain Cleric Channel Divinity — Charm Animals and
     // Plants. RAW Channel Divinity is once per short rest.
     CHARM_ANIMALS_AND_PLANTS_TAG,
+    // 5e Trickery Domain Cleric Channel Divinity — Invoke Duplicity.
+    // RAW Channel Divinity is once per short rest, the same cadence as
+    // every sibling CD charge above.
+    INVOKE_DUPLICITY_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -5037,20 +5041,93 @@ pub static FLURRY_OF_BLOWS: LazyLock<FlurryOfBlows> = LazyLock::new(|| FlurryOfB
 /// Channel Divinity: Turn Undead lane.
 pub const DIVINE_STRIKE_TAG: &str = "cleric.divine_strike";
 
-/// Divine Strike — Cleric feature, bonus action. Spends the once-per-rest
-/// feature to prime the cleric's next melee hit with +1d8 radiant
-/// damage (consumed at the hit site in `resolve_attack` via the
-/// OnHitRider table — see the `DivineStriking` rider entry). Tick-down
-/// timer caps the prime to 2 rounds so an idle cleric doesn't carry
-/// the prime across rests.
-pub struct DivineStrike {}
+/// Class-feature tag for the Trickery Domain Cleric's **Divine Strike
+/// (poison)** (5e level-8 subclass feature; once per long rest in our
+/// model, matching the baseline `DIVINE_STRIKE_TAG` cadence).
+///
+/// RAW gives every cleric domain a Divine Strike at level 8 and varies
+/// only the damage type — radiant for Life / Light / Twilight, thunder
+/// for Tempest, cold for Nature, fire for Forge, poison for Trickery.
+/// The engine ships the radiant flavor on the baseline cleric chassis
+/// and this one on the Trickery domain, both as `PrimeStrike` rows, so
+/// a third variant costs a tag, a condition and a rider row rather than
+/// a fresh `impl Action`.
+///
+/// Poison is the sharpest of the eight typings *and* the most
+/// situational: it is the damage type more monsters resist or are
+/// outright immune to than any other in the engine (every undead and
+/// construct, most fiends), which is exactly the trade the Trickery
+/// Cleric makes elsewhere — Invoke Duplicity is an advantage engine
+/// with no floor, and the strike is a damage rider with no ceiling
+/// against the things it does bite.
+pub const DIVINE_STRIKE_POISON_TAG: &str = "cleric.divine_strike_poison";
 
-impl Action for DivineStrike {
+/// Class-feature tag for the Four Elements Monk's **Fangs of the Fire
+/// Snake** elemental discipline (5e PHB, Way of the Four Elements
+/// level 3). RAW spends 1 ki to wreathe the monk's arms in fire: the
+/// unarmed strike gains 10 ft of reach and deals an extra 1d10 fire
+/// damage on a hit.
+///
+/// The engine models the damage half as a `PrimeStrike` row and lets
+/// the reach half go — the monk's `MONK_UNARMED_STRIKE` declares its
+/// own `reach_tiles`, and the engine has no per-swing reach override
+/// lane (the Battle Master's Lunging Attack owns the only one, and it
+/// is wired to `LungingAttacking` specifically). What survives is the
+/// part that makes the discipline worth a ki point on a chassis whose
+/// staple swing is 1d8: a +1d10 rider is more than doubling it.
+pub const FANGS_OF_THE_FIRE_SNAKE_TAG: &str = "monk.fangs_of_the_fire_snake";
+
+/// Config-driven "bonus action; spend a per-rest charge to prime the
+/// next melee hit with a typed damage rider" class-feature action.
+///
+/// Three features share the shape and differ only in four values — the
+/// display name and aliases, which per-rest tag pays for it, which
+/// caster-side condition the `ON_HIT_RIDERS` table keys off, and the
+/// log line:
+///
+///   - **Divine Strike** (`DIVINE_STRIKE`) — baseline cleric, +1d8
+///     radiant.
+///   - **Divine Strike (poison)** (`DIVINE_STRIKE_POISON`) — Trickery
+///     Domain cleric, +1d8 poison.
+///   - **Fangs of the Fire Snake** (`FANGS_OF_THE_FIRE_SNAKE`) — Way of
+///     the Four Elements monk, +1d10 fire.
+///
+/// Note what is *not* on this struct: the dice, the damage type, and
+/// the melee gate. All three live on the rider row in
+/// `ON_HIT_RIDERS`, keyed by `prime`, which is where every other
+/// per-hit rider in the engine already declares them. Duplicating them
+/// here would create two places for "how much does Divine Strike hit
+/// for" to be written down and one of them to drift; the action's job
+/// is to install the flag, and the rider table's job is to say what
+/// the flag means.
+///
+/// Sibling in shape to the config-driven `TurnBurst` (Channel Divinity
+/// burst) and `ManeuverPrime` (Battle Master save-rider prime) chassis:
+/// a fourth variant costs a struct literal, not an `impl Action`.
+pub struct PrimeStrike {
+    /// Display name — action list entry, prompt parser's canonical
+    /// name, and the log line's implicit subject.
+    pub name: &'static str,
+    /// Alias set for the prompt parser. `&'static [&'static str]` keeps
+    /// the struct plain data at `LazyLock` init.
+    pub aliases: &'static [&'static str],
+    /// Per-rest feature tag that funds the prime. Read by
+    /// `feature_prime_ready` on the validate side; spent by
+    /// `prime_self_condition`.
+    pub tag: &'static str,
+    /// Caster-side flag installed on use. The matching `ON_HIT_RIDERS`
+    /// row carries the dice, the damage type and the melee gate.
+    pub prime: Condition,
+    /// Log line emitted on use, verbatim.
+    pub log_line: &'static str,
+}
+
+impl Action for PrimeStrike {
     fn name(&self) -> &str {
-        "divine strike"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["dstrike", "cd-strike"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
@@ -5080,7 +5157,7 @@ impl Action for DivineStrike {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        feature_prime_ready(encounter, caster_id, DIVINE_STRIKE_TAG, Condition::DivineStriking)
+        feature_prime_ready(encounter, caster_id, self.tag, self.prime)
     }
     fn side_effects(
         &self,
@@ -5093,15 +5170,66 @@ impl Action for DivineStrike {
         prime_self_condition(
             encounter,
             caster_id,
-            DIVINE_STRIKE_TAG,
-            Condition::DivineStriking,
+            self.tag,
+            self.prime,
+            // Two rounds is the shared prime envelope: long enough to
+            // survive a turn spent closing to reach, short enough that
+            // an idle holder can't bank the charge across an encounter.
             ConditionTimer::Rounds(2),
-            "  divine strike: cleric's next melee hit will land with radiant fury.",
+            self.log_line,
         )
     }
 }
 
-pub static DIVINE_STRIKE: LazyLock<DivineStrike> = LazyLock::new(|| DivineStrike {});
+/// Divine Strike — Cleric feature, bonus action. Spends the once-per-rest
+/// feature to prime the cleric's next melee hit with +1d8 radiant
+/// damage (consumed at the hit site in `resolve_attack` via the
+/// OnHitRider table — see the `DivineStriking` rider entry). Tick-down
+/// timer caps the prime to 2 rounds so an idle cleric doesn't carry
+/// the prime across rests.
+pub static DIVINE_STRIKE: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "divine strike",
+    aliases: &["dstrike", "cd-strike"],
+    tag: DIVINE_STRIKE_TAG,
+    prime: Condition::DivineStriking,
+    log_line: "  divine strike: cleric's next melee hit will land with radiant fury.",
+});
+
+/// Divine Strike (poison) — Trickery Domain Cleric level-8 subclass
+/// feature, bonus action. Same envelope as the radiant baseline; the
+/// `DivineStrikingPoison` rider row swaps 1d8 radiant for 1d8 poison.
+///
+/// The three-token canonical name is deliberate. The prompt parser
+/// resolves the longest token-prefix that names an action *before*
+/// falling back to shorter ones, so `divine strike poison` reaches
+/// this action even on a template that also carried the two-token
+/// `divine strike` — and no Trickery cleric does, since the domain
+/// swaps rather than stacks.
+pub static DIVINE_STRIKE_POISON: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "divine strike poison",
+    aliases: &["pstrike", "cd-poison"],
+    tag: DIVINE_STRIKE_POISON_TAG,
+    prime: Condition::DivineStrikingPoison,
+    log_line: "  divine strike (poison): cleric's next melee hit will land envenomed.",
+});
+
+/// Fangs of the Fire Snake — Way of the Four Elements Monk elemental
+/// discipline, bonus action. Primes the monk's next melee hit with
+/// +1d10 fire damage (the `FangsOfTheFireSnake` rider row).
+///
+/// The largest single die on the whole `ON_HIT_RIDERS` table, and it
+/// sits on the chassis with the *smallest* base weapon die — a monk's
+/// unarmed strike is 1d8, so the discipline more than doubles a
+/// connecting swing. That is the Four Elements trade in miniature: the
+/// subclass buys big numbers with a resource (ki, modeled as slots)
+/// that the rest of the monk kit never needed.
+pub static FANGS_OF_THE_FIRE_SNAKE: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "fangs of the fire snake",
+    aliases: &["fangs", "firesnake"],
+    tag: FANGS_OF_THE_FIRE_SNAKE_TAG,
+    prime: Condition::FangsOfTheFireSnake,
+    log_line: "  fangs of the fire snake: the monk's arms wreathe in flame.",
+});
 
 /// Class-feature tag for the Fighter's Trip Attack Battle Master
 /// maneuver (once per long rest). RAW exposes maneuvers as a pool of
@@ -7731,6 +7859,102 @@ impl Action for GuidedStrike {
 }
 
 pub static GUIDED_STRIKE: LazyLock<GuidedStrike> = LazyLock::new(|| GuidedStrike {});
+
+/// 5e **Trickery Domain Cleric** Channel Divinity: **Invoke Duplicity**
+/// feature tag (subclass level 2). Once per short rest — registered in
+/// `SHORT_REST_FEATURES` alongside the other cleric Channel Divinity
+/// charges (Turn Undead, Preserve Life, Guided Strike, Radiance of the
+/// Dawn).
+///
+/// RAW conjures a perfect illusory double within 30 ft, moved with a
+/// bonus action, granting the cleric advantage on attack rolls against
+/// any creature within 5 ft of it while the cleric is also within 5 ft
+/// of that creature. The engine has no second body to place or move, so
+/// the positional clause collapses into the `Duplicity` self-buff: ten
+/// rounds of advantage on the cleric's attack rolls, full stop.
+///
+/// That is the generous direction — RAW's illusion can be played around
+/// by spreading out and this one cannot — and it is why the charge is
+/// the Trickery cleric's *entire* Channel Divinity budget rather than
+/// one option among several.
+pub const INVOKE_DUPLICITY_TAG: &str = "cleric.invoke_duplicity";
+
+/// Channel Divinity: Invoke Duplicity — Trickery Domain Cleric action.
+/// Installs the `Duplicity` self-buff (advantage on the cleric's attack
+/// rolls) for ten rounds. Once per short rest.
+///
+/// **Action, not bonus action**, which is the one place this deviates
+/// upward in cost from its siblings on the lane. Guided Strike is a
+/// bonus action because it buys one swing; Invoke Duplicity buys every
+/// swing for a minute, and RAW charges an action for it. On a chassis
+/// whose bonus action is otherwise idle that ordering matters: the
+/// Trickery cleric spends a whole turn arming, then collects.
+///
+/// The gate is `feature_prime_ready` — the same "has a charge and isn't
+/// already carrying the flag" shape every other prime uses — so a
+/// cleric can't burn the short-rest charge refreshing a live illusion.
+pub struct InvokeDuplicity {}
+
+impl Action for InvokeDuplicity {
+    fn name(&self) -> &str {
+        "invoke duplicity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["duplicity", "cd-duplicity"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_prime_ready(encounter, caster_id, INVOKE_DUPLICITY_TAG, Condition::Duplicity)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            INVOKE_DUPLICITY_TAG,
+            Condition::Duplicity,
+            // Ten rounds — the engine's standard 1-minute envelope, and
+            // RAW's duration. Unlike its one-shot neighbours on this
+            // lane, the flag is off `CONSUMED_ON_ATTACK`: it is meant to
+            // ride every swing in the window.
+            ConditionTimer::Rounds(10),
+            "  invoke duplicity: an illusory double steps out beside the cleric.",
+        )
+    }
+}
+
+pub static INVOKE_DUPLICITY: LazyLock<InvokeDuplicity> = LazyLock::new(|| InvokeDuplicity {});
 
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered

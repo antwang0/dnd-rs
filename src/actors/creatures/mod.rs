@@ -258,3 +258,179 @@ pub mod goats;
 pub mod mules;
 pub mod ponies;
 pub mod elks;
+
+use crate::actors::actor_template::CreatureTemplate;
+
+/// Every playable-class template in the engine, grouped by class family.
+///
+/// One registry, two consumers today — the `every_pc_class_family_renders_unambiguously`
+/// sweep in `engine::encounter` (no two templates in a family share a
+/// name or a glyph) and `every_pc_action_is_reachable_by_its_canonical_name`
+/// in `engine::prompt` (every action on every template resolves to
+/// itself through the parser). Both used to carry their own verbatim
+/// copy of this 145-line list, which meant a new subclass was correct
+/// only if whoever added it remembered to edit two unrelated test
+/// modules; forgetting either one silently narrowed a sweep rather than
+/// failing.
+///
+/// **Adding a subclass template is one line here and nothing else.**
+/// That is the whole point of the registry: it is the single place the
+/// engine's answer to "what can a player be?" is written down, and
+/// every guarantee that ought to hold across all of them reads it.
+///
+/// Returned by value rather than stored in a `LazyLock` because
+/// `CreatureTemplate` isn't `Copy` and the callers want plain
+/// `&'static` references — building the outer `Vec` is a few hundred
+/// pointer copies on a path that runs twice in the test suite and never
+/// in play.
+pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplate>)> {
+    vec![
+            (
+                "barbarian",
+                vec![
+                    &*barbarians::BARBARIAN_TEMPLATE,
+                    &*barbarians::TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLVERINE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::PANTHER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::BERSERKER_BARBARIAN_TEMPLATE,
+                    &*barbarians::ZEALOT_BARBARIAN_TEMPLATE,
+                ],
+            ),
+            (
+                "bard",
+                vec![
+                    &*bards::BARD_TEMPLATE,
+                    &*bards::VALOR_BARD_TEMPLATE,
+                    &*bards::SWORDS_BARD_TEMPLATE,
+                    &*bards::LORE_BARD_TEMPLATE,
+                    &*bards::WHISPERS_BARD_TEMPLATE,
+                ],
+            ),
+            (
+                "cleric",
+                vec![
+                    &*clerics::CLERIC_TEMPLATE,
+                    &*clerics::WAR_CLERIC_TEMPLATE,
+                    &*clerics::LIGHT_CLERIC_TEMPLATE,
+                    &*clerics::TEMPEST_CLERIC_TEMPLATE,
+                    &*clerics::LIFE_CLERIC_TEMPLATE,
+                    &*clerics::GRAVE_CLERIC_TEMPLATE,
+                    &*clerics::FORGE_CLERIC_TEMPLATE,
+                    &*clerics::TWILIGHT_CLERIC_TEMPLATE,
+                    &*clerics::ARCANA_CLERIC_TEMPLATE,
+                    &*clerics::NATURE_CLERIC_TEMPLATE,
+                    &*clerics::TRICKERY_CLERIC_TEMPLATE,
+                ],
+            ),
+            (
+                "druid",
+                vec![
+                    &*druids::DRUID_TEMPLATE,
+                    &*druids::LAND_DRUID_TEMPLATE,
+                    &*druids::MOON_DRUID_TEMPLATE,
+                ],
+            ),
+            (
+                "fighter",
+                vec![
+                    &*fighters::FIGHTER_TEMPLATE,
+                    &*fighters::CHAMPION_TEMPLATE,
+                    &*fighters::SAMURAI_FIGHTER_TEMPLATE,
+                    &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                    &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
+                    &*fighters::CAVALIER_FIGHTER_TEMPLATE,
+                ],
+            ),
+            (
+                "monk",
+                vec![
+                    &*monks::MONK_TEMPLATE,
+                    &*monks::OPEN_HAND_MONK_TEMPLATE,
+                    &*monks::LONG_DEATH_MONK_TEMPLATE,
+                    &*monks::SHADOW_MONK_TEMPLATE,
+                ],
+            ),
+            (
+                "paladin",
+                vec![
+                    &*paladins::PALADIN_TEMPLATE,
+                    &*paladins::DEVOTION_PALADIN_TEMPLATE,
+                    &*paladins::ANCIENTS_PALADIN_TEMPLATE,
+                    &*paladins::VENGEANCE_PALADIN_TEMPLATE,
+                    &*paladins::OATHBREAKER_PALADIN_TEMPLATE,
+                    &*paladins::GLORY_PALADIN_TEMPLATE,
+                    &*paladins::WATCHERS_PALADIN_TEMPLATE,
+                ],
+            ),
+            (
+                "ranger",
+                vec![
+                    &*rangers::RANGER_TEMPLATE,
+                    &*rangers::HUNTER_RANGER_TEMPLATE,
+                    &*rangers::GLOOM_STALKER_RANGER_TEMPLATE,
+                    &*rangers::FEY_WANDERER_RANGER_TEMPLATE,
+                    &*rangers::HORIZON_WALKER_RANGER_TEMPLATE,
+                    &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
+                    &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
+                ],
+            ),
+            (
+                "rogue",
+                vec![
+                    &*rogues::ROGUE_TEMPLATE,
+                    &*rogues::ASSASSIN_ROGUE_TEMPLATE,
+                    &*rogues::SWASHBUCKLER_ROGUE_TEMPLATE,
+                    &*rogues::SCOUT_ROGUE_TEMPLATE,
+                    &*rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE,
+                ],
+            ),
+            (
+                "sorcerer",
+                vec![
+                    &*sorcerers::SORCERER_TEMPLATE,
+                    &*sorcerers::DRACONIC_SORCERER_TEMPLATE,
+                    &*sorcerers::STORM_SORCERER_TEMPLATE,
+                    &*sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE,
+                    &*sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE,
+                    &*sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE,
+                ],
+            ),
+            (
+                "warlock",
+                vec![
+                    &*warlocks::WARLOCK_TEMPLATE,
+                    &*warlocks::FIEND_WARLOCK_TEMPLATE,
+                    &*warlocks::UNDYING_WARLOCK_TEMPLATE,
+                    &*warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+                    &*warlocks::ARCHFEY_WARLOCK_TEMPLATE,
+                    &*warlocks::CELESTIAL_WARLOCK_TEMPLATE,
+                    &*warlocks::MARID_WARLOCK_TEMPLATE,
+                    &*warlocks::DAO_WARLOCK_TEMPLATE,
+                    &*warlocks::DJINNI_WARLOCK_TEMPLATE,
+                    &*warlocks::EFREETI_WARLOCK_TEMPLATE,
+                ],
+            ),
+            (
+                "wizard",
+                vec![
+                    &*wizards::WIZARD_TEMPLATE,
+                    &*wizards::NECROMANCY_WIZARD_TEMPLATE,
+                    &*wizards::WAR_MAGIC_WIZARD_TEMPLATE,
+                    &*wizards::ABJURATION_WIZARD_TEMPLATE,
+                    &*wizards::EVOCATION_WIZARD_TEMPLATE,
+                    &*wizards::DIVINATION_WIZARD_TEMPLATE,
+                    &*wizards::ENCHANTMENT_WIZARD_TEMPLATE,
+                    &*wizards::ILLUSION_WIZARD_TEMPLATE,
+                    &*wizards::CONJURATION_WIZARD_TEMPLATE,
+                    &*wizards::TRANSMUTATION_WIZARD_TEMPLATE,
+                ],
+            ),
+    ]
+}

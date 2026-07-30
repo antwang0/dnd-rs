@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
     ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CHARM_ANIMALS_AND_PLANTS,
     CHARM_ANIMALS_AND_PLANTS_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
-    DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
+    DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_POISON,
+    DIVINE_STRIKE_POISON_TAG, INVOKE_DUPLICITY, INVOKE_DUPLICITY_TAG,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
     SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
@@ -928,6 +929,107 @@ pub static NATURE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         actions,
         features,
         skills,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// Trickery Domain Cleric — Divine Domain **Trickery Domain** subclass
+/// build (PHB). The eleventh cleric domain in the engine, and the first
+/// whose Channel Divinity buys nothing but *accuracy*.
+///
+/// Two subclass features ship:
+///
+///   - **Invoke Duplicity** (lv2 Channel Divinity) — an action, once per
+///     short rest: an illusory double steps out beside the cleric and
+///     the cleric has advantage on attack rolls for ten rounds.
+///   - **Divine Strike (poison)** (lv8) — the domain's typing of the
+///     level-8 strike the baseline chassis carries in radiant. A
+///     bonus-action prime; +1d8 poison on the next melee hit.
+///
+/// The two are the same bet placed twice. Every other cleric domain's
+/// signature is a save the *enemy* rolls — Turn Undead, Radiance of the
+/// Dawn, Wrath of the Storm, Arcane Abjuration, Charm Animals and
+/// Plants all resolve on someone else's d20 — so a domain whose apex
+/// button never asks the target for anything is a genuinely different
+/// shape. Invoke Duplicity cannot be resisted, cannot be saved against,
+/// and cannot be dispelled; it also does no damage on its own. It makes
+/// the cleric's *other* buttons land.
+///
+/// Which is why the poison strike is the right partner and not merely
+/// the RAW one. Advantage roughly doubles the odds a marginal swing
+/// connects, and the rider only pays out on a connect, so the two
+/// features multiply rather than add: the Trickery cleric spends turn
+/// one arming the illusion, then every swing after that is both more
+/// likely to hit and worth more when it does.
+///
+/// **Poison is the sharpest edge and the dullest**, which is the
+/// domain's honest cost. It is the damage type more of the bestiary
+/// resists or is outright immune to than any other — every undead and
+/// every construct ignores it entirely, and most fiends halve it. A
+/// Trickery cleric walking into a crypt has a level-8 feature that
+/// does literally nothing, while the same cleric against a room of
+/// humanoid bandits has the best per-swing rider on any cleric
+/// template. The advantage half never stops working, and that
+/// asymmetry is deliberate: the domain that specializes in *landing*
+/// hits should still land them when its damage typing is the wrong one.
+///
+/// **Divine Strike is swapped, not stacked.** The baseline cleric
+/// chassis carries the radiant `DIVINE_STRIKE`; this template filters
+/// it out of the inherited action list and drops the matching tag
+/// before installing the poison arm, so a Trickery cleric has exactly
+/// one level-8 strike, as RAW intends. Leaving both on would hand the
+/// domain two per-rest primes no other cleric gets.
+///
+/// RAW's other Trickery features are left out. **Blessing of the
+/// Trickster** (lv1) grants an ally advantage on Stealth checks — the
+/// engine's `Hidden` condition is installed by the Hide action against
+/// a contested roll, and there is no ally-targeted skill-buff lane for
+/// the blessing to ride. **Cloak of Shadows** (lv6 Channel Divinity)
+/// grants invisibility until the end of the cleric's next turn, and it
+/// would sit on this template as a strictly worse Invoke Duplicity:
+/// `Invisible` already grants self-attack advantage through the same
+/// `grants_self_attack_advantage` cohort `Duplicity` rides, for one
+/// round instead of ten, out of the same short-rest charge — the same
+/// call `SHADOW_MONK_TEMPLATE` makes when it declines Cloak of Shadows
+/// next to Empty Body. **Improved Duplicity** (lv17) adds more
+/// illusions, which the flag model has no room to represent.
+///
+/// Glyph 'K' — for tric**K**ery; 'T' is taken by the Tempest-adjacent
+/// naming already crowded on this chassis and by the Arcane Trickster
+/// rogue. Distinct from baseline cleric 'C', War 'W', Light 'L',
+/// Tempest 'S', Life 'V', Grave 'G', Forge 'F', Twilight 'X', Arcana
+/// 'A' and Nature 'N'.
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW lv2 /
+/// lv8 gates for the same reason every sibling domain template does —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub static TRICKERY_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // The one domain that *removes* something from the inherited
+    // chassis. RAW gives every cleric exactly one Divine Strike and
+    // varies its typing by domain, so the radiant baseline arm is
+    // filtered out of the cloned action list (and its tag out of the
+    // cloned feature set) before the poison arm goes in — otherwise
+    // the Trickery cleric would carry two level-8 per-rest primes and
+    // every other domain would carry one.
+    let mut actions: Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)> =
+        CLERIC_TEMPLATE
+            .actions
+            .iter()
+            .copied()
+            .filter(|a| a.name() != DIVINE_STRIKE.name)
+            .collect();
+    actions.push(&*INVOKE_DUPLICITY);
+    actions.push(&*DIVINE_STRIKE_POISON);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.remove(DIVINE_STRIKE_TAG);
+    features.insert(INVOKE_DUPLICITY_TAG);
+    features.insert(DIVINE_STRIKE_POISON_TAG);
+    CreatureTemplate {
+        name: "Trickery Cleric",
+        glyph: 'K',
+        actions,
+        features,
         ..CLERIC_TEMPLATE.clone()
     }
 });

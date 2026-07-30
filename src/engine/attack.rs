@@ -2242,6 +2242,46 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             consume_on_trigger: true,
             follow_up: None,
         },
+        // 5e Trickery Domain Cleric Divine Strike (subclass level 8).
+        // The poison-typed arm of the row above — RAW varies only the
+        // damage type across the eight domains, and the rider table is
+        // where that type is written down, so a domain variant is a row
+        // here plus a `PrimeStrike` literal and nothing else.
+        //
+        // Poison is the narrowest typing on the table: every undead and
+        // construct in the bestiary is immune and most fiends resist,
+        // so this rider lands for nothing more often than any other.
+        // Against everything else it is the same 1d8.
+        OnHitRider {
+            condition: Condition::DivineStrikingPoison,
+            dice: Dice::new(1, 8),
+            label: "divine strike (poison)",
+            damage_type: DamageType::Poison,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: None,
+        },
+        // 5e Way of the Four Elements Monk **Fangs of the Fire Snake**
+        // elemental discipline. The biggest single die on this table
+        // (1d10) riding the smallest base weapon die in the engine (the
+        // monk's 1d8 unarmed strike), which is the whole point: the
+        // discipline buys a doubled swing with a ki point.
+        //
+        // RAW's other half — +10 ft of reach on the strike — is not
+        // modeled; reach is per-action via `Action::reach_tiles` and
+        // the only per-swing override lane is wired to the Battle
+        // Master's `LungingAttacking`.
+        OnHitRider {
+            condition: Condition::FangsOfTheFireSnake,
+            dice: Dice::new(1, 10),
+            label: "fangs of the fire snake",
+            damage_type: DamageType::Fire,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: None,
+        },
         // 5e Battle Master Trip Attack maneuver. No bonus damage in our
         // model (RAW: +superiority die damage; we skip the die since the
         // existing dice infra doesn't carry a per-class scaling pool);

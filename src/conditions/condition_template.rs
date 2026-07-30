@@ -537,6 +537,32 @@ pub enum Condition {
     /// types; the headline self-advantage + temp HP envelope is the
     /// load-bearing buff. Concentration-bound on the caster.
     Transformed,
+    /// Invoked Duplicity (5e **Trickery Domain Cleric** Channel
+    /// Divinity, subclass level 2). A perfect illusory double of the
+    /// cleric stands on the battlefield; RAW hands the cleric advantage
+    /// on attack rolls against any creature within 5 ft of it, so long
+    /// as both the cleric and the illusion are within 5 ft of that
+    /// creature.
+    ///
+    /// The engine models the double as a flag on the cleric rather than
+    /// as a second body: there is no actor to place, move (RAW's bonus
+    /// action) or knock down, and the positional clause collapses to
+    /// "the cleric has advantage on attack rolls" for the duration.
+    /// That is a real simplification and it is the generous direction —
+    /// RAW's version can be defeated by spreading out, this one cannot.
+    /// It is priced accordingly: one charge per short rest, and the
+    /// Trickery cleric's whole Channel Divinity budget.
+    ///
+    /// Joins `grants_self_attack_advantage` as a *persistent* member
+    /// (like `Transformed` and `Foreseen`, unlike the one-shot
+    /// `TidesOfChaos` / `Helped` / `Hidden` primes) — it is deliberately
+    /// off `CONSUMED_ON_ATTACK` so the advantage rides every swing for
+    /// the ten rounds it lasts, which is the entire feature.
+    ///
+    /// Not on `is_dispellable_buff`: Channel Divinity is a class
+    /// feature, not a spell, so Dispel Magic has nothing to grab —
+    /// the same call `WildShaped` makes.
+    Duplicity,
     /// Divine Strike primed (5e Cleric Channel Divinity flavor; we model
     /// the level-8-and-above feature as a once-per-rest prime that lands
     /// on the caster's next melee hit for +1d8 radiant damage. Mirrors
@@ -544,6 +570,39 @@ pub enum Condition {
     /// the OnHitRider table the moment the rider lands. Tick-down timer
     /// keeps a swing-less prime from dangling indefinitely.
     DivineStriking,
+    /// Divine Strike (poison) primed (5e **Trickery Domain Cleric**,
+    /// subclass level 8). The poison-typed arm of the same feature
+    /// `DivineStriking` carries in radiant: a once-per-rest bonus-action
+    /// prime that lands +1d8 poison on the cleric's next melee hit.
+    ///
+    /// A distinct condition rather than a damage-type field on the
+    /// existing one because the `ON_HIT_RIDERS` table is keyed by
+    /// condition — that is where every per-hit rider in the engine
+    /// declares its dice, typing and melee gate, and a second typing
+    /// is a second row there. The combat log also stays honest: a
+    /// Trickery cleric's swing reads "envenomed", not "radiant fury".
+    ///
+    /// On `is_smite_prime` alongside `DivineStriking`, so the
+    /// dispellable-buff sweep and the AI's don't-double-prime gates
+    /// treat the two identically.
+    DivineStrikingPoison,
+    /// Fangs of the Fire Snake primed (5e **Way of the Four Elements
+    /// Monk**, elemental discipline). The monk's arms are wreathed in
+    /// flame: the next melee hit lands +1d10 fire.
+    ///
+    /// RAW also extends the unarmed strike's reach by 10 ft for the
+    /// turn. That half is not modeled — reach is declared per-action
+    /// by `Action::reach_tiles` and the engine's only per-swing reach
+    /// override is wired specifically to the Battle Master's
+    /// `LungingAttacking`. The damage half is the one that pays for the
+    /// ki point on a 1d8 chassis.
+    ///
+    /// Not on `is_smite_prime`: that cohort is the paladin / cleric
+    /// divine-smite family, and a monk's elemental discipline is
+    /// neither divine nor dispellable (it is a class feature, not a
+    /// spell). It rides `ON_HIT_RIDERS` and the two-round tick-down
+    /// like every other prime, and nothing else.
+    FangsOfTheFireSnake,
     /// Trip Attack primed (5e Fighter Battle Master maneuver). The next
     /// melee weapon hit forces the target to make a STR save vs the
     /// fighter's maneuver DC (8 + prof + STR); on fail, the target is
@@ -1568,7 +1627,10 @@ impl Condition {
             Condition::SickeningRadiated => "sickened with radiance",
             Condition::BigbysHanded => "guarded by bigby's hand",
             Condition::Transformed => "transformed",
+            Condition::Duplicity => "shadowed by an illusory double",
             Condition::DivineStriking => "primed with divine strike",
+            Condition::DivineStrikingPoison => "primed with envenomed divine strike",
+            Condition::FangsOfTheFireSnake => "wreathed in the fire snake's fangs",
             Condition::TripAttacking => "primed to trip",
             Condition::InvestedInFlame => "invested with flame",
             Condition::InvestedInIce => "invested with ice",
@@ -1829,6 +1891,10 @@ impl Condition {
                 | Condition::BanishingSmiting
                 | Condition::ThunderousSmiting
                 | Condition::DivineStriking
+                // Trickery Domain's poison-typed arm of the same
+                // level-8 feature — same lane, same lifecycle, one
+                // rider row apart.
+                | Condition::DivineStrikingPoison
                 | Condition::LightningArrowPrimed
                 | Condition::EnsnaringStriking
                 | Condition::ZephyrStriking
@@ -1974,6 +2040,12 @@ impl Condition {
                 | Condition::Blessed
                 | Condition::Transformed
                 | Condition::TidesOfChaos
+                // 5e Trickery Domain Cleric **Invoke Duplicity** — the
+                // illusory double's whole combat surface. Persistent
+                // (deliberately off `CONSUMED_ON_ATTACK`) so it rides
+                // every swing for its ten rounds, unlike the one-shot
+                // `TidesOfChaos` / `Helped` / `Hidden` primes above it.
+                | Condition::Duplicity
         )
     }
 

@@ -559,6 +559,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m*. Invoke Duplicity — Trickery Domain Cleric Channel
+        //      Divinity (Action, once per short rest). Ten rounds of
+        //      advantage on every attack roll the cleric makes. Sits
+        //      directly under Tenser's Transformation because it is the
+        //      same purchase — an Action spent up front to make every
+        //      later swing land — and above the damage lane for the
+        //      same reason: a turn spent arming pays back over the rest
+        //      of the fight, and paying for it after the shooting
+        //      starts wastes the window it buys.
+        if let Some(aei) = try_invoke_duplicity(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3m'. Investiture of Flame — level-6 caster concentration
         //      self-buff (fire resistance + 1d10 fire melee retaliation).
         //      Fire when at least one enemy is in attack reach so the
@@ -686,59 +699,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3o. Divine Strike — cleric bonus-action prime (once per long
-        //     rest). Fire when an enemy is in melee so the +1d8 radiant
-        //     rider lands on the cleric's next swing.
-        if let Some(aei) = try_divine_strike(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3p. Trip Attack — fighter bonus-action prime (once per long
-        //     rest). Fire when an enemy is in melee so the prone-on-
-        //     fail save lands this turn.
-        if let Some(aei) = try_trip_attack(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3p'. Menacing Attack — fighter bonus-action prime (Battle
-        //      Master). Same engagement gate as Trip Attack; the
-        //      WIS-save-vs-frighten rider sticks even on tough STR
-        //      monsters that would resist the trip. Lower priority
-        //      than Trip Attack because prone enables follow-up
-        //      melee-advantage swings, whereas Frightened only
-        //      disadvantages the target's own attacks.
-        if let Some(aei) = try_menacing_attack(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3p''. Disarming Attack — fighter bonus-action prime (Battle
-        //       Master). STR save vs disarm; the one-round attacker
-        //       disadvantage hits especially hard against ranged or
-        //       multi-attack threats. Slotted after Menacing because
-        //       Frightened lasts longer than Disarmed in our model.
-        if let Some(aei) = try_disarming_attack(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3p'''. Pushing Attack — fighter bonus-action prime (Battle
-        //        Master). STR save vs forced 4-tile shove. Last of the
-        //        maneuver lane because pure displacement (no attack /
-        //        save penalty rider) is the weakest tactically against
-        //        a target already in melee; it's a finisher when none
-        //        of the debuff-rider maneuvers are available.
-        if let Some(aei) = try_pushing_attack(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3p''''. Goading Attack — fighter bonus-action prime (Battle
-        //         Master). WIS save vs goaded (tank-anchor: target eats
-        //         disadvantage on attacks against anyone other than the
-        //         fighter). Last among the maneuvers since the tank-
-        //         anchor effect is strongest when the fighter has
-        //         already absorbed the maneuver-debuff options above on
-        //         tougher single targets — at which point the surviving
-        //         enemy still gets goaded onto the front-liner.
-        if let Some(aei) = try_goading_attack(encounter, actor_id) {
+        // 3o. The melee-adjacent self-prime lane — one ordered table
+        //     rather than N near-identical rungs. See
+        //     `MELEE_ADJACENT_PRIMES` for the roster and the reasoning
+        //     behind the order.
+        if let Some(aei) =
+            try_first_available(encounter, actor_id, MELEE_ADJACENT_PRIMES, |e, id, name| {
+                try_self_action_when_enemy_within(e, id, 0, name)
+            })
+        {
             return ControllerDecision::Act(aei);
         }
 
@@ -760,8 +729,12 @@ impl Controller for SimpleAi {
         //           Master). +4 to the next attack roll (one-shot via
         //           `clear_attack_advantage_riders`). The "do I miss?"
         //           insurance — fire when an enemy is in melee so the
-        //           prime is consumed this turn.
-        if let Some(aei) = try_precision_attack(encounter, actor_id) {
+        //           prime is consumed this turn. Same gate as the
+        //           `MELEE_ADJACENT_PRIMES` table above but a separate
+        //           rung, because Sweeping Attack's two-enemy gate sits
+        //           between them and the order is load-bearing.
+        if let Some(aei) = try_self_action_when_enemy_within(encounter, actor_id, 0, "precision attack")
+        {
             return ControllerDecision::Act(aei);
         }
 
@@ -1736,85 +1709,77 @@ fn try_pass_without_trace(
     try_self_action(encounter, actor_id, "pass without trace")
 }
 
-/// Cleric Divine Strike — once-per-rest bonus-action prime. Fire when
-/// an enemy is footprint-adjacent so the +1d8 radiant rider lands on
-/// the cleric's next melee swing (most likely Thorn Whip or melee
-/// weapon). Validation handles the feature-available + already-primed
-/// gate.
-fn try_divine_strike(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "divine strike")
-}
+/// Ordered roster of the "bonus action; spend a per-rest charge to
+/// prime the next melee hit" lane. Walked top-to-bottom by the ladder
+/// at rung 3o; the first entry the actor carries, can afford, and
+/// isn't already holding wins the bonus action.
+///
+/// Every row shares one gate — an enemy inside footprint reach, so the
+/// prime is cashed on this turn's swing rather than banked — and the
+/// action's own `custom_validate_input` supplies the rest (charge
+/// available, flag not already up). That uniformity is why the lane is
+/// a table: each entry used to be a three-line wrapper function around
+/// the identical `try_self_action_when_enemy_within(.., 0, name)` call,
+/// plus a rung in the ladder, so a new prime cost two edits in two
+/// places to express one string.
+///
+/// **The order is the priority and it is load-bearing**, which is the
+/// one thing a table must not lose:
+///
+///   1. `divine strike` / `divine strike poison` — the cleric's flat
+///      damage rider. First because it is pure upside with no save to
+///      fail and no positioning to set up; a cleric in melee always
+///      wants it. The two typings never co-occur on one template (the
+///      Trickery domain swaps rather than stacks), so listing both
+///      costs nothing.
+///   2. `fangs of the fire snake` — the Four Elements monk's +1d10
+///      fire rider. Same shape as Divine Strike and sits with it for
+///      the same reason; the monk carries no other entry on this lane.
+///   3. `trip attack` — prone is the strongest maneuver rider: it
+///      hands every melee ally advantage against the target *and*
+///      costs the target its movement.
+///   4. `menacing attack` — Frightened sticks on tough-STR monsters
+///      that shrug off the trip, but only disadvantages the target's
+///      own swings rather than enabling the party's.
+///   5. `disarming attack` — attacker disadvantage, which bites
+///      hardest on ranged and multiattack threats but lasts a single
+///      round in this engine.
+///   6. `pushing attack` — pure displacement, no accuracy or save
+///      rider attached; the finisher when nothing above is available.
+///   7. `goading attack` — the tank-anchor. Last because its value is
+///      conditional on the fighter *wanting* to be attacked, which is
+///      the situation left over once the debuff riders are spent.
+///
+/// Precision Attack shares the gate but is deliberately *not* here:
+/// Sweeping Attack's two-adjacent-enemies rung sits between it and
+/// this table in the ladder, and collapsing the two would silently
+/// reorder them.
+const MELEE_ADJACENT_PRIMES: &[&str] = &[
+    "divine strike",
+    "divine strike poison",
+    "fangs of the fire snake",
+    "trip attack",
+    "menacing attack",
+    "disarming attack",
+    "pushing attack",
+    "goading attack",
+];
 
-/// Fighter Trip Attack — once-per-rest bonus-action maneuver. Fire when
-/// an enemy is footprint-adjacent so the prone-on-fail STR save lands
-/// this turn. Validation handles the feature-available + already-primed
-/// gate.
-fn try_trip_attack(
+/// Walk `names` in order and return the first picker result that fires.
+///
+/// The shared body of every "ordered roster of interchangeable action
+/// names" rung in the ladder. `pick` is the per-entry gate — for
+/// `MELEE_ADJACENT_PRIMES` it is the melee-reach check, and any future
+/// table on this shape supplies its own — so the helper owns only the
+/// walk and the short-circuit, which is the part that would otherwise
+/// be copied per table.
+fn try_first_available(
     encounter: &EncounterInstance,
     actor_id: usize,
+    names: &[&str],
+    pick: impl Fn(&EncounterInstance, usize, &str) -> Option<ActionExecutionInfo>,
 ) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "trip attack")
-}
-
-/// Fighter Battle Master Menacing Attack — bonus-action prime that lays a
-/// WIS save vs frighten on the next melee hit. Same engagement gate as
-/// Trip Attack (enemy must be in reach so the swing connects this turn).
-/// Validation handles the feature-available + already-primed gate.
-fn try_menacing_attack(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "menacing attack")
-}
-
-/// Fighter Battle Master Disarming Attack — bonus-action prime that lays
-/// a STR save vs disarm on the next melee hit. Same engagement gate as
-/// Trip Attack. Disarmed (one-round attacker disadvantage) layers nicely
-/// with a follow-up swing from the Extra Attack lane.
-fn try_disarming_attack(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "disarming attack")
-}
-
-/// Fighter Battle Master Pushing Attack — bonus-action prime that lays a
-/// STR save vs shove on the next melee hit. Same engagement gate as Trip
-/// Attack. The shove makes most tactical sense when an adjacent enemy
-/// threatens an ally — pushing them clear of the squishy backline.
-fn try_pushing_attack(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "pushing attack")
-}
-
-/// Fighter Battle Master Goading Attack — bonus-action prime that lays a
-/// WIS save vs goaded on the next melee hit. The Goaded debuff is the
-/// tank-anchor maneuver: it forces the target to focus the fighter or
-/// eat disadvantage on every other swing. Higher leverage when the
-/// fighter is in melee with a threat to a squishy ally — we approximate
-/// "I'm the tank" by gating on at least one ally being within close
-/// reach (4 tiles) so the goad does work this round. Falls back to the
-/// generic adjacency gate when no ally is in sight.
-fn try_goading_attack(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "goading attack")
-}
-
-/// Fighter Battle Master Precision Attack — bonus-action prime that
-/// adds +4 to the next attack roll. Same engagement gate as Trip Attack
-/// (enemy in melee so the prime lands this turn).
-fn try_precision_attack(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "precision attack")
+    names.iter().find_map(|name| pick(encounter, actor_id, name))
 }
 
 /// Fighter Battle Master Distracting Strike — bonus-action prime that
@@ -3386,6 +3351,28 @@ fn try_guided_strike(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     try_self_action_when_enemy_within(encounter, actor_id, 24, "guided strike")
+}
+
+/// Trickery Domain Cleric Invoke Duplicity — Channel Divinity, Action,
+/// once per short rest. Installs ten rounds of advantage on the
+/// cleric's attack rolls.
+///
+/// Same 24-tile (≈60 ft) engagement window as Guided Strike, and for
+/// the same reason: the cleric's attack rolls come from spell attacks
+/// as often as from a weapon, so "is there anything I could plausibly
+/// swing at" is a wider question than melee reach. Wider than the
+/// bonus-action primes' adjacency gate because this buff lasts ten
+/// rounds rather than one swing — arming it a turn before contact is
+/// correct play, not a wasted charge.
+///
+/// The action's `custom_validate_input` owns the rest: the short-rest
+/// charge, and the no-restack clause that stops a cleric from spending
+/// the charge to refresh a `Duplicity` flag that is already up.
+fn try_invoke_duplicity(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(encounter, actor_id, 24, "invoke duplicity")
 }
 
 /// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
