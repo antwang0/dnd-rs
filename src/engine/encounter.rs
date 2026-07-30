@@ -472,6 +472,114 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     Condition::GuidedStriking,
 ];
 
+/// One row in the `CASTER_SAVE_MODE_RIDERS` cohort — a single
+/// caster-attributed rider that bends the mode of a saving throw the
+/// *target* is about to roll against the *caster's* spell.
+///
+/// The three closures split the row into the three things every such
+/// rider has to say, and nothing else:
+///   - `applies`: does this rider fire for this (caster, target) pair?
+///     Reads either side — Heightened Spell keys off a caster-side
+///     prime, Eldritch Strike off a target-side mark plus its
+///     back-link, Magical Ambush off the caster's concealment.
+///   - `consume`: burn the one-shot prime. Every current row is
+///     once-per-trigger, so a multi-target cast bends only its first
+///     save; a hypothetical persistent rider would land here as a
+///     no-op closure without widening the row shape.
+///   - `mode` + `label`: the notch to fold in and the log tag.
+///
+/// Sibling in spirit to `CONSUMED_ON_ATTACK` on the "one-shot prime,
+/// consumed at the roll site" lane — that cohort covers the attack-roll
+/// axis with a bare condition list because every entry there is a plain
+/// caster-side self-buff; this one covers the save-roll axis and needs
+/// the predicate pair because its rows read *both* sides of the roll.
+pub struct CasterSaveModeRider {
+    /// Gate: does the rider fire for `(caster_id, target_id)`?
+    pub applies: fn(&EncounterInstance, usize, usize) -> bool,
+    /// Burn the prime that `applies` just matched on.
+    pub consume: fn(&mut EncounterInstance, usize, usize),
+    /// Notch folded into the save's mode via `RollMode::combine`.
+    pub mode: RollMode,
+    /// Log-friendly tag ("heightened spell", "eldritch strike", ...).
+    pub label: &'static str,
+}
+
+/// Caster-attributed save-mode riders, walked by
+/// `roll_save_against_caster` before the save is rolled. Every row that
+/// fires combines its `mode` into the roll and consumes its prime;
+/// `RollMode::combine` keeps two disadvantage rows at a single notch,
+/// matching 5e's no-stacking rule.
+///
+/// Adding a future "the target has advantage/disadvantage on saves
+/// against *my* spell" feature (a Heightened-Spell-shaped metamagic, a
+/// subclass mark, a hypothetical Gnome Cunning-style ward that flips
+/// the polarity to advantage) lands as one row here rather than another
+/// branch in `roll_save_against_caster`.
+///
+/// Entries (in order — the walk is order-independent since every row
+/// combines into the same accumulator):
+///   - **Heightened Spell** (Sorcerer Metamagic): the caster spent
+///     three sorcery points on a bonus-action prime; the first save
+///     against their next spell is at disadvantage.
+///   - **Eldritch Strike** (Eldritch Knight Fighter lv10): the caster
+///     landed a weapon hit on this target, so the target's next save
+///     against a spell *this* caster casts is at disadvantage. The
+///     back-link (`eldritch_struck_by`) is what makes the mark
+///     caster-specific — a second spellcaster on the team gets no
+///     benefit from the fighter's swing.
+///   - **Magical Ambush** (Arcane Trickster Rogue lv9): the caster is
+///     Hidden, so their spell's first save lands at disadvantage.
+///     Consuming `Hidden` on the trigger mirrors the way
+///     `CONSUMED_ON_ATTACK` drops it on an attack roll — casting a
+///     spell at someone gives your position away just as surely as
+///     shooting at them does.
+pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
+    CasterSaveModeRider {
+        applies: |e, caster_id, _target_id| {
+            e.actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_condition(Condition::HeightenedSpelling))
+        },
+        consume: |e, caster_id, _target_id| {
+            if let Some(caster) = e.actors.get_mut(&caster_id) {
+                caster.remove_condition(Condition::HeightenedSpelling);
+            }
+        },
+        mode: RollMode::Disadvantage,
+        label: "heightened spell",
+    },
+    CasterSaveModeRider {
+        applies: |e, caster_id, target_id| {
+            e.actors.get(&target_id).is_some_and(|t| {
+                t.has_condition(Condition::EldritchStruck)
+                    && t.eldritch_struck_by() == Some(caster_id)
+            })
+        },
+        consume: |e, _caster_id, target_id| {
+            if let Some(target) = e.actors.get_mut(&target_id) {
+                target.remove_condition(Condition::EldritchStruck);
+            }
+        },
+        mode: RollMode::Disadvantage,
+        label: "eldritch strike",
+    },
+    CasterSaveModeRider {
+        applies: |e, caster_id, _target_id| {
+            e.actors.get(&caster_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::MAGICAL_AMBUSH_TAG)
+                    && a.has_condition(Condition::Hidden)
+            })
+        },
+        consume: |e, caster_id, _target_id| {
+            if let Some(caster) = e.actors.get_mut(&caster_id) {
+                caster.remove_condition(Condition::Hidden);
+            }
+        },
+        mode: RollMode::Disadvantage,
+        label: "magical ambush",
+    },
+];
+
 /// Conditions whose presence combines a blanket **disadvantage** into
 /// the actor's save-roll mode regardless of which ability the save
 /// rolls off of. Read by `compute_save_mode`. Adding a new "condition
@@ -3056,18 +3164,24 @@ impl EncounterInstance {
     }
 
     /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
-    /// `roll_save` except it honors the 5e Sorcerer **Heightened Spell**
-    /// metamagic: if the caster has the `HeightenedSpelling` prime up,
-    /// this save is forced to disadvantage (combined with the actor's
-    /// normal mode) and the prime is consumed.
+    /// `roll_save` except it walks the shared `CASTER_SAVE_MODE_RIDERS`
+    /// cohort first: any row whose gate fires for this (caster, target)
+    /// pair folds its mode into the roll and consumes its one-shot
+    /// prime.
     ///
     /// Damaging spells that already thread `caster_id` (almost every
     /// save-for-half AoE in `resolve_burst_save_damage`, and single-
     /// target lockdown spells like Hold Person / Hold Monster /
     /// Dominate Person) should route their saves through this helper so
-    /// Heightened Spell actually bites. Spells that don't bother with a
+    /// the cohort actually bites. Spells that don't bother with a
     /// caster_id (NPC-only attack riders, environmental DoTs) fall
-    /// through to `roll_save` and the prime never engages.
+    /// through to `roll_save` and no rider engages.
+    ///
+    /// Rows combine via `RollMode::combine`, so a Heightened Spell cast
+    /// at an Eldritch-Struck target still resolves at a single notch of
+    /// disadvantage (5e never stacks advantage/disadvantage) — but both
+    /// primes are consumed, which is the RAW-correct bookkeeping for two
+    /// independent once-each riders that both found their trigger.
     pub fn roll_save_against_caster(
         &mut self,
         target_id: usize,
@@ -3075,27 +3189,35 @@ impl EncounterInstance {
         dc: i32,
         caster_id: usize,
     ) -> crate::engine::saves::SaveOutcome {
-        let heightened = self
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_condition(Condition::HeightenedSpelling));
-        if !heightened {
+        let mut extra = RollMode::Normal;
+        for rider in CASTER_SAVE_MODE_RIDERS {
+            if !(rider.applies)(self, caster_id, target_id) {
+                continue;
+            }
+            // Consume the prime up front so a multi-target spell only
+            // forces the rider on its *first* save (RAW for Heightened
+            // Spell: "The first time the target makes a saving throw
+            // against the spell, the target has disadvantage"; the same
+            // once-per-trigger shape covers the sibling rows).
+            // Subsequent saves in the same cast fall through clean.
+            (rider.consume)(self, caster_id, target_id);
+            let target_name = self.actor_name(target_id);
+            self.log(format!(
+                "  {}: {} rolls the save at {}",
+                rider.label,
+                target_name,
+                match rider.mode {
+                    RollMode::Advantage => "advantage",
+                    RollMode::Disadvantage => "disadvantage",
+                    RollMode::Normal => "normal",
+                }
+            ));
+            extra = extra.combine(rider.mode);
+        }
+        if extra == RollMode::Normal {
             return self.roll_save(target_id, ability, dc);
         }
-        // Consume the prime up front so a multi-target spell only forces
-        // disadvantage on its *first* save (RAW: "The first time the
-        // target makes a saving throw against the spell, the target has
-        // disadvantage on the save"). Subsequent saves in the same cast
-        // fall through to the normal `roll_save` path.
-        if let Some(caster) = self.actors.get_mut(&caster_id) {
-            caster.remove_condition(Condition::HeightenedSpelling);
-        }
-        let target_name = self.actor_name(target_id);
-        self.log(format!(
-            "  heightened spell: {} rolls the save at disadvantage",
-            target_name
-        ));
-        self.roll_save_with_extra_mode(target_id, ability, dc, RollMode::Disadvantage)
+        self.roll_save_with_extra_mode(target_id, ability, dc, extra)
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used
@@ -6675,7 +6797,63 @@ impl EncounterInstance {
         self.trigger_arcane_ward(caster_id, spell_level, school);
         self.trigger_expert_divination(caster_id, spell_level, school);
         self.trigger_benign_transposition_recharge(caster_id, spell_level, school);
+        self.trigger_war_magic_prime(caster_id, spell_level, school);
         effects
+    }
+
+    /// 5e Eldritch Knight Fighter **War Magic** (subclass level 7)
+    /// post-cast hook: casting a cantrip arms the `WAR_MAGIC_STRIKE`
+    /// bonus action for a follow-up weapon swing this turn.
+    ///
+    /// The only member of the post-cast family gated on a *cantrip*
+    /// rather than on a levelled cast — Arcane Ward, Expert Divination
+    /// and Benign Transposition all key off `spell_level >= 1`, and War
+    /// Magic is the mirror case: cantrips are exactly what it rewards,
+    /// because the fighter's whole tempo trade is giving up the Attack
+    /// action for a spell that costs no slot.
+    ///
+    /// Which makes the `school.is_some()` half of the gate load-bearing
+    /// rather than decorative. `Action::execute` opens a level-0 cast
+    /// frame for *every* action it runs, so a weapon swing, a Move and
+    /// War Magic's own bonus action all arrive here indistinguishable
+    /// from a cantrip on level alone — and a knight who armed the prime
+    /// by swinging would get the follow-up swing for free, which is the
+    /// opposite of the feature. "Has a school" is the engine's marker
+    /// for "is a spell" (see `CastContext::is_cantrip`, pinned by
+    /// `every_cantrip_declares_its_school`), and it is what separates
+    /// the two cases here.
+    ///
+    /// Installing the prime is idempotent — two cantrips in one turn
+    /// (Action Surge) leave one prime, and the single bonus action is
+    /// the real cap. No feature charge to spend and no rest cadence:
+    /// the tag is the entire gate.
+    fn trigger_war_magic_prime(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        school: Option<SpellSchool>,
+    ) {
+        use crate::actions::class_features::WAR_MAGIC_TAG;
+        if spell_level != 0 || school.is_none() {
+            return;
+        }
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        if !caster.has_passive_feature(WAR_MAGIC_TAG) {
+            return;
+        }
+        if !caster.add_condition(
+            Condition::WarMagicPrimed,
+            crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+        ) {
+            return;
+        }
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  war magic: {}'s cantrip leaves an opening for a follow-up swing",
+            name
+        ));
     }
 
     /// 5e Conjuration Wizard **Benign Transposition** (subclass level 6)
@@ -53048,6 +53226,370 @@ mod tests {
         // Riposte reactive maneuvers, Dueling Fighting Style — all
         // still ride via the clone tail.
         assert!(e.actors[&samurai].has_extra_attack());
+    }
+
+    /// Eldritch Knight template drift pin. The subclass adds three tags,
+    /// five spells, one bonus action, a slot table and an INT bump — and
+    /// must still inherit the whole baseline Fighter kit through the
+    /// `..FIGHTER_TEMPLATE.clone()` tail. Any of those going missing is
+    /// a silent regression, since the missing half only shows up as
+    /// "the knight is weaker than expected" in play.
+    #[test]
+    fn eldritch_knight_ships_its_kit_and_inherits_the_fighter_chassis() {
+        use crate::actions::class_features::{
+            ACTION_SURGE_TAG, ELDRITCH_STRIKE_TAG, INDOMITABLE_TAG, PARRY_TAG, RIPOSTE_TAG,
+            SECOND_WIND_TAG, TRIP_ATTACK_TAG, WAR_MAGIC_TAG, WEAPON_BOND_TAG,
+        };
+        use crate::actors::creatures::fighters::{
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knight = e
+            .instantiate_creature(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // The three subclass tells.
+        for tag in [WEAPON_BOND_TAG, WAR_MAGIC_TAG, ELDRITCH_STRIKE_TAG] {
+            assert!(
+                e.actors[&knight].has_passive_feature(tag),
+                "Eldritch Knight should carry its own subclass tag {}",
+                tag
+            );
+        }
+        // Baseline chassis, inherited wholesale.
+        for tag in [
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            INDOMITABLE_TAG,
+            PARRY_TAG,
+            RIPOSTE_TAG,
+            TRIP_ATTACK_TAG,
+        ] {
+            assert!(
+                e.actors[&knight].has_passive_feature(tag),
+                "Eldritch Knight should inherit baseline Fighter tag {}",
+                tag
+            );
+        }
+        assert!(e.actors[&knight].has_extra_attack());
+        // The spell kit, plus the bonus action that cashes War Magic.
+        for name in [
+            "fire bolt",
+            "booming blade",
+            "shield",
+            "magic missile",
+            "misty step",
+            "war magic",
+        ] {
+            assert!(
+                e.actors[&knight].find_action(name).is_some(),
+                "Eldritch Knight should carry the {} action",
+                name
+            );
+        }
+        // Third-caster slot table and the INT bump that anchors the DC —
+        // both distinguish this template from the baseline, which has
+        // neither.
+        assert_eq!(
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE.spell_slots_by_level,
+            vec![4, 3],
+            "third-caster progression"
+        );
+        assert!(
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE.intelligence
+                > FIGHTER_TEMPLATE.intelligence,
+            "the knight's INT rises above the baseline fighter's to anchor the spell DC"
+        );
+        assert!(
+            FIGHTER_TEMPLATE.spell_slots_by_level.is_empty(),
+            "the baseline fighter stays slotless"
+        );
+    }
+
+    /// Every fighter-chassis template renders unambiguously: no two
+    /// share a name or a glyph. The per-template doc comments each claim
+    /// their glyph collides with no sibling; this is that claim.
+    #[test]
+    fn fighter_templates_have_distinct_names_and_glyphs() {
+        use crate::actors::creatures::fighters::{
+            CHAMPION_TEMPLATE, ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
+            SAMURAI_FIGHTER_TEMPLATE,
+        };
+        let templates = [
+            &*FIGHTER_TEMPLATE,
+            &*CHAMPION_TEMPLATE,
+            &*SAMURAI_FIGHTER_TEMPLATE,
+            &*ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+        ];
+        let names: std::collections::HashSet<&str> =
+            templates.iter().map(|t| t.name).collect();
+        assert_eq!(names.len(), templates.len(), "fighter names collide");
+        let glyphs: std::collections::HashSet<char> =
+            templates.iter().map(|t| t.glyph).collect();
+        assert_eq!(glyphs.len(), templates.len(), "fighter glyphs collide");
+    }
+
+    /// Eldritch Strike stamps the mark plus its back-link on any
+    /// connecting weapon hit. Driven over a seed sweep so at least one
+    /// swing lands; a knight without the tag never stamps.
+    #[test]
+    fn eldritch_strike_marks_the_target_on_a_weapon_hit() {
+        use crate::actors::creatures::fighters::{
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
+        };
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        // (hits, marks) — a nat 1 auto-misses, so the sweep can't assume
+        // every swing connects; what's under test is that the mark
+        // tracks hits exactly.
+        let run = |template: &'static CreatureTemplate| -> (usize, usize) {
+            let (mut hits, mut marked) = (0usize, 0usize);
+            for seed in 0..40u64 {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let knight = e
+                    .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                let (effects, dealt) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: knight,
+                        target_id: target,
+                        action_name: "scimitar",
+                        attack_bonus: 20, // force the hit; the mark is what's under test
+                        damage_dice: Dice::new(1, 6),
+                        damage_bonus: 3,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                        is_spell: false,
+                    },
+                );
+                if dealt > 0 {
+                    hits += 1;
+                }
+                for ef in effects {
+                    ef.apply(&mut e);
+                }
+                if e.actors[&target].has_condition(Condition::EldritchStruck) {
+                    assert_eq!(
+                        e.actors[&target].eldritch_struck_by(),
+                        Some(knight),
+                        "the mark carries the striking knight's id"
+                    );
+                    marked += 1;
+                }
+            }
+            (hits, marked)
+        };
+        let (knight_hits, knight_marks) = run(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE);
+        assert!(knight_hits > 0, "attack_bonus 20 should connect most swings");
+        assert_eq!(
+            knight_marks, knight_hits,
+            "every connecting swing stamps the mark, and only a connecting one"
+        );
+        let (plain_hits, plain_marks) = run(&FIGHTER_TEMPLATE);
+        assert!(plain_hits > 0, "control arm should also be landing swings");
+        assert_eq!(
+            plain_marks, 0,
+            "a fighter without the tag never stamps the mark"
+        );
+    }
+
+    /// The mark is caster-specific. A save against a *different*
+    /// caster's spell reads clean and leaves the mark standing; the save
+    /// against the knight who placed it consumes the mark and clears the
+    /// back-link with it.
+    #[test]
+    fn eldritch_strike_bends_only_the_marking_knights_spell_save() {
+        use crate::actors::creatures::fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, SetEldritchStruckBy};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knight = e
+            .instantiate_creature(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::EldritchStruck, ConditionTimer::Rounds(2));
+        SetEldritchStruckBy {
+            target_id: target,
+            striker: Some(knight),
+        }
+        .apply(&mut e);
+
+        // The team's wizard casting at the same target gets nothing —
+        // the mark belongs to the knight who swung.
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, wizard);
+        assert!(
+            e.actors[&target].has_condition(Condition::EldritchStruck),
+            "another caster's spell neither fires nor consumes the mark"
+        );
+
+        // The knight's own spell cashes it, once.
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, knight);
+        assert!(
+            !e.actors[&target].has_condition(Condition::EldritchStruck),
+            "the marking knight's spell consumes the mark"
+        );
+        assert_eq!(
+            e.actors[&target].eldritch_struck_by(),
+            None,
+            "removing the condition clears the back-link"
+        );
+    }
+
+    /// War Magic's prime is cantrip-only: `spell_level == 0` arms it,
+    /// any levelled cast leaves it alone, and a fighter without the tag
+    /// never arms it at all.
+    #[test]
+    fn war_magic_primes_on_cantrips_only() {
+        use crate::actors::creatures::fighters::{
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
+        };
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knight = e
+            .instantiate_creature(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+
+        // A levelled cast is not a cantrip.
+        let _ = e.dispatch_post_cast_triggers(knight, 2, &[], Some(SpellSchool::Evocation));
+        assert!(
+            !e.actors[&knight].has_condition(Condition::WarMagicPrimed),
+            "a levelled spell doesn't arm War Magic"
+        );
+        // Neither is a non-spell action: `Action::execute` opens a
+        // level-0 cast frame for every action it runs, and only the
+        // school tag separates a Fire Bolt from a scimitar swing. A
+        // knight who could arm the prime by swinging would get the
+        // War Magic follow-up for free.
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], None);
+        assert!(
+            !e.actors[&knight].has_condition(Condition::WarMagicPrimed),
+            "an untagged level-0 action is a weapon swing, not a cantrip"
+        );
+        // A cantrip is.
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation));
+        assert!(
+            e.actors[&knight].has_condition(Condition::WarMagicPrimed),
+            "a cantrip arms War Magic"
+        );
+        // No tag, no prime.
+        let _ = e.dispatch_post_cast_triggers(plain, 0, &[], Some(SpellSchool::Evocation));
+        assert!(
+            !e.actors[&plain].has_condition(Condition::WarMagicPrimed),
+            "a fighter without the tag never arms War Magic"
+        );
+    }
+
+    /// The War Magic bonus action is gated on the prime, hands back an
+    /// Action token, and burns the prime so it can't be cashed twice.
+    #[test]
+    fn war_magic_strike_trades_the_prime_for_an_action() {
+        use crate::actions::class_features::WAR_MAGIC_STRIKE;
+        use crate::actors::creatures::fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knight = e
+            .instantiate_creature(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Unprimed: the bonus action isn't available at all.
+        assert!(
+            !WAR_MAGIC_STRIKE.validate_input(&e, knight, None, None, None),
+            "War Magic needs a cantrip cast first"
+        );
+
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation));
+        let actor = e.actors.get_mut(&knight).unwrap();
+        actor.give_resource(Resource::BonusAction);
+        // Spend the Action the (notional) cantrip cost so the grant is
+        // observable rather than masked by an unspent token.
+        actor.consume_resource(Resource::Action);
+        assert!(!e.actors[&knight].can_consume_resource(Resource::Action));
+
+        assert!(WAR_MAGIC_STRIKE.validate_input(&e, knight, None, None, None));
+        let effects = WAR_MAGIC_STRIKE.execute(&mut e, knight, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&knight].can_consume_resource(Resource::Action),
+            "War Magic hands back an Action for the follow-up swing"
+        );
+        assert!(
+            !e.actors[&knight].has_condition(Condition::WarMagicPrimed),
+            "the prime is one-shot"
+        );
+        assert!(
+            !WAR_MAGIC_STRIKE.validate_input(&e, knight, None, None, None),
+            "and can't be cashed a second time"
+        );
+    }
+
+    /// Weapon Bond bounces the Disarmed install — but only while the
+    /// knight is on their feet. Incapacitating them (RAW's carve-out)
+    /// hands the disarm straight back.
+    #[test]
+    fn weapon_bond_blocks_disarm_unless_incapacitated() {
+        use crate::actors::creatures::fighters::{
+            ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE,
+        };
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let knight = e
+            .instantiate_creature(&ELDRITCH_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+
+        // Bonded: the disarm bounces.
+        e.actors
+            .get_mut(&knight)
+            .unwrap()
+            .add_condition(Condition::Disarmed, ConditionTimer::Rounds(1));
+        assert!(!e.actors[&knight].has_condition(Condition::Disarmed));
+
+        // Control: a fighter without the bond eats it.
+        e.actors
+            .get_mut(&plain)
+            .unwrap()
+            .add_condition(Condition::Disarmed, ConditionTimer::Rounds(1));
+        assert!(e.actors[&plain].has_condition(Condition::Disarmed));
+
+        // RAW carve-out: an incapacitated knight loses the bond.
+        {
+            let a = e.actors.get_mut(&knight).unwrap();
+            a.add_condition(Condition::Stunned, ConditionTimer::Rounds(1));
+            a.add_condition(Condition::Disarmed, ConditionTimer::Rounds(1));
+        }
+        assert!(
+            e.actors[&knight].has_condition(Condition::Disarmed),
+            "a stunned knight can be disarmed"
+        );
     }
 
     /// 5e Paladin Oath of the Ancients Nature's Ward (lv15): passive

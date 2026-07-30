@@ -173,6 +173,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''*. War Magic — Eldritch Knight bonus action, at-will,
+        //        available only on a turn the knight already spent
+        //        their Action on a cantrip. Sits next to Frenzy because
+        //        it is the same trade in a different costume: a bonus
+        //        action bought back into a fresh Action token. Its own
+        //        gate is the `WarMagicPrimed` condition, which the
+        //        post-cast hook installs — so this picker is a no-op on
+        //        every turn the knight opened by swinging, which is
+        //        most of them.
+        if let Some(aei) = try_war_magic(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'''. Eagle Dive — Eagle Totem barbarian bonus-action Dash
         //        while raging. Grants a fresh movement chunk for closing
         //        on a fleeing target. The action's validator gates on
@@ -3160,6 +3173,37 @@ fn try_frenzy(
     try_self_action(encounter, actor_id, "frenzy")
 }
 
+/// War Magic — Eldritch Knight Fighter bonus action (subclass lv7).
+/// Trades the bonus action for a fresh Action token on any turn the
+/// knight opened with a cantrip.
+///
+/// Two gates, and neither is a heuristic judgement call:
+///   1. The `WarMagicPrimed` condition is up — the knight cast a
+///      cantrip with their Action this turn. This is the whole feature,
+///      and it means the picker no-ops on the far more common
+///      swing-first turn without needing to know anything about the
+///      knight's build.
+///   2. At least one enemy is on the map within a generous window (24
+///      tiles — the spell-window cadence `try_self_action_when_enemy_within`
+///      already uses for payoffs the actor can spend across a few
+///      turns). The granted Action is worth having for a swing *or* a
+///      second cantrip, so unlike Frenzy this doesn't demand an
+///      adjacent target — but an empty room is still no reason to
+///      spend the bonus action.
+///
+/// No feature charge to check: War Magic is at-will, and the
+/// once-per-turn cap falls out of the prime being consumed on use.
+fn try_war_magic(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::WarMagicPrimed) {
+        return None;
+    }
+    try_self_action_when_enemy_within(encounter, actor_id, 24, "war magic")
+}
+
 /// Eagle Totem Spirit's Dash-as-bonus-action — Eagle Totem barbarian
 /// bonus action while raging. Grants a fresh movement chunk for kiting
 /// or closing. Fires only when there's at least one enemy that needs
@@ -5990,6 +6034,24 @@ mod tests {
                 Coordinate::new(6, 6),
                 0,
                 30,
+            );
+            // The Eldritch Knight is the first chassis in the driver
+            // that both swings and casts, which is the only way to
+            // exercise either of its mid-tier features end-to-end.
+            // Eldritch Strike stamps its mark from the weapon-hit
+            // chokepoint and cashes it at the save chokepoint, so the
+            // driver has to route a swing and a spell through the same
+            // actor against the same target across turns. War Magic
+            // needs the AI to actually open a turn with a cantrip —
+            // which happens whenever the knight is out of melee reach
+            // and reaches for Fire Bolt — and then find the bonus
+            // action still unspent.
+            use crate::actors::creatures::fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE;
+            let _ = e.instantiate_creature(
+                &ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                Coordinate::new(6, 8),
+                0,
+                31,
             );
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.

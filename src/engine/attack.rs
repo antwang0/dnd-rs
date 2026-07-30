@@ -3,7 +3,7 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
+    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetEldritchStruckBy,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
 
@@ -1078,6 +1078,48 @@ pub fn resolve_attack_outcome(
         if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
             caster.mark_divine_fury_used();
         }
+    }
+    // 5e Eldritch Knight Fighter **Eldritch Strike** (subclass lv10) —
+    // passive weapon-hit mark. RAW: "When you hit a creature with a
+    // weapon attack, that creature has disadvantage on the next saving
+    // throw it makes against a spell you cast before the end of your
+    // next turn."
+    //
+    // Two gates: not a spell attack (RAW: "with a weapon attack" — the
+    // knight's own Fire Bolt doesn't arm the next Fire Bolt), and the
+    // caster holds the tag. No melee gate — RAW says "a weapon attack",
+    // which covers the knight's longbow as readily as their longsword.
+    //
+    // The mark rides `Rounds(2)` rather than the one-round tick-down
+    // envelope its `UntilStartOfNextTurn` siblings use, because RAW's
+    // window is explicitly "before the end of your **next** turn": a
+    // knight who hits on turn N and casts on turn N+1 is inside the
+    // window, and a `UntilStartOfNextTurn` timer on the *target* would
+    // decay on the wrong actor's clock entirely. The cohort in
+    // `roll_save_against_caster` consumes the mark on the first save it
+    // bends, so the timer only ever matters for a mark that never gets
+    // cashed.
+    //
+    // Unlike the die-riders above this is not once-per-turn: every
+    // connecting swing re-stamps the mark, which is a no-op when one is
+    // already up (`add_condition` keeps the longer timer) and refreshes
+    // the window when it has partly decayed — matching RAW, where the
+    // clause fires on each hit rather than on the first.
+    if !p.is_spell
+        && encounter.actors.get(&p.caster_id).is_some_and(|a| {
+            a.has_passive_feature(crate::actions::class_features::ELDRITCH_STRIKE_TAG)
+        })
+    {
+        encounter.log("  eldritch strike: the blow rattles the target's guard".to_string());
+        effects.push(Box::new(ApplyCondition {
+            actor_id: p.target_id,
+            condition: Condition::EldritchStruck,
+            timer: ConditionTimer::Rounds(2),
+        }));
+        effects.push(Box::new(SetEldritchStruckBy {
+            target_id: p.target_id,
+            striker: Some(p.caster_id),
+        }));
     }
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,

@@ -1,14 +1,16 @@
 use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
-    DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELEGANT_COURTIER_TAG,
-    FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE,
-    INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG,
-    PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY,
-    RALLY_TAG, RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK,
-    SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
+    DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELDRITCH_STRIKE_TAG,
+    ELEGANT_COURTIER_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
+    INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
+    MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK,
+    PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG,
+    SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG, WAR_MAGIC_STRIKE,
+    WAR_MAGIC_TAG, WEAPON_BOND_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
+use crate::actions::spells::{BOOMING_BLADE, FIRE_BOLT, MAGIC_MISSILE, MISTY_STEP, SHIELD};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -397,4 +399,124 @@ pub static SAMURAI_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
     // `FEY_WANDERER_RANGER_TEMPLATE`.
     FIGHTER_TEMPLATE.with_subclass_tag("Samurai Fighter", 'S', ELEGANT_COURTIER_TAG)
+});
+
+/// Eldritch Knight Fighter — Martial Archetype **Eldritch Knight**
+/// subclass build (PHB), and with it every PHB Martial Archetype has a
+/// build in the engine: Champion (`CHAMPION_TEMPLATE`), Battle Master
+/// (the baseline `FIGHTER_TEMPLATE`, which carries the full maneuver
+/// suite), and now the third.
+///
+/// The first fighter chassis in the engine that casts. Four subclass
+/// features, all shipped:
+///
+///   - **Weapon Bond** (lv3) — the bonded blade can't be knocked away.
+///     Conditional immunity to `Disarmed`, gated on the knight not
+///     being incapacitated.
+///   - **War Magic** (lv7) — cast a cantrip with your Action, then take
+///     a weapon swing as a bonus action.
+///   - **Eldritch Strike** (lv10) — a connecting weapon hit gives the
+///     target disadvantage on its next save against a spell *you* cast.
+///   - **Arcane Charge** (lv15) — Action Surge also teleports you 30 ft.
+///
+/// The build's whole argument is that its two halves are worth less
+/// apart than together, and both of the mid-tier features say so from
+/// opposite directions. War Magic pays the knight for casting *before*
+/// swinging; Eldritch Strike pays them for swinging *before* casting.
+/// Neither ordering satisfies both in one turn — the swing War Magic
+/// buys arrives after the cantrip that armed it, and the spell Eldritch
+/// Strike sharpens arrives after the swing that marked the target — so
+/// the knight who wants both alternates across turns: cantrip-and-swing
+/// on turn N leaves a mark that turn N+1's levelled spell cashes, and
+/// that spell's landing sets up the next cantrip. A knight who commits
+/// to one half plays a strictly worse Champion or a strictly worse
+/// wizard.
+///
+/// Which makes this a different answer to "martial plus X" than the two
+/// siblings on the chassis give. The Battle Master's maneuvers are all
+/// spent from one pool on one turn's swing; the Champion's passives ask
+/// nothing at all. The Eldritch Knight is the only fighter build whose
+/// features are sequenced — they reward the *order* of turns rather
+/// than the contents of one.
+///
+/// **The spell list is deliberately narrow.** RAW restricts the
+/// Eldritch Knight to abjuration and evocation (plus two free picks),
+/// which is a flavor rule that also happens to be a balance rule: the
+/// knight gets no lockdown, no summons, and no save-or-suck. We honor
+/// it as-written rather than as a suggestion. Cantrips are Fire Bolt
+/// (the reach option — a knight pinned at range still has a turn) and
+/// Booming Blade (which routes through the weapon-attack chokepoint, so
+/// it arms Eldritch Strike *and* counts as a cantrip for War Magic —
+/// the one cast that satisfies both features at once, and the reason it
+/// is on the list). Level 1 is Shield (the reaction AC spike that makes
+/// the d10 chassis genuinely hard to hit) and Magic Missile (the
+/// no-roll damage floor for a turn where the swing is out of reach).
+/// Level 2 is Misty Step, the escape hatch a plate-armored caster
+/// otherwise lacks.
+///
+/// Absorb Elements and Shatter would both be RAW-legal and are left
+/// out: at `[4, 3]` slots the knight is choosing between Shield and
+/// everything else on most turns, and a fifth and sixth option would
+/// dilute a decision that is currently sharp.
+///
+/// **Stats.** Third-caster slots `[4, 3]` (4× level-1, 3× level-2) put
+/// this at roughly fighter level 10-13, which is also where War Magic
+/// and Eldritch Strike come online — the first subclass template on the
+/// chassis whose shipped features actually match its slot table rather
+/// than running above their RAW gate. INT rises to 14 from the
+/// baseline's 10 to anchor the spell save DC and Booming Blade's rider;
+/// STR stays 16 so the knight is a fighter first. HP and AC inherit the
+/// baseline (24 HP / AC 16 chain mail) via `..FIGHTER_TEMPLATE.clone()`,
+/// as do every Battle Master maneuver, Second Wind / Action Surge /
+/// Indomitable, Parry / Riposte, Extra Attack and the Dueling style —
+/// RAW-illegally, since a real Eldritch Knight doesn't get maneuvers,
+/// but consistent with how `SAMURAI_FIGHTER_TEMPLATE` inherits the same
+/// suite and with the engine-wide convention that a subclass template
+/// is the baseline chassis plus its subclass tell.
+///
+/// Arcane Charge (lv15) is the one feature left as future work: the
+/// teleport has to fire *as part of* Action Surge rather than as its
+/// own action, and the engine's `ActionSurge` impl has no post-grant
+/// hook to hang a destination picker on. Adding one for a single
+/// consumer would mean either a blind auto-teleport (which can strand
+/// the knight away from the enemy it just surged to reach) or a prompt
+/// channel the AI can't answer — the same reasoning that leaves the
+/// Transmuter's stone re-attunement and the Samurai's Rapid Strike out.
+///
+/// Glyph 'E' — for **E**ldritch Knight. Distinct from baseline Fighter
+/// 'F', Champion 'C' and Samurai 'S'.
+pub static ELDRITCH_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner the Samurai uses: this
+    // subclass adds actions (four spells plus the War Magic bonus
+    // action), three tags rather than one, a slot table, and an INT
+    // bump. The `..FIGHTER_TEMPLATE.clone()` tail still picks up
+    // everything else — AC, HP, STR, every maneuver, Parry / Riposte,
+    // Extra Attack, Dueling style — without an N-line field-by-field
+    // copy.
+    let mut actions = FIGHTER_TEMPLATE.actions.clone();
+    actions.push(&*FIRE_BOLT);
+    actions.push(&*BOOMING_BLADE);
+    actions.push(&*SHIELD);
+    actions.push(&*MAGIC_MISSILE);
+    actions.push(&*MISTY_STEP);
+    actions.push(&*WAR_MAGIC_STRIKE);
+    let mut features = FIGHTER_TEMPLATE.features.clone();
+    features.insert(WEAPON_BOND_TAG);
+    features.insert(WAR_MAGIC_TAG);
+    features.insert(ELDRITCH_STRIKE_TAG);
+    CreatureTemplate {
+        name: "Eldritch Knight",
+        glyph: 'E',
+        // INT 14 (+2) anchors the spell save DC at 8 + 2 prof + 2 = 12
+        // and Booming Blade's thunder rider. Modest by caster standards
+        // — which is correct: the knight's spells are shields and
+        // openers, not the win condition.
+        intelligence: 14,
+        // Third-caster progression. `[4, 3]` reads as four level-1 slots
+        // and three level-2s, matching a fighter around level 13.
+        spell_slots_by_level: vec![4, 3],
+        actions,
+        features,
+        ..FIGHTER_TEMPLATE.clone()
+    }
 });

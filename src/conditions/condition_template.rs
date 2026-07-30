@@ -1065,6 +1065,46 @@ pub enum Condition {
     /// fighter's next turn; we use the target-side tick-down envelope
     /// shared with Mocked / Helped / Goaded.
     Distracted,
+    /// Eldritch Struck (5e Eldritch Knight Fighter **Eldritch Strike**,
+    /// subclass level 10). The knight's blade has rattled the target's
+    /// footing for the spell that follows it: the next saving throw the
+    /// target makes against a spell cast *by the knight who hit them* is
+    /// rolled at disadvantage. Engine reads the `eldritch_struck_by`
+    /// link on the holder at the shared `CASTER_SAVE_MODE_RIDERS` cohort
+    /// in `roll_save_against_caster` — the same flag-plus-link shape as
+    /// `Distracted` + `distracted_by` and `Sworn` + `sworn_by`, but on
+    /// the save-roll axis rather than the attack-roll one, and
+    /// positive-polarity on the link like `Sworn` (a *match* is what
+    /// fires the rider; a different caster's spell reads clean).
+    ///
+    /// One-shot: the cohort's `consume` strips the mark the moment it
+    /// bends a save, so a knight who hits twice and then casts a
+    /// multi-target spell still only debuffs the first save. RAW's
+    /// window is "before the end of your next turn"; we install with
+    /// `Rounds(2)` so an unspent mark decays on its own rather than
+    /// dangling.
+    ///
+    /// Deliberately *not* on the `is_dispellable_buff` sweep — the mark
+    /// is a mundane weapon rattle in RAW's fiction (the Eldritch Knight
+    /// hits you with a sword; the magic is in what comes next), and the
+    /// engine's dispel lane only reaches spell effects.
+    EldritchStruck,
+    /// War Magic primed (5e Eldritch Knight Fighter **War Magic**,
+    /// subclass level 7). The knight has spent their Action on a cantrip
+    /// this turn, which unlocks the `WAR_MAGIC_STRIKE` bonus action for
+    /// a follow-up swing. Installed by the post-cast hook
+    /// `trigger_war_magic_prime` on any `spell_level == 0` cast by a
+    /// `WAR_MAGIC_TAG` holder; consumed by the bonus action itself.
+    ///
+    /// Tick-down timer (`UntilStartOfNextTurn`) — this is what enforces
+    /// RAW's same-turn window rather than a bespoke ledger: the timer
+    /// clears at the start of the holder's next turn, so an uncashed
+    /// prime can never fund a swing on a later turn's bonus action.
+    /// Same one-shot-prime envelope as the metamagic primes
+    /// (`HeightenedSpelling`, `SubtleSpelling`, ...) and the Cunning
+    /// Strike primes, differing only in what installs it: a completed
+    /// cast rather than a resource spend.
+    WarMagicPrimed,
     /// Sworn — 5e Paladin Oath of Vengeance Channel Divinity: Vow of
     /// Enmity (lv3 subclass feature, once per long rest). The target is
     /// marked as the paladin's chosen quarry: the swearing paladin (and
@@ -1535,6 +1575,8 @@ impl Condition {
             Condition::CausticBrewed => "splashed with caustic brew",
             Condition::DistractingAttacking => "primed to distract",
             Condition::Distracted => "distracted",
+            Condition::EldritchStruck => "eldritch-struck",
+            Condition::WarMagicPrimed => "primed with war magic",
             Condition::Sworn => "sworn-quarry of a vengeance paladin",
             Condition::Purified => "purified",
             Condition::PhantasmalForced => "haunted by a phantasm",

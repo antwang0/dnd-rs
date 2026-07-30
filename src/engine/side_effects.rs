@@ -1398,6 +1398,30 @@ impl ApplicableSideEffect for SetSwornBy {
     }
 }
 
+/// Record which Eldritch Knight's weapon hit marked the target (5e
+/// Eldritch Knight Fighter **Eldritch Strike**, subclass lv10). Pairs
+/// with ApplyCondition (EldritchStruck): the `CASTER_SAVE_MODE_RIDERS`
+/// cohort in `roll_save_against_caster` reads this to bend the target's
+/// next save against *this* knight's spell to disadvantage. Same
+/// positive-polarity flag-plus-link shape as `SetSwornBy` — only the
+/// marker benefits — but on the save-roll axis rather than the
+/// attack-roll one. `set_eldritch_struck_by(None)` clears the link
+/// explicitly; the engine also clears it automatically when the
+/// EldritchStruck condition is removed via `remove_condition`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetEldritchStruckBy {
+    pub target_id: usize,
+    pub striker: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetEldritchStruckBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_eldritch_struck_by(self.striker);
+        }
+    }
+}
+
 /// Single source of truth for "which conditions carry a back-link to
 /// the actor that applied them, and what `Set*By` side-effect installs
 /// that link." Returns `Some(boxed_side_effect)` for the four flag-plus-

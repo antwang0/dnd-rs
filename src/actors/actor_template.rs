@@ -923,6 +923,27 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
         ),
         suppressed: &[Condition::Charmed],
     },
+    // 5e Eldritch Knight Fighter **Weapon Bond** (subclass lv3, PHB):
+    // "you can't be disarmed of that weapon unless you are
+    // incapacitated." The engine's only disarm source today is the
+    // Battle Master's Disarming Attack maneuver, whose STR-save failure
+    // installs `Disarmed`; the bond bounces that install.
+    //
+    // The compound gate is what keeps this RAW rather than a strictly
+    // better `condition_immunities` entry: the closure checks the tag
+    // AND `!is_incapacitated()`, so a Stunned / Paralyzed / Unconscious
+    // knight — every condition that inherits Incapacitated — loses the
+    // bond and can be disarmed normally. Same two-clause closure shape
+    // as the Mindless Rage row above (tag AND live condition state),
+    // which is the reason this lane exists at all rather than the flat
+    // template set.
+    FlagDrivenImmunity {
+        flag: |a| {
+            a.has_passive_feature(crate::actions::class_features::WEAPON_BOND_TAG)
+                && !a.is_incapacitated()
+        },
+        suppressed: &[Condition::Disarmed],
+    },
 ];
 
 /// 5e Transmutation Wizard **Transmuter's Stone** (subclass level 6) —
@@ -3430,6 +3451,17 @@ pub struct ActorInstance {
     /// advantage, rather than a *mismatch* imposing disadvantage on
     /// non-counterparties. Cleared when the Sworn condition lifts.
     sworn_by: Option<usize>,
+    /// Identity of the Eldritch Knight whose weapon hit marked this actor
+    /// (5e Eldritch Knight Fighter **Eldritch Strike**, subclass lv10).
+    /// Paired with the `EldritchStruck` condition: the next saving throw
+    /// this actor makes against a spell cast by *this* knight is rolled
+    /// at disadvantage. Same flag-plus-link shape as `sworn_by` and the
+    /// same positive polarity — a *match* on the link fires the rider,
+    /// so a second caster on the knight's team gets no benefit from the
+    /// fighter's swing. Read at the shared `CASTER_SAVE_MODE_RIDERS`
+    /// cohort in `roll_save_against_caster`; cleared when the
+    /// `EldritchStruck` condition lifts.
+    eldritch_struck_by: Option<usize>,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
@@ -3709,6 +3741,7 @@ impl ActorInstance {
             goaded_by: None,
             distracted_by: None,
             sworn_by: None,
+            eldritch_struck_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             warding_partner: None,
@@ -3879,6 +3912,20 @@ impl ActorInstance {
 
     pub fn set_sworn_by(&mut self, id: Option<usize>) {
         self.sworn_by = id;
+    }
+
+    /// Identity of the Eldritch Knight whose weapon hit marked this
+    /// actor (Eldritch Strike). Read by the `CASTER_SAVE_MODE_RIDERS`
+    /// cohort to bend the target's next save against *that* knight's
+    /// spell to disadvantage. Positive-polarity sibling of `sworn_by`
+    /// on the "only the marker benefits" lane, but on the save-roll
+    /// axis rather than the attack-roll one.
+    pub fn eldritch_struck_by(&self) -> Option<usize> {
+        self.eldritch_struck_by
+    }
+
+    pub fn set_eldritch_struck_by(&mut self, id: Option<usize>) {
+        self.eldritch_struck_by = id;
     }
 
     /// Caster id this actor is currently Warding-Bonded to (5e
@@ -5596,6 +5643,7 @@ impl ActorInstance {
                 Condition::Goaded => self.goaded_by = None,
                 Condition::Distracted => self.distracted_by = None,
                 Condition::Sworn => self.sworn_by = None,
+                Condition::EldritchStruck => self.eldritch_struck_by = None,
                 Condition::WardingBonded => self.warding_partner = None,
                 _ => {}
             }

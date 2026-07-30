@@ -4781,6 +4781,175 @@ pub const PARRY_TAG: &str = "fighter.parry";
 /// `BATTLE_MASTER_MANEUVERS`.
 pub const RIPOSTE_TAG: &str = "fighter.riposte";
 
+/// Class-feature tag for the Eldritch Knight Fighter's **Weapon Bond**
+/// (subclass level 3). RAW: the knight performs a ritual binding one
+/// weapon to themselves; while it is bonded they "can't be disarmed of
+/// that weapon unless [they are] incapacitated," and they can summon it
+/// to hand as a bonus action.
+///
+/// The summoning half has no engine surface — the engine tracks no
+/// weapon location, so a weapon is never anywhere but in its wielder's
+/// hands. The disarm half does: `Condition::Disarmed` is a live debuff
+/// installed by the Battle Master's Disarming Attack maneuver (and any
+/// future disarm source), so Weapon Bond reads as a conditional
+/// immunity to it.
+///
+/// The conditionality is the whole feature — an unconditional immunity
+/// would be a strictly better `condition_immunities` entry and would
+/// lose RAW's escape hatch. It rides `dynamic_immunity_to` next to
+/// Halfling Brave (Frightened) and Fey Ancestry (Charmed / Asleep),
+/// which is the chokepoint that already evaluates immunity against live
+/// actor state rather than a static template set. The "unless
+/// incapacitated" carve-out maps onto `is_incapacitated`, so a
+/// Stunned / Paralyzed / Unconscious knight can still be disarmed —
+/// exactly RAW.
+pub const WEAPON_BOND_TAG: &str = "fighter.weapon_bond";
+
+/// Class-feature tag for the Eldritch Knight Fighter's **War Magic**
+/// (subclass level 7). RAW: "When you use your action to cast a
+/// cantrip, you can make one weapon attack as a bonus action."
+///
+/// Passive — there is no charge to spend and no rest cadence. The tag
+/// gates the post-cast hook `trigger_war_magic_prime`, which installs
+/// `Condition::WarMagicPrimed` on the knight whenever they finish
+/// casting a cantrip (`spell_level == 0`). The `WAR_MAGIC_STRIKE`
+/// bonus action below reads the prime and hands back the swing.
+///
+/// The prime's `UntilStartOfNextTurn` timer is what enforces RAW's
+/// same-turn window: it clears at the start of the holder's *next*
+/// turn, so a cantrip cast on turn N can only be cashed in on turn N's
+/// bonus action, and an uncashed prime never lingers into turn N+1's
+/// action economy.
+pub const WAR_MAGIC_TAG: &str = "fighter.war_magic";
+
+/// War Magic — Eldritch Knight bonus action, at-will, gated on having
+/// cast a cantrip earlier this turn (`Condition::WarMagicPrimed`).
+///
+/// RAW hands back "one weapon attack"; we hand back one **Action**,
+/// which the knight then spends on a weapon action. That is the same
+/// collapse `FlurryOfBlows` and `WarPriest` already make, and for the
+/// same reason: the engine's action economy has no "make exactly one
+/// weapon attack right now" primitive, and building one for a single
+/// feature would duplicate the whole attack-targeting pipeline. The
+/// deviation is that a granted Action can technically be spent on a
+/// second cantrip instead of a swing — which costs the knight the swing
+/// they wanted and cannot loop, since re-priming still needs a bonus
+/// action the turn has already spent.
+///
+/// The cantrip-first ordering is what makes the feature a real tempo
+/// decision rather than free damage: the knight's Action is committed
+/// to a cantrip *before* the prime exists, so taking War Magic means
+/// giving up the Attack action (and with it Extra Attack's second
+/// swing) in exchange for a cantrip plus one swing.
+pub struct WarMagicStrike {}
+
+impl Action for WarMagicStrike {
+    fn name(&self) -> &str {
+        "war magic"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wm", "warmagic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_passive_feature(WAR_MAGIC_TAG)
+                && a.has_condition(Condition::WarMagicPrimed)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Burn the prime immediately so a knight who somehow reaches a
+        // second bonus action in a turn can't cash the same cantrip
+        // twice. The `UntilStartOfNextTurn` timer would eventually do
+        // this anyway; the explicit strip makes the one-shot contract
+        // local to the feature rather than dependent on the tick order.
+        if let Some(knight) = encounter.actors.get_mut(&caster_id) {
+            knight.remove_condition(Condition::WarMagicPrimed);
+        }
+        encounter.log(
+            "  war magic: the knight's cantrip flows into a follow-up weapon swing.".to_string(),
+        );
+        grant_extra_action(caster_id)
+    }
+}
+
+pub static WAR_MAGIC_STRIKE: LazyLock<WarMagicStrike> = LazyLock::new(|| WarMagicStrike {});
+
+/// Class-feature tag for the Eldritch Knight Fighter's **Eldritch
+/// Strike** (subclass level 10). RAW: "When you hit a creature with a
+/// weapon attack, that creature has disadvantage on the next saving
+/// throw it makes against a spell you cast before the end of your next
+/// turn."
+///
+/// Passive, no charge, no rest cadence — the tag is read at the
+/// weapon-hit chokepoint in `resolve_attack_outcome`, which stamps
+/// `Condition::EldritchStruck` plus the `eldritch_struck_by` back-link
+/// onto the target. The rider is cashed by the shared
+/// `CASTER_SAVE_MODE_RIDERS` cohort in `roll_save_against_caster`.
+///
+/// The feature is what makes the Eldritch Knight's two halves one
+/// build rather than two: a fighter who only swings never notices it,
+/// and a fighter who only casts never arms it. Landing a swing and
+/// *then* casting is the line, which is also the line War Magic wants
+/// reversed (cantrip first, swing second) — the subclass rewards
+/// alternating rather than committing, across turns.
+pub const ELDRITCH_STRIKE_TAG: &str = "fighter.eldritch_strike";
+
+/// Class-feature tag for the Arcane Trickster Rogue's **Magical
+/// Ambush** (subclass level 9). RAW: "If you are hidden from a creature
+/// when you cast a spell on it, the creature has disadvantage on any
+/// saving throw it makes against the spell this turn."
+///
+/// Passive, no charge — read at the shared `CASTER_SAVE_MODE_RIDERS`
+/// cohort in `roll_save_against_caster`, gated on the trickster holding
+/// `Condition::Hidden` at cast time.
+///
+/// Two RAW clauses collapse. "Hidden *from that creature*" becomes
+/// "Hidden" flat: the engine's `Hidden` is a global concealment flag
+/// with no per-observer ledger, the same simplification every other
+/// Hidden consumer (`grants_self_attack_advantage`, the Assassin's
+/// opening-round advantage) already makes. And "any saving throw ...
+/// this turn" becomes the first one, because the cohort consumes
+/// `Hidden` on the trigger — casting a spell at someone gives your
+/// position away just as surely as shooting at them does, which is
+/// exactly why `CONSUMED_ON_ATTACK` already drops `Hidden` on an attack
+/// roll. Both collapses cut the same direction: toward the rogue
+/// spending their concealment rather than holding it.
+pub const MAGICAL_AMBUSH_TAG: &str = "rogue.magical_ambush";
+
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,
 /// recover spell slots whose combined levels equal half the wizard's
