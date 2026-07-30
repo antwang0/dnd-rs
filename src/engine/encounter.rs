@@ -1219,6 +1219,29 @@ pub struct EncounterInstance {
     /// enclosing `execute`. `current_cast` always reads the innermost
     /// frame, which is the cast a nested site is actually part of.
     cast_stack: Vec<CastContext>,
+    /// Actor whose turn `start_turn_for` has already run for, or `None`
+    /// when the current initiative slot hasn't been opened yet.
+    ///
+    /// The latch exists because "the current actor's turn has started"
+    /// and "the initiative index moved" are not the same event, and the
+    /// engine has paths where only the second happens. Cleared by
+    /// `advance_initiative` (the index moved, so nobody's turn has
+    /// started yet) and set by `start_turn_for`; `ensure_turn_started`
+    /// closes the gap immediately before a prompt is issued.
+    ///
+    /// Two paths need it. The **first actor of the encounter** never
+    /// advances into their slot, so nothing else would ever open their
+    /// turn. And an actor who **dies on their own turn** vacates the
+    /// slot without an advance —
+    /// `InitiativeTracker::remove_actor` deliberately lets the next
+    /// actor slide into the vacated index — so that actor is prompted
+    /// off a slot change that no `advance_initiative` accompanied.
+    ///
+    /// It also keeps the *idempotence* the old code got by construction:
+    /// `process_stack` runs once per action, so an actor taking three
+    /// actions in a turn must not have their resources reset between
+    /// them. Matching ids is what suppresses that.
+    turn_started_for: Option<usize>,
 }
 
 /// One frame of the in-flight spell-cast stack — the resolved identity
@@ -4461,6 +4484,7 @@ impl EncounterInstance {
             outcome_tracker: OutcomeTracker::new(),
             multiattack_depth: 0,
             cast_stack: Vec::new(),
+            turn_started_for: None,
         }
     }
 
@@ -5640,6 +5664,10 @@ impl EncounterInstance {
             }
             None => return,
         };
+        // Latched only on the path that actually opened a turn: a
+        // missing actor means the slot is stale, and `process_stack`'s
+        // own guard is what repairs the queue in that case.
+        self.turn_started_for = Some(actor_id);
         for c in expired {
             self.log(format!("{} is no longer {}.", name, c.name()));
         }
@@ -5683,11 +5711,39 @@ impl EncounterInstance {
     /// `initiative_tracker.advance()` directly so condition timers,
     /// concentration saves, etc. all run at the right moment.
     fn advance_initiative(&mut self) {
+        // The slot moved, so whoever lands in it has not had their turn
+        // opened yet — even when the queue has a single actor and the
+        // "move" lands back on the same id. `ensure_turn_started` reads
+        // this to decide whether a prompt needs a turn start first.
+        self.turn_started_for = None;
         let wrapped = self.initiative_tracker.advance();
         if wrapped {
             self.round = self.round.saturating_add(1);
             self.round_end();
         }
+    }
+
+    /// Open the current initiative slot's turn if it hasn't been opened
+    /// yet. Idempotent: repeated calls within one turn are no-ops, which
+    /// is what lets `process_stack` call this before every prompt
+    /// without resetting the resources of an actor mid-turn.
+    ///
+    /// This is the one place that guarantees the engine's
+    /// "every prompted actor has had `start_turn_for` run" invariant.
+    /// The two explicit `advance_initiative` + `start_turn_for` pairs
+    /// (`skip_turn`, and the dying-actor sweep in `process_stack`) stay
+    /// as they are — they set the latch, so this call sees nothing to
+    /// do. What it catches is the slot changing *without* an advance:
+    /// the encounter's very first actor, and the actor who slides into
+    /// the index of someone who died on their own turn.
+    fn ensure_turn_started(&mut self) {
+        let Some(curr_id) = self.initiative_tracker.current_player() else {
+            return;
+        };
+        if self.turn_started_for == Some(curr_id) {
+            return;
+        }
+        self.start_turn_for(curr_id);
     }
 
     /// 1-indexed encounter round counter. UI surfaces this so the
@@ -8459,6 +8515,15 @@ impl EncounterInstance {
             return;
         }
 
+        // Open the current slot's turn before anything resolves. This is
+        // the call that catches the encounter's very first actor, who
+        // never advances into their slot and so would otherwise act with
+        // no turn start at all. It has to come *before* the stack drains
+        // rather than after: an action resolved this call can install
+        // `UntilStartOfNextTurn` state (Dodge, Disengage), and opening
+        // the turn afterwards would retroactively expire it.
+        self.ensure_turn_started();
+
         while let Some(se) = self.encounter_stack.pop() {
             match se.entry {
                 StackElementEntry::Prompt(p) => {
@@ -8533,6 +8598,15 @@ impl EncounterInstance {
         let Some(current_player_id) = self.initiative_tracker.current_player() else {
             return;
         };
+        // Second call, and not a redundant one: the slot can change
+        // between the top of this function and here without any
+        // `advance_initiative` to announce it — an actor who dies on
+        // their own turn (a damage reflect, a Hellish Rebuke) vacates
+        // their index and `InitiativeTracker::remove_actor` lets the
+        // next actor slide into it. That actor is about to be prompted,
+        // and this is what opens their turn. A no-op whenever the slot
+        // didn't move, since the latch still matches.
+        self.ensure_turn_started();
         let Some(current_player) = self.actors.get(&current_player_id) else {
             return;
         };
@@ -53566,6 +53640,141 @@ mod tests {
         assert!(
             !WAR_MAGIC_STRIKE.validate_input(&e, knight, None, None, None),
             "and can't be cashed a second time"
+        );
+    }
+
+    /// Every actor the engine prompts has had `start_turn_for` run for
+    /// them first. That is the invariant `ensure_turn_started` exists to
+    /// hold, and it used to have two holes.
+    ///
+    /// **Hole one — the first actor of the encounter.** `initialize`
+    /// leaves the initiative slot at index 0 and nothing calls
+    /// `start_turn_for`; the only two production callers both sat
+    /// *after* an `advance_initiative`. So the actor who won initiative
+    /// was prompted without their turn ever starting — no
+    /// `mark_taken_turn_in_combat` (an Assassin got Assassinate
+    /// advantage against them all round, after they had already acted),
+    /// no `UntilStartOfNextTurn` expiry, no recharge roll.
+    ///
+    /// **Hole two — an actor who dies on their own turn.**
+    /// `InitiativeTracker::remove_actor` deliberately lets the next
+    /// actor slide into the vacated index, on the documented assumption
+    /// that the caller won't advance. But the actor who slid in is then
+    /// prompted through the same no-advance path, so they too were
+    /// prompted with no turn start — inheriting whatever resources they
+    /// had left from their *previous* turn. Reachable through every
+    /// damage-reflect lane (Fire Shield, Armor of Agathys, a
+    /// salamander's Heated Body) and through Hellish Rebuke.
+    ///
+    /// This pins the first hole directly, which is the one that needs no
+    /// setup: initiative order is seed-dependent, so the test asserts
+    /// against whoever won rather than a fixed id.
+    #[test]
+    fn the_first_actor_prompted_has_had_their_turn_started() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+        // `ei_with_terrain` builds an already-initialized encounter, so
+        // spawn into it and let `instantiate_creature` wire the queue.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let b = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        for id in [a, b] {
+            assert!(
+                !e.actors[&id].has_taken_turn_in_combat(),
+                "latch starts clear"
+            );
+        }
+        e.process_stack();
+        let prompted = e.peek_prompt().map(|p| p.actor_id()).expect("a prompt");
+        assert!(
+            e.actors[&prompted].has_taken_turn_in_combat(),
+            "the actor being prompted has had their turn started"
+        );
+        // And the one who hasn't been prompted still hasn't — the latch
+        // is per-actor, not a blanket flip.
+        let other = if prompted == a { b } else { a };
+        assert!(
+            !e.actors[&other].has_taken_turn_in_combat(),
+            "an actor whose slot hasn't come up is untouched"
+        );
+    }
+
+    /// The second hole in the same invariant: an actor who dies on their
+    /// own turn vacates their initiative index without an
+    /// `advance_initiative`, and `InitiativeTracker::remove_actor` lets
+    /// the next actor slide into it. That actor gets prompted off a slot
+    /// change nothing announced, so before `ensure_turn_started` they
+    /// acted with no turn start — carrying whatever action economy was
+    /// left from their previous turn, with `UntilStartOfNextTurn`
+    /// conditions unexpired and recharge abilities un-rolled.
+    ///
+    /// Four actors, two per team, so killing the leader leaves both
+    /// teams standing and the encounter still wants a prompt. Which
+    /// actor leads is seed-dependent, so the test kills whoever it is.
+    #[test]
+    fn dying_on_your_own_turn_still_starts_the_next_actors_turn() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mut ids = Vec::new();
+        for (i, (tpl, team)) in [
+            (&*GOBLIN_TEMPLATE, 0usize),
+            (&*GOBLIN_TEMPLATE, 0),
+            (&*SKELETON_TEMPLATE, 1),
+            (&*SKELETON_TEMPLATE, 1),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            ids.push(
+                e.instantiate_creature(
+                    tpl,
+                    Coordinate::new(2 + (i as isize) * 4, 2),
+                    team,
+                    i,
+                )
+                .unwrap(),
+            );
+        }
+        e.process_stack();
+        let leader = e.peek_prompt().map(|p| p.actor_id()).expect("a prompt");
+        e.pop_prompt();
+        // The actor next in line hasn't had a turn yet.
+        let next = e.initiative_actor_ids()[1];
+        assert_ne!(next, leader);
+        assert!(!e.actors[&next].has_taken_turn_in_combat());
+
+        // Kill the leader from *inside* a `process_stack` drain, the way
+        // a damage reflect resolving off the leader's own swing does.
+        // Queueing the damage as a side-effect rather than mutating HP
+        // directly is what makes this exercise the pre-prompt half of
+        // the fix: the slot changes after `process_stack` has already
+        // opened the leader's turn, so only the second
+        // `ensure_turn_started` can catch it.
+        let hp = e.actors[&leader].max_hitpoints() + 1;
+        e.enqueue_event(StackElementEntry::SideEffect(Box::new(
+            crate::engine::side_effects::DealDamage {
+                actor_id: leader,
+                amount: hp,
+                damage_type: DamageType::Slashing,
+            },
+        )));
+        e.process_stack();
+        assert!(!e.actors.contains_key(&leader), "leader is gone");
+        let prompted = e
+            .peek_prompt()
+            .map(|p| p.actor_id())
+            .expect("the next actor is prompted");
+        assert_eq!(prompted, next, "the slot passes to the next actor in line");
+        assert!(
+            e.actors[&next].has_taken_turn_in_combat(),
+            "and their turn is actually opened rather than inherited"
         );
     }
 
