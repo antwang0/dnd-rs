@@ -133,28 +133,17 @@ fn spell_attack_outcome(
     // attack_mode_with_riders so a one-shot Help grant on the caster is
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
-    let mut mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee);
-    // 5e target-side reactive per-rest disadvantage-imposing features
-    // (Light Domain Cleric Warding Flare lv1, Great Old One Warlock
-    // Entropic Ward lv6, and any future sibling): mirrored from the
-    // weapon-attack path in `engine::attack::resolve_attack` since
-    // RAW's "attack roll" trigger applies to spell attacks too. The
-    // target may spend their reaction + per-rest charge to impose
-    // disadvantage on this spell attack roll. Layered here (after
-    // `attack_mode_with_riders`) so any advantage the spell attack
-    // picked up from Help / Bless / Hidden still combines cleanly with
-    // the reactive disadvantage via `RollMode::combine`. Skipped when
-    // the mode is already disadvantage (a wasted per-rest charge would
-    // provide no additional tax). Routes through the shared
-    // `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort so a hypothetical
-    // Light Cleric / Great Old One Warlock multiclass burns at most
-    // one charge per incoming spell attack — iteration stops on first
-    // firing.
-    if mode != crate::engine::dice::RollMode::Disadvantage
-        && encounter.apply_reactive_attack_disadvantage(target_id, caster_id)
-    {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
-    }
+    let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee);
+    // Defender-side reactive taxes on the attack roll — Fighting Style:
+    // Protection and the per-rest `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`
+    // cohort (Light Cleric Warding Flare, Great Old One Warlock Entropic
+    // Ward). Shared with the weapon path in `engine::attack` through one
+    // engine chokepoint, since RAW's triggers ("when a creature you can
+    // see attacks a target other than you" / "when a creature attacks
+    // you") say nothing about weapons. Layered here, after
+    // `attack_mode_with_riders`, so advantage the spell picked up from
+    // Help / Bless / Hidden still combines cleanly via `RollMode::combine`.
+    let mode = encounter.apply_reactive_attack_taxes(caster_id, target_id, mode);
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls
@@ -326,6 +315,20 @@ fn spell_attack_outcome(
             is_crit,
             DamageType::Necrotic,
             "hex",
+        );
+    }
+    // Melee retaliation against the caster. Every reflect source — Fire
+    // Shield, Armor of Agathys, Investiture of Flame, and the creature-
+    // intrinsic ones — triggers on RAW's "hits you with a melee attack",
+    // and a touch spell is a melee attack. Shared with the weapon path so
+    // a wizard who reaches out to Shocking Grasp a Fire Shielded target
+    // eats the same 2d8 a fighter would.
+    if is_melee {
+        crate::engine::attack::push_melee_reflect_riders(
+            encounter,
+            &mut effects,
+            caster_id,
+            target_id,
         );
     }
     (effects, total_dmg)

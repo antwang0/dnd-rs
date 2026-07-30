@@ -7399,6 +7399,58 @@ impl EncounterInstance {
         false
     }
 
+    /// Apply every reactive "tax the incoming attack roll" feature and
+    /// return the resulting roll mode. The single chokepoint both attack
+    /// paths use for the defender-side disadvantage lane, in RAW-priority
+    /// order:
+    ///
+    ///   1. **Fighting Style: Protection** — an ally adjacent to the
+    ///      target burns their reaction to impose disadvantage. Free
+    ///      (no per-rest charge), so it goes first: a target with both a
+    ///      Protection ally and a self-carried per-rest ward shouldn't
+    ///      spend the scarce charge when the free reaction covers it.
+    ///   2. The `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort (Warding
+    ///      Flare, Entropic Ward) — skipped when the mode is already
+    ///      disadvantage, since a second source adds no tax.
+    ///
+    /// Neither lane has a weapon-only qualifier in RAW — Protection is
+    /// "when a creature you can see attacks a target other than you",
+    /// the cohort rows are "when a creature attacks you" — so both fire
+    /// on weapon swings and spell attacks alike. Keeping the pair in one
+    /// helper is what makes that true by construction; when the two
+    /// chokepoints each open-coded the sequence, Protection was on the
+    /// weapon path only and a wizard's Fire Bolt walked past a
+    /// protecting ally untaxed.
+    ///
+    /// Resolved here rather than inside `compute_attack_mode` because
+    /// both lanes spend reactions and log, and `compute_attack_mode` is
+    /// a `&self` read chokepoint.
+    pub fn apply_reactive_attack_taxes(
+        &mut self,
+        attacker_id: usize,
+        target_id: usize,
+        mode: crate::engine::dice::RollMode,
+    ) -> crate::engine::dice::RollMode {
+        use crate::engine::dice::RollMode;
+        let mut mode = mode;
+        if let Some(protector_id) = self.first_eligible_protector(attacker_id, target_id) {
+            mode = mode.combine(RollMode::Disadvantage);
+            if let Some(protector) = self.actors.get_mut(&protector_id) {
+                protector.consume_resource(crate::engine::side_effects::Resource::Reaction);
+            }
+            self.log(
+                "  protection: attack against target imposed disadvantage (protector's reaction spent)"
+                    .to_string(),
+            );
+        }
+        if mode != RollMode::Disadvantage
+            && self.apply_reactive_attack_disadvantage(target_id, attacker_id)
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        mode
+    }
+
     /// Common gate + spend + log body for a single
     /// `ReactiveDisadvantageSource` row. Returns `true` when the gate
     /// passes and the reaction + per-rest charge are spent. Returns
@@ -53339,6 +53391,83 @@ mod tests {
         // Riposte reactive maneuvers, Dueling Fighting Style — all
         // still ride via the clone tail.
         assert!(e.actors[&samurai].has_extra_attack());
+    }
+
+    /// Fighting Style: Protection has no weapon-only qualifier in RAW —
+    /// "when a creature you can see attacks a target other than you that
+    /// is within 5 feet of you" — so a protecting ally taxes an incoming
+    /// *spell* attack too. Both attack paths now share one
+    /// `apply_reactive_attack_taxes` chokepoint; before they did, only
+    /// weapon swings were taxed and a wizard's Fire Bolt walked past the
+    /// protector untouched.
+    #[test]
+    fn protection_style_taxes_spell_attacks() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        let protector = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&protector)
+            .unwrap()
+            .set_protection_style(true);
+        assert!(e.actors[&protector].can_consume_resource(Resource::Reaction));
+        let target_vec = vec![target];
+        FIRE_BOLT.side_effects(&mut e, wizard, Some(&target_vec), None, None);
+        assert!(
+            !e.actors[&protector].can_consume_resource(Resource::Reaction),
+            "the protector should spend their reaction taxing a spell attack"
+        );
+    }
+
+    /// Melee reflect sources trigger on RAW's "hits you with a melee
+    /// attack", which a touch spell satisfies. A Fire Shielded target
+    /// bounces 2d8 fire back at a wizard who reaches out with Shocking
+    /// Grasp, exactly as it would at a fighter with a longsword — the
+    /// spell path shares `push_melee_reflect_riders` with the weapon path.
+    #[test]
+    fn melee_spell_attacks_trigger_the_reflect_riders() {
+        use crate::actions::spells::SHOCKING_GRASP;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        for _ in 0..80 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&target).unwrap().add_condition(
+                Condition::FireShielded,
+                ConditionTimer::Rounds(10),
+            );
+            let wizard_hp = e.actors[&wizard].hitpoints();
+            let target_vec = vec![target];
+            let effects = SHOCKING_GRASP.side_effects(&mut e, wizard, Some(&target_vec), None, None);
+            if effects.is_empty() {
+                continue;
+            }
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            assert!(
+                e.actors[&wizard].hitpoints() < wizard_hp,
+                "fire shield should burn the wizard who touched the target"
+            );
+            return;
+        }
+        panic!("shocking grasp never connected in 80 attempts");
     }
 
     /// Cavalier template drift pin: two subclass tags, a CON bump for

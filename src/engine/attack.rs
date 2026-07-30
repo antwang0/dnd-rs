@@ -841,48 +841,17 @@ pub fn resolve_attack_outcome(
     // only because it installs the condition too.
     let mut mode =
         encounter.attack_mode_with_riders(p.caster_id, p.target_id, p.is_melee);
-    // 5e Fighting Style: **Protection** — a target-adjacent ally (NOT
-    // the target itself) with the Protection flag and an unspent
-    // reaction may burn their reaction to impose disadvantage on THIS
-    // attack. RAW: "when a creature you can see attacks a target other
-    // than you that is within 5 feet of you". The eligibility scan
-    // lives on the encounter (`first_eligible_protector`) so the ally-
-    // sweep chokepoint stays shared with other ally-adjacency features.
-    // Resolved HERE (rather than inside `compute_attack_mode`) because
-    // the reaction spend needs `&mut encounter`, and `compute_attack_mode`
-    // is a `&self` read chokepoint. Ordering-wise: Protection fires
-    // before the help / bless one-shot rider consumption below, so a
-    // Protection-tax swing STILL burns the attacker's Help / Hidden /
-    // Inspired priming — RAW: those primes are consumed on the roll,
-    // regardless of disadvantage.
-    if let Some(protector_id) = encounter.first_eligible_protector(p.caster_id, p.target_id) {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
-        if let Some(protector) = encounter.actors.get_mut(&protector_id) {
-            protector.consume_resource(crate::engine::side_effects::Resource::Reaction);
-        }
-        encounter.log(
-            "  protection: attack against target imposed disadvantage (protector's reaction spent)",
-        );
-    }
-    // 5e target-side reactive per-rest disadvantage-imposing features
-    // (Light Domain Cleric Warding Flare lv1, Great Old One Warlock
-    // Entropic Ward lv6, and any future sibling). Wired here rather
-    // than inside `compute_attack_mode` because the reaction spend +
-    // log needs `&mut encounter`. RAW is "any attack roll" — no
-    // weapon-only qualifier — so the same helper fires on spell
-    // attacks via `spell_attack_outcome`. Layered AFTER Protection so
-    // a target with both an adjacent Protection ally AND a
-    // self-carried Warding Flare / Entropic Ward doesn't waste the
-    // per-rest charge when Protection already handled the tax. Routes
-    // through the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`
-    // cohort so a hypothetical Light Cleric / Great Old One Warlock
-    // multiclass burns at most one per-rest charge per incoming
-    // attack — iteration stops on first firing.
-    if mode != crate::engine::dice::RollMode::Disadvantage
-        && encounter.apply_reactive_attack_disadvantage(p.target_id, p.caster_id)
-    {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
-    }
+    // Defender-side reactive taxes on the attack roll — Fighting Style:
+    // Protection (an adjacent ally spends their reaction) and the
+    // `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` per-rest cohort (Warding
+    // Flare, Entropic Ward). Both lanes live behind one engine
+    // chokepoint so the spell-attack path in `spell_attack_outcome`
+    // gets the identical sequence; neither has a weapon-only qualifier
+    // in RAW. Ordering-wise both fire before the help / bless one-shot
+    // rider consumption below, so a taxed swing STILL burns the
+    // attacker's Help / Hidden / Inspired priming — RAW: those primes
+    // are consumed on the roll, regardless of disadvantage.
+    mode = encounter.apply_reactive_attack_taxes(p.caster_id, p.target_id, mode);
     // 5e long-range disadvantage: ranged weapon attacks beyond normal
     // range but within max range impose disadvantage. The `long_range`
     // threshold (in tiles) is set by the weapon definition — melee
@@ -1420,39 +1389,70 @@ pub fn resolve_attack_outcome(
     // spell / melee lane gates, the tag check, the log, and the
     // condition-plus-back-link push.
     push_on_hit_condition_marks(encounter, &mut effects, &p);
-    // Melee-only retaliation table: any condition the *target* holds that
-    // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
-    // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each
-    // entry plugs in here without re-implementing the "target has cond?
-    // → roll → log → push DealDamage(attacker)" dance. The reflected
-    // damage resolves through the standard damage pipeline so the
-    // attacker's typed immunity / resistance / vulnerability is honored.
+    // Melee retaliation: any condition the *target* holds that bounces
+    // damage back at a melee attacker, plus their creature-intrinsic
+    // reflect. Shared with the spell-attack path via
+    // `push_melee_reflect_riders` — RAW's "hits you with a melee attack"
+    // covers a melee spell attack.
     if p.is_melee {
-        for rider in MELEE_REFLECT_RIDERS.iter().copied() {
-            if !encounter
-                .actors
-                .get(&p.target_id)
-                .is_some_and(|a| a.has_condition(rider.condition))
-            {
-                continue;
-            }
-            push_reflect_damage(encounter, &mut effects, p.caster_id, rider.damage,
-                rider.damage_type, rider.label);
-        }
-        // Creature-intrinsic natural reflect (Black Pudding Corrosive
-        // Form, Salamander Heated Body). Composes additively with the
-        // condition-keyed table — a salamander wearing Fire Shield rolls
-        // both reflects on the same incoming swing.
-        if let Some(natural) = encounter
-            .actors
-            .get(&p.target_id)
-            .and_then(|a| a.natural_melee_reflect())
-        {
-            push_reflect_damage(encounter, &mut effects, p.caster_id, natural.damage,
-                natural.damage_type, natural.label);
-        }
+        push_melee_reflect_riders(encounter, &mut effects, p.caster_id, p.target_id);
     }
     (effects, damage)
+}
+
+/// Queue every melee retaliation payload a landed melee attack earns the
+/// *target* against their attacker: first the condition-keyed reflect
+/// table (Fire Shield 2d8 fire, Armor of Agathys 5 cold, Investiture of
+/// Flame 1d10 fire), then the creature-intrinsic reflect (Black Pudding
+/// Corrosive Form, Salamander Heated Body). The two lanes compose
+/// additively — a salamander wearing Fire Shield rolls both on the same
+/// incoming swing.
+///
+/// Reflected damage goes through the standard `DealDamage` pipeline, so
+/// the attacker's own typed immunity / resistance / vulnerability is
+/// honored.
+///
+/// Shared by both attack chokepoints. Every source here triggers on RAW's
+/// "hits you with a melee attack", which a melee *spell* attack
+/// (Vampiric Touch, Shocking Grasp, Inflict Wounds) satisfies — so the
+/// caller gates only on `is_melee`, never on weapon-vs-spell.
+pub fn push_melee_reflect_riders(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    attacker_id: usize,
+    target_id: usize,
+) {
+    for rider in MELEE_REFLECT_RIDERS.iter().copied() {
+        if !encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(rider.condition))
+        {
+            continue;
+        }
+        push_reflect_damage(
+            encounter,
+            effects,
+            attacker_id,
+            rider.damage,
+            rider.damage_type,
+            rider.label,
+        );
+    }
+    if let Some(natural) = encounter
+        .actors
+        .get(&target_id)
+        .and_then(|a| a.natural_melee_reflect())
+    {
+        push_reflect_damage(
+            encounter,
+            effects,
+            attacker_id,
+            natural.damage,
+            natural.damage_type,
+            natural.label,
+        );
+    }
 }
 
 /// Roll (or read flat) the reflect amount, log the reflection, and queue
