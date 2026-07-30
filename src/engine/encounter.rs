@@ -1258,6 +1258,28 @@ pub struct EncounterInstance {
 pub struct CastContext {
     pub school: Option<SpellSchool>,
     pub level: u32,
+    /// Whether this cast has already paid out its once-per-cast flat
+    /// damage bonus (Empowered Evocation's +INT, Potent Spellcasting's
+    /// +WIS).
+    ///
+    /// RAW's unit for both features is "one damage roll" — the spell,
+    /// not the die and not the target. Most spells roll damage once, so
+    /// for most of them the distinction never comes up; a handful roll
+    /// two separate pools in one cast (Storm of Vengeance's thunder and
+    /// lightning, Acid Arrow's impact and splash) and a couple roll
+    /// fresh dice per target. Without a latch every one of those would
+    /// collect the flat bonus once per roll.
+    ///
+    /// Latched on the frame rather than on the caster because the frame
+    /// is exactly the lifetime the rule describes, and because nesting
+    /// then behaves correctly for free: a spell that somehow triggers
+    /// another spell pushes a second frame with its own unspent latch,
+    /// which is what RAW would say if it had thought about it.
+    ///
+    /// The reroll half of the chokepoint (the Sorcerer's Empowered
+    /// Spell metamagic) needs no latch — it self-consumes by clearing
+    /// its own prime condition on first use.
+    pub flat_damage_bonus_paid: bool,
 }
 
 impl CastContext {
@@ -1576,7 +1598,33 @@ impl EncounterInstance {
         // levelled evocations, Potent Spellcasting a cleric's WIS on
         // cantrips), so no build can hold both and the sum is never a
         // stack in practice. Each gates itself on the in-flight cast.
+        //
+        // Both are once per *cast*, not once per roll — see
+        // `CastContext::flat_damage_bonus_paid`. The latch is claimed
+        // before either is computed so a spell that rolls two damage
+        // pools (Storm of Vengeance, Acid Arrow) pays the bonus on the
+        // first and not the second, matching RAW's "one damage roll".
+        if !self.claim_flat_damage_bonus() {
+            return base;
+        }
         base + self.empowered_evocation_bonus(caster_id) + self.potent_spellcasting_bonus(caster_id)
+    }
+
+    /// Claim this cast's once-per-cast flat damage bonus, returning
+    /// `true` the first time and `false` on every later call within the
+    /// same cast frame.
+    ///
+    /// Returns `true` outside any cast frame so a non-spell damage roll
+    /// that reaches `roll_empowered_sum` isn't silently gated — the two
+    /// bonuses behind the latch each check the frame themselves and
+    /// return 0 there anyway, so the permissive default costs nothing
+    /// and keeps the latch from becoming a second place that decides
+    /// what counts as a spell.
+    fn claim_flat_damage_bonus(&mut self) -> bool {
+        match self.cast_stack.last_mut() {
+            Some(frame) => !std::mem::replace(&mut frame.flat_damage_bonus_paid, true),
+            None => true,
+        }
     }
 
     /// The Potent Spellcasting flat damage bonus for `caster_id` on the
@@ -4629,7 +4677,11 @@ impl EncounterInstance {
     /// `side_effects` call — the symmetric-guard shape
     /// `enter_multiattack` / `exit_multiattack` already use.
     pub fn enter_cast(&mut self, school: Option<SpellSchool>, level: u32) {
-        self.cast_stack.push(CastContext { school, level });
+        self.cast_stack.push(CastContext {
+            school,
+            level,
+            flat_damage_bonus_paid: false,
+        });
     }
 
     /// Pop the innermost cast frame. Tolerates an empty stack so a panic
@@ -68190,5 +68242,45 @@ mod tests {
         // start firing on buffs.
         assert!(!crate::actions::spells::BLESS.summons_allies());
         assert!(!crate::actions::spells::FIREBALL.summons_allies());
+    }
+
+    /// The flat damage bonuses on the shared chokepoint are once per
+    /// *cast*, not once per roll.
+    ///
+    /// RAW's unit for both Empowered Evocation and Potent Spellcasting
+    /// is "one damage roll", meaning the spell. Most spells roll damage
+    /// once so the distinction never surfaces — but Storm of Vengeance
+    /// rolls thunder and lightning as separate pools, and Acid Arrow
+    /// rolls impact and splash, and each of those would otherwise
+    /// collect the bonus twice off one slot.
+    #[test]
+    fn the_flat_damage_bonus_is_paid_once_per_cast() {
+        use crate::actions::class_features::POTENT_SPELLCASTING_TAG;
+        use crate::actors::creatures::clerics::KNOWLEDGE_CLERIC_TEMPLATE;
+        use crate::engine::types::SpellSchool;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&KNOWLEDGE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].has_passive_feature(POTENT_SPELLCASTING_TAG));
+        let wis = e.actors[&cleric]
+            .ability_modifier(AbilityScoreType::Wisdom)
+            .max(0) as u32;
+        assert!(wis > 0);
+
+        // Zero dice isolate the flat bonus from the roll.
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        assert_eq!(e.roll_empowered_sum(cleric, 0, 8), wis, "first pool pays");
+        assert_eq!(
+            e.roll_empowered_sum(cleric, 0, 8),
+            0,
+            "a second damage pool in the same cast does not pay again"
+        );
+        e.exit_cast();
+
+        // A fresh cast gets a fresh latch.
+        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        assert_eq!(e.roll_empowered_sum(cleric, 0, 8), wis);
+        e.exit_cast();
     }
 }
