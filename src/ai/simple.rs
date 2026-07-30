@@ -703,10 +703,9 @@ impl Controller for SimpleAi {
         //     rather than N near-identical rungs. See
         //     `MELEE_ADJACENT_PRIMES` for the roster and the reasoning
         //     behind the order.
-        if let Some(aei) =
-            try_first_available(encounter, actor_id, MELEE_ADJACENT_PRIMES, |e, id, name| {
-                try_self_action_when_enemy_within(e, id, 0, name)
-            })
+        if let Some(aei) = MELEE_ADJACENT_PRIMES
+            .iter()
+            .find_map(|name| try_self_action_when_enemy_within(encounter, actor_id, 0, name))
         {
             return ControllerDecision::Act(aei);
         }
@@ -1793,23 +1792,6 @@ const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "pushing attack",
     "goading attack",
 ];
-
-/// Walk `names` in order and return the first picker result that fires.
-///
-/// The shared body of every "ordered roster of interchangeable action
-/// names" rung in the ladder. `pick` is the per-entry gate — for
-/// `MELEE_ADJACENT_PRIMES` it is the melee-reach check, and any future
-/// table on this shape supplies its own — so the helper owns only the
-/// walk and the short-circuit, which is the part that would otherwise
-/// be copied per table.
-fn try_first_available(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-    names: &[&str],
-    pick: impl Fn(&EncounterInstance, usize, &str) -> Option<ActionExecutionInfo>,
-) -> Option<ActionExecutionInfo> {
-    names.iter().find_map(|name| pick(encounter, actor_id, name))
-}
 
 /// Fighter Battle Master Distracting Strike — bonus-action prime that
 /// adds +1d6 damage to the next melee hit and tags the target with
