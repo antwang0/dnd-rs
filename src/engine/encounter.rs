@@ -1942,10 +1942,11 @@ impl EncounterInstance {
         // unconditional (no `has_fancy_footwork` gate) so the mark
         // stays cheap; the OA-suppression read in
         // `dispatch_opportunity_attacks` is where the flag gates the
-        // suppression. Idempotent HashSet insert — a caller that
-        // routes through both this helper AND `resolve_attack` on the
-        // same swing (currently none does, but a future path could)
-        // still leaves the ledger in the correct state.
+        // suppression. Idempotent HashSet insert, which is what makes
+        // the double-write safe: `resolve_attack_outcome` routes every
+        // weapon swing through this helper AND writes the mark itself
+        // beforehand, because its own write is the only one that
+        // survives a swing Sanctuary turns away.
         if is_melee
             && let Some(attacker) = self.actors.get_mut(&attacker_id)
         {
@@ -53707,6 +53708,92 @@ mod tests {
                 blocker
             );
         }
+    }
+
+    /// A per-target Help grant reaches *weapon* attacks, not just spell
+    /// attacks.
+    ///
+    /// The engine has two advantage-from-help lanes: the `Helped`
+    /// condition, read by `compute_attack_mode`, and the per-target
+    /// `HelpGrant` ledger, read only by `attack_mode_with_riders`.
+    /// `spell_attack_outcome` called the latter; `resolve_attack_outcome`
+    /// called `compute_attack_mode` directly and then cleared the
+    /// one-shot rider stack — which *consumes* the grant. So a grant
+    /// installed without the condition was silently eaten by the next
+    /// weapon swing without ever granting advantage.
+    ///
+    /// Three shipped features install only the grant: the Battle
+    /// Master's Feinting Attack, Commander's Strike (on the ordered
+    /// ally), and the Arcane Trickster's Versatile Trickster. All three
+    /// exist to make a *weapon* swing land, so all three did nothing on
+    /// the lane they were written for. The `Help` action itself was
+    /// unaffected because it installs both.
+    ///
+    /// Driven through `resolve_attack_outcome` on the log line, which is
+    /// where the mode is rendered, over both polarities: with the grant
+    /// naming this target, and with it naming somebody else.
+    #[test]
+    fn a_help_grant_grants_advantage_on_a_weapon_swing() {
+        use crate::actors::actor_template::HelpGrant;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let swing = |grant_against: Option<usize>| -> bool {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let decoy = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 1)
+                .unwrap();
+            let against = grant_against.map(|_| decoy).unwrap_or(target);
+            // `None` means "grant names the real target"; `Some` means
+            // "grant names the decoy" — read that way so the closure
+            // takes one flag rather than an id the caller can't know yet.
+            let named = if grant_against.is_some() {
+                against
+            } else {
+                target
+            };
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .set_help_grant(Some(HelpGrant {
+                    helper_id: fighter,
+                    against: named,
+                }));
+            let before = e.messages().len();
+            let _ = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: fighter,
+                    target_id: target,
+                    action_name: "scimitar",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("scimitar") && m.contains("(adv)"))
+        };
+        assert!(
+            swing(None),
+            "a grant naming this target should read as advantage on the swing"
+        );
+        assert!(
+            !swing(Some(0)),
+            "a grant naming somebody else should not"
+        );
     }
 
     /// Typing a spell's own name casts *that* spell, even when another

@@ -369,16 +369,22 @@ pub fn resolve_attack_outcome(
     // unconditional (no `has_fancy_footwork` gate) so the mark stays
     // cheap; the OA-suppression read in `dispatch_opportunity_attacks`
     // is where the flag gates the suppression. RAW's trigger is on
-    // "making a melee attack" — we place the mark BEFORE the Sanctuary
-    // save check below, so even a swing that bounces off a sanctified
-    // target still counts as an attempted attack (mirrors RAW's "if
-    // you make a melee attack" wording — the swing was attempted even
-    // if it was warded off). Written for weapon melee only via the
-    // `p.is_melee` gate — a spell attack routed through this chokepoint
-    // (currently only weapon-attack-shaped spells like Booming Blade
-    // and Green Flame Blade) picks up the mark too since they're
-    // engine-tagged `is_melee: true`, matching the RAW "melee attack
-    // roll" trigger.
+    // "making a melee attack" — the mark goes BEFORE the Sanctuary save
+    // check below, so even a swing that bounces off a sanctified target
+    // still counts as an attempted attack (mirrors RAW's "if you make a
+    // melee attack" wording — the swing was attempted even if it was
+    // warded off). Written for weapon melee only via the `p.is_melee`
+    // gate — a spell attack routed through this chokepoint (currently
+    // only weapon-attack-shaped spells like Booming Blade and Green
+    // Flame Blade) picks up the mark too since they're engine-tagged
+    // `is_melee: true`, matching the RAW "melee attack roll" trigger.
+    //
+    // `attack_mode_with_riders` further down writes the same mark, and
+    // that duplication is deliberate rather than leftover: the ledger
+    // insert is an idempotent `HashSet` add, and the two writers cover
+    // different swings. The wrapper never runs for a swing that
+    // Sanctuary turns away (the early return below beats it), which is
+    // exactly the case this write exists for.
     if p.is_melee
         && let Some(attacker) = encounter.actors.get_mut(&p.caster_id)
     {
@@ -412,7 +418,22 @@ pub fn resolve_attack_outcome(
     // sanctuary_save_blocks branch returns early on fail).
     encounter.break_sanctuary_on_hostile(p.caster_id);
 
-    let mut mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
+    // `attack_mode_with_riders` rather than the bare
+    // `compute_attack_mode`, because the two disagree about one lane and
+    // this is the side that needs it. `compute_attack_mode` reads the
+    // `Helped` *condition*; the per-target `HelpGrant` ledger is read
+    // only by the wrapper. Weapon swings used to call the inner
+    // function and then clear the one-shot rider stack below — which
+    // *consumes* the grant — so a grant installed without the
+    // accompanying condition was eaten without ever granting anything.
+    //
+    // Three features install only the grant, and all three exist to
+    // make a weapon swing land: the Battle Master's Feinting Attack,
+    // Commander's Strike (on the ordered ally), and the Arcane
+    // Trickster's Versatile Trickster. The `Help` action was unaffected
+    // only because it installs the condition too.
+    let mut mode =
+        encounter.attack_mode_with_riders(p.caster_id, p.target_id, p.is_melee, true);
     // 5e Fighting Style: **Protection** — a target-adjacent ally (NOT
     // the target itself) with the Protection flag and an unspent
     // reaction may burn their reaction to impose disadvantage on THIS
