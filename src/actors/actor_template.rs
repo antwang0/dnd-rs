@@ -7086,6 +7086,21 @@ impl ActorInstance {
         !self.help_grants.is_empty()
     }
 
+    /// Lowest spell-slot level this actor still has a slot for, or
+    /// `None` when every tier is spent. Reads the raw pool rather than
+    /// `can_consume_resource`, so a caster whose spell lane is blocked
+    /// (`Silenced`, `WildShaped`) still reports what they *hold*.
+    ///
+    /// That distinction is the whole reason the helper exists: Combat
+    /// Wild Shape's slot-to-hit-points conversion is expressly not
+    /// casting, so it has to see slots the can't-cast gate would hide.
+    /// A future "burn a slot for something that isn't a spell" feature
+    /// (a Divine Smite variant priced off the pool, an arcane-recovery
+    /// sibling) reads the same way.
+    pub fn lowest_available_spell_slot(&self) -> Option<u32> {
+        (1..=9).find(|lvl| self.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)
+    }
+
     /// Set or clear a Help grant on this actor.
     /// `Some(g)` overwrites any prior grant; `None` clears all grants.
     pub fn set_help_grant(&mut self, grant: Option<HelpGrant>) {

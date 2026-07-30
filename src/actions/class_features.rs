@@ -170,6 +170,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // slot... Once you do so, you can't use this feature again until
     // you finish a short or long rest."
     SHAPECHANGER_TAG,
+    // 5e Circle of the Moon Druid **Combat Wild Shape** — RAW: "you
+    // regain [Wild Shape uses] when you finish a short or long rest",
+    // the same cadence as the Channel Divinity family above. The
+    // engine collapses RAW's two uses per rest to one charge; the
+    // cadence stays exact.
+    COMBAT_WILD_SHAPE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -3516,6 +3522,255 @@ impl Action for EmptyBody {
 }
 
 pub static EMPTY_BODY: LazyLock<EmptyBody> = LazyLock::new(|| EmptyBody {});
+
+/// Class-feature tag for the Circle of the Moon Druid's **Combat Wild
+/// Shape** (subclass level 2). Gates both halves of the feature: the
+/// `WILD_SHAPE` bonus action below and the `WILD_HEAL` slot-to-hit-
+/// points conversion that only works while in form.
+///
+/// One charge per short rest. RAW gives the druid two Wild Shape uses
+/// per short rest; the engine's per-tag charge model is one-per-tag, so
+/// the collapse to a single use is the same one every other multi-use
+/// feature already makes (Stunning Strike's ki pool, Bardic
+/// Inspiration's CHA-mod pool, the Battle Master's superiority dice).
+/// Registered in `SHORT_REST_FEATURES` so the rest cadence is RAW-exact
+/// even though the count isn't.
+pub const COMBAT_WILD_SHAPE_TAG: &str = "druid.combat_wild_shape";
+
+/// Beast-form hit points, granted as temp HP on transformation.
+///
+/// 34 — the brown bear's hit points, matching the form
+/// `BEAST_FORM_CLAWS` swings for. Circle of the Moon's **Circle Forms**
+/// caps the druid at CR 1 at subclass level 2, and the bear is the CR-1
+/// beast the class is famous for taking, so one number describes the
+/// whole form: 34 HP and 2d6+4 claws.
+///
+/// Temp HP rather than a second HP bar because that is what the engine
+/// has, and because the semantics line up better than they might
+/// appear: RAW's beast form takes damage to its own pool and reverts
+/// when that pool empties, leaving the druid's own HP untouched, which
+/// is exactly how temp HP drains. The deviation is at the seam —
+/// emptying the pool doesn't force an early revert here, so the form's
+/// `Rounds(10)` timer is what ends it either way.
+///
+/// Flat rather than level-scaled for the same reason `Polymorph` grants
+/// a flat 30: the pool describes the *form*, not the caster, and
+/// `ActorInstance::level` tracks in-run XP progression from 1 rather
+/// than the build level a class template targets.
+const BEAST_FORM_TEMP_HP: u32 = 34;
+
+/// Wild Shape — Circle of the Moon Druid bonus action, one charge per
+/// short rest. Installs `Condition::WildShaped` and hands the druid the
+/// beast form's hit points as temp HP.
+///
+/// The bonus-action cost *is* Combat Wild Shape — baseline Wild Shape
+/// is an Action, and the whole subclass feature at level 2 is that the
+/// moon druid can transform and still swing on the same turn.
+///
+/// What makes the button a decision rather than a freebie is what
+/// `WildShaped` costs: the form blocks spell slots outright, so a
+/// full-caster who takes it is trading Moonbeam, Call Lightning, Sleet
+/// Storm and every heal on the list for 34 temp HP and a 2d6+4 melee
+/// swing. That is a good trade when the druid is out of position or
+/// already concentrating on nothing, and a bad one when the party needs
+/// the control. The AI's gate is where that judgement lives.
+pub struct WildShape {}
+
+impl Action for WildShape {
+    fn name(&self) -> &str {
+        "wild shape"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ws", "shape"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, COMBAT_WILD_SHAPE_TAG) {
+            return false;
+        }
+        // Already a bear — re-transforming would burn the charge to
+        // refresh a timer and re-grant a temp HP pool that
+        // `GainTempHp` would mostly discard anyway (temp HP replaces
+        // rather than stacks, so a partly-drained pool is the only
+        // case that gains anything, and not enough to be worth a rest
+        // charge).
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::WildShaped))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(druid) = encounter.actors.get_mut(&caster_id) {
+            druid.spend_feature(COMBAT_WILD_SHAPE_TAG);
+        }
+        encounter.log(format!(
+            "  wild shape: the druid's form runs like water into a bear ({} temp HP).",
+            BEAST_FORM_TEMP_HP
+        ));
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::WildShaped,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: BEAST_FORM_TEMP_HP,
+            }),
+        ]
+    }
+}
+
+pub static WILD_SHAPE: LazyLock<WildShape> = LazyLock::new(|| WildShape {});
+
+/// Wild Heal — the second half of Combat Wild Shape: "you can expend a
+/// spell slot to regain 1d8 hit points per level of the spell slot
+/// expended." Bonus action, only while `WildShaped`.
+///
+/// RAW gives this clause no name of its own; "wild heal" is the
+/// engine's handle for it.
+///
+/// **The slot is drained directly, not spent as a `Resource`.** That
+/// looks like a shortcut and isn't: `WildShaped` rides
+/// `blocks_spell_slots`, so a `Resource::SpellSlot` cost would be
+/// refused by `can_consume_resource` and the action could never fire in
+/// the only state it is legal in. RAW is careful about exactly this —
+/// the clause says *expend* a slot, not *cast* — so bypassing the
+/// can't-cast gate is the faithful reading rather than a workaround.
+/// The consume happens in `side_effects` alongside the log line, which
+/// is the same place `spend_feature` fires for every per-rest feature.
+///
+/// **It always spends the lowest available slot.** RAW lets the druid
+/// pick, and the engine has no channel for "this action, but at level
+/// 3" outside the spell-slot cost machinery this action deliberately
+/// sidesteps. Lowest-first is the right default for both drivers: a
+/// human wants their high slots kept for the spells they'll cast after
+/// reverting, and an AI with no way to answer the question shouldn't be
+/// handed it. The consequence is a deliberately modest heal — 1d8 off a
+/// level-1 slot — which keeps the conversion a top-up rather than a
+/// second HP bar on top of the 34 temp HP the form already granted.
+pub struct WildHeal {}
+
+impl WildHeal {
+    /// Lowest slot level the druid can still spend, or `None` when the
+    /// pool is dry. Shared by the validator and the side-effect body so
+    /// the two can't disagree about which slot is being burned.
+    fn slot_level(encounter: &EncounterInstance, caster_id: usize) -> Option<u32> {
+        encounter
+            .actors
+            .get(&caster_id)
+            .and_then(|a| a.lowest_available_spell_slot())
+    }
+}
+
+impl Action for WildHeal {
+    fn name(&self) -> &str {
+        "wild heal"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wh"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Bonus action only — the slot is drained in `side_effects`
+        // rather than declared here, because `WildShaped` blocks the
+        // `SpellSlot` resource lane outright. See the type doc.
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(druid) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        druid.is_combat_active()
+            && druid.has_condition(Condition::WildShaped)
+            // Nothing to top up — don't burn a slot at full HP.
+            && druid.hitpoints() < druid.max_hitpoints()
+            && Self::slot_level(encounter, caster_id).is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(level) = Self::slot_level(encounter, caster_id) else {
+            return Vec::new();
+        };
+        let rolled = encounter.roll(&Dice::new(level, 8));
+        if let Some(druid) = encounter.actors.get_mut(&caster_id) {
+            druid.spell_slot_manager.consume_spell_slot(level);
+        }
+        encounter.log(format!(
+            "  wild heal: the beast body knits shut — level-{} slot, {}d8({}) HP",
+            level, level, rolled
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount: rolled,
+        })]
+    }
+}
+
+pub static WILD_HEAL: LazyLock<WildHeal> = LazyLock::new(|| WildHeal {});
 
 /// Class-feature tag for the Way of Shadow Monk's **Shadow Arts**
 /// (subclass level 3). RAW: spend 2 ki to cast Darkness, Darkvision,

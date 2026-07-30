@@ -1124,6 +1124,32 @@ pub enum Condition {
     /// Tick-down timer (`UntilStartOfNextTurn`) caps an unspent prime so
     /// the advantage can't carry into the next round.
     Shadowstepping,
+    /// Wild Shaped (5e Druid **Wild Shape**, as accelerated by Circle of
+    /// the Moon's **Combat Wild Shape**). The druid is wearing a beast's
+    /// body: they carry the form's hit points as a temp HP pool, swing
+    /// the form's natural weapons via `BEAST_FORM_CLAWS`, and — RAW's
+    /// load-bearing cost — **can't cast spells**.
+    ///
+    /// That last clause rides `blocks_spell_slots`, the same gate the
+    /// Silence spell's `Silenced` uses. The two arrive at the identical
+    /// mechanical place from opposite directions (a hush imposed on you
+    /// versus a body you chose), which is exactly why the gate is a
+    /// cohort rather than a `Silenced` special-case: a full-caster who
+    /// spends a bonus action to become a bear is trading their entire
+    /// spell list for a melee chassis, and the engine should say so with
+    /// the same machinery either way.
+    ///
+    /// The one thing that clause deliberately does *not* block is
+    /// Combat Wild Shape's own slot-to-hit-points conversion, which RAW
+    /// is careful to phrase as expending a slot rather than casting.
+    /// `WildHeal` honors that by draining the slot manager directly
+    /// instead of routing a `SpellSlot` cost through
+    /// `can_consume_resource` — see its doc comment.
+    ///
+    /// `Rounds(10)` timer, the engine's standard long-buff envelope
+    /// (RAW is hours). Not on `is_dispellable_buff`: Wild Shape is a
+    /// class feature, not a spell, so Dispel Magic has nothing to grab.
+    WildShaped,
     /// Sworn — 5e Paladin Oath of Vengeance Channel Divinity: Vow of
     /// Enmity (lv3 subclass feature, once per long rest). The target is
     /// marked as the paladin's chosen quarry: the swearing paladin (and
@@ -1597,6 +1623,7 @@ impl Condition {
             Condition::EldritchStruck => "eldritch-struck",
             Condition::WarMagicPrimed => "primed with war magic",
             Condition::Shadowstepping => "stepping through shadow",
+            Condition::WildShaped => "wild-shaped",
             Condition::Sworn => "sworn-quarry of a vengeance paladin",
             Condition::Purified => "purified",
             Condition::PhantasmalForced => "haunted by a phantasm",
@@ -2063,7 +2090,16 @@ impl Condition {
     /// Read by `can_consume_resource`'s SpellSlot gate alongside the
     /// action-blocked check. Cantrips (no slot cost) are unaffected.
     pub fn blocks_spell_slots(&self) -> bool {
-        matches!(self, Condition::Silenced)
+        // `WildShaped` joins from the opposite direction to `Silenced`:
+        // a hush imposed on you versus a body you chose. Same
+        // mechanical place — RAW's Wild Shape reads "you can't cast
+        // spells" — which is why the gate is a cohort rather than a
+        // `Silenced` special-case. Combat Wild Shape's slot-to-HP
+        // conversion is deliberately not blocked; RAW phrases it as
+        // expending a slot rather than casting, and `WildHeal` drains
+        // the slot manager directly rather than routing a `SpellSlot`
+        // cost through here.
+        matches!(self, Condition::Silenced | Condition::WildShaped)
     }
 
     /// True if the holder auto-fails STR and DEX saving throws.

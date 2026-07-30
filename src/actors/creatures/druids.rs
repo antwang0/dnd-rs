@@ -364,3 +364,79 @@ pub static LAND_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..DRUID_TEMPLATE.clone()
     }
 });
+
+/// Moon Druid — Druid Circle **Circle of the Moon** subclass build
+/// (PHB), and with it both PHB Druid Circles have a build in the
+/// engine. One subclass feature, in two halves:
+///
+///   - **Combat Wild Shape** (lv2, first half) — Wild Shape as a bonus
+///     action rather than an Action, so the druid can transform and
+///     still act on the same turn.
+///   - **Combat Wild Shape** (lv2, second half) — while in form, a
+///     bonus action expends a spell slot to regain 1d8 HP per slot
+///     level.
+///
+/// **Circle Forms** (lv2) is the third piece and it ships as data
+/// rather than as an action: the CR-1 cap it imposes is what fixes the
+/// form at a brown bear, and the bear is what `BEAST_FORM_TEMP_HP`
+/// (34 HP) and `BEAST_FORM_CLAWS` (2d6+4 slashing, +4 to hit from the
+/// form's Strength) describe. One beast, two constants.
+///
+/// The subclass is the sharpest either-or in the engine, because
+/// `WildShaped` blocks spell slots outright. A druid who takes the form
+/// is trading Moonbeam, Call Lightning, Sleet Storm, Wall of Fire,
+/// every heal on the list and Reverse Gravity — the whole reason to
+/// play a full caster — for 34 temp HP and a 2d6+4 melee swing. Nothing
+/// else on the chassis asks the player to give up that much at once,
+/// and the answer genuinely varies: a druid holding a Web is throwing
+/// away the fight to become a bear, and a druid at 15 HP with nothing
+/// concentrating and two hostiles in contact is not.
+///
+/// Which is why the two halves point in opposite directions and that's
+/// deliberate. The bonus-action transform is an *entry* discount — it
+/// lowers the cost of committing. The slot-to-HP conversion is what the
+/// druid does *after* committing, and it is the only thing their slots
+/// are still good for once the spell list is locked out. So the feature
+/// reads as "getting in is cheap, and once you're in, your magic is
+/// hit points." A Land Druid, the sibling template, never faces this:
+/// Natural Recovery hands slots *back* so the druid can keep casting,
+/// which is the same resource pointed at the opposite strategy.
+///
+/// **Nothing about the stat block changes.** The Moon Druid is the
+/// baseline `DRUID_TEMPLATE` — WIS 18, AC 14, 58 HP, the full 1-9 spell
+/// list, the same scimitar — plus two actions and one tag. That is
+/// RAW-faithful and it is also the point: the form's numbers come from
+/// the form (34 HP, +4 claws), not from the druid, so a Moon Druid out
+/// of shape is exactly a druid. `BEAST_FORM_CLAWS` sits on the action
+/// list permanently and its own validator refuses it out of form.
+///
+/// Primal Strike (lv6) has no engine surface — it makes beast-form
+/// attacks count as magical for overcoming resistance, and the engine
+/// models "resistance to nonmagical bludgeoning/piercing/slashing" as
+/// flat physical resistance with no magic axis to overcome. Elemental
+/// Wild Shape (lv10) and Thousand Forms (lv14) would both need a second
+/// form's worth of constants for a strictly better version of the
+/// button that already exists.
+///
+/// Glyph 'B' — for the **B**ear the form settles on. Distinct from
+/// baseline druid 'D' and Land Druid 'L'.
+pub static MOON_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_attacks::BEAST_FORM_CLAWS;
+    use crate::actions::class_features::{COMBAT_WILD_SHAPE_TAG, WILD_HEAL, WILD_SHAPE};
+    // Not the tag-only clone the Land Druid uses: the form needs an
+    // attack to swing and two bonus actions to enter and sustain it.
+    // The `..DRUID_TEMPLATE.clone()` tail carries the entire caster
+    // chassis unchanged — which is exactly right, since a Moon Druid
+    // out of shape is a druid.
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(&*WILD_SHAPE);
+    actions.push(&*WILD_HEAL);
+    actions.push(&*BEAST_FORM_CLAWS);
+    CreatureTemplate {
+        name: "Moon Druid",
+        glyph: 'B',
+        actions,
+        features: HashSet::from([COMBAT_WILD_SHAPE_TAG]),
+        ..DRUID_TEMPLATE.clone()
+    }
+});

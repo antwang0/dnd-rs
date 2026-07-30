@@ -53569,6 +53569,226 @@ mod tests {
         );
     }
 
+    /// Moon Druid template drift pin, plus the druid-family name/glyph
+    /// uniqueness claim its doc comment makes. The Moon Druid is the
+    /// baseline caster plus three actions and one tag — nothing about
+    /// the stat block or the spell list moves, which is both RAW and
+    /// the reason the form's numbers live on the form.
+    #[test]
+    fn moon_druid_ships_its_kit_and_leaves_the_caster_chassis_alone() {
+        use crate::actions::class_features::COMBAT_WILD_SHAPE_TAG;
+        use crate::actors::creatures::druids::{
+            DRUID_TEMPLATE, LAND_DRUID_TEMPLATE, MOON_DRUID_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&druid].has_passive_feature(COMBAT_WILD_SHAPE_TAG));
+        for name in ["wild shape", "wild heal", "beast claws", "moonbeam", "scimitar"] {
+            assert!(
+                e.actors[&druid].find_action(name).is_some(),
+                "Moon Druid should carry the {} action",
+                name
+            );
+        }
+        // The caster chassis is untouched: same stats, same slots.
+        assert_eq!(MOON_DRUID_TEMPLATE.wisdom, DRUID_TEMPLATE.wisdom);
+        assert_eq!(MOON_DRUID_TEMPLATE.ac, DRUID_TEMPLATE.ac);
+        assert_eq!(
+            MOON_DRUID_TEMPLATE.spell_slots_by_level,
+            DRUID_TEMPLATE.spell_slots_by_level
+        );
+
+        let templates = [
+            &*DRUID_TEMPLATE,
+            &*LAND_DRUID_TEMPLATE,
+            &*MOON_DRUID_TEMPLATE,
+        ];
+        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
+        assert_eq!(names.len(), templates.len(), "druid names collide");
+        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
+        assert_eq!(glyphs.len(), templates.len(), "druid glyphs collide");
+    }
+
+    /// Wild Shape hands over the beast body and takes the spell list in
+    /// exchange: temp HP lands, the claws unlock, and every levelled
+    /// spell stops being affordable. Reverting restores all three.
+    #[test]
+    fn wild_shape_trades_the_spell_list_for_a_beast_body() {
+        use crate::actions::class_features::WILD_SHAPE;
+        use crate::actions::spells::MOONBEAM;
+        use crate::actors::creatures::druids::MOON_DRUID_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // Out of form: the claws are refused and the spell list works.
+        let targets = vec![target];
+        assert!(
+            !crate::actions::class_attacks::BEAST_FORM_CLAWS
+                .validate_input(&e, druid, Some(&targets), None, None),
+            "no claws without a beast body"
+        );
+        assert!(
+            e.actors[&druid].can_consume_resource(Resource::SpellSlot(2)),
+            "a druid out of shape casts normally"
+        );
+
+        assert!(WILD_SHAPE.validate_input(&e, druid, None, None, None));
+        let effects = WILD_SHAPE.execute(&mut e, druid, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&druid].has_condition(Condition::WildShaped));
+        assert_eq!(
+            e.actors[&druid].temp_hp(),
+            34,
+            "the brown bear's hit points arrive as the form's pool"
+        );
+        assert!(
+            crate::actions::class_attacks::BEAST_FORM_CLAWS
+                .validate_input(&e, druid, Some(&targets), None, None),
+            "the form unlocks its natural weapon"
+        );
+        // The cost: RAW's "you can't cast spells", via the same
+        // `blocks_spell_slots` gate the Silence spell uses.
+        assert!(
+            !e.actors[&druid].can_consume_resource(Resource::SpellSlot(2)),
+            "a bear casts nothing"
+        );
+        assert!(
+            !MOONBEAM.validate_input(
+                &e,
+                druid,
+                None,
+                Some(&vec![Coordinate::new(6, 2)]),
+                None
+            ),
+            "and the spell list refuses at the action layer too"
+        );
+        // The charge is spent, so the button doesn't re-fire.
+        assert!(!WILD_SHAPE.validate_input(&e, druid, None, None, None));
+
+        // Reverting gives everything back.
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .remove_condition(Condition::WildShaped);
+        assert!(e.actors[&druid].can_consume_resource(Resource::SpellSlot(2)));
+        assert!(
+            !crate::actions::class_attacks::BEAST_FORM_CLAWS
+                .validate_input(&e, druid, Some(&targets), None, None)
+        );
+    }
+
+    /// Wild Heal burns the lowest slot for `level`d8 HP, and does it
+    /// *through* the can't-cast gate the form imposes — the whole point
+    /// of draining the slot manager directly rather than declaring a
+    /// `SpellSlot` cost.
+    #[test]
+    fn wild_heal_spends_a_slot_the_form_would_otherwise_block() {
+        use crate::actions::class_features::WILD_HEAL;
+        use crate::actors::creatures::druids::MOON_DRUID_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&druid).unwrap();
+            a.give_resource(Resource::BonusAction);
+            a.give_resource(Resource::BonusAction);
+        }
+        // Install the form directly rather than through `WILD_SHAPE`:
+        // the real button also grants 34 temp HP, which would absorb
+        // the wound this test needs to be healing. What's under test is
+        // the conversion, not the transform.
+        {
+            let a = e.actors.get_mut(&druid).unwrap();
+            a.add_condition(Condition::WildShaped, ConditionTimer::Rounds(10));
+            let _ = a.take_damage(20);
+        }
+        let hp_before = e.actors[&druid].hitpoints();
+        assert!(hp_before < e.actors[&druid].max_hitpoints());
+        let slots_before = e.actors[&druid].lowest_available_spell_slot();
+        assert_eq!(slots_before, Some(1), "lowest slot first");
+
+        assert!(WILD_HEAL.validate_input(&e, druid, None, None, None));
+        let effects = WILD_HEAL.execute(&mut e, druid, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&druid].hitpoints() > hp_before,
+            "the conversion actually heals"
+        );
+        assert_eq!(
+            e.actors[&druid]
+                .spell_slot_manager
+                .spell_slots(1)
+                .spell_slots,
+            MOON_DRUID_TEMPLATE.spell_slots_by_level[0] - 1,
+            "exactly one level-1 slot burned"
+        );
+    }
+
+    /// Wild Heal is form-gated and full-HP-gated: a druid out of shape
+    /// can't reach it at all, and a druid at full HP shouldn't burn a
+    /// slot for nothing.
+    #[test]
+    fn wild_heal_declines_out_of_form_and_at_full_health() {
+        use crate::actions::class_features::WILD_HEAL;
+        use crate::actors::creatures::druids::MOON_DRUID_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .take_damage(20);
+        assert!(
+            !WILD_HEAL.validate_input(&e, druid, None, None, None),
+            "wounded but not in form"
+        );
+
+        {
+            let a = e.actors.get_mut(&druid).unwrap();
+            a.add_condition(Condition::WildShaped, ConditionTimer::Rounds(10));
+        }
+        assert!(WILD_HEAL.validate_input(&e, druid, None, None, None));
+
+        // Top back up: nothing to convert a slot into.
+        let max = e.actors[&druid].max_hitpoints();
+        e.actors.get_mut(&druid).unwrap().heal(max);
+        assert!(
+            !WILD_HEAL.validate_input(&e, druid, None, None, None),
+            "in form but at full HP"
+        );
+    }
+
     /// Shadow Monk template drift pin, plus the monk-family name/glyph
     /// uniqueness claim its doc comment makes.
     #[test]

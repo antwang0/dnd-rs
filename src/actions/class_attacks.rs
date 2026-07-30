@@ -427,3 +427,128 @@ fn sneak_attack_eligible(
     }
     false
 }
+
+/// The beast form's Strength modifier, and the reason this attack has
+/// its own impl instead of being a `SimpleWeapon` declaration.
+///
+/// RAW's Wild Shape is explicit: "your game statistics are replaced by
+/// the statistics of the beast." Every other weapon in the engine reads
+/// its to-hit and damage modifiers off the *wielder*, which is right
+/// for a scimitar and wrong for a bear — a Wisdom-primary druid with
+/// STR 10 wielding a brown bear's claws at +0 is not the feature. So
+/// the modifier is a constant of the form rather than a lookup on the
+/// actor: +4, the brown bear's Strength 19.
+///
+/// The brown bear is the reference form because Circle of the Moon's
+/// **Circle Forms** caps the druid at CR 1 at subclass level 2, and the
+/// bear is the CR-1 beast the class is famous for taking. Its claws are
+/// 2d6+4 slashing, which is what `BEAST_FORM_CLAWS` deals.
+///
+/// Proficiency still comes from the druid — RAW keeps the character's
+/// proficiency bonus through the transformation — so a higher-level
+/// moon druid's claws get more accurate without the form changing.
+const BEAST_FORM_STR_MOD: i32 = 4;
+
+/// Beast-form claws — the natural weapon a Wild Shaped druid swings.
+/// 2d6+4 slashing at melee reach, to-hit at the druid's proficiency
+/// bonus plus the form's +4 Strength.
+///
+/// Gated on `Condition::WildShaped`, which is the whole reason it can
+/// sit on the druid's action list permanently: out of form the
+/// validator refuses it, in form it is the only attack that matters
+/// (the scimitar is still legal but strictly worse, and the spell list
+/// is locked out entirely by `blocks_spell_slots`).
+///
+/// Routes through the shared `resolve_attack` chokepoint rather than
+/// rolling inline the way `RogueShortsword` does, so every rider that
+/// keys off a weapon hit — Extra Attack chaining is the one that
+/// matters here, but also the once-per-turn die cohort and the
+/// Eldritch Strike mark — sees the swing as the weapon attack it is.
+pub struct BeastFormClaws {}
+
+impl Action for BeastFormClaws {
+    fn name(&self) -> &str {
+        "beast claws"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bc", "maul"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::WildShaped))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(prof) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.proficiency_bonus())
+        else {
+            return Vec::new();
+        };
+        // The form's Strength drives both halves; the druid contributes
+        // only their proficiency bonus, per RAW's "you retain your
+        // proficiency bonuses" clause.
+        let swing = |e: &mut EncounterInstance| {
+            resolve_attack(
+                e,
+                AttackParams {
+                    caster_id,
+                    target_id,
+                    action_name: "beast claws",
+                    attack_bonus: prof + BEAST_FORM_STR_MOD,
+                    damage_dice: Dice::new(2, 6),
+                    damage_bonus: BEAST_FORM_STR_MOD,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            )
+        };
+        let mut effects = swing(encounter);
+        crate::actions::monster_attacks::maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            &mut effects,
+            swing,
+        );
+        effects
+    }
+}
+
+pub static BEAST_FORM_CLAWS: LazyLock<BeastFormClaws> = LazyLock::new(|| BeastFormClaws {});

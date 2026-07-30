@@ -103,6 +103,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a'. Wild Heal — the Moon Druid's slot-to-hit-points
+        //      conversion, available only in beast form. Sits with the
+        //      other self-heals because that is what it is; the only
+        //      reason it needs its own rung is that it is the *sole*
+        //      thing a wild-shaped druid's slots can still buy, so it
+        //      should out-rank every casting rung below rather than
+        //      compete with them.
+        if let Some(aei) = try_wild_heal(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3a''. Shapechanger — the Transmuter's emergency self-Polymorph.
         //       Below the heal lane because 30 temp HP on a beast body
         //       is strictly worse than an actual heal when both are
@@ -170,6 +181,18 @@ impl Controller for SimpleAi {
         //       after Reckless Attack so the granted Action benefits
         //       from the advantage rider on the follow-up swing.
         if let Some(aei) = try_frenzy(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3c'^. Wild Shape — the Moon Druid's bonus-action transform.
+        //       Slotted here with the other bonus-action commitments
+        //       (Rage is the closest sibling: same "become a melee
+        //       chassis for the fight" shape) and above the primes,
+        //       because unlike them it changes what the rest of the
+        //       turn is even allowed to do — the form locks the spell
+        //       list out entirely, so deciding it late would mean
+        //       re-walking the ladder.
+        if let Some(aei) = try_wild_shape(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -4453,6 +4476,64 @@ fn try_teleport_escape(
     None
 }
 
+/// Wild Shape — the Moon Druid's bonus-action transform into a brown
+/// bear: 34 temp HP and a 2d6+4 claw swing, at the cost of the entire
+/// spell list for as long as it lasts.
+///
+/// That cost is what the gate is about. Becoming a bear is not a buff
+/// the AI should reach for on general principle — for a WIS-18
+/// full-caster it is usually a downgrade, and the action's own
+/// validator (charge available, not already in form) says nothing about
+/// whether it's a *good* idea. So two conditions have to hold together:
+///
+///   1. An enemy is footprint-adjacent. The form's whole output is a
+///      melee swing, and a druid nobody is standing next to should be
+///      casting, not clawing.
+///   2. The spell list has stopped being the better option — either the
+///      slot pool is empty (nothing is being given up) or the druid is
+///      under 60% HP (the 34 temp HP roughly doubles what's left, and a
+///      caster in melee at half health is about to stop casting
+///      anyway).
+///
+/// Concentration is deliberately *not* part of the gate. RAW lets a
+/// wild-shaped druid keep concentrating on something cast before the
+/// transformation, and the engine agrees — so a druid holding a Moonbeam
+/// keeps it through the change, and the AI doesn't need to protect
+/// against a loss that can't happen.
+fn try_wild_shape(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !any_enemy_within(encounter, actor_id, 1) {
+        return None;
+    }
+    let slots_dry = actor.lowest_available_spell_slot().is_none();
+    if !slots_dry && !is_low_hp(encounter, actor_id, 0.6) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "wild shape")
+}
+
+/// Wild Heal — the Moon Druid's in-form slot-to-hit-points conversion.
+///
+/// The action's own validator already covers the load-bearing gates
+/// (in beast form, below max HP, at least one slot left), so this rung
+/// only adds the "is it worth a slot yet" judgement: hold until 70% HP.
+/// The threshold sits higher than most self-heal gates in this file
+/// because the alternative use for those slots is nothing at all — a
+/// wild-shaped druid can't cast, so a slot not spent here is a slot
+/// doing no work until the form ends.
+fn try_wild_heal(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !is_low_hp(encounter, actor_id, 0.7) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "wild heal")
+}
+
 /// Shadow Step — the Way of Shadow Monk's 60 ft bonus-action blink.
 ///
 /// The mirror image of `try_teleport_escape`, and deliberately so:
@@ -6221,6 +6302,14 @@ mod tests {
             );
             let _ =
                 e.instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(6, 12), 0, 33);
+            // The Moon Druid is the only actor in the driver whose
+            // action list can *stop working* mid-encounter: taking the
+            // beast form locks out every levelled spell it carries. So
+            // it exercises a path nothing else does — the AI's casting
+            // rungs walking a caster whose slots are unspendable, and
+            // Wild Heal being the only thing those slots can still buy.
+            use crate::actors::creatures::druids::MOON_DRUID_TEMPLATE;
+            let _ = e.instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(6, 14), 0, 34);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
