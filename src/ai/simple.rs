@@ -1,4 +1,10 @@
+use std::sync::LazyLock;
+
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
+use crate::actions::class_features::{
+    ARCANE_ABJURATION, CHARM_ANIMALS_AND_PLANTS, DREADFUL_ASPECT, TURN_THE_FAITHLESS, TURN_UNDEAD,
+    TurnBurst,
+};
 use crate::ai::{Controller, ControllerDecision};
 use crate::conditions::Condition;
 use crate::engine::dice::RollMode;
@@ -411,10 +417,11 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3g. Cleric Turn Undead — once-per-rest Channel Divinity.
-        //     Fire when at least one undead-proxy enemy is within 30ft
-        //     so the cleanse-and-frighten lands on someone worth it.
-        if let Some(aei) = try_turn_undead(encounter, actor_id) {
+        // 3g. Channel Divinity turn-bursts — Turn Undead, Turn the
+        //     Faithless, Arcane Abjuration, Charm Animals and Plants,
+        //     Dreadful Aspect. Fire the narrowest variant the actor holds
+        //     that has enough eligible hostiles inside the 30ft burst.
+        if let Some(aei) = try_turn_burst(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -3743,29 +3750,108 @@ fn try_cleansing_touch(
     None
 }
 
-/// Cleric Channel Divinity: Turn Undead — action. Fire when at least
-/// one undead-proxy enemy (Poison-immune) is within 30ft. Once per
-/// long rest; the action's own validation handles the feature-flag
-/// gate so the AI just provides the proximity heuristic.
-fn try_turn_undead(
+/// One row in the `TURN_BURST_PICKS` cohort: a `TurnBurst` Channel
+/// Divinity config the AI knows how to fire, plus the minimum number of
+/// eligible targets that justifies spending the charge.
+///
+/// The config supplies the action name and — crucially — the same
+/// `type_filter` closure the action itself uses to pick victims, so the
+/// heuristic and the resolver can never disagree about who counts.
+struct TurnBurstPick {
+    /// The engine-side config. Read for `name` (the action lookup) and
+    /// `type_filter` (the eligibility scan).
+    config: &'static LazyLock<TurnBurst>,
+    /// How many eligible hostiles must be in range before the AI spends
+    /// the charge. 1 for the type-filtered variants — they're
+    /// specialists, and a charge saved for a target that never appears is
+    /// a charge wasted. 2 for the unfiltered Dreadful Aspect, whose value
+    /// is entirely in breadth: against a single enemy an ordinary swing
+    /// beats a frighten.
+    min_targets: usize,
+}
+
+/// Every `TurnBurst` Channel Divinity the AI can fire, in priority order.
+///
+/// Before this cohort existed only Turn Undead had an AI heuristic, so
+/// three subclasses never used their Channel Divinity at all: a Devotion
+/// Paladin never turned a fey, an Oathbreaker never projected dread, and
+/// an AI-driven Arcana Cleric would never have abjured anything. Driving
+/// the heuristic off the shared configs means a new turn variant becomes
+/// AI-visible by being added here, and it reuses the variant's own
+/// creature-type filter rather than re-deriving one.
+///
+/// Order is narrowest-filter-first, so a hypothetical multiclass holding
+/// several spends the most specialized charge on the target that only it
+/// can answer.
+const TURN_BURST_PICKS: &[TurnBurstPick] = &[
+    TurnBurstPick {
+        config: &CHARM_ANIMALS_AND_PLANTS,
+        min_targets: 1,
+    },
+    TurnBurstPick {
+        config: &TURN_UNDEAD,
+        min_targets: 1,
+    },
+    TurnBurstPick {
+        config: &TURN_THE_FAITHLESS,
+        min_targets: 1,
+    },
+    TurnBurstPick {
+        config: &ARCANE_ABJURATION,
+        min_targets: 1,
+    },
+    TurnBurstPick {
+        config: &DREADFUL_ASPECT,
+        min_targets: 2,
+    },
+];
+
+/// Channel Divinity turn-burst picker — Turn Undead, Turn the Faithless,
+/// Arcane Abjuration, Charm Animals and Plants, Dreadful Aspect. Walks
+/// `TURN_BURST_PICKS` and fires the first row the actor holds that has
+/// enough eligible hostiles inside the 30 ft (12 tile) burst. The action's
+/// own validation owns the per-rest charge gate, so the AI supplies only
+/// the "is this worth spending on?" heuristic.
+///
+/// Eligibility is read through the row's own `type_filter` against the
+/// target's `creature_type()`. The pre-cohort Turn Undead heuristic
+/// instead probed for *poison immunity* as an undead proxy, which was
+/// wrong in both directions across the engine's creature pool: 30
+/// poison-immune non-undead (every golem, most devils and demons, the
+/// tarrasque, giant spiders) drew a wasted charge, and one genuine undead
+/// that isn't poison-immune (the crawling claw) never drew one at all.
+/// The proxy presumably predates `CreatureType`; the resolver has always
+/// filtered on the real type.
+fn try_turn_burst(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    use crate::engine::types::DamageType;
-
     let actor = encounter.actors.get(&actor_id)?;
     let team = actor.team();
-    let undead_nearby = encounter.actors.iter().any(|(id, a)| {
-        *id != actor_id
-            && a.team() != team
-            && a.is_combat_active()
-            && a.is_immune_to(DamageType::Poison)
-            && actor.footprint_gap_to(a) <= 12
-    });
-    if !undead_nearby {
-        return None;
+    for pick in TURN_BURST_PICKS {
+        let config = &**pick.config;
+        if actor.find_action(config.name).is_none() {
+            continue;
+        }
+        let eligible = encounter
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                **id != actor_id
+                    && a.team() != team
+                    && a.is_combat_active()
+                    && (config.type_filter)(a.creature_type())
+                    && actor.footprint_gap_to(a) <= 12
+            })
+            .count();
+        if eligible < pick.min_targets {
+            continue;
+        }
+        if let Some(aei) = try_self_action(encounter, actor_id, config.name) {
+            return Some(aei);
+        }
     }
-    try_self_action(encounter, actor_id, "turn undead")
+    None
 }
 
 /// Pit Fiend Fear Aura — action that frightens every hostile within
@@ -7487,6 +7573,90 @@ mod tests {
             try_preserve_life(&e, cleric).is_some(),
             "wounded ally should trigger the preserve-life heuristic"
         );
+    }
+
+    /// The turn-burst picker reads the real `CreatureType`, not the old
+    /// poison-immunity proxy. An iron golem is poison-immune and not
+    /// undead, so a cleric standing beside one must keep its Turn Undead
+    /// charge; a zombie must draw it.
+    #[test]
+    fn ai_turn_burst_ignores_poison_immune_non_undead() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let golem = e
+            .instantiate_creature(&IRON_GOLEM_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        // The proxy the old heuristic used still reports true here, which
+        // is exactly why it was the wrong question to ask.
+        assert!(e.actors[&golem].is_immune_to(DamageType::Poison));
+        assert!(
+            try_turn_burst(&e, cleric).is_none(),
+            "a construct must not draw the cleric's Turn Undead charge"
+        );
+        // Swap in a genuine undead: now the charge is worth spending.
+        e.actors.remove(&golem);
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 1)
+            .unwrap();
+        assert!(
+            try_turn_burst(&e, cleric).is_some(),
+            "an undead in range should draw Turn Undead"
+        );
+    }
+
+    /// The picker covers every `TurnBurst` config, not just Turn Undead.
+    /// A Devotion Paladin beside a fiend fires Turn the Faithless, and an
+    /// Arcana Cleric beside the same fiend fires Arcane Abjuration —
+    /// neither had any AI path before the shared cohort.
+    #[test]
+    fn ai_turn_burst_covers_the_other_channel_divinities() {
+        use crate::actors::creatures::clerics::ARCANA_CLERIC_TEMPLATE;
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        let mut e = empty_arena();
+        let paladin = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let cleric = e
+            .instantiate_creature(&ARCANA_CLERIC_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let _imp = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        let pal_pick = try_turn_burst(&e, paladin).expect("paladin should turn the fiend");
+        assert_eq!(pal_pick.action().name(), "turn the faithless");
+        let cleric_pick = try_turn_burst(&e, cleric).expect("cleric should abjure the fiend");
+        assert_eq!(cleric_pick.action().name(), "arcane abjuration");
+    }
+
+    /// Dreadful Aspect's row carries `min_targets: 2` because its filter
+    /// is unconditional — against one enemy an ordinary swing is worth
+    /// more than a frighten, so the charge is held.
+    #[test]
+    fn ai_dreadful_aspect_waits_for_a_second_enemy() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        let mut e = empty_arena();
+        let paladin = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _one = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_turn_burst(&e, paladin).is_none(),
+            "one enemy is not worth the dread charge"
+        );
+        let _two = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 6), 1, 1)
+            .unwrap();
+        let pick = try_turn_burst(&e, paladin).expect("two enemies should draw the dread");
+        assert_eq!(pick.action().name(), "dreadful aspect");
     }
 
     /// `try_arcane_recovery` should fire when the wizard has spent
