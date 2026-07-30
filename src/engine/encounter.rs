@@ -53341,6 +53341,189 @@ mod tests {
         assert!(e.actors[&samurai].has_extra_attack());
     }
 
+    /// Psi Warrior template drift pin. Two subclass tags, a psychic
+    /// resistance entry and an INT bump — and the whole baseline Fighter
+    /// kit inherited through the `..FIGHTER_TEMPLATE.clone()` tail.
+    #[test]
+    fn psi_warrior_ships_its_kit_and_inherits_the_fighter_chassis() {
+        use crate::actions::class_features::{
+            ACTION_SURGE_TAG, INDOMITABLE_TAG, PARRY_TAG, PROTECTIVE_FIELD_TAG, PSIONIC_STRIKE_TAG,
+            RIPOSTE_TAG, SECOND_WIND_TAG, TRIP_ATTACK_TAG,
+        };
+        use crate::actors::creatures::fighters::{FIGHTER_TEMPLATE, PSI_WARRIOR_FIGHTER_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let psi = e
+            .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for tag in [PSIONIC_STRIKE_TAG, PROTECTIVE_FIELD_TAG] {
+            assert!(
+                e.actors[&psi].has_passive_feature(tag),
+                "Psi Warrior should carry its own subclass tag {}",
+                tag
+            );
+        }
+        // Protective Field is charge-gated, so the pool has to arrive armed.
+        assert!(
+            e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG),
+            "the psionic energy charge should start available"
+        );
+        for tag in [
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            INDOMITABLE_TAG,
+            PARRY_TAG,
+            RIPOSTE_TAG,
+            TRIP_ATTACK_TAG,
+        ] {
+            assert!(
+                e.actors[&psi].has_passive_feature(tag),
+                "Psi Warrior should inherit baseline Fighter tag {}",
+                tag
+            );
+        }
+        assert!(e.actors[&psi].has_extra_attack());
+        // Guarded Mind's shipped half.
+        assert!(
+            e.actors[&psi].is_resistant_to(DamageType::Psychic),
+            "Guarded Mind grants psychic resistance"
+        );
+        assert!(
+            PSI_WARRIOR_FIGHTER_TEMPLATE.intelligence > FIGHTER_TEMPLATE.intelligence,
+            "the Psi Warrior's INT rises above the baseline to size Protective Field"
+        );
+        // No new action surface — both features are passive cohort rows.
+        assert_eq!(
+            PSI_WARRIOR_FIGHTER_TEMPLATE.actions.len(),
+            FIGHTER_TEMPLATE.actions.len(),
+            "the Psi Warrior's shipped features are passive, not actions"
+        );
+    }
+
+    /// Protective Field reaches an ally 30 ft away — the clamp scope no
+    /// other row in the cohort has. The Psi Warrior spends their own
+    /// reaction and psionic charge to shrink damage aimed at someone
+    /// else, and the charge closes the door behind it.
+    #[test]
+    fn protective_field_clamps_damage_to_a_distant_ally() {
+        use crate::actions::class_features::PROTECTIVE_FIELD_TAG;
+        use crate::actors::creatures::fighters::PSI_WARRIOR_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        // Eight tiles from the wizard: well outside Interception's
+        // adjacency, well inside Protective Field's 12.
+        let psi = e
+            .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(11, 5), 0, 1)
+            .unwrap();
+        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false);
+        assert!(reduced < 20, "the field should clamp the wizard's damage");
+        assert!(
+            !e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG),
+            "firing spends the psionic charge"
+        );
+        assert!(
+            !e.actors[&psi].can_consume_resource(Resource::Reaction),
+            "firing spends the Psi Warrior's reaction"
+        );
+        // Charge gone: a second hit on the wizard passes through intact.
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false),
+            20,
+            "the field is spent for the rest of the short rest"
+        );
+    }
+
+    /// Out of range is out of range: a Psi Warrior 20 tiles from the
+    /// wizard (50 ft, past the RAW 30 ft reach) keeps their charge.
+    #[test]
+    fn protective_field_respects_its_thirty_foot_reach() {
+        use crate::actions::class_features::PROTECTIVE_FIELD_TAG;
+        use crate::actors::creatures::fighters::PSI_WARRIOR_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        let psi = e
+            .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(24, 5), 0, 1)
+            .unwrap();
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false),
+            20
+        );
+        assert!(e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG));
+    }
+
+    /// Psionic Strike lays +1d8 Force on the Psi Warrior's first hit of
+    /// the turn and no more: the shared once-per-turn ledger gates it,
+    /// so a template carrying the tag out-damages the baseline Fighter
+    /// but by a bounded amount.
+    #[test]
+    fn psionic_strike_fires_once_per_turn() {
+        use crate::actions::class_features::PSIONIC_STRIKE_TAG;
+        use crate::actors::creatures::fighters::PSI_WARRIOR_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::attack::{
+            AttackParams, ONCE_PER_TURN_WEAPON_DIE_RIDERS, try_fire_once_per_turn_weapon_die_rider,
+        };
+        let spec = ONCE_PER_TURN_WEAPON_DIE_RIDERS
+            .iter()
+            .find(|s| s.tag == PSIONIC_STRIKE_TAG)
+            .expect("psionic strike should be a row on the shared rider cohort");
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let psi = e
+            .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let params = AttackParams {
+            caster_id: psi,
+            target_id: ogre,
+            action_name: "scimitar",
+            attack_bonus: 5,
+            damage_dice: Dice::new(1, 6),
+            damage_bonus: 3,
+            damage_type: DamageType::Slashing,
+            is_melee: true,
+            long_range: None,
+            is_spell: false,
+        };
+        let mut effects = Vec::new();
+        assert!(
+            try_fire_once_per_turn_weapon_die_rider(&mut e, &mut effects, &params, false, spec),
+            "the first hit of the turn carries the strike"
+        );
+        assert_eq!(effects.len(), 1, "one Force payload queued");
+        assert!(
+            !try_fire_once_per_turn_weapon_die_rider(&mut e, &mut effects, &params, false, spec),
+            "the second hit of the same turn does not"
+        );
+        assert_eq!(effects.len(), 1);
+        // Turn-start clears the shared ledger, re-arming the rider.
+        let _ = e.actors.get_mut(&psi).unwrap().reset_for_new_round();
+        assert!(try_fire_once_per_turn_weapon_die_rider(
+            &mut e,
+            &mut effects,
+            &params,
+            false,
+            spec
+        ));
+    }
+
     /// Eldritch Knight template drift pin. The subclass adds three tags,
     /// five spells, one bonus action, a slot table and an INT bump — and
     /// must still inherit the whole baseline Fighter kit through the
@@ -54036,6 +54219,7 @@ mod tests {
                     &*fighters::CHAMPION_TEMPLATE,
                     &*fighters::SAMURAI_FIGHTER_TEMPLATE,
                     &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                    &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
                 ],
             ),
             (
@@ -57705,22 +57889,23 @@ mod tests {
     /// registered tags — a Sneak Attack mark doesn't accidentally
     /// suppress a Colossus Slayer / Foe Slayer / Divine Fury / Dreadful
     /// Strikes / Psychic Blades / Planar Warrior / Slayer's Prey /
-    /// Gathered Swarm swing (and vice versa). Locks the HashSet-backed
+    /// Gathered Swarm / Psionic Strike swing (and vice versa). Locks the
+    /// HashSet-backed
     /// decoupling that the pre-refactor bool cohort trivially had by
     /// construction.
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
             COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG,
-            GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSYCHIC_BLADES_TAG,
-            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG,
+            PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            9,
+            10,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
@@ -57729,6 +57914,7 @@ mod tests {
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DIVINE_FURY_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DREADFUL_STRIKES_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSYCHIC_BLADES_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSIONIC_STRIKE_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PLANAR_WARRIOR_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SLAYERS_PREY_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GATHERED_SWARM_TAG));

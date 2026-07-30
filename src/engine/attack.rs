@@ -268,6 +268,13 @@ enum ClampScope {
     /// (footprint distance 0 means touching). Gated by
     /// `first_reactive_ally_within`.
     Ally(isize),
+    /// The damaged actor if they carry the row, otherwise the first
+    /// eligible ally within `n` footprint tiles — Psi Warrior's
+    /// Protective Field, whose RAW trigger is "when you or a creature
+    /// you can see within 30 feet of you takes damage" → the only
+    /// scope covering both. Prefers the damaged actor so a Psi Warrior
+    /// shields themselves before an ally spends a charge on them.
+    HolderOrAlly(isize),
 }
 
 /// Cohort row shape for a reactive per-swing damage clamp: a feature
@@ -332,6 +339,10 @@ struct ReactiveDamageClamp {
 ///     attacks only, self, burns a `PARRY_TAG` charge.
 ///   - **Interception** (Fighting Style, XGtE): 1d10 + proficiency, any
 ///     attack, adjacent ally.
+///   - **Protective Field** (Psi Warrior Fighter lv3, TCE): 1d8 + INT,
+///     any attack, self *or* an ally within 30 ft, burns a
+///     `PROTECTIVE_FIELD_TAG` charge. Last row so its scarce charge is
+///     only spent on damage the free clamps couldn't already absorb.
 const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
     ReactiveDamageClamp {
         flag: |a| a.has_uncanny_dodge(),
@@ -374,6 +385,18 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
             bonus: |a| a.proficiency_bonus(),
         },
     },
+    ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
+        tag: Some(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
+        label: "protective field",
+        lane: ClampLane::AnyAttack,
+        // 12 tiles = 30 ft on the 2.5 ft grid.
+        scope: ClampScope::HolderOrAlly(12),
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 8),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Intelligence),
+        },
+    },
 ];
 
 /// Resolve which actor (if any) spends a reaction for `row` against this
@@ -397,6 +420,19 @@ fn pick_clamp_reactor(
             &row.flag,
             row.tag,
         ),
+        ClampScope::HolderOrAlly(max_tiles) => {
+            if reactive_reducer_eligible(encounter, target_id, attacker_id, row.flag, row.tag) {
+                Some(target_id)
+            } else {
+                encounter.first_reactive_ally_within(
+                    attacker_id,
+                    target_id,
+                    max_tiles,
+                    &row.flag,
+                    row.tag,
+                )
+            }
+        }
     }
 }
 
@@ -1669,6 +1705,12 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///     Blades / Slayer's Prey but Piercing-fixed (physical, distinct
 ///     from the Psychic Blades / Dreadful Strikes psychic lane and the
 ///     Planar Warrior force lane).
+///   - **Psionic Strike** (Psi Warrior Fighter lv3, TCE): +1d8 Force,
+///     no target gate. Mechanically the twin of Planar Warrior — RAW's
+///     psionic-die cost and flat +INT are dropped (see the tag
+///     docstring); the Psi Warrior's distinguishing feature is the
+///     Protective Field row on `REACTIVE_DAMAGE_CLAMPS`, not this
+///     rider.
 pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
@@ -1710,6 +1752,13 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         dice: Dice::new(1, 6),
         damage_type: |_| DamageType::Piercing,
         label: "gathered swarm",
+        target_gate: |_| true,
+    },
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::PSIONIC_STRIKE_TAG,
+        dice: Dice::new(1, 8),
+        damage_type: |_| DamageType::Force,
+        label: "psionic strike",
         target_gate: |_| true,
     },
 ];

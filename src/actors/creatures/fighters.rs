@@ -3,8 +3,9 @@ use crate::actions::class_features::{
     DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELDRITCH_STRIKE_TAG,
     ELEGANT_COURTIER_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
     INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
-    MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK,
-    PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG,
+    MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PROTECTIVE_FIELD_TAG,
+    PSIONIC_STRIKE_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG,
+    SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG,
     SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG, WAR_MAGIC_STRIKE,
     WAR_MAGIC_TAG, WEAPON_BOND_TAG,
 };
@@ -12,8 +13,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
 use crate::actions::spells::{BOOMING_BLADE, FIRE_BOLT, MAGIC_MISSILE, MISTY_STEP, SHIELD};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::HashSet;
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size,
+};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Champion Fighter — the PHB's most popular fighter subclass. This is a
@@ -516,6 +519,107 @@ pub static ELDRITCH_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLo
         // and three level-2s, matching a fighter around level 13.
         spell_slots_by_level: vec![4, 3],
         actions,
+        features,
+        ..FIGHTER_TEMPLATE.clone()
+    }
+});
+
+/// Psi Warrior Fighter — Martial Archetype **Psi Warrior** subclass build
+/// (TCE). The fifth fighter build in the engine, and the first whose
+/// signature feature spends the fighter's reaction on somebody else.
+///
+/// Two subclass features ship, both level 3, both fed by RAW's Psionic
+/// Energy pool:
+///
+///   - **Psionic Strike** — a once-per-turn +1d8 Force rider on any
+///     weapon hit, via the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS`
+///     cohort.
+///   - **Protective Field** — a reaction that reduces damage by
+///     `1d8 + INT` taken by the knight *or any ally within 30 ft*, via
+///     the shared `REACTIVE_DAMAGE_CLAMPS` cohort. One charge per short
+///     rest.
+///
+/// Plus **Guarded Mind** (lv10) as resistance to psychic damage.
+///
+/// The two lv3 features are RAW's single most literal expression of a
+/// resource trade — one pool, spent either offensively or defensively —
+/// and the engine can't represent that, because its per-rest charge lane
+/// is a set membership rather than a counter. Faced with the choice, the
+/// build gives the strike away for free and charges for the field. That
+/// keeps the interesting decision (when do I spend the field, and on
+/// whom?) and discards the uninteresting one (do I want +1d8 damage this
+/// turn? — yes, always). The alternative split, charging for the strike,
+/// would have produced a fighter whose defining feature almost never
+/// fires. See `PROTECTIVE_FIELD_TAG` / `PSIONIC_STRIKE_TAG` for the
+/// per-feature reasoning.
+///
+/// What distinguishes this from the four siblings on the chassis is the
+/// direction its reaction points. Every other fighter reaction in the
+/// engine is self-interested: Parry clamps damage aimed at the fighter,
+/// Riposte answers a miss against the fighter, Indomitable rescues the
+/// fighter's own save. Protective Field is the only one that can be
+/// spent on a swing the fighter was never in, and it reaches 30 ft — so
+/// a Psi Warrior standing between two melees is doing something none of
+/// the other builds can. The natural reading is that this is the fighter
+/// you put next to the wizard.
+///
+/// It also composes with rather than duplicates Parry, which the chassis
+/// already carries. The clamp cohort visits `Holder`-scoped rows before
+/// `HolderOrAlly` ones, so on a melee hit against the Psi Warrior
+/// themselves the free parry die fires first and the field is only
+/// reached once parry is spent. The two charges are independent, so a
+/// Psi Warrior has *two* clamps per short rest against melee and one
+/// against everything else.
+///
+/// **Stats.** INT rises to 16 from the baseline's 10 — the highest INT
+/// on any fighter template — which puts Protective Field at `1d8 + 3`
+/// (avg 7.5, roughly one greatsword swing absorbed). That's the only
+/// stat change: HP, AC, STR, every maneuver, Parry / Riposte, Second
+/// Wind / Action Surge / Indomitable, Extra Attack and the Dueling
+/// style all inherit from the baseline via `..FIGHTER_TEMPLATE.clone()`.
+/// The maneuver suite is RAW-illegal on a Psi Warrior, as it is on the
+/// Samurai and the Eldritch Knight — engine-wide convention is that a
+/// subclass template is the baseline chassis plus its subclass tell.
+///
+/// Guarded Mind's second RAW clause — ending Charmed / Frightened on
+/// itself at the start of each of the holder's turns — is left out. It
+/// needs a turn-start condition-scrub hook keyed to a feature tag, which
+/// nothing else in the engine wants yet; the psychic resistance half is
+/// the part that reads at a damage site the engine already has. Psionic
+/// Adept's Psi-Powered Leap and Telekinetic Thrust, and the lv15
+/// Bulwark of Force, are future work for the same reason the Eldritch
+/// Knight's Arcane Charge is: each needs a destination or option picker
+/// the AI has no channel to answer.
+///
+/// Glyph 'P' — for **P**si Warrior. Distinct from baseline Fighter 'F',
+/// Champion 'C', Samurai 'S' and Eldritch Knight 'E'.
+pub static PSI_WARRIOR_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner the Samurai uses: this
+    // subclass adds two tags rather than one, a damage-resistance entry,
+    // and an INT bump. No new actions — both shipped features are
+    // passive rows on shared engine cohorts (a once-per-turn weapon
+    // rider and a reactive damage clamp), so the build's action surface
+    // is exactly the baseline fighter's.
+    let mut features = FIGHTER_TEMPLATE.features.clone();
+    features.insert(PSIONIC_STRIKE_TAG);
+    features.insert(PROTECTIVE_FIELD_TAG);
+    CreatureTemplate {
+        name: "Psi Warrior",
+        glyph: 'P',
+        // INT 16 (+3) sizes Protective Field's clamp at 1d8+3. Psionics
+        // are the one fighter subclass whose headline number keys off
+        // INT, so this is the stat that has to move.
+        intelligence: 16,
+        // 5e Psi Warrior **Guarded Mind** (subclass level 10): resistance
+        // to psychic damage. Ships on this CR-3 (level-5-ish) chassis
+        // above its RAW gate for the same reason the Champion's Survivor
+        // (lv18) and Superior Critical (lv15) ride there — class
+        // templates target a balanced playable level, not lockstep
+        // progression. Psychic is a narrow lane in the engine's monster
+        // pool (mind flayers, allips, nothics, the psychic-lance /
+        // mind-spike spell family), so the resistance is a genuine but
+        // situational defense rather than a broad one.
+        damage_modifiers: HashMap::from([(DamageType::Psychic, DamageModifier::Resistance)]),
         features,
         ..FIGHTER_TEMPLATE.clone()
     }

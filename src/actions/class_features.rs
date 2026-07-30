@@ -176,6 +176,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // engine collapses RAW's two uses per rest to one charge; the
     // cadence stays exact.
     COMBAT_WILD_SHAPE_TAG,
+    // 5e Psi Warrior Fighter **Protective Field** — the Psionic Energy
+    // pool RAW "regain all expended dice when you finish a short or
+    // long rest", the same cadence as the Channel Divinity family
+    // above. The engine collapses RAW's four-plus dice to one charge;
+    // the cadence stays exact.
+    PROTECTIVE_FIELD_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2429,6 +2435,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     PLANAR_WARRIOR_TAG,
     SLAYERS_PREY_TAG,
     GATHERED_SWARM_TAG,
+    PSIONIC_STRIKE_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -2704,6 +2711,84 @@ pub const PLANAR_WARRIOR_TAG: &str = "ranger.planar_warrior";
 /// different angles (Whispers' Psychic-fixed, Monster Slayer's weapon-
 /// typed, Swarmkeeper's Piercing-fixed).
 pub const GATHERED_SWARM_TAG: &str = "ranger.gathered_swarm";
+
+/// 5e Fighter **Psi Warrior** subclass — **Psionic Strike** (level 3,
+/// TCE). Passive once-per-turn weapon-hit rider: on any weapon hit
+/// against a target within 30 ft, lay +1d8 Force damage on the swing.
+///
+/// RAW spends one Psionic Energy die from the subclass pool and adds the
+/// holder's INT modifier to the rolled die. We ship the die alone, with
+/// neither the pool cost nor the flat INT bump, for two reasons that
+/// pull the same way. The engine's per-rest charge lane is binary — one
+/// `features_remaining` entry per tag, not a counter — so a
+/// pool-accurate Psionic Strike would fire once per short rest rather
+/// than the four-plus times RAW allows, which is a worse approximation
+/// than "free but once per turn". And the pool's other consumer here,
+/// `PROTECTIVE_FIELD_TAG`, is the feature whose whole character is
+/// deciding *when* to spend; letting the offensive rider compete for the
+/// same single charge would mean the defensive half essentially never
+/// fires. Splitting them — strike free, field charged — keeps both
+/// features legible at the cost of RAW's shared-resource tension. The
+/// flat +INT is dropped alongside the pool cost because the shared
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort is the "one die, one damage
+/// type, one target gate" corner of the rider space and has no flat-
+/// bonus column; a +2 that would need one is not worth widening every
+/// row for. Same "collapse to the load-bearing lane" call the sibling
+/// Gathered Swarm / Slayer's Prey / Planar Warrior riders make on their
+/// own RAW riders.
+///
+/// The RAW 30 ft range gate is also dropped: every weapon swing this
+/// rider can attach to is already inside its own weapon's reach, and no
+/// weapon in the engine outranges 30 ft by enough for the gate to bite
+/// on a melee build. Force damage is the rarest-resisted type in the
+/// engine — the same lane Planar Warrior sits on, and the reason both
+/// features read as "your hits just land harder, against anything".
+///
+/// Stored as a `has_passive_feature` flag and read at the attack-
+/// resolution chokepoint in `engine::attack::resolve_attack_outcome`
+/// via the shared `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort. The "once
+/// per turn" gate is the `once_per_turn_used(PSIONIC_STRIKE_TAG)`
+/// ledger, cleared at turn-start by `reset_for_new_round`. Crits double
+/// the die via the shared `roll_rider` helper. Fires on melee AND
+/// ranged weapon hits — RAW's "when you hit a creature with a weapon
+/// attack" has no melee-only gate.
+///
+/// Sibling in die size and damage type to PLANAR_WARRIOR_TAG (Horizon
+/// Walker Ranger lv3 — +1d8 Force); the two are mechanically identical
+/// riders reached from opposite class chassis, which is why the Psi
+/// Warrior's identity rests on `PROTECTIVE_FIELD_TAG` rather than here.
+pub const PSIONIC_STRIKE_TAG: &str = "fighter.psionic_strike";
+
+/// 5e Fighter **Psi Warrior** subclass — **Protective Field** (level 3,
+/// TCE). Reactive damage clamp: when the holder *or* a creature they can
+/// see within 30 ft takes damage, the holder may spend their reaction
+/// and one Psionic Energy die to reduce that damage by `1d8 + INT
+/// modifier`.
+///
+/// Ships as a row on the shared `REACTIVE_DAMAGE_CLAMPS` cohort in
+/// `engine::attack` with `ClampScope::HolderOrAlly(12)` (12 tiles = 30
+/// ft on the 2.5 ft grid) — the first row to use that scope, and the
+/// reason the scope exists. The row carries this tag, so firing burns
+/// the reaction *and* a `feature_available` charge; the tag is
+/// registered on `SHORT_REST_FEATURES` so the Psionic Energy pool
+/// re-arms between engagements. RAW's pool of four-plus dice collapses
+/// to one charge per short rest — the same collapse the Cleric Channel
+/// Divinity charges and Warding Flare's WIS-mod uses take.
+///
+/// The scope is what makes this feature distinct from every clamp
+/// already in the engine. Uncanny Dodge, Deflect Missiles and Parry are
+/// self-only; Interception is ally-only and adjacent. Protective Field
+/// is the only clamp whose holder chooses between shielding themselves
+/// and shielding someone across the battlefield, which is also why it
+/// pairs with a charge rather than being always-on: an always-on clamp
+/// with a 30 ft ally reach would strictly dominate both Fighting Styles.
+///
+/// Because the cohort walk visits `Holder`-scoped rows before this one,
+/// a Psi Warrior who also carries Parry (as the fighter chassis does)
+/// spends the parry charge first on a melee hit and reaches for the
+/// field only when parry is already gone — which is the ordering a
+/// player would pick anyway, the cheaper die first.
+pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 
 /// 5e Ranger **Monster Slayer** subclass — **Slayer's Prey** (level 3,
 /// XGtE). Passive once-per-turn weapon-hit rider: on any weapon hit, lay
