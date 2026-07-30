@@ -198,6 +198,9 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the short-rest cadence the rest of the reactive per-rest family
     // (Parry, Warding Flare, Warding Maneuver, Protective Field) shares.
     DAMPEN_ELEMENTS_TAG,
+    // 5e Nature Domain Cleric Channel Divinity — Charm Animals and
+    // Plants. RAW Channel Divinity is once per short rest.
+    CHARM_ANIMALS_AND_PLANTS_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2886,6 +2889,32 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 /// once-per-short-rest charge is the standard collapse, and here it is
 /// also a balance choice — an unlimited 30 ft elemental halve would make
 /// every elemental encounter in the engine a non-event.
+/// 5e Cleric **Nature Domain** subclass — **Charm Animals and Plants**
+/// (Channel Divinity, level 2, PHB). Action: every beast and plant within
+/// 30 ft rolls a WIS save vs the cleric's WIS-anchored spell DC and is
+/// Charmed by the cleric for 10 rounds on a fail. Once per short rest;
+/// refreshes via `SHORT_REST_FEATURES`.
+///
+/// Ships as a `TurnBurst` config, and it is the config that generalized
+/// that struct past Frightened. The resolver installs the condition
+/// through `install_condition_with_link`, so Charmed's `charmed_by`
+/// back-link — the anchor for the "can't attack your charmer" gate —
+/// comes along without the burst code knowing which conditions carry one.
+///
+/// Charmed is stronger than the Frightened its three siblings install: a
+/// charmed creature can't attack the cleric or target them with harmful
+/// effects at all, where a frightened one only rolls at disadvantage. The
+/// type filter is correspondingly the narrowest in the cohort — against a
+/// druid's summons or a pack of wolves this ends the fight, and against
+/// anything humanoid it does nothing.
+///
+/// RAW's "ends early if the creature takes any damage" clause is not
+/// modeled: `Charmed` has no damage-clears-it rule and adding one would
+/// change every charm source in the engine. The party can therefore beat
+/// on a charmed bear in a way RAW forbids, which makes the narrow type
+/// filter load-bearing rather than incidental.
+pub const CHARM_ANIMALS_AND_PLANTS_TAG: &str = "cleric.charm_animals_and_plants";
+
 pub const DAMPEN_ELEMENTS_TAG: &str = "cleric.dampen_elements";
 
 pub const ARCANE_ABJURATION_TAG: &str = "cleric.arcane_abjuration";
@@ -4556,6 +4585,12 @@ pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
 /// - `is_affected` — creature-type gate: returns true iff the target's
 ///   `CreatureType` is in the "turn" cohort (undead for Turn Undead,
 ///   fey / fiend for Turn the Faithless).
+/// - `installed` — condition laid on each failed-save target. Frightened
+///   for the three Turn / dread variants; Charmed for the Nature
+///   Domain's Charm Animals and Plants. Routed through
+///   `install_condition_with_link`, so a condition carrying a back-link
+///   (Charmed's `charmed_by`) gets it without this resolver knowing which
+///   conditions do.
 /// - `label` — log prefix ("turn undead" / "turn the faithless").
 fn resolve_turn_burst(
     encounter: &mut EncounterInstance,
@@ -4563,6 +4598,7 @@ fn resolve_turn_burst(
     feature_tag: &'static str,
     spellcasting_ability: AbilityScoreType,
     is_affected: fn(crate::engine::types::CreatureType) -> bool,
+    installed: Condition,
     label: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
@@ -4656,11 +4692,16 @@ fn resolve_turn_burst(
             }));
             continue;
         }
-        effects.push(Box::new(ApplyCondition {
-            actor_id: id,
-            condition: Condition::Frightened,
-            timer: ConditionTimer::Rounds(10),
-        }));
+        // `install_condition_with_link` covers the back-link half for
+        // conditions that carry one — Charmed's `charmed_by` anchors the
+        // "can't attack your charmer" gate, and Frightened has no link,
+        // so the same call serves every variant.
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            installed,
+            id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
     }
     effects
 }
@@ -4732,11 +4773,16 @@ pub struct TurnBurst {
     /// CHA for the paladin oaths, matching each class's spellcasting
     /// ability.
     pub dc_ability: AbilityScoreType,
-    /// Which creature types the burst can frighten. The team and
+    /// Which creature types the burst can affect. The team and
     /// combat-active filters live inside `resolve_turn_burst`; this
     /// closure adds only the RAW type gate, so `|_| true` means "any
     /// hostile".
     pub type_filter: fn(crate::engine::types::CreatureType) -> bool,
+    /// Condition laid on each failed-save target, for 10 rounds. The
+    /// three Turn / dread variants install Frightened; the Nature
+    /// Domain's Charm Animals and Plants installs Charmed. Any back-link
+    /// the condition carries is queued by the resolver.
+    pub installed: Condition,
 }
 
 impl Action for TurnBurst {
@@ -4779,6 +4825,7 @@ impl Action for TurnBurst {
             self.tag,
             self.dc_ability,
             self.type_filter,
+            self.installed,
             self.name,
         )
     }
@@ -4796,6 +4843,7 @@ pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     tag: TURN_UNDEAD_TAG,
     dc_ability: AbilityScoreType::Wisdom,
     type_filter: |ct| ct.is_undead(),
+    installed: Condition::Frightened,
 });
 
 /// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
@@ -4821,6 +4869,7 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
             crate::engine::types::CreatureType::Fey | crate::engine::types::CreatureType::Fiend
         )
     },
+    installed: Condition::Frightened,
 });
 
 /// Arcane Abjuration — Arcana Domain Cleric Channel Divinity (lv2,
@@ -4855,6 +4904,39 @@ pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
                 | CreatureType::Fiend
         )
     },
+    installed: Condition::Frightened,
+});
+
+/// Charm Animals and Plants — Nature Domain Cleric Channel Divinity
+/// (lv2, PHB), action. Every beast and plant within 30 ft makes a WIS
+/// save vs the cleric's WIS-based DC; on fail it is Charmed by the cleric
+/// for 10 rounds. Once per short rest.
+///
+/// The only `TurnBurst` config that installs Charmed rather than
+/// Frightened, and the reason the struct carries an `installed` column at
+/// all. Charmed is the stronger of the two on paper — a charmed creature
+/// can't attack the cleric or target them with harmful effects at all,
+/// where a frightened one merely rolls at disadvantage — but the type
+/// filter is the narrowest in the cohort. Against a druid's summons, a
+/// pack of wolves or an awakened forest it ends the fight; against
+/// anything humanoid it does nothing.
+///
+/// RAW's charm ends early "if the creature takes any damage", which the
+/// engine doesn't model: `Charmed` has no damage-clears-it clause, and
+/// adding one would change every other charm source. So the party can
+/// safely beat on a charmed bear here in a way RAW wouldn't allow — a
+/// real over-grant, and the reason this config's narrow type filter is
+/// load-bearing rather than incidental.
+pub static CHARM_ANIMALS_AND_PLANTS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "charm animals and plants",
+    aliases: &["cap", "cd-charm", "charm-nature"],
+    tag: CHARM_ANIMALS_AND_PLANTS_TAG,
+    dc_ability: AbilityScoreType::Wisdom,
+    type_filter: |ct| {
+        use crate::engine::types::CreatureType;
+        matches!(ct, CreatureType::Beast | CreatureType::Plant)
+    },
+    installed: Condition::Charmed,
 });
 
 /// Dreadful Aspect — Oathbreaker Paladin Channel Divinity (lv3), action.
@@ -4872,6 +4954,7 @@ pub static DREADFUL_ASPECT: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     // No creature-type filter — the team + combat-active filters inside
     // `resolve_turn_burst` handle the "hostile and standing" half.
     type_filter: |_| true,
+    installed: Condition::Frightened,
 });
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
@@ -10865,7 +10948,6 @@ impl Action for HypnoticGaze {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -10896,22 +10978,18 @@ impl Action for HypnoticGaze {
         // enchanter lands one tick short; a flat 1-round timer is the
         // closer fit and matches how the sibling round-scale lockdowns
         // (Hold Person's stun window, Mind Whip) are timed.
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(1),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Incapacitated,
-                timer: ConditionTimer::Rounds(1),
-            }),
-        ]
+        let mut out = crate::engine::side_effects::install_condition_with_link(
+            Condition::Charmed,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(1),
+        );
+        out.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Incapacitated,
+            timer: ConditionTimer::Rounds(1),
+        }));
+        out
     }
 }
 

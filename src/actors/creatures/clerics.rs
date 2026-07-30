@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
+    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CHARM_ANIMALS_AND_PLANTS,
+    CHARM_ANIMALS_AND_PLANTS_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
@@ -859,12 +860,16 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// signature reaction cares about the *type* of damage coming in rather
 /// than how it arrives.
 ///
-/// Two subclass features ship:
+/// Three subclass features ship:
 ///
 ///   - **Acolyte of Nature** (lv1) — a druid cantrip and the Nature
 ///     skill. Thorn Whip is the cantrip: a ranged attack that drags the
 ///     target 10 ft toward the cleric, which is the only forced-movement
 ///     tool on any cleric template.
+///   - **Charm Animals and Plants** (Channel Divinity, lv2) — an action:
+///     every beast and plant within 30 ft rolls a WIS save or is Charmed
+///     by the cleric. A `TurnBurst` config, and the one that generalized
+///     that struct past Frightened.
 ///   - **Dampen Elements** (lv6) — a reaction granting the cleric or an
 ///     ally within 30 ft resistance to acid, cold, fire, lightning or
 ///     thunder damage. A row on the shared `REACTIVE_DAMAGE_CLAMPS`
@@ -884,15 +889,10 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// the fighter. Neither feature is loud on its own; together they make
 /// the build the one that decides *where* the fight happens.
 ///
-/// RAW's other Nature features are left out. Channel Divinity: Charm
-/// Animals and Plants (lv2) is a 30 ft WIS-save burst against beasts and
-/// plants — mechanically a `TurnBurst` sibling, except it applies Charmed
-/// rather than Frightened, and Charmed's `charmed_by` back-link isn't on
-/// the shared `condition_link_side_effect` dispatch the burst resolver
-/// would need. Dampen Elements is the load-bearing half anyway. Divine
-/// Strike (lv8) is already on the baseline chassis via
-/// `DIVINE_STRIKE_TAG`; Master of Nature (lv17) commands charmed beasts,
-/// which needs the charm half first.
+/// RAW's remaining Nature features are left out. Divine Strike (lv8) is
+/// already on the baseline chassis via `DIVINE_STRIKE_TAG`; Master of
+/// Nature (lv17) lets the cleric command charmed beasts, which needs an
+/// order-an-actor surface the engine doesn't have.
 ///
 /// Glyph 'N' — for **N**ature. Distinct from baseline cleric 'C', War
 /// 'W', Light 'L', Tempest 'S', Life 'V', Grave 'G', Forge 'F', Twilight
@@ -904,7 +904,7 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// level, not lockstep PHB progression.
 pub static NATURE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Not the `with_subclass_tag` one-liner the Forge / Twilight domains
-    // use: this subclass adds an action, a tag and a skill. The
+    // use: this subclass adds two actions, two tags and a skill. The
     // `..CLERIC_TEMPLATE.clone()` tail still picks up the full cleric
     // spell ladder, save profs, stats, slots, and the baseline
     // TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE / DESTROY_UNDEAD
@@ -914,8 +914,10 @@ pub static NATURE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // choice. Thorn Whip is the pick with the most combat surface — the
     // 10 ft pull is forced movement no other cleric template has.
     actions.push(&*THORN_WHIP);
+    actions.push(&*CHARM_ANIMALS_AND_PLANTS);
     let mut features = CLERIC_TEMPLATE.features.clone();
     features.insert(DAMPEN_ELEMENTS_TAG);
+    features.insert(CHARM_ANIMALS_AND_PLANTS_TAG);
     let mut skills = CLERIC_TEMPLATE.skills.clone();
     // Acolyte of Nature's other half: proficiency in Animal Handling,
     // Nature or Survival. Nature is the on-the-nose pick.

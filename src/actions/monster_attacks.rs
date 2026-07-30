@@ -260,7 +260,7 @@ pub fn save_or_charmed_by_caster(
     timer: ConditionTimer,
     rider_name: &str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+    use crate::engine::side_effects::install_condition_with_link;
     let Some(target) = encounter.actors.get(&target_id) else {
         return Vec::new();
     };
@@ -274,17 +274,7 @@ pub fn save_or_charmed_by_caster(
         return Vec::new();
     }
     encounter.log(format!("  {}: target is enthralled", rider_name));
-    vec![
-        Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Charmed,
-            timer,
-        }),
-        Box::new(SetCharmedBy {
-            target_id,
-            charmer: Some(caster_id),
-        }),
-    ]
+    install_condition_with_link(Condition::Charmed, target_id, caster_id, timer)
 }
 
 /// On an Action-cost weapon swing, conditionally run a second swing if
@@ -3086,7 +3076,7 @@ impl Action for LuringSong {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        use crate::engine::side_effects::install_condition_with_link;
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
@@ -3118,15 +3108,12 @@ impl Action for LuringSong {
             if save.passed() {
                 continue;
             }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(3),
-            }));
-            effects.push(Box::new(SetCharmedBy {
+            effects.extend(install_condition_with_link(
+                Condition::Charmed,
                 target_id,
-                charmer: Some(caster_id),
-            }));
+                caster_id,
+                ConditionTimer::Rounds(3),
+            ));
         }
         effects
     }
@@ -9460,7 +9447,7 @@ impl Action for SuccubusCharm {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        use crate::engine::side_effects::install_condition_with_link;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -9481,17 +9468,12 @@ impl Action for SuccubusCharm {
             return Vec::new();
         }
         encounter.log("  succubus charm: target falls under the succubus's sway");
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        install_condition_with_link(
+            Condition::Charmed,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 

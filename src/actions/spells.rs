@@ -16,7 +16,7 @@ use crate::{
         saves::SaveDamagePolicy,
         side_effects::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, Resource,
-            StartConcentration,
+            StartConcentration, install_condition_with_link,
         },
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
     },
@@ -1027,8 +1027,13 @@ fn save_or_concentration_condition(
 /// `ApplyCondition(Charmed, timer)` on the target plus a
 /// `SetCharmedBy` that anchors the engine's "can't attack your charmer"
 /// gate in `action_template::validate_input`. Shared by Charm Person,
-/// Charm Monster, and Geas — each of which would otherwise re-inline
-/// the same two-Box vec at the call site.
+/// Charm Monster, and Geas.
+///
+/// A named wrapper over the general
+/// `side_effects::install_condition_with_link`, which owns the
+/// condition-to-link dispatch for all six linked conditions. Kept for the
+/// call sites' legibility — `install_charmed_by(t, c, timer)` reads better
+/// at a charm spell than the generic form.
 ///
 /// Timer varies per spell (Charm Person / Charm Monster: `Rounds(10)`
 /// ≈ 1 hour RAW capped to encounter-scale; Geas: `Rounds(100)` ≈ 10
@@ -1041,18 +1046,12 @@ fn install_charmed_by(
     caster_id: usize,
     timer: ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    use crate::engine::side_effects::SetCharmedBy;
-    vec![
-        Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Charmed,
-            timer,
-        }),
-        Box::new(SetCharmedBy {
-            target_id,
-            charmer: Some(caster_id),
-        }),
-    ]
+    crate::engine::side_effects::install_condition_with_link(
+        Condition::Charmed,
+        target_id,
+        caster_id,
+        timer,
+    )
 }
 
 /// Install the canonical Dominate spell payload: Charmed by the caster
@@ -7784,7 +7783,6 @@ impl Action for CrownOfMadness {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -7797,24 +7795,15 @@ impl Action for CrownOfMadness {
             return Vec::new();
         }
         encounter.log("  crown of madness: target falls under the caster's sway");
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Crown of Madness",
-                    vec![(target_id, Condition::Charmed)],
-                ),
-            }),
-        ]
+        let mut out = install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
+        out.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Crown of Madness",
+                vec![(target_id, Condition::Charmed)],
+            ),
+        }));
+        out
     }
 }
 
@@ -8036,7 +8025,6 @@ impl Action for Suggestion {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -8049,24 +8037,15 @@ impl Action for Suggestion {
             return Vec::new();
         }
         encounter.log("  suggestion: target's mind is bent to the caster's words");
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Suggestion",
-                    vec![(target_id, Condition::Charmed)],
-                ),
-            }),
-        ]
+        let mut out = install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
+        out.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Suggestion",
+                vec![(target_id, Condition::Charmed)],
+            ),
+        }));
+        out
     }
 }
 
@@ -8122,7 +8101,6 @@ impl Action for MassSuggestion {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
@@ -8142,15 +8120,12 @@ impl Action for MassSuggestion {
             if save.passed() {
                 continue;
             }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            effects.push(Box::new(SetCharmedBy {
-                target_id: tid,
-                charmer: Some(caster_id),
-            }));
+            effects.extend(install_condition_with_link(
+                Condition::Charmed,
+                tid,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
         }
         effects
     }
@@ -24658,7 +24633,6 @@ impl Action for Compulsion {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         // 30 ft RAW = 12 tiles. The self-centered burst targets every
         // enemy within range — the bard's whole front rank in a typical
         // clustered encounter.
@@ -24687,15 +24661,12 @@ impl Action for Compulsion {
             // Mirror the Charm Person / Geas install lane — Charmed flag
             // plus charmed_by link, so the "can't attack your charmer"
             // gate in `action_template::validate_input` fires correctly.
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            effects.push(Box::new(SetCharmedBy {
-                target_id: tid,
-                charmer: Some(caster_id),
-            }));
+            effects.extend(install_condition_with_link(
+                Condition::Charmed,
+                tid,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
             conditions.push((tid, Condition::Charmed));
         }
         effects.push(Box::new(StartConcentration {

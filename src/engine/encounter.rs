@@ -57774,8 +57774,8 @@ mod tests {
     #[test]
     fn nature_cleric_ships_its_kit_and_inherits_the_cleric_chassis() {
         use crate::actions::class_features::{
-            DAMPEN_ELEMENTS_TAG, DESTROY_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG,
-            TURN_UNDEAD_TAG,
+            CHARM_ANIMALS_AND_PLANTS_TAG, DAMPEN_ELEMENTS_TAG, DESTROY_UNDEAD_TAG,
+            DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG, TURN_UNDEAD_TAG,
         };
         use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, NATURE_CLERIC_TEMPLATE};
         use crate::engine::types::Skill;
@@ -57788,6 +57788,14 @@ mod tests {
         assert!(
             e.actors[&cleric].find_action("thorn whip").is_some(),
             "Acolyte of Nature's druid cantrip should be on the action list"
+        );
+        assert!(e.actors[&cleric].has_passive_feature(CHARM_ANIMALS_AND_PLANTS_TAG));
+        assert!(e.actors[&cleric].feature_available(CHARM_ANIMALS_AND_PLANTS_TAG));
+        assert!(
+            e.actors[&cleric]
+                .find_action("charm animals and plants")
+                .is_some(),
+            "the Channel Divinity needs an action surface"
         );
         assert!(NATURE_CLERIC_TEMPLATE.skills.contains(&Skill::Nature));
         assert!(
@@ -57806,6 +57814,57 @@ mod tests {
                 tag
             );
         }
+    }
+
+    /// Charm Animals and Plants installs Charmed — not Frightened — and
+    /// installs it *with* the `charmed_by` back-link, which is what makes
+    /// the "can't attack your charmer" gate fire. Pins the `installed`
+    /// column the config gained for this feature, plus the link the
+    /// shared resolver now queues on its behalf. A humanoid in range is
+    /// untouched by the beast/plant filter.
+    #[test]
+    fn charm_animals_and_plants_charms_a_beast_with_its_link() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{
+            CHARM_ANIMALS_AND_PLANTS, CHARM_ANIMALS_AND_PLANTS_TAG,
+        };
+        use crate::actors::creatures::clerics::NATURE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut saw_charm = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let cleric = e
+                .instantiate_creature(&NATURE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let wolf = e
+                .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 1)
+                .unwrap();
+            let effects = CHARM_ANIMALS_AND_PLANTS.side_effects(&mut e, cleric, None, None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            assert!(!e.actors[&cleric].feature_available(CHARM_ANIMALS_AND_PLANTS_TAG));
+            assert!(
+                !e.actors[&goblin].has_condition(Condition::Charmed),
+                "a humanoid is outside the beast/plant filter"
+            );
+            if e.actors[&wolf].has_condition(Condition::Charmed) {
+                assert_eq!(
+                    e.actors[&wolf].charmed_by(),
+                    Some(cleric),
+                    "the charm must carry its back-link to the cleric"
+                );
+                saw_charm = true;
+                break;
+            }
+        }
+        assert!(saw_charm, "charm animals and plants never landed on the wolf");
     }
 
     /// Dampen Elements is the cohort's only damage-type-filtered clamp: it

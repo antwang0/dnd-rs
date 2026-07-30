@@ -1424,10 +1424,10 @@ impl ApplicableSideEffect for SetEldritchStruckBy {
 
 /// Single source of truth for "which conditions carry a back-link to
 /// the actor that applied them, and what `Set*By` side-effect installs
-/// that link." Returns `Some(boxed_side_effect)` for the five flag-plus-
+/// that link." Returns `Some(boxed_side_effect)` for the six flag-plus-
 /// link conditions (Dueled / Goaded / Distracted / Sworn /
-/// EldritchStruck); returns `None` for conditions that stand alone with
-/// just `ApplyCondition`.
+/// EldritchStruck / Charmed); returns `None` for conditions that stand
+/// alone with just `ApplyCondition`.
 ///
 /// Used by:
 ///   - `engine::attack::attacker_link_side_effect` (weapon on-hit rider
@@ -1435,6 +1435,9 @@ impl ApplicableSideEffect for SetEldritchStruckBy {
 ///   - `engine::attack::push_on_hit_condition_marks` (the passive
 ///     weapon-hit mark cohort — Eldritch Strike installs
 ///     EldritchStruck, Unwavering Mark installs Dueled),
+///   - `install_condition_with_link` (the condition-plus-link install
+///     helper every charm source and the Channel Divinity turn-burst
+///     resolver route through),
 ///   - direct-cast actions that install a flag-plus-link condition
 ///     without going through the rider chain (Compelled Duel installs
 ///     Dueled; Vow of Enmity installs Sworn).
@@ -1469,8 +1472,46 @@ pub fn condition_link_side_effect(
             target_id,
             striker: Some(caster_id),
         })),
+        Condition::Charmed => Some(Box::new(SetCharmedBy {
+            target_id,
+            charmer: Some(caster_id),
+        })),
         _ => None,
     }
+}
+
+/// Install a condition together with whatever back-link it carries: an
+/// `ApplyCondition` on the target, plus the `Set*By` from
+/// `condition_link_side_effect` when the condition has one. Returns both
+/// as a ready-to-extend effect vec.
+///
+/// This is the install-side counterpart to `condition_link_side_effect`'s
+/// dispatch, and the reason to prefer it over hand-writing the pair: the
+/// two halves of a linked condition have to stay in lockstep, and every
+/// place that writes them separately is a place a future edit can drop
+/// one. Charm is the cautionary case — eight production sites across
+/// three modules each hand-built `ApplyCondition(Charmed)` +
+/// `SetCharmedBy`, and any ninth that forgot the link would have produced
+/// a charmed creature that still happily attacks its charmer, with no
+/// error anywhere.
+///
+/// Conditions with no link (Frightened, Prone, Restrained, …) come back
+/// as a one-element vec, so callers never need to know which is which.
+pub fn install_condition_with_link(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    caster_id: usize,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut out: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition,
+        timer,
+    })];
+    if let Some(link) = condition_link_side_effect(condition, target_id, caster_id) {
+        out.push(link);
+    }
+    out
 }
 
 /// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
