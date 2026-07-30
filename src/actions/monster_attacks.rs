@@ -7018,14 +7018,17 @@ impl Action for VrockScreech {
             raw
         ));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        // Non-demon filter: any creature *without* poison immunity. Every
-        // demon in our pool is poison-immune by template; the cohort
-        // gates the screech to non-demon targets.
+        // RAW's filter is "each creature within 20 feet of it ... other
+        // than demons". The engine's `CreatureType` doesn't split demons
+        // from devils — both are `Fiend` — so the gate spares every fiend,
+        // which over-spares devils that RAW would catch. Still far tighter
+        // than the poison-immunity proxy this used to read, which also
+        // spared golems, giant spiders, yuan-ti and the tarrasque.
         for tid in encounter.enemy_burst_targets(caster_id, center, RADIUS) {
             let Some(target) = encounter.actors.get(&tid) else {
                 continue;
             };
-            if target.is_immune_to(DamageType::Poison) {
+            if target.creature_type() == crate::engine::types::CreatureType::Fiend {
                 continue;
             }
             let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);

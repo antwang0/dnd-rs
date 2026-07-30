@@ -2236,26 +2236,28 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
             }
+            // Two attacker-type-gated disadvantage lanes. Neither can live
+            // in the static condition cohort: both read the *attacker's*
+            // creature type, not the target's conditions alone.
+            //
             // 5e Protection from Evil and Good: aberrations / celestials /
             // elementals / fey / fiends / undead have disadvantage on
-            // attacks vs the Warded target. We approximate the creature-
-            // type gate by checking the attacker's necrotic/poison
-            // immunity (a reliable proxy for undead / fiend in our pool).
+            // attacks against the Warded target. `affected_by_protection`
+            // on `CreatureType` is exactly that list.
             //
-            // Daylight applies the same undead-disadvantage hook for any
-            // ally standing in the daylight aura, mirroring RAW's "sunlight
-            // forces sun-vulnerable creatures to make Constitution saves
-            // or take damage" but simplified to a flat disadvantage.
-            //
-            // Not in the static cohort because the disadvantage fires only
-            // for undead-flavored attackers — needs attacker-side state.
-            if (target.has_condition(Condition::Warded)
-                || target.has_condition(Condition::Daylit))
-                && let Some(attacker) = self.actors.get(&attacker_id)
-                && (attacker.is_immune_to(DamageType::Necrotic)
-                    || attacker.is_immune_to(DamageType::Poison))
-            {
-                mode = mode.combine(RollMode::Disadvantage);
+            // Daylight: the engine's simplification of RAW Sunlight
+            // Sensitivity — an undead attacker caught in the aura rolls at
+            // disadvantage. RAW's own trait belongs to specific undead
+            // (and to a few subterranean humanoids the engine doesn't
+            // tag), so undead is the load-bearing cohort.
+            if let Some(attacker) = self.actors.get(&attacker_id) {
+                let attacker_type = attacker.creature_type();
+                if (target.has_condition(Condition::Warded)
+                    && attacker_type.affected_by_protection())
+                    || (target.has_condition(Condition::Daylit) && attacker_type.is_undead())
+                {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
             // 5e Battle Master Distracting Strike — target-side mirror
             // of the Dueled / Goaded pattern. A distracted creature is
@@ -22458,15 +22460,16 @@ mod tests {
         );
     }
 
+    /// Protection from Evil and Good taxes exactly RAW's six creature
+    /// types — aberration, celestial, elemental, fey, fiend, undead — read
+    /// through `CreatureType::affected_by_protection`. An undead attacker
+    /// rolls at disadvantage against the Warded target.
     #[test]
-    fn warded_target_gets_disadvantage_against_fiendish_attackers() {
+    fn warded_target_gets_disadvantage_against_protection_types() {
         let mut e = ei_with_terrain(15, 15, &[]);
-        // Ward an ally.
         let ally = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
             .unwrap();
-        // Use Zombie as the "fiendish" attacker — it's Poison-immune,
-        // matching our proxy for fiend/undead detection.
         let attacker = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
             .unwrap();
@@ -22477,8 +22480,69 @@ mod tests {
         let mode = e.compute_attack_mode(attacker, ally, true);
         assert!(
             matches!(mode, crate::engine::dice::RollMode::Disadvantage),
-            "warded target should give fiendish attacker disadvantage (got {:?})",
+            "warded target should tax an undead attacker (got {:?})",
             mode
+        );
+    }
+
+    /// The ward's gate reads the attacker's creature type, not their
+    /// damage immunities. An iron golem is poison-immune — which is what
+    /// the pre-fix proxy tested — but a Construct is not on RAW's list, so
+    /// it swings unimpeded. Six Constructs, two Monstrosities and a Beast
+    /// in the engine's pool used to be taxed by this ward.
+    #[test]
+    fn warded_target_does_not_tax_a_poison_immune_construct() {
+        use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let golem = e
+            .instantiate_creature(&IRON_GOLEM_TEMPLATE, Coordinate::new(5, 3), 1, 0)
+            .unwrap();
+        assert!(e.actors[&golem].is_immune_to(DamageType::Poison));
+        assert!(!e.actors[&golem].creature_type().affected_by_protection());
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Warded, crate::conditions::ConditionTimer::Rounds(10));
+        assert!(
+            !matches!(
+                e.compute_attack_mode(golem, ally, true),
+                crate::engine::dice::RollMode::Disadvantage
+            ),
+            "a construct is not on Protection from Evil and Good's list"
+        );
+    }
+
+    /// The other half of the fix: RAW types the proxy *missed*. A beholder
+    /// is an Aberration with neither necrotic nor poison immunity, so the
+    /// old gate let it swing at a Warded target untaxed — as it did for
+    /// dozens of the engine's templates across every one of RAW's six
+    /// types.
+    #[test]
+    fn warded_target_taxes_an_aberration_the_proxy_missed() {
+        use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let beholder = e
+            .instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(6, 3), 1, 0)
+            .unwrap();
+        assert!(!e.actors[&beholder].is_immune_to(DamageType::Poison));
+        assert!(!e.actors[&beholder].is_immune_to(DamageType::Necrotic));
+        assert!(e.actors[&beholder].creature_type().affected_by_protection());
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Warded, crate::conditions::ConditionTimer::Rounds(10));
+        assert!(
+            matches!(
+                e.compute_attack_mode(beholder, ally, true),
+                crate::engine::dice::RollMode::Disadvantage
+            ),
+            "an aberration is on Protection from Evil and Good's list"
         );
     }
 
