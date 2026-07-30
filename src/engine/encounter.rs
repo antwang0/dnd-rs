@@ -67586,4 +67586,154 @@ mod tests {
             assert!(saw_rider, "40 seeds should land at least one {} swing", label);
         }
     }
+
+    /// Four Elements template drift pin: both discipline actions, the
+    /// rider tag, the ki-as-slots budget, and the whole baseline Monk
+    /// chassis inherited through the `..MONK_TEMPLATE.clone()` tail.
+    #[test]
+    fn four_elements_monk_ships_its_kit_and_inherits_the_monk_chassis() {
+        use crate::actions::class_features::{
+            EMPTY_BODY_TAG, FANGS_OF_THE_FIRE_SNAKE_TAG, PURITY_OF_BODY_TAG, STUNNING_STRIKE_TAG,
+            UNARMORED_MOVEMENT_TAG,
+        };
+        use crate::actors::creatures::monks::{FOUR_ELEMENTS_MONK_TEMPLATE, MONK_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let monk = e
+            .instantiate_creature(&FOUR_ELEMENTS_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&monk].has_passive_feature(FANGS_OF_THE_FIRE_SNAKE_TAG));
+        for name in [
+            "water whip",
+            "fangs of the fire snake",
+            // The disciplines proper, one per tier.
+            "burning hands",
+            "shatter",
+            "fireball",
+            "stoneskin",
+            "cone of cold",
+        ] {
+            assert!(
+                e.actors[&monk].find_action(name).is_some(),
+                "the Four Elements kit needs {}",
+                name
+            );
+        }
+        // The ki budget is real: a baseline monk has none at all.
+        assert_eq!(
+            FOUR_ELEMENTS_MONK_TEMPLATE.spell_slots_by_level,
+            vec![2, 2, 1, 1, 1]
+        );
+        assert!(MONK_TEMPLATE.spell_slots_by_level.is_empty());
+        // The chassis still arrives whole.
+        for tag in [
+            STUNNING_STRIKE_TAG,
+            PURITY_OF_BODY_TAG,
+            EMPTY_BODY_TAG,
+            UNARMORED_MOVEMENT_TAG,
+        ] {
+            assert!(
+                e.actors[&monk].has_passive_feature(tag),
+                "Four Elements Monk should inherit baseline Monk tag {}",
+                tag
+            );
+        }
+        assert!(e.actors[&monk].has_extra_attack());
+        assert!(e.actors[&monk].has_diamond_soul());
+    }
+
+    /// Water Whip's two halves come apart on the save: prone rides the
+    /// failure, the damage rides both at different magnitudes. Sweeps
+    /// seeds until each branch is observed so neither can silently
+    /// collapse into the other.
+    #[test]
+    fn water_whip_prones_on_a_failed_save_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::WATER_WHIP;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::FOUR_ELEMENTS_MONK_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut saw_fail = false;
+        let mut saw_pass = false;
+        for seed in 0..60 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let monk = e
+                .instantiate_creature(&FOUR_ELEMENTS_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Out of melee reach but inside the whip's 30 ft — the lash
+            // is the monk's only ranged option and this pins that.
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 2), 1, 0)
+                .unwrap();
+            for ef in WATER_WHIP.side_effects(&mut e, monk, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            let proned = e
+                .actors
+                .get(&goblin)
+                .is_some_and(|g| g.has_condition(Condition::Prone));
+            let failed = e.messages().iter().any(|m| m.contains("fail (full)"));
+            if failed {
+                saw_fail = true;
+                assert!(proned || !e.actors.contains_key(&goblin) || !e.actors[&goblin].is_combat_active(),
+                    "a failed save should sweep the target off its feet");
+            } else if e.messages().iter().any(|m| m.contains("save (half)")) {
+                saw_pass = true;
+                assert!(
+                    !proned,
+                    "a passed save keeps the target on its feet"
+                );
+            }
+            if saw_fail && saw_pass {
+                break;
+            }
+        }
+        assert!(saw_fail && saw_pass, "60 seeds should show both save branches");
+    }
+
+    /// The promoted save DCs follow the caster's own spellcasting stat
+    /// rather than a hardcoded Intelligence. A druid's Thunderwave is
+    /// anchored on WIS, a wizard's on INT — before the promotion both
+    /// read INT, which quietly handed every non-wizard carrier of these
+    /// six spells a DC computed off a stat their class never invests in.
+    #[test]
+    fn promoted_spell_dcs_follow_the_casters_own_ability() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::monks::FOUR_ELEMENTS_MONK_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let monk = e
+            .instantiate_creature(&FOUR_ELEMENTS_MONK_TEMPLATE, Coordinate::new(6, 2), 0, 2)
+            .unwrap();
+        let candidates = [
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ];
+        assert_eq!(
+            e.actors[&druid].best_spellcasting_ability(candidates),
+            AbilityScoreType::Wisdom
+        );
+        assert_eq!(
+            e.actors[&wizard].best_spellcasting_ability(candidates),
+            AbilityScoreType::Intelligence
+        );
+        assert_eq!(
+            e.actors[&monk].best_spellcasting_ability(candidates),
+            AbilityScoreType::Wisdom,
+            "a Four Elements monk's disciplines have to key off the ki DC stat"
+        );
+        // And the DC that falls out beats what INT alone would have
+        // given the WIS chassis.
+        assert!(
+            e.actors[&monk].best_spell_save_dc(candidates)
+                > e.actors[&monk].spell_save_dc(AbilityScoreType::Intelligence)
+        );
+    }
 }

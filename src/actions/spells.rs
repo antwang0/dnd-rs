@@ -1483,7 +1483,17 @@ impl Action for HoldPerson {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.best_spell_save_dc([
+            // Every full-caster list carries Hold Person, so the DC has
+            // to follow the caster rather than a single class's stat:
+            // WIS for the cleric / druid / Four Elements monk, INT for
+            // the wizard, CHA for the bard / sorcerer / warlock. WIS
+            // leads the candidate order so the divine carriers this
+            // spell shipped for keep their anchor on a tie.
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
         // Apply Stunned for up to 10 rounds, plus install concentration
         // tracking so the round-end WIS save (shared `ROUND_END_SAVES`
         // table) can release the target. Helper routes the cast through
@@ -1796,7 +1806,17 @@ impl Action for BurningHands {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.best_spell_save_dc([
+            // Arcane / primal / pact list all reach this spell, and the
+            // 5e save DC is the *caster's* spellcasting ability — the
+            // wizard's INT, the sorcerer's and warlock's CHA, the
+            // druid's and the Four Elements monk's WIS. Anchoring on
+            // INT alone quietly handed every non-wizard carrier a DC
+            // computed off a stat their class never invests in.
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
         let radius: isize = match self.targeting_schema() {
             TargetingSchema::Burst { radius } => radius,
             _ => return Vec::new(),
@@ -2567,7 +2587,17 @@ impl Action for Thunderwave {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.best_spell_save_dc([
+            // Arcane / primal / pact list all reach this spell, and the
+            // 5e save DC is the *caster's* spellcasting ability — the
+            // wizard's INT, the sorcerer's and warlock's CHA, the
+            // druid's and the Four Elements monk's WIS. Anchoring on
+            // INT alone quietly handed every non-wizard carrier a DC
+            // computed off a stat their class never invests in.
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
         let center = caster.location();
         const RADIUS: isize = 2;
         // 10 ft = 4 tiles on this 2.5ft grid. RAW Thunderwave push.
@@ -4096,7 +4126,17 @@ impl Action for Shatter {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.best_spell_save_dc([
+            // Arcane / primal / pact list all reach this spell, and the
+            // 5e save DC is the *caster's* spellcasting ability — the
+            // wizard's INT, the sorcerer's and warlock's CHA, the
+            // druid's and the Four Elements monk's WIS. Anchoring on
+            // INT alone quietly handed every non-wizard carrier a DC
+            // computed off a stat their class never invests in.
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
         let lvl = crate::engine::action_overrides::cast_level(overrides, 2);
         let dice = 3 + (lvl - 2);
         let raw = encounter.roll(&Dice::new(dice, 8));
@@ -4738,7 +4778,17 @@ impl Action for Fireball {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.best_spell_save_dc([
+            // Arcane / primal / pact list all reach this spell, and the
+            // 5e save DC is the *caster's* spellcasting ability — the
+            // wizard's INT, the sorcerer's and warlock's CHA, the
+            // druid's and the Four Elements monk's WIS. Anchoring on
+            // INT alone quietly handed every non-wizard carrier a DC
+            // computed off a stat their class never invests in.
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
         let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
         let dice = 8 + (lvl - 3);
         // Route through `roll_empowered_sum` so Empowered Spell metamagic
@@ -6016,7 +6066,17 @@ impl Action for ConeOfCold {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.best_spell_save_dc([
+            // Arcane / primal / pact list all reach this spell, and the
+            // 5e save DC is the *caster's* spellcasting ability — the
+            // wizard's INT, the sorcerer's and warlock's CHA, the
+            // druid's and the Four Elements monk's WIS. Anchoring on
+            // INT alone quietly handed every non-wizard carrier a DC
+            // computed off a stat their class never invests in.
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
         // Empowered Spell metamagic routes through the same chokepoint
         // as Fireball / Lightning Bolt — the 8d8 cone is the single
         // pool the sorcerer's CHA-mod reroll applies to.

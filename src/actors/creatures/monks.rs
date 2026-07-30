@@ -1,12 +1,16 @@
 use crate::actions::class_features::{
-    EMPTY_BODY, EMPTY_BODY_TAG, FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
+    EMPTY_BODY, EMPTY_BODY_TAG, FANGS_OF_THE_FIRE_SNAKE, FANGS_OF_THE_FIRE_SNAKE_TAG,
+    FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
     SHADOW_ARTS_TAG, SHADOW_STEP, SHADOW_STEP_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
     STUNNING_STRIKE, STUNNING_STRIKE_TAG, TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG,
-    WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
+    WATER_WHIP, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
-use crate::actions::spells::{PASS_WITHOUT_TRACE, SILENCE};
+use crate::actions::spells::{
+    BURNING_HANDS, CONE_OF_COLD, FIREBALL, FLY, GUST_OF_WIND, HOLD_PERSON, PASS_WITHOUT_TRACE,
+    SHATTER, SILENCE, STONESKIN, THUNDERWAVE, WALL_OF_FIRE, WALL_OF_STONE,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -320,6 +324,116 @@ pub static SHADOW_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // currency the engine has: no level-1 slots, two level-2s —
         // exactly two casts of Silence or Pass without Trace.
         spell_slots_by_level: vec![0, 2],
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});
+
+/// Four Elements Monk — Monastic Tradition **Way of the Four Elements**
+/// subclass build (PHB), and with it every PHB Monastic Tradition has a
+/// build in the engine: Open Hand, Shadow, and this one.
+///
+/// The subclass that spends a resource no other monk needs. Where Open
+/// Hand refills the HP bar, Long Death refills the temp HP buffer and
+/// Shadow buys a 60 ft arrival, the Four Elements monk buys *numbers* —
+/// and the whole build is the question of whether a d8 chassis is the
+/// right place to put them.
+///
+/// Three surfaces ship:
+///
+///   - **Water Whip** (2 ki) — a bonus action: DEX save vs the monk's ki
+///     DC, 3d10 bludgeoning save-for-half, and prone on a fail.
+///   - **Fangs of the Fire Snake** (1 ki) — a bonus-action prime: +1d10
+///     fire on the next melee hit, the largest die on the engine's
+///     on-hit rider table.
+///   - **The elemental disciplines proper** — RAW's "you can spend ki
+///     to cast this spell", carried as a spell list.
+///
+/// **Ki is spelled as spell slots**, exactly as `SHADOW_MONK_TEMPLATE`
+/// spells Shadow Arts' ki, and here the mapping is RAW's own rather
+/// than an approximation: every discipline in the PHB is priced in ki
+/// at (spell level + 1), so a slot table *is* a ki budget once you read
+/// the level as the discipline's tier. `[2, 2, 1, 1, 1]` is a monk with
+/// enough ki for a couple of openers and one apex press, which is the
+/// shape of a real Four Elements turn: whip something prone, spend the
+/// next turns swinging, and hold the level-5 slot for the moment a
+/// Breath of Winter is worth more than three unarmed strikes.
+///
+/// **The spell list is the discipline list, translated.** Each entry is
+/// RAW's named discipline and the spell it casts:
+///
+///   - lv1 — Sweeping Cinder Strike (*Burning Hands*), Fist of Four
+///     Thunders (*Thunderwave*).
+///   - lv2 — Rush of the Gale Spirits (*Gust of Wind*), Clench of the
+///     North Wind (*Hold Person*), Gong of the Summit (*Shatter*).
+///   - lv3 — Flames of the Phoenix (*Fireball*), Ride the Wind (*Fly*).
+///   - lv4 — Eternal Mountain Defense (*Stoneskin*), River of Hungry
+///     Flame (*Wall of Fire*).
+///   - lv5 — Breath of Winter (*Cone of Cold*), Wave of Rolling Earth
+///     (*Wall of Stone*).
+///
+/// Every save-based entry now anchors its DC on the best of the
+/// caster's mental stats rather than a hardcoded Intelligence, which is
+/// what makes this list playable on a WIS chassis at all — see the
+/// `best_spell_save_dc` promotion on Burning Hands, Thunderwave,
+/// Shatter, Fireball, Cone of Cold and Hold Person. A monk casting
+/// Fireball off INT 10 would have been rolling a DC 10 save against
+/// creatures the same monk's Stunning Strike hits at DC 14.
+///
+/// Shape the Flowing River, Water Whip's pull variant, Mist Stance
+/// (*Gaseous Form*) and Elemental Attunement are left out — the first
+/// and last have no combat surface, the pull needs a per-cast rider
+/// choice the action surface can't express, and *Gaseous Form* isn't
+/// in the engine.
+///
+/// **The honest cost.** This is the only monk template that can run out
+/// of subclass. Open Hand, Long Death and Shadow all carry features
+/// that refresh or never deplete; a Four Elements monk who spends its
+/// slots is a baseline monk with a 1d10 rider, and the AI will spend
+/// them. That is the RAW criticism of the subclass reproduced faithfully
+/// rather than balanced away, and it is why Water Whip is priced in the
+/// shared pool instead of a per-rest charge: the interesting decision is
+/// *which* ki to spend, and a per-rest charge would have removed it.
+///
+/// Glyph 'E' — for the four **E**lements. Distinct from baseline monk
+/// 'M', Open Hand 'O', Long Death 'D' and Shadow 'W'.
+pub static FOUR_ELEMENTS_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner Long Death uses: this
+    // subclass adds two actions, eleven spells, a tag and a slot table.
+    // The `..MONK_TEMPLATE.clone()` tail still carries the whole monk
+    // chassis — AC 15, the unarmed strike, Stunning Strike, Patient
+    // Defense, Flurry of Blows, Stillness of Mind, Step of the Wind,
+    // Empty Body, Evasion, Deflect Missiles, Extra Attack, and the
+    // Purity of Body / Diamond Soul / Unarmored Movement passives.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*WATER_WHIP);
+    actions.push(&*FANGS_OF_THE_FIRE_SNAKE);
+    // lv1 disciplines.
+    actions.push(&*BURNING_HANDS);
+    actions.push(&*THUNDERWAVE);
+    // lv2 disciplines.
+    actions.push(&*GUST_OF_WIND);
+    actions.push(&*HOLD_PERSON);
+    actions.push(&*SHATTER);
+    // lv3 disciplines.
+    actions.push(&*FIREBALL);
+    actions.push(&*FLY);
+    // lv4 disciplines.
+    actions.push(&*STONESKIN);
+    actions.push(&*WALL_OF_FIRE);
+    // lv5 disciplines.
+    actions.push(&*CONE_OF_COLD);
+    actions.push(&*WALL_OF_STONE);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(FANGS_OF_THE_FIRE_SNAKE_TAG);
+    CreatureTemplate {
+        name: "Four Elements Monk",
+        glyph: 'E',
+        // The ki budget, expressed in the only casting currency the
+        // engine has. RAW prices each discipline at (spell level + 1)
+        // ki, so a slot table read by tier *is* a ki pool.
+        spell_slots_by_level: vec![2, 2, 1, 1, 1],
         actions,
         features,
         ..MONK_TEMPLATE.clone()

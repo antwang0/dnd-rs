@@ -5223,6 +5223,126 @@ pub static DIVINE_STRIKE_POISON: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeS
 /// connecting swing. That is the Four Elements trade in miniature: the
 /// subclass buys big numbers with a resource (ki, modeled as slots)
 /// that the rest of the monk kit never needed.
+/// Water Whip — 5e **Way of the Four Elements Monk** elemental
+/// discipline (PHB). A bonus action and 2 ki: a whip of water lashes a
+/// creature within 30 ft, which makes a Dexterity save against the
+/// monk's ki save DC. On a fail it takes 3d10 bludgeoning and is
+/// knocked prone; on a save, half damage and it stays on its feet.
+///
+/// The discipline that most repays the ki, and the only one on the
+/// subclass that does two things at once. Prone is the strongest
+/// single rider in the engine's control vocabulary — it hands every
+/// melee ally advantage against the target *and* costs the target its
+/// movement getting up — and this is the only way any monk template
+/// reaches it. Stunning Strike, the chassis's other lockdown, has to
+/// land a swing first; Water Whip's damage arrives whether the save
+/// lands or not.
+///
+/// **Ki is spelled as a level-2 spell slot**, the same currency the
+/// Shadow Monk's Shadow Arts uses, and the exchange rate is RAW's own:
+/// 2 ki, one slot level 2. That keeps the Four Elements monk's whole
+/// discipline budget — this plus the elemental spell list — in a
+/// single pool the engine already knows how to spend, rather than a
+/// per-rest charge that would make the subclass's signature button a
+/// once-a-fight event.
+///
+/// **The DC is the monk's WIS**, per RAW's ki save DC (8 + prof + WIS)
+/// — the same anchor the chassis's Stunning Strike already uses, so a
+/// Four Elements monk invests in exactly one stat for both halves of
+/// its kit.
+///
+/// RAW's alternative rider — pull the target up to 25 ft toward the
+/// monk instead of proning it — is not offered. The engine has a
+/// forced-pull lane (Thorn Whip uses it), but a per-cast choice
+/// between two riders needs an override the action surface doesn't
+/// carry, and prone is the stronger half on a chassis built to stand
+/// next to what it hits.
+pub struct WaterWhip {}
+
+impl Action for WaterWhip {
+    fn name(&self) -> &str {
+        "water whip"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["whip", "ww"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles on the 2.5 ft grid.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // 2 ki, spelled as one level-2 slot — see the type doc.
+        bonus_action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Ki save DC — 8 + prof + WIS, the monk's spellcasting anchor
+        // and the same one Stunning Strike reads.
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (dmg, passed) = crate::actions::spells::save_for_half_damage(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 10),
+            DamageType::Bludgeoning,
+            "water whip",
+        );
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Bludgeoning,
+            }));
+        }
+        // Prone rides the failed save only, and independently of the
+        // damage: a target that resists everything the 3d10 could do
+        // (bludgeoning immunity) still goes down if it failed the save,
+        // because RAW's trigger is the save, not the damage.
+        if !passed {
+            encounter.log("  water whip: the lash sweeps the target off its feet.".to_string());
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static WATER_WHIP: LazyLock<WaterWhip> = LazyLock::new(|| WaterWhip {});
+
 pub static FANGS_OF_THE_FIRE_SNAKE: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
     name: "fangs of the fire snake",
     aliases: &["fangs", "firesnake"],
