@@ -70,7 +70,7 @@ impl Action for RogueShortsword {
         // can branch on the same d20 result. weapon_attack would re-
         // roll inside; instead we use the engine's mode-with-riders
         // helper and roll inline so we keep the mode visible.
-        let mode = encounter.attack_mode_with_riders(caster_id, target_id, true, true);
+        let mode = encounter.attack_mode_with_riders(caster_id, target_id, true);
         let raw_attack = encounter.roll_d20_lucky(caster_id, mode) as i32;
         let nat_crit = raw_attack >= encounter.crit_threshold(caster_id);
         let total = raw_attack + attack_bonus;

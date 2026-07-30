@@ -433,7 +433,7 @@ pub fn resolve_attack_outcome(
     // Trickster's Versatile Trickster. The `Help` action was unaffected
     // only because it installs the condition too.
     let mut mode =
-        encounter.attack_mode_with_riders(p.caster_id, p.target_id, p.is_melee, true);
+        encounter.attack_mode_with_riders(p.caster_id, p.target_id, p.is_melee);
     // 5e Fighting Style: **Protection** — a target-adjacent ally (NOT
     // the target itself) with the Protection flag and an unspent
     // reaction may burn their reaction to impose disadvantage on THIS

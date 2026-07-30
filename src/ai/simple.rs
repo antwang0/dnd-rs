@@ -5166,7 +5166,13 @@ fn try_attack_focus_fire(
             continue;
         }
         let is_melee = reach <= MELEE_REACH;
-        let mode = encounter.compute_attack_mode(actor_id, target_id, is_melee);
+        // `peek_attack_mode`, not `compute_attack_mode`: the ranking has
+        // to see the per-target Help grant, or a target the actor just
+        // spent a bonus action feinting (Feinting Attack, Versatile
+        // Trickster) ranks no better than any other and the advantage
+        // goes somewhere it wasn't bought for. Read-only by
+        // construction — the grant is consumed at the swing, not here.
+        let mode = encounter.peek_attack_mode(actor_id, target_id, is_melee);
         let mode_pri = mode_priority(mode);
         let hp = target.effective_hitpoints();
         let pick = match &best {

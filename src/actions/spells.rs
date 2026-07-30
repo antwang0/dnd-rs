@@ -133,7 +133,7 @@ fn spell_attack_outcome(
     // attack_mode_with_riders so a one-shot Help grant on the caster is
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
-    let mut mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
+    let mut mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee);
     // 5e target-side reactive per-rest disadvantage-imposing features
     // (Light Domain Cleric Warding Flare lv1, Great Old One Warlock
     // Entropic Ward lv6, and any future sibling): mirrored from the
@@ -21472,7 +21472,14 @@ impl Action for RayOfEnfeeblement {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]);
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
+        // `attack_mode_with_riders` rather than the bare
+        // `compute_attack_mode`: this is one of the few spells that
+        // open-codes its own spell-attack roll instead of routing
+        // through `spell_attack_outcome`, and it inherited that
+        // helper's blind spot — the per-target Help grant lives outside
+        // `compute_attack_mode`, so the roll missed it and the clear
+        // below then consumed it.
+        let mode = encounter.attack_mode_with_riders(caster_id, target_id, false);
         encounter.clear_attack_advantage_riders(caster_id, target_id);
         // Route the d20 through `roll_d20_lucky` so a Halfling / Lucky-
         // feat caster's nat-1 reroll fires here too. Crit threshold reads

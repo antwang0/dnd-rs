@@ -1915,20 +1915,24 @@ impl EncounterInstance {
     }
 
     /// Compute the attack mode with all per-attack riders folded in:
-    /// condition state, Dodge, Help (consumed if applicable), Bless.
-    /// Used by every weapon / spell attack so the rider stack stays in
-    /// one place. Returns the final mode for `roll_d20_with_mode`.
+    /// condition state, Dodge, the per-target Help grant, Bless. Used by
+    /// every weapon / spell attack so the rider stack stays in one
+    /// place. Returns the final mode for `roll_d20_with_mode`.
     ///
-    /// `consume_help` controls whether a matching HelpGrant on the
-    /// attacker is *consumed* during this call (so it can't fire on a
-    /// later swing). All real attacks pass `true`; a peek-only caller
-    /// (e.g. AI heuristics estimating mode) would pass `false`.
+    /// **Mutating**, and unconditionally so: the Help grant is consumed
+    /// and the Fancy Footwork mark is written. A caller that only wants
+    /// to *predict* the mode — the AI ranking candidate targets — must
+    /// use `peek_attack_mode` instead, which reads the same rider set
+    /// through `&self`. This used to be a `consume_help: bool` knob, but
+    /// no caller ever passed `false` (the AI couldn't: the knob only
+    /// gated the grant, and the method still needed `&mut` for the
+    /// mark), so the flag documented a capability the signature didn't
+    /// actually offer.
     pub fn attack_mode_with_riders(
         &mut self,
         attacker_id: usize,
         target_id: usize,
         is_melee: bool,
-        consume_help: bool,
     ) -> RollMode {
         let mut mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
         // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
@@ -1955,17 +1959,11 @@ impl EncounterInstance {
         // Help: one-shot advantage if the attacker has a grant against
         // this target. Pop it before the roll regardless of hit/miss so
         // it can't double-fire on a follow-up.
-        let help_active = if consume_help {
-            self.actors
-                .get_mut(&attacker_id)
-                .map(|a| a.consume_help_for(target_id))
-                .unwrap_or(false)
-        } else {
-            self.actors
-                .get(&attacker_id)
-                .map(|a| a.help_grant(target_id))
-                .unwrap_or(false)
-        };
+        let help_active = self
+            .actors
+            .get_mut(&attacker_id)
+            .map(|a| a.consume_help_for(target_id))
+            .unwrap_or(false);
         if help_active {
             mode = mode.combine(RollMode::Advantage);
         }
@@ -1973,6 +1971,42 @@ impl EncounterInstance {
         // we don't promote it to Advantage. Keep this method focused on
         // mode (advantage / disadvantage) only.
         mode
+    }
+
+    /// Read-only twin of `attack_mode_with_riders`: the mode an attack
+    /// *would* resolve at, with nothing consumed and no mark written.
+    ///
+    /// Exists for the AI's target ranking, which is a prediction rather
+    /// than an attack and therefore only has `&EncounterInstance` to
+    /// work with. Before it existed that ranking called
+    /// `compute_attack_mode` directly — the only `&self` option — and so
+    /// couldn't see the per-target Help grant. The visible effect was
+    /// small but exactly backwards: a fighter who spent a bonus action
+    /// feinting a target, or a rogue who designated one with Versatile
+    /// Trickster, then ranked that target as no more attractive than any
+    /// other, because the advantage they had just bought was invisible
+    /// to the picker.
+    ///
+    /// Kept as a thin wrapper rather than a shared inner helper with a
+    /// flag: the difference is one clause, and a flag is what the
+    /// mutating twin used to carry before it turned out nobody could
+    /// pass it.
+    pub fn peek_attack_mode(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> RollMode {
+        let mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        let helped = self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.help_grant(target_id));
+        if helped {
+            mode.combine(RollMode::Advantage)
+        } else {
+            mode
+        }
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
@@ -35843,7 +35877,7 @@ mod tests {
         );
         assert!(!e.actors[&f].feature_available(FEINTING_ATTACK_TAG));
         // The follow-up attack pops the grant via consume_help_for.
-        let mode = e.attack_mode_with_riders(f, g, true, true);
+        let mode = e.attack_mode_with_riders(f, g, true);
         assert_eq!(
             mode,
             crate::engine::dice::RollMode::Advantage,
@@ -53796,6 +53830,67 @@ mod tests {
         );
     }
 
+    /// `peek_attack_mode` sees the per-target Help grant and leaves it
+    /// standing; `attack_mode_with_riders` sees it and spends it.
+    ///
+    /// The pair matters because the AI's target ranking only has
+    /// `&EncounterInstance` and so used to call `compute_attack_mode` —
+    /// the only read-only option — which doesn't read the grant at all.
+    /// A fighter who spent a bonus action feinting then ranked that
+    /// target no higher than any other.
+    #[test]
+    fn peeking_the_attack_mode_reads_the_help_grant_without_spending_it() {
+        use crate::actors::actor_template::HelpGrant;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let other = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .set_help_grant(Some(HelpGrant {
+                helper_id: fighter,
+                against: target,
+            }));
+
+        assert_eq!(
+            e.peek_attack_mode(fighter, target, true),
+            RollMode::Advantage,
+            "the grant is visible to a read-only peek"
+        );
+        assert_eq!(
+            e.peek_attack_mode(fighter, other, true),
+            RollMode::Normal,
+            "and only against the target it names"
+        );
+        // Peeking twice still reads Advantage — nothing was spent.
+        assert_eq!(
+            e.peek_attack_mode(fighter, target, true),
+            RollMode::Advantage,
+            "peeking is idempotent"
+        );
+
+        // The mutating twin spends it.
+        assert_eq!(
+            e.attack_mode_with_riders(fighter, target, true),
+            RollMode::Advantage
+        );
+        assert_eq!(
+            e.peek_attack_mode(fighter, target, true),
+            RollMode::Normal,
+            "the swing consumed the grant"
+        );
+    }
+
     /// Typing a spell's own name casts *that* spell, even when another
     /// action on the same sheet claims the name as an alias.
     ///
@@ -54591,7 +54686,7 @@ mod tests {
             "the designation lands as a self-help-grant"
         );
         assert_eq!(
-            e.attack_mode_with_riders(rogue, target, true, true),
+            e.attack_mode_with_riders(rogue, target, true),
             RollMode::Advantage,
             "and reads as advantage on the swing that follows"
         );
