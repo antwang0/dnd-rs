@@ -4048,7 +4048,13 @@ impl EncounterInstance {
         if attacker.has_condition(Condition::Blinded) {
             return None;
         }
-        self.first_adjacent_reactive_ally(attacker_id, target_id, |a| a.has_protection_style())
+        self.first_reactive_ally_within(
+            attacker_id,
+            target_id,
+            0,
+            &|a| a.has_protection_style(),
+            None,
+        )
     }
 
     /// 5e Fighting Style: **Interception** (XGtE, lv1 pick). When a
@@ -4075,35 +4081,48 @@ impl EncounterInstance {
         attacker_id: usize,
         target_id: usize,
     ) -> Option<usize> {
-        self.first_adjacent_reactive_ally(attacker_id, target_id, |a| a.has_interception_style())
+        self.first_reactive_ally_within(
+            attacker_id,
+            target_id,
+            0,
+            &|a| a.has_interception_style(),
+            None,
+        )
     }
 
-    /// Shared eligibility scan for the "adjacent-ally with reaction and a
-    /// per-style flag" cohort — Fighting Style Protection and Fighting
-    /// Style Interception both need the same footprint-adjacent, ally-
-    /// team, has-reaction, can-see-attacker, has-FLAG filter over a
-    /// deterministic id order. The "can see" clause routes through
-    /// `viewer_can_see` so an Invisible / Blurred / Displaced attacker
-    /// (that the ally doesn't pierce) bounces both style reactions —
-    /// pre-refactor this only checked `!Blinded` on the ally, silently
-    /// letting an invisible attacker still draw the reactive shield.
-    /// Extracted so a future third style (Interception's Rune Knight
-    /// sibling, a homebrew ally-shield) lands as one line — the
-    /// closure picks the per-style flag.
+    /// Shared eligibility scan for the "nearby ally with a reaction and a
+    /// per-feature flag" cohort — Fighting Style Protection, Fighting
+    /// Style Interception, and Psi Warrior Protective Field all need the
+    /// same in-range, ally-team, has-reaction, can-see-attacker,
+    /// has-FLAG filter over a deterministic id order. The "can see"
+    /// clause routes through `viewer_can_see` so an Invisible / Blurred
+    /// / Displaced attacker (that the ally doesn't pierce) bounces every
+    /// one of them — pre-refactor this only checked `!Blinded` on the
+    /// ally, silently letting an invisible attacker still draw the
+    /// reactive shield. Extracted so a future sibling lands as one line
+    /// — the closure picks the per-feature flag.
+    ///
+    /// Two axes differentiate the callers:
+    ///   - `max_tiles`: footprint-Chebyshev radius the ally must be
+    ///     within. Both Fighting Styles are RAW "within 5 feet" → `0`
+    ///     (footprint distance 0 means touching); Protective Field's
+    ///     RAW "within 30 feet" → `12` on the 2.5ft grid.
+    ///   - `feature_tag`: `Some(tag)` also requires an unspent
+    ///     `feature_available(tag)` charge (Protective Field's psionic
+    ///     energy dice); `None` for the always-on Fighting Styles.
     ///
     /// Returns `None` for missing ids or same-team swings (friendly-fire
-    /// doesn't draw the tax on either style). Callers own the reaction
-    /// spend / log line and any style-specific extra gates (e.g.
+    /// doesn't draw the tax on any of them). Callers own the reaction
+    /// spend / log line and any feature-specific extra gates (e.g.
     /// Protection's attacker-Blinded early-out).
-    fn first_adjacent_reactive_ally<F>(
+    pub(crate) fn first_reactive_ally_within(
         &self,
         attacker_id: usize,
         target_id: usize,
-        has_flag: F,
-    ) -> Option<usize>
-    where
-        F: Fn(&ActorInstance) -> bool,
-    {
+        max_tiles: isize,
+        has_flag: &dyn Fn(&ActorInstance) -> bool,
+        feature_tag: Option<&'static str>,
+    ) -> Option<usize> {
         let attacker = self.actors.get(&attacker_id)?;
         let target = self.actors.get(&target_id)?;
         // Same-team swings (friendly-fire, e.g. a Confused ally) don't
@@ -4146,13 +4165,14 @@ impl EncounterInstance {
                 || !a.is_combat_active()
                 || !has_flag(a)
                 || !a.has_reaction()
+                || feature_tag.is_some_and(|t| !a.feature_available(t))
                 || !self.viewer_can_see(id, attacker_id)
             {
                 continue;
             }
             if self
                 .footprint_distance(id, target_id)
-                .is_none_or(|d| d != 0)
+                .is_none_or(|d| d > max_tiles)
             {
                 continue;
             }
@@ -56040,15 +56060,16 @@ mod tests {
         );
     }
 
-    /// Interception fires end-to-end via `apply_interception_reduction`:
-    /// non-zero damage is reduced, the ally's reaction is spent, and
-    /// zero damage is a no-op (the ally's reaction stays intact so a
-    /// follow-up hit can still be intercepted).
+    /// Interception fires end-to-end through the shared
+    /// `apply_reactive_damage_clamps` cohort walker: non-zero damage is
+    /// reduced, the ally's reaction is spent, and zero damage is a no-op
+    /// (the ally's reaction stays intact so a follow-up hit can still be
+    /// intercepted).
     #[test]
-    fn apply_interception_reduction_spends_reaction_and_reduces_damage() {
+    fn interception_row_spends_reaction_and_reduces_damage() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        use crate::engine::attack::apply_interception_reduction;
+        use crate::engine::attack::apply_reactive_damage_clamps;
         use crate::engine::side_effects::Resource;
         let mut e = ei_with_terrain(20, 20, &[]);
         let goblin = e
@@ -56061,12 +56082,17 @@ mod tests {
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
             .unwrap();
         e.actors.get_mut(&ally).unwrap().set_interception_style(true);
+        // The plain Fighter chassis carries Parry, which would clamp a
+        // melee swing before the ally's row ever runs. Pin the swing to
+        // the ranged lane so this test isolates the Interception row.
+        let clamp = |e: &mut EncounterInstance, dmg: u32| {
+            apply_reactive_damage_clamps(e, goblin, target, dmg, false, false)
+        };
         // Zero-damage swing: no-op, no reaction spent.
-        let reduced = apply_interception_reduction(&mut e, goblin, target, 0);
-        assert_eq!(reduced, 0);
+        assert_eq!(clamp(&mut e, 0), 0);
         assert!(e.actors[&ally].can_consume_resource(Resource::Reaction));
         // Non-zero damage: reduced by 1d10 + prof (>=1), reaction spent.
-        let reduced = apply_interception_reduction(&mut e, goblin, target, 20);
+        let reduced = clamp(&mut e, 20);
         assert!(reduced < 20, "interception must reduce non-zero damage");
         assert!(
             !e.actors[&ally].can_consume_resource(Resource::Reaction),
@@ -56074,11 +56100,126 @@ mod tests {
         );
         // Follow-up hit: ally's reaction is gone, so the second
         // reduction is a no-op (damage stays).
-        let reduced2 = apply_interception_reduction(&mut e, goblin, target, 20);
         assert_eq!(
-            reduced2, 20,
+            clamp(&mut e, 20),
+            20,
             "second interception attempt without a reaction should pass damage through"
         );
+    }
+
+    /// Uncanny Dodge's RAW trigger is "when an attacker that you can
+    /// see hits you with an attack" — no weapon-only qualifier — so a
+    /// rogue struck by a ranged *spell* attack halves it too. This was
+    /// the hole the shared clamp cohort closed: the pre-cohort engine
+    /// only ran Uncanny Dodge from the weapon chokepoint, so a Fire Bolt
+    /// went through a rogue's reaction untouched.
+    #[test]
+    fn uncanny_dodge_clamps_spell_attacks() {
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&rogue].has_uncanny_dodge());
+        // Ranged spell attack (`is_melee: false, is_spell: true`).
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, rogue, 20, false, true);
+        assert_eq!(reduced, 10, "uncanny dodge halves an incoming spell attack");
+        assert!(
+            !e.actors[&rogue].can_consume_resource(Resource::Reaction),
+            "the halving must burn the rogue's reaction"
+        );
+    }
+
+    /// Deflect Missiles is the counter-case: RAW gates it on a ranged
+    /// **weapon** attack, so a monk hit by a ranged spell attack keeps
+    /// their reaction. Pins the `is_spell` half of the `RangedWeapon`
+    /// lane gate — without it, routing the clamp cohort through the
+    /// spell chokepoint would have handed monks a deflect against every
+    /// Fire Bolt.
+    #[test]
+    fn deflect_missiles_skips_spell_attacks() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&monk].has_deflect_missiles());
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, true);
+        assert_eq!(reduced, 20, "a ranged spell attack is not a missile");
+        assert!(
+            e.actors[&monk].can_consume_resource(Resource::Reaction),
+            "the monk's reaction must survive a spell attack"
+        );
+        // Same swing as a ranged weapon attack does get deflected.
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, false);
+        assert!(reduced < 20, "a ranged weapon attack is deflectable");
+        assert!(!e.actors[&monk].can_consume_resource(Resource::Reaction));
+    }
+
+    /// Parry's RAW trigger is "when another creature damages you with a
+    /// melee attack", which a melee *spell* attack (Vampiric Touch,
+    /// Shocking Grasp) satisfies. The `Melee` lane admits both, so the
+    /// maneuver now clamps a touch spell and burns its superiority die.
+    #[test]
+    fn parry_clamps_melee_spell_attacks() {
+        use crate::actions::class_features::PARRY_TAG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&fighter].has_parry());
+        assert!(e.actors[&fighter].feature_available(PARRY_TAG));
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, fighter, 20, true, true);
+        assert!(reduced < 20, "parry clamps a melee spell attack");
+        assert!(
+            !e.actors[&fighter].feature_available(PARRY_TAG),
+            "the clamp must burn the parry charge"
+        );
+        assert!(!e.actors[&fighter].can_consume_resource(Resource::Reaction));
+    }
+
+    /// A clamp never burns a reaction it can't spend usefully: once the
+    /// running damage total reaches 0 the walker stops, so a follow-up
+    /// row (and its per-rest charge) stays in hand for the next swing.
+    #[test]
+    fn clamp_walk_stops_at_zero_damage() {
+        use crate::actions::class_features::PARRY_TAG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, fighter, 0, true, false),
+            0
+        );
+        assert!(e.actors[&fighter].feature_available(PARRY_TAG));
+        assert!(e.actors[&fighter].can_consume_resource(Resource::Reaction));
     }
 
     /// Warding Flare refreshes on a short rest. Its tag lives on

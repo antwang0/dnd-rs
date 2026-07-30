@@ -192,6 +192,293 @@ fn spend_reactive_reducer(
     }
 }
 
+/// How a reactive damage-clamp row turns the damage a landed swing would
+/// deal into a smaller number. The two shapes cover every clamp in the
+/// engine: a proportional halving and a "roll a die, subtract the roll
+/// plus a stat" reduction.
+///
+/// Kept separate from `ClampLane` / `ClampScope` because the three axes
+/// are independent — Uncanny Dodge is `Halve` + `AnyAttack` + `Holder`
+/// while Interception is `RollMinus` + `AnyAttack` + `Ally`, and a
+/// future clamp can mix any combination.
+#[derive(Clone, Copy)]
+enum ClampFormula {
+    /// Halve the damage, rounding down — Uncanny Dodge's RAW "halve the
+    /// attack's damage against you". Rolls no dice, so it never touches
+    /// the RNG stream.
+    Halve,
+    /// Roll `dice` and subtract `roll + bonus(reactor)`, floored at 0 —
+    /// the superiority-die / psionic-die shape shared by Deflect
+    /// Missiles (1d10 + DEX + monk level), Parry (1d8 + DEX), and
+    /// Interception (1d10 + proficiency). `bonus` reads the *reactor*
+    /// (who spends the reaction), not the damaged actor — the two differ
+    /// on the ally-scoped rows.
+    RollMinus {
+        dice: Dice,
+        bonus: fn(&ActorInstance) -> i32,
+    },
+}
+
+/// Which incoming swings a clamp row may fire against. Checked against
+/// the `(is_melee, is_spell)` pair the two attack chokepoints already
+/// carry, so a row's RAW trigger wording maps to exactly one variant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClampLane {
+    /// Any attack roll — melee or ranged, weapon or spell. Uncanny
+    /// Dodge ("when an attacker that you can see hits you with an
+    /// attack") and Interception ("hits a target with a weapon or spell
+    /// attack") both read this broadly in RAW.
+    AnyAttack,
+    /// Melee attack rolls only, weapon *or* spell — Parry's RAW "when
+    /// another creature damages you with a melee attack" doesn't
+    /// exclude a melee spell attack (Vampiric Touch, Shocking Grasp).
+    Melee,
+    /// Ranged **weapon** attack rolls only — Deflect Missiles' RAW
+    /// "when you are hit by a ranged weapon attack" explicitly excludes
+    /// ranged spell attacks (Fire Bolt, Guiding Bolt), so this variant
+    /// gates on `!is_spell` as well as `!is_melee`.
+    RangedWeapon,
+}
+
+impl ClampLane {
+    /// True if a swing described by `(is_melee, is_spell)` falls in this
+    /// lane. `is_spell` distinguishes the two ranged sub-lanes; melee
+    /// spell attacks and melee weapon swings share the `Melee` lane.
+    fn admits(self, is_melee: bool, is_spell: bool) -> bool {
+        match self {
+            ClampLane::AnyAttack => true,
+            ClampLane::Melee => is_melee,
+            ClampLane::RangedWeapon => !is_melee && !is_spell,
+        }
+    }
+}
+
+/// Who may spend the reaction for a clamp row. The damaged actor and the
+/// reactor are the same actor on the self-clamp rows and different
+/// actors on the ally-shield rows; `pick_clamp_reactor` resolves the
+/// distinction once so `fire_clamp` only ever sees a concrete reactor id.
+#[derive(Clone, Copy)]
+enum ClampScope {
+    /// Only the damaged actor themselves (Uncanny Dodge, Deflect
+    /// Missiles, Parry). Gated by `reactive_reducer_eligible`.
+    Holder,
+    /// Only a *different* actor on the damaged actor's team, within `n`
+    /// footprint tiles of them — Fighting Style: Interception's RAW
+    /// "hits a target, other than you, within 5 feet of you" → `Ally(0)`
+    /// (footprint distance 0 means touching). Gated by
+    /// `first_reactive_ally_within`.
+    Ally(isize),
+}
+
+/// Cohort row shape for a reactive per-swing damage clamp: a feature
+/// whose holder spends a reaction (and optionally a per-rest charge) to
+/// shrink the damage a landed attack is about to deal.
+///
+/// Every clamp in the engine is one row here, and the shared walker
+/// `apply_reactive_damage_clamps` owns the gate → roll → log → spend
+/// body. Before this cohort existed the four clamps were four
+/// near-identical open-coded blocks in `resolve_attack_outcome`, and
+/// only Interception had been mirrored onto the spell-attack path — so
+/// a Rogue hit by a Fire Bolt silently lost Uncanny Dodge even though
+/// RAW's "hits you with an attack" covers it. Routing both chokepoints
+/// through one walker closed that hole for every row at once and makes
+/// a new clamp a single row addition.
+struct ReactiveDamageClamp {
+    /// Passive-feature predicate the reactor must satisfy. Reads the
+    /// template-installed flag (`has_uncanny_dodge()`, `has_parry()`,
+    /// …), *not* the per-rest charge — that's `tag`'s job.
+    flag: fn(&ActorInstance) -> bool,
+    /// `Some(tag)` if the row also burns a `feature_available(tag)`
+    /// per-rest charge on top of the reaction (Parry's superiority
+    /// die); `None` for the always-on rows (Uncanny Dodge, Deflect
+    /// Missiles, Interception).
+    tag: Option<&'static str>,
+    /// Log-friendly identity ("uncanny dodge", "parry"). Distinct from
+    /// `tag`, which carries a noisy `class.feature` namespace prefix.
+    label: &'static str,
+    /// Which swings the row can fire against — see `ClampLane`.
+    lane: ClampLane,
+    /// Who spends the reaction — see `ClampScope`.
+    scope: ClampScope,
+    /// How much damage comes off — see `ClampFormula`.
+    formula: ClampFormula,
+}
+
+/// Ordered cohort of every reactive per-swing damage clamp, walked by
+/// `apply_reactive_damage_clamps` from both attack chokepoints
+/// (`resolve_attack_outcome` for weapons, `spell_attack_outcome` for
+/// spells).
+///
+/// Unlike the "stop on first firing" cohorts (`FAILED_SAVE_ADD_DIE_SOURCES`,
+/// `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`), every eligible row fires:
+/// 5e reactions are independent features and a monk/rogue multiclass
+/// deflecting *and* dodging the same arrow is RAW-legal. Each row spends
+/// its own reactor's reaction, so in practice a single actor can only
+/// contribute one row per round — the stacking only shows up across
+/// different reactors or across a multiclass with two flags and a
+/// reaction still in hand.
+///
+/// Order is the order damage flows through the clamps. It's observable:
+/// halving before subtracting yields less final damage than the reverse,
+/// so `Halve` rows come first (RAW leaves the ordering to the table, and
+/// this is the target-favorable reading). Ally-scoped rows come last so
+/// the ally clamps whatever survived the target's own defenses.
+///
+/// Entries:
+///   - **Uncanny Dodge** (Rogue lv5): halve, any attack, self.
+///   - **Deflect Missiles** (Monk lv3): 1d10 + DEX + monk level, ranged
+///     weapon attacks only, self.
+///   - **Parry** (Fighter Battle Master maneuver): 1d8 + DEX, melee
+///     attacks only, self, burns a `PARRY_TAG` charge.
+///   - **Interception** (Fighting Style, XGtE): 1d10 + proficiency, any
+///     attack, adjacent ally.
+const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
+    ReactiveDamageClamp {
+        flag: |a| a.has_uncanny_dodge(),
+        tag: None,
+        label: "uncanny dodge",
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::Halve,
+    },
+    ReactiveDamageClamp {
+        flag: |a| a.has_deflect_missiles(),
+        tag: None,
+        label: "deflect missiles",
+        lane: ClampLane::RangedWeapon,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 10),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Dexterity) + a.level() as i32,
+        },
+    },
+    ReactiveDamageClamp {
+        flag: |a| a.has_parry(),
+        tag: Some(crate::actions::class_features::PARRY_TAG),
+        label: "parry",
+        lane: ClampLane::Melee,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 8),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Dexterity),
+        },
+    },
+    ReactiveDamageClamp {
+        flag: |a| a.has_interception_style(),
+        tag: None,
+        label: "interception",
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::Ally(0),
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 10),
+            bonus: |a| a.proficiency_bonus(),
+        },
+    },
+];
+
+/// Resolve which actor (if any) spends a reaction for `row` against this
+/// swing. `&self`-only so the caller can keep reading actor stats before
+/// switching to `&mut` for the die roll.
+fn pick_clamp_reactor(
+    encounter: &EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    row: &ReactiveDamageClamp,
+) -> Option<usize> {
+    match row.scope {
+        ClampScope::Holder => {
+            reactive_reducer_eligible(encounter, target_id, attacker_id, row.flag, row.tag)
+                .then_some(target_id)
+        }
+        ClampScope::Ally(max_tiles) => encounter.first_reactive_ally_within(
+            attacker_id,
+            target_id,
+            max_tiles,
+            &row.flag,
+            row.tag,
+        ),
+    }
+}
+
+/// Roll `row`'s reduction, log it, spend the reactor's reaction (plus
+/// any per-rest charge), and return the clamped damage. Assumes the
+/// gates in `pick_clamp_reactor` already passed.
+fn fire_clamp(
+    encounter: &mut EncounterInstance,
+    reactor_id: usize,
+    target_id: usize,
+    damage: u32,
+    row: &ReactiveDamageClamp,
+) -> u32 {
+    let (reduced, detail) = match row.formula {
+        ClampFormula::Halve => (damage / 2, "halved".to_string()),
+        ClampFormula::RollMinus { dice, bonus } => {
+            let flat = encounter.actors.get(&reactor_id).map_or(0, bonus);
+            let raw = encounter.roll(&dice) as i32;
+            let reduction = (raw + flat).max(0) as u32;
+            (
+                damage.saturating_sub(reduction),
+                format!("{}({}){:+} = -{}", dice, raw, flat, reduction),
+            )
+        }
+    };
+    // Name the reactor only on the ally-scoped rows — on a self-clamp
+    // the label already identifies them, and the extra name would just
+    // repeat the actor whose damage line sits directly above.
+    let who = if reactor_id == target_id {
+        String::new()
+    } else {
+        encounter
+            .actors
+            .get(&reactor_id)
+            .map_or_else(String::new, |a| format!("{} ", a.name()))
+    };
+    encounter.log(format!(
+        "  {}: {}{} ({} \u{2192} {})",
+        row.label, who, detail, damage, reduced
+    ));
+    spend_reactive_reducer(encounter, reactor_id, row.tag);
+    reduced
+}
+
+/// Walk `REACTIVE_DAMAGE_CLAMPS` over a landed swing and return the
+/// damage that survives. Called from both attack chokepoints once the
+/// hit is confirmed and the base damage line is logged, so every clamp
+/// applies uniformly to weapon and spell attacks (subject to each row's
+/// `ClampLane`).
+///
+/// `is_melee` / `is_spell` describe the swing; `damage` is the
+/// pre-resistance total (target-side resistance / immunity is applied
+/// later, at `DealDamage::apply`) — matching RAW, where these features
+/// reduce the attack's damage before the target's damage types are
+/// consulted.
+///
+/// Short-circuits as soon as the damage hits 0: a clamp that can't
+/// shave anything off shouldn't burn its holder's reaction (or a
+/// per-rest charge) for nothing.
+pub fn apply_reactive_damage_clamps(
+    encounter: &mut EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    mut damage: u32,
+    is_melee: bool,
+    is_spell: bool,
+) -> u32 {
+    for row in REACTIVE_DAMAGE_CLAMPS {
+        if damage == 0 {
+            break;
+        }
+        if !row.lane.admits(is_melee, is_spell) {
+            continue;
+        }
+        let Some(reactor_id) = pick_clamp_reactor(encounter, attacker_id, target_id, row) else {
+            continue;
+        };
+        damage = fire_clamp(encounter, reactor_id, target_id, damage, row);
+    }
+    damage
+}
+
 /// 5e Fighter Battle Master **Riposte** maneuver — reactive melee
 /// counter-attack that fires when a melee attack MISSES the target and
 /// the target holds the `has_riposte` flag with an unspent `RIPOSTE_TAG`
@@ -285,48 +572,6 @@ pub fn try_fire_riposte(
         Some(crate::actions::class_features::RIPOSTE_TAG),
     );
     encounter.cleanup_dead_actors();
-}
-
-/// 5e Fighting Style: **Interception** — shared reduction helper for
-/// weapon and spell attacks. Finds the first eligible adjacent ally with
-/// the flag + reaction, rolls `1d10 + prof`, spends the ally's reaction,
-/// and returns the post-clamp damage. Damage of 0 is a no-op (skip the
-/// scan). No-op when no ally qualifies.
-///
-/// Shared between `resolve_attack_outcome` here and
-/// `spell_attack_outcome` in `spells.rs` so a single site owns the
-/// 1d10 + prof reduction envelope for every attack roll — RAW's
-/// "weapon or spell attack" is honored by having both call sites
-/// funnel through this helper.
-pub fn apply_interception_reduction(
-    encounter: &mut EncounterInstance,
-    attacker_id: usize,
-    target_id: usize,
-    damage: u32,
-) -> u32 {
-    if damage == 0 {
-        return damage;
-    }
-    let Some(interceptor_id) = encounter.first_eligible_interceptor(attacker_id, target_id)
-    else {
-        return damage;
-    };
-    let Some(interceptor) = encounter.actors.get(&interceptor_id) else {
-        return damage;
-    };
-    let prof = interceptor.proficiency_bonus();
-    let interceptor_name = interceptor.name().to_string();
-    let raw = encounter.roll(&Dice::new(1, 10)) as i32;
-    let reduction = (raw + prof).max(0) as u32;
-    let reduced = damage.saturating_sub(reduction);
-    encounter.log(format!(
-        "  interception: {} clamps 1d10({}){:+} = -{} damage ({} \u{2192} {})",
-        interceptor_name, raw, prof, reduction, damage, reduced
-    ));
-    if let Some(a) = encounter.actors.get_mut(&interceptor_id) {
-        a.consume_resource(crate::engine::side_effects::Resource::Reaction);
-    }
-    reduced
 }
 
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
@@ -772,120 +1017,27 @@ pub fn resolve_attack_outcome(
             hm_total, p.damage_type
         ));
     }
-    // 5e Uncanny Dodge (Rogue 5): when hit by an attack, spend reaction
-    // to halve the damage. Only fires if the target has the feature, a
-    // reaction available, and can see the attacker. Eligibility gate
-    // (passive + reaction + sight; no per-rest feature charge here)
-    // routes through the shared `reactive_reducer_eligible` helper —
-    // covers Blinded on the target AND the attacker being illusion-
-    // concealed (Invisible / Blurred / Displaced) without the target
-    // holding a piercing sense. Consumption (reaction spend) routes
-    // through `spend_reactive_reducer`. Same gate shape now shared with
-    // Deflect Missiles / Parry below.
-    if reactive_reducer_eligible(
+    // Target-side and ally-side reactive damage clamps — Uncanny Dodge
+    // (Rogue lv5), Deflect Missiles (Monk lv3), Parry (Battle Master
+    // maneuver), Fighting Style: Interception. All four are rows on the
+    // shared `REACTIVE_DAMAGE_CLAMPS` cohort; the walker owns the
+    // per-row lane gate (weapon vs spell, melee vs ranged), the
+    // reactor pick (self vs adjacent ally), the roll, the log, and the
+    // reaction / per-rest-charge spend. `is_spell: false` here — this
+    // chokepoint only ever resolves weapon swings (including the
+    // weapon-shaped attack cantrips, which are engine-tagged as melee
+    // weapon attacks), so Deflect Missiles' ranged-weapon lane admits
+    // ranged swings that arrive here. The spell-attack chokepoint in
+    // `spells::spell_attack_outcome` calls the same walker with
+    // `is_spell: true`.
+    damage = apply_reactive_damage_clamps(
         encounter,
-        p.target_id,
         p.caster_id,
-        |a| a.has_uncanny_dodge(),
-        None,
-    ) {
-        damage /= 2;
-        encounter.log(format!("  uncanny dodge: damage halved to {}", damage));
-        spend_reactive_reducer(encounter, p.target_id, None);
-    }
-    // 5e Monk Deflect Missiles (level 3): when hit by a ranged weapon
-    // attack, the monk can spend their reaction to reduce damage by
-    // `1d10 + DEX modifier + monk level`. Only fires on ranged weapon
-    // swings (gated on `!is_melee` AND the rider chokepoint sees only
-    // weapon attacks — spell attacks resolve through a separate path,
-    // so the gate here covers the RAW "ranged weapon attack" clause).
-    // Reaction is consumed iff the rider actually fires; an unprimed
-    // monk eats the full damage instead. Layered AFTER Uncanny Dodge so
-    // a rare rogue/monk multiclass benefits from both halves cleanly
-    // (RAW order doesn't matter since both are independent reactions).
-    // Eligibility + consume route through the shared reactive-reducer
-    // helpers — the sight gate covers Blinded on the target AND
-    // Invisible attackers uniformly with Uncanny Dodge / Parry.
-    if !p.is_melee
-        && damage > 0
-        && reactive_reducer_eligible(
-            encounter,
-            p.target_id,
-            p.caster_id,
-            |a| a.has_deflect_missiles(),
-            None,
-        )
-    {
-        let target = &encounter.actors[&p.target_id];
-        let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
-        let level = target.level() as i32;
-        let raw = encounter.roll(&Dice::new(1, 10)) as i32;
-        let reduction = (raw + dex_mod + level).max(0) as u32;
-        let reduced = damage.saturating_sub(reduction);
-        encounter.log(format!(
-            "  deflect missiles: 1d10({}){:+}{:+} = -{} damage ({} → {})",
-            raw, dex_mod, level, reduction, damage, reduced
-        ));
-        damage = reduced;
-        spend_reactive_reducer(encounter, p.target_id, None);
-    }
-    // 5e Fighter Battle Master **Parry** maneuver: when a melee attack
-    // hits, spend a reaction + one `PARRY_TAG` charge to reduce damage
-    // by `1d8 + DEX modifier` (the RAW 5e superiority-die reducer).
-    // Gated on the same shape as Uncanny Dodge / Deflect Missiles via
-    // `reactive_reducer_eligible`, plus the per-rest feature charge:
-    //   - `is_melee` — RAW: "when a creature damages you with a melee
-    //     attack" (RAW's 2014 wording; 2024's phrasing is broader but
-    //     we keep the melee-only gate so the maneuver stays distinct
-    //     from Deflect Missiles' ranged-only lane),
-    //   - `damage > 0` — no work to clamp on a zero-damage hit,
-    //   - shared reactive-reducer eligibility handles the passive
-    //     flag, reaction slot, sight, and per-rest charge in one call.
-    // Layered after Deflect Missiles so the ordering stays "target-
-    // side self-clamps first, then ally-side clamps via Interception
-    // below" — a Battle Master fighter with a hypothetical monk
-    // multiclass would still eat the parry charge on a melee hit even
-    // after Deflect Missiles handled a ranged one earlier (RAW:
-    // reactions are per-round, and each reactive feature is
-    // independent).
-    if p.is_melee
-        && damage > 0
-        && reactive_reducer_eligible(
-            encounter,
-            p.target_id,
-            p.caster_id,
-            |a| a.has_parry(),
-            Some(crate::actions::class_features::PARRY_TAG),
-        )
-    {
-        let target = &encounter.actors[&p.target_id];
-        let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
-        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
-        let reduction = (raw + dex_mod).max(0) as u32;
-        let reduced = damage.saturating_sub(reduction);
-        encounter.log(format!(
-            "  parry: 1d8({}){:+} = -{} damage ({} → {})",
-            raw, dex_mod, reduction, damage, reduced
-        ));
-        damage = reduced;
-        spend_reactive_reducer(
-            encounter,
-            p.target_id,
-            Some(crate::actions::class_features::PARRY_TAG),
-        );
-    }
-    // 5e Fighting Style: **Interception** (XGtE). An adjacent ally
-    // (within 5 ft of the target) with the style flag and an unspent
-    // reaction may burn their reaction to reduce the incoming damage
-    // by `1d10 + prof`. Layered AFTER Deflect Missiles / Uncanny Dodge
-    // so the ally's clamp fires on whatever damage remains — a monk
-    // deflecting first and a paladin intercepting second is the RAW
-    // "each reaction is independent" stacking. Skipped on zero damage
-    // (no work to shield). Same helper feeds `spell_attack_outcome`
-    // so an intercepting ally covers spell attacks too per RAW.
-    if damage > 0 {
-        damage = apply_interception_reduction(encounter, p.caster_id, p.target_id, damage);
-    }
+        p.target_id,
+        damage,
+        p.is_melee,
+        false,
+    );
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: p.target_id,
         amount: damage,

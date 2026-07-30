@@ -290,13 +290,24 @@ fn spell_attack_outcome(
             String::new()
         }
     ));
-    // 5e Fighting Style: **Interception** (XGtE) — RAW covers "weapon
-    // or spell attack", so the reduction fires against spell attacks
-    // too. Shared with the weapon path in `engine::attack` via
-    // `apply_interception_reduction` so the 1d10 + prof clamp lives
-    // in one place. A no-op when no adjacent ally qualifies.
-    let total_dmg =
-        crate::engine::attack::apply_interception_reduction(encounter, caster_id, target_id, total_dmg);
+    // Reactive damage clamps — Uncanny Dodge, Deflect Missiles, Parry,
+    // Fighting Style: Interception. Shared with the weapon path in
+    // `engine::attack` via the `REACTIVE_DAMAGE_CLAMPS` cohort walker,
+    // so RAW's per-feature trigger wording ("hits you with an attack"
+    // vs "melee attack" vs "ranged weapon attack") decides which rows
+    // fire here rather than which chokepoint happens to have the block
+    // pasted into it. `is_spell: true` keeps Deflect Missiles out — RAW
+    // gates it on a ranged *weapon* attack — while Uncanny Dodge and
+    // Interception, whose RAW wording covers any attack, now cover
+    // spell attacks too.
+    let total_dmg = crate::engine::attack::apply_reactive_damage_clamps(
+        encounter,
+        caster_id,
+        target_id,
+        total_dmg,
+        is_melee,
+        true,
+    );
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: target_id,
         amount: total_dmg,
