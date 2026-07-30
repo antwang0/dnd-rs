@@ -6603,6 +6603,51 @@ impl ActorInstance {
         self.spell_attack_modifier(self.best_spellcasting_ability(candidates))
     }
 
+    /// The three abilities 5e ever uses for spellcasting, in the order
+    /// `best_spellcasting_ability` breaks ties: Intelligence (wizard,
+    /// artificer, Eldritch Knight, Arcane Trickster), Charisma (bard,
+    /// sorcerer, warlock, paladin), Wisdom (cleric, druid, ranger,
+    /// Four Elements monk).
+    ///
+    /// The order is the historical default rather than a claim about
+    /// importance — it is the anchor most hardcoded call sites used
+    /// before they were promoted, so a template whose top two mental
+    /// scores tie keeps the DC it had.
+    pub const SPELLCASTING_ABILITIES: [AbilityScoreType; 3] = [
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Charisma,
+        AbilityScoreType::Wisdom,
+    ];
+
+    /// This caster's spell save DC, off whichever of the three
+    /// spellcasting abilities they score highest in.
+    ///
+    /// The engine's model of RAW's "8 + proficiency + your spellcasting
+    /// ability modifier". 5e keys that phrase to the caster's *class*,
+    /// which a `CreatureTemplate` doesn't carry — a template is a
+    /// stat block, not a character sheet, and the same spell static is
+    /// shared by every class list that gets it. Reading the highest
+    /// mental score instead is the standing approximation, and it is a
+    /// good one precisely because a stat block invests in exactly the
+    /// ability its class casts off: a wizard's INT, a warlock's CHA, a
+    /// druid's WIS.
+    ///
+    /// Prefer this over `spell_save_dc(SomeFixedAbility)` for any spell
+    /// on more than one class list. A fixed anchor is only correct when
+    /// exactly one kind of creature ever casts the thing — and when it
+    /// is wrong it is invisible, because the spell still fires, still
+    /// logs, and still rolls a save. It just rolls against a DC built
+    /// from a stat the caster never invested in.
+    pub fn spellcasting_save_dc(&self) -> i32 {
+        self.best_spell_save_dc(Self::SPELLCASTING_ABILITIES)
+    }
+
+    /// Attack-roll sibling of `spellcasting_save_dc`, for spells that
+    /// resolve as a spell attack rather than a save.
+    pub fn spellcasting_attack_modifier(&self) -> i32 {
+        self.best_spell_attack_modifier(Self::SPELLCASTING_ABILITIES)
+    }
+
     /// Pick the highest-scoring spellcasting ability from `candidates`. Ties
     /// break by the order in `candidates`. Falls back to Intelligence on an
     /// empty iterator (no caller currently passes empty — the fallback is a

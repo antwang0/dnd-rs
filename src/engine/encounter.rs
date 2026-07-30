@@ -67971,4 +67971,71 @@ mod tests {
             );
         }
     }
+
+    /// A spell's save DC and attack modifier follow the caster's own
+    /// spellcasting ability, not the class the spell was first written
+    /// for.
+    ///
+    /// The failure this pins is the quietest kind in the engine: a
+    /// warlock casting Fire Bolt off a hardcoded Intelligence anchor
+    /// still fires, still logs, still rolls — it just rolls with the
+    /// modifier of a stat warlocks dump. Thirty-seven save DCs and
+    /// sixteen attack modifiers were anchored that way, every one of
+    /// them on a spell three or more classes carry.
+    ///
+    /// Asserted through the accessor rather than by casting, because
+    /// the accessor *is* the contract — every promoted call site reads
+    /// it, and a regression would be a site drifting back to a fixed
+    /// ability rather than the accessor returning the wrong answer.
+    #[test]
+    fn spellcasting_dc_and_attack_follow_the_caster_not_the_spell() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(6, 2), 0, 2)
+            .unwrap();
+        for (id, expected, label) in [
+            (wizard, AbilityScoreType::Intelligence, "wizard"),
+            (warlock, AbilityScoreType::Charisma, "warlock"),
+            (cleric, AbilityScoreType::Wisdom, "cleric"),
+        ] {
+            let a = &e.actors[&id];
+            assert_eq!(
+                a.spellcasting_save_dc(),
+                a.spell_save_dc(expected),
+                "{} should cast off {:?}",
+                label,
+                expected
+            );
+            assert_eq!(
+                a.spellcasting_attack_modifier(),
+                a.spell_attack_modifier(expected),
+                "{} should attack off {:?}",
+                label,
+                expected
+            );
+        }
+        // And the anchors genuinely differ, so the assertions above
+        // aren't three ways of saying the same number.
+        assert_ne!(
+            e.actors[&wizard].spellcasting_save_dc(),
+            e.actors[&wizard].spell_save_dc(AbilityScoreType::Charisma)
+        );
+        assert_ne!(
+            e.actors[&warlock].spellcasting_save_dc(),
+            e.actors[&warlock].spell_save_dc(AbilityScoreType::Intelligence)
+        );
+        assert_ne!(
+            e.actors[&cleric].spellcasting_save_dc(),
+            e.actors[&cleric].spell_save_dc(AbilityScoreType::Intelligence)
+        );
+    }
 }

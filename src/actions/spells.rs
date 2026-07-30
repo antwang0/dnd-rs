@@ -1233,7 +1233,7 @@ impl Action for SacredFlame {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
 
         // Shared save-or-nothing cantrip resolver: caster-aware save
@@ -1632,7 +1632,7 @@ impl Action for FireBolt {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
         resolve_attack(
             encounter,
@@ -2073,7 +2073,7 @@ impl Action for CauseFear {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell can force disadvantage
         // on this single save-or-suck roll. RAW: the prime affects the
         // first save against the spell, which here is the only save.
@@ -2152,7 +2152,7 @@ impl Action for GuidingBolt {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_mod = caster.spellcasting_attack_modifier();
         let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
         let dice = 4 + (lvl - 1);
         let mut effects = spell_attack(
@@ -2230,7 +2230,7 @@ impl Action for Web {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let radius = match self.targeting_schema() {
             TargetingSchema::Burst { radius } => radius,
             _ => return Vec::new(),
@@ -2360,7 +2360,7 @@ impl Action for Blindness {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Route through the caster-aware save helper so Heightened Spell
         // metamagic forces disadvantage on the save (RAW). The prime is
         // consumed on the first save resolved through this site.
@@ -2479,7 +2479,7 @@ impl Action for FaerieFire {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         let radius = match self.targeting_schema() {
             TargetingSchema::Burst { radius } => radius,
             _ => return Vec::new(),
@@ -2554,7 +2554,7 @@ impl Action for RayOfFrost {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         resolve_attack(
             encounter,
@@ -3009,7 +3009,7 @@ impl Action for AcidSplash {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         let (effects, _saves) = neutral_burst_save_only(
             encounter,
@@ -3071,7 +3071,7 @@ impl Action for ChillTouch {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         spell_attack(
             encounter,
@@ -3136,7 +3136,7 @@ impl Action for SpiritualWeapon {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         spell_attack_with_bonus(
             encounter,
@@ -3266,7 +3266,7 @@ impl Action for PoisonSpray {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         cantrip_save_damage(
             encounter,
@@ -3334,7 +3334,7 @@ impl Action for InflictWounds {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
         let dice = 3 + (lvl - 1);
         spell_attack(
@@ -3580,7 +3580,7 @@ impl Action for ThornWhip {
             return Vec::new();
         };
         let caster_loc = caster.location();
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let mut effects = spell_attack(
             encounter,
             caster_id,
@@ -3726,7 +3726,7 @@ impl Action for TollTheDead {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         // The die upgrade is resolved before the save so the shared
         // cantrip resolver gets the right pool; RAW keys it on the
@@ -4085,7 +4085,7 @@ impl Action for ShockingGrasp {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         let mut effects = spell_attack(
             encounter,
@@ -4338,7 +4338,7 @@ impl Action for CharmPerson {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell can force disadvantage.
         let save =
             encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
@@ -4457,7 +4457,7 @@ impl Action for EldritchBlast {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Charisma);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let beam_count = crate::engine::util::cantrip_dice_count(caster.level());
         // 5e Warlock Eldritch Invocations: read both invocations up front
         // from the caster's permanent feature tags. Agonizing Blast adds
@@ -4741,7 +4741,7 @@ impl Action for Command {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell metamagic can force
         // disadvantage on the save. The prime is consumed on the first
         // save resolved through this site.
@@ -4982,7 +4982,7 @@ impl Action for ScorchingRay {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let mut all: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         // Three independent rays. Each is its own attack roll → its own
         // hit/miss/crit. If the target falls between rays the later rays
@@ -5064,7 +5064,7 @@ impl Action for LightningBolt {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
         let dice = 8 + (lvl - 3);
         // Route through `roll_empowered_sum` — Sorcerer Empowered Spell
@@ -5140,7 +5140,7 @@ impl Action for VampiricTouch {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         // spell_attack rolls the d20 vs AC and (on hit) the damage dice,
         // returning a DealDamage we'll merge with the self-heal rider.
         // `dealt` is the post-crit damage queued onto the target; we use
@@ -5237,7 +5237,7 @@ impl Action for HypnoticPattern {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let mut conditions_tracked: Vec<(usize, Condition)> = Vec::new();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
@@ -5575,7 +5575,7 @@ impl Action for HoldMonster {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so the sorcerer Heightened Spell prime can
         // force disadvantage on this single save-or-suck roll. The
         // shared helper routes through `roll_save_against_caster`
@@ -5716,7 +5716,7 @@ impl Action for BestowCurse {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
@@ -5784,7 +5784,7 @@ impl Action for MindSliver {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell metamagic can force
         // disadvantage on the save. The prime is consumed on the first
         // save resolved through this site.
@@ -6628,7 +6628,7 @@ impl Action for IceStorm {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let bludg = encounter.roll(&Dice::new(2, 8));
         let cold = encounter.roll(&Dice::new(4, 6));
         encounter.log(format!(
@@ -7117,12 +7117,12 @@ impl Action for WitchBolt {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // Wizards (INT) and clerics (WIS) both use this spell in the
-        // template loadout. Auto-detect via the caster's higher spell-
-        // attack modifier so it works in both pools.
-        let int_mod = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
-        let wis_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
-        let attack_bonus = int_mod.max(wis_mod);
+        // Wizards (INT), clerics (WIS) and sorcerers / warlocks (CHA)
+        // all carry this spell, so the modifier follows the caster —
+        // see `spellcasting_attack_modifier`. Previously an open-coded
+        // max of INT and WIS, which left every CHA caster on the list
+        // shooting off a stat they never invested in.
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let mut effects = spell_attack(
             encounter,
             caster_id,
@@ -7296,8 +7296,8 @@ impl Action for Banishment {
         // Use the caster's strongest spellcasting modifier (INT for
         // wizards, WIS for clerics) so the DC scales with whichever
         // school is firing it.
-        let int_dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let wis_dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let int_dc = caster.spellcasting_save_dc();
+        let wis_dc = caster.spellcasting_save_dc();
         let dc = int_dc.max(wis_dc);
         // Caster-aware save so Heightened Spell can force disadvantage.
         let save =
@@ -7381,7 +7381,7 @@ impl Action for TashasHideousLaughter {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
@@ -7566,7 +7566,7 @@ impl Action for Disintegrate {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         if save.passed() {
             return Vec::new();
@@ -7640,7 +7640,7 @@ impl Action for FingerOfDeath {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         let dmg_full = encounter.roll(&Dice::new(7, 8)) + 30;
         let dmg = if save.passed() { dmg_full / 2 } else { dmg_full };
@@ -7782,7 +7782,7 @@ impl Action for SynapticStatic {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 4;
         let full = encounter.roll(&Dice::new(8, 6));
         encounter.log(format!(
@@ -8145,7 +8145,7 @@ impl Action for Suggestion {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
@@ -8305,7 +8305,7 @@ impl Action for Sunburst {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 12;
         // Empowered Spell metamagic — sorcerer can reroll low dice on
         // the shared sunburst pool. Same hook as Fireball / Cone of Cold.
@@ -8598,7 +8598,7 @@ impl Action for MeteorSwarm {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 4;
         // Empowered Spell metamagic — RAW says "When you roll damage for
         // a spell, you can reroll a number of the damage dice." Meteor
@@ -8799,12 +8799,10 @@ impl Action for Sunbeam {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // Caster ability-mod choice: clerics get WIS, wizards get INT.
-        // Pick whichever yields the bigger save DC so cross-class users
-        // (e.g. a multi-class wizard/cleric) still get their best attack.
-        let int_mod = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
-        let wis_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
-        let attack_bonus = int_mod.max(wis_mod);
+        // The modifier follows the caster across all three casting
+        // abilities — see `spellcasting_attack_modifier`. Previously an
+        // open-coded max of INT and WIS only.
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let (effs, dealt) = spell_attack_outcome(
             encounter,
             caster_id,
@@ -9248,7 +9246,7 @@ impl Action for Cloudkill {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let raw = encounter.roll(&Dice::new(5, 8));
         encounter.log(format!("  cloudkill: 5d8({}) = {} poison area", raw, raw));
         let mut effects = crate::actions::action_template::resolve_burst_save_damage(
@@ -10125,7 +10123,7 @@ impl Action for Polymorph {
             .unwrap_or(caster_team);
         // Enemies get a WIS save; willing allies auto-fail (5e RAW).
         if target_team != caster_team {
-            let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+            let dc = caster.spellcasting_save_dc();
             // Caster-aware save so the sorcerer Heightened Spell prime
             // can force disadvantage on this single save-or-suck roll.
             let save = encounter.roll_save_against_caster(
@@ -10371,7 +10369,7 @@ impl Action for BoomingBlade {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         let mut effects = spell_attack(
             encounter,
@@ -10601,7 +10599,7 @@ impl Action for Earthquake {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
@@ -10940,7 +10938,7 @@ impl Action for Fear {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 4;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied = Vec::new();
@@ -11472,7 +11470,7 @@ impl Action for FlameStrike {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Roll the two damage halves separately so the per-actor
         // resistance / immunity lookup applies independently — a fire-
         // immune efreet still eats the radiant half, and a radiant-
@@ -11649,7 +11647,7 @@ impl Action for ChainLightning {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let raw = encounter.roll(&Dice::new(10, 8));
         encounter.log(format!(
             "  chain lightning: 10d8({}) lightning (primary + forks)",
@@ -12774,7 +12772,7 @@ impl Action for Confusion {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 4;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
@@ -12921,7 +12919,7 @@ impl Action for Levitate {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
@@ -14436,7 +14434,7 @@ impl Action for MassPolymorph {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         let targets = encounter.enemy_burst_targets(caster_id, origin, 6);
         if targets.is_empty() {
             return Vec::new();
@@ -14544,9 +14542,7 @@ impl Action for MordenkainensSword {
         // Spell uses the caster's best mental ability — wizards (INT),
         // sorcerers (CHA), and warlocks (CHA) all get Mordenkainen's
         // Sword on their published lists.
-        let attack_bonus = caster
-            .spell_attack_modifier(AbilityScoreType::Intelligence)
-            .max(caster.spell_attack_modifier(AbilityScoreType::Charisma));
+        let attack_bonus = caster.spellcasting_attack_modifier();
         // 5d10 force on hit — a melee spell attack, so reach + footprint
         // adjacency apply via resolve_attack's melee path.
         let mut effects = spell_attack_with_bonus(
@@ -15317,7 +15313,7 @@ impl Action for AcidArrow {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spellcasting_attack_modifier();
         // Combined 4d4 immediate + 2d4 splash → 6d4 on hit (5e RAW: full
         // immediate + full splash). Half damage on miss only covers the
         // splash dice per RAW: "half damage on a miss and no splash" →
@@ -19973,7 +19969,7 @@ impl Action for Weird {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         // Shared 10d10 psychic roll. Fail = full damage + Frightened;
         // success = nothing. No half-on-save by RAW for Weird.
         let raw = encounter.roll(&Dice::new(10, 10));
@@ -22980,7 +22976,7 @@ impl Action for TashasCausticBrew {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         // Failed save = 2d4 acid AND the target picks up the
         // `CausticBrewed` flag (DoT lives on `ROUND_END_DOTS` so the
         // per-turn drip rolls through the shared pipeline). Passed save
@@ -25026,7 +25022,7 @@ impl Action for Earthbind {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let dc = caster.spellcasting_save_dc();
         // Caster-aware save so Heightened Spell metamagic can force
         // disadvantage on the single save-or-suck STR roll.
         let save = encounter.roll_save_against_caster(
@@ -25305,7 +25301,7 @@ impl Action for Contagion {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = caster.spellcasting_save_dc();
         // Skip the save against a Poisoned-immune target — the install
         // can't land, and skipping preserves the Heightened Spell prime.
         if encounter.actor_immune_to_condition(target_id, Condition::Poisoned) {
