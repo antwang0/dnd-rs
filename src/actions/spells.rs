@@ -1442,7 +1442,11 @@ impl Action for SacredBurst {
 
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         let die = Dice::new(n + 1, 6);
-        let raw = encounter.roll(&die);
+        // Roll through the shared caster-aware chokepoint rather than
+        // `roll` directly — Empowered Spell, Empowered Evocation and
+        // Potent Spellcasting all live there, and a bare `roll` skips
+        // all three silently.
+        let raw = encounter.roll_empowered_sum(caster_id, die.count, die.faces);
         encounter.log(format!(
             "  sacred burst: {}({}) = {} radiant area",
             die, raw, raw
@@ -4177,7 +4181,11 @@ impl Action for Shatter {
         ]);
         let lvl = crate::engine::action_overrides::cast_level(overrides, 2);
         let dice = 3 + (lvl - 2);
-        let raw = encounter.roll(&Dice::new(dice, 8));
+        // Roll through the shared caster-aware chokepoint rather than
+        // `roll` directly — Empowered Spell, Empowered Evocation and
+        // Potent Spellcasting all live there, and a bare `roll` skips
+        // all three silently.
+        let raw = encounter.roll_empowered_sum(caster_id, dice, 8);
         encounter.log(format!("  shatter: {}d8({}) = {} thunder area", dice, raw, raw));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -5420,7 +5428,11 @@ impl Action for SpiritGuardians {
         };
         let caster_loc = caster.location();
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let raw = encounter.roll(&Dice::new(3, 8));
+        // Roll through the shared caster-aware chokepoint rather than
+        // `roll` directly — Empowered Spell, Empowered Evocation and
+        // Potent Spellcasting all live there, and a bare `roll` skips
+        // all three silently.
+        let raw = encounter.roll_empowered_sum(caster_id, 3, 8);
         encounter.log(format!(
             "  spirit guardians: 3d8({}) = {} radiant area",
             raw, raw
@@ -5793,7 +5805,7 @@ impl Action for MindSliver {
         if save.passed() {
             return Vec::new();
         }
-        let dmg = encounter.roll(&Dice::new(1, 6));
+        let dmg = encounter.roll_empowered_sum(caster_id, 1, 6);
         encounter.log(format!("  mind sliver: 1d6({}) = {} psychic", dmg, dmg));
         vec![
             Box::new(DealDamage {
@@ -7030,7 +7042,7 @@ impl Action for CloudOfDaggers {
             return Vec::new();
         };
         const RADIUS: isize = 1;
-        let damage = encounter.roll(&Dice::new(4, 4));
+        let damage = encounter.roll_empowered_sum(caster_id, 4, 4);
         encounter.log(format!(
             "  cloud of daggers: 4d4({}) = {} slashing",
             damage, damage
@@ -7209,7 +7221,7 @@ impl Action for PhantasmalKiller {
         if save.passed() {
             return Vec::new();
         }
-        let dmg = encounter.roll(&Dice::new(4, 10));
+        let dmg = encounter.roll_empowered_sum(caster_id, 4, 10);
         encounter.log(format!(
             "  phantasmal killer: 4d10({}) = {} psychic",
             dmg, dmg
@@ -7642,7 +7654,7 @@ impl Action for FingerOfDeath {
         };
         let dc = caster.spellcasting_save_dc();
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
-        let dmg_full = encounter.roll(&Dice::new(7, 8)) + 30;
+        let dmg_full = encounter.roll_empowered_sum(caster_id, 7, 8) + 30;
         let dmg = if save.passed() { dmg_full / 2 } else { dmg_full };
         encounter.log(format!(
             "  finger of death: 7d8+30({}) = {} necrotic",
@@ -7784,7 +7796,7 @@ impl Action for SynapticStatic {
         };
         let dc = caster.spellcasting_save_dc();
         const RADIUS: isize = 4;
-        let full = encounter.roll(&Dice::new(8, 6));
+        let full = encounter.roll_empowered_sum(caster_id, 8, 6);
         encounter.log(format!(
             "  synaptic static: 8d6({}) = {} psychic (each)",
             full, full
@@ -9157,7 +9169,7 @@ impl Action for WallOfFire {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let raw = encounter.roll(&Dice::new(5, 8));
+        let raw = encounter.roll_empowered_sum(caster_id, 5, 8);
         encounter.log(format!(
             "  wall of fire: 5d8({}) = {} fire (enemies only)",
             raw, raw
@@ -10448,7 +10460,7 @@ impl Action for MindWhip {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(3, 6));
+        let raw = encounter.roll_empowered_sum(caster_id, 3, 6);
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Intelligence, dc, caster_id);
         let dmg = if save.passed() { raw / 2 } else { raw };
         encounter.log(format!(
@@ -10591,7 +10603,7 @@ impl Action for Earthquake {
             return Vec::new();
         };
         const RADIUS: isize = 4;
-        let raw = encounter.roll(&Dice::new(5, 6));
+        let raw = encounter.roll_empowered_sum(caster_id, 5, 6);
         encounter.log(format!(
             "  earthquake: 5d6({}) shared bludgeoning",
             raw
@@ -11560,7 +11572,7 @@ impl Action for HeatMetal {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let raw = encounter.roll(&Dice::new(2, 8));
+        let raw = encounter.roll_empowered_sum(caster_id, 2, 8);
         encounter.log(format!("  heat metal: 2d8({}) fire on cast", raw));
         vec![
             Box::new(DealDamage {
@@ -11648,7 +11660,7 @@ impl Action for ChainLightning {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        let raw = encounter.roll(&Dice::new(10, 8));
+        let raw = encounter.roll_empowered_sum(caster_id, 10, 8);
         encounter.log(format!(
             "  chain lightning: 10d8({}) lightning (primary + forks)",
             raw
@@ -11844,7 +11856,7 @@ impl Action for Moonbeam {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let raw = encounter.roll(&Dice::new(2, 10));
+        let raw = encounter.roll_empowered_sum(caster_id, 2, 10);
         encounter.log(format!("  moonbeam: 2d10({}) radiant beam", raw));
         let targets = encounter.enemy_burst_targets(caster_id, point, 1);
         let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
@@ -12116,7 +12128,7 @@ impl Action for ReverseGravity {
         let dc = caster
             .spell_save_dc(AbilityScoreType::Wisdom)
             .max(caster.spell_save_dc(AbilityScoreType::Intelligence));
-        let raw = encounter.roll(&Dice::new(8, 6));
+        let raw = encounter.roll_empowered_sum(caster_id, 8, 6);
         encounter.log(format!(
             "  reverse gravity: 8d6({}) bludgeoning fall damage",
             raw
@@ -12213,8 +12225,8 @@ impl Action for StormOfVengeance {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         const RADIUS: isize = 6;
 
-        let thunder = encounter.roll(&Dice::new(2, 6));
-        let lightning = encounter.roll(&Dice::new(4, 6));
+        let thunder = encounter.roll_empowered_sum(caster_id, 2, 6);
+        let lightning = encounter.roll_empowered_sum(caster_id, 4, 6);
         encounter.log(format!(
             "  storm of vengeance: 2d6({}) thunder + 4d6({}) lightning",
             thunder, lightning
@@ -13497,7 +13509,7 @@ impl Action for HolyWord {
         };
         let caster_loc = caster.location();
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let damage = encounter.roll(&Dice::new(5, 10));
+        let damage = encounter.roll_empowered_sum(caster_id, 5, 10);
         encounter.log(format!(
             "  holy word: 5d10({}) = {} radiant to enemies in 30ft",
             damage, damage
@@ -13638,6 +13650,15 @@ impl Action for PrismaticSpray {
                 7 => (DamageType::Radiant, "white", true),
                 _ => (DamageType::Necrotic, "indigo", false),
             };
+            // Bare `roll`, deliberately, for the same reason
+            // Sickening Radiance keeps one: RAW gives each target its
+            // own ray *and* its own 10d6, so this is a per-target roll
+            // rather than a shared one. `roll_empowered_sum` carries
+            // per-cast bonuses (Empowered Evocation, Potent
+            // Spellcasting) and a per-cast metamagic reroll, all of
+            // which would be paid once per victim from inside this
+            // loop. The two per-target bursts are the file's only two
+            // exceptions and both say so here.
             let raw = encounter.roll(&Dice::new(10, 6));
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             let dmg = if save.passed() { raw / 2 } else { raw };
@@ -13732,7 +13753,7 @@ impl Action for Feeblemind {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let damage = encounter.roll(&Dice::new(4, 6));
+        let damage = encounter.roll_empowered_sum(caster_id, 4, 6);
         // Per RAW the damage lands regardless of the save; only the
         // mind-shatter rider gates on the save outcome.
         encounter.log(format!(
@@ -14882,6 +14903,17 @@ impl Action for SickeningRadiance {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conditions: Vec<(usize, Condition)> = Vec::new();
         for tid in targets {
+            // Deliberately a bare `roll` and the only damage roll in
+            // this file that stays one. `roll_empowered_sum` carries
+            // flat per-*cast* bonuses (Empowered Evocation's +INT,
+            // Potent Spellcasting's +WIS) and a per-*cast* metamagic
+            // reroll, and this is the one burst that rolls fresh dice
+            // inside the per-target loop rather than sharing a single
+            // roll — so routing it through the chokepoint would pay the
+            // flat bonus once per victim and burn the Empowered Spell
+            // prime on whichever target happened to be first in the
+            // sorted order. RAW's unit for all three features is the
+            // spell, not the target.
             let raw = encounter.roll(&Dice::new(4, 10));
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             encounter.log(format!(
@@ -15333,7 +15365,7 @@ impl Action for AcidArrow {
         if dmg > 0 {
             // Hit: append the 2d4 splash. Logged separately so the
             // breakdown stays legible.
-            let splash = encounter.roll(&Dice::new(2, 4));
+            let splash = encounter.roll_empowered_sum(caster_id, 2, 4);
             encounter.log(format!("  acid arrow splash: 2d4({}) acid", splash));
             let mut all = effects;
             all.push(Box::new(DealDamage {
@@ -15344,7 +15376,7 @@ impl Action for AcidArrow {
             return all;
         }
         // Miss: the splash still drips for half damage per RAW.
-        let half_splash = encounter.roll(&Dice::new(2, 4)) / 2;
+        let half_splash = encounter.roll_empowered_sum(caster_id, 2, 4) / 2;
         if half_splash == 0 {
             return effects;
         }
@@ -16561,7 +16593,7 @@ impl Action for MaximiliansEarthenGrasp {
             encounter.log("  earthen grasp: target saves, fist crumbles".to_string());
             return Vec::new();
         }
-        let dmg = encounter.roll(&Dice::new(2, 6));
+        let dmg = encounter.roll_empowered_sum(caster_id, 2, 6);
         encounter.log(format!(
             "  earthen grasp: 2d6({}) bludgeoning + Restrained",
             dmg
@@ -17609,7 +17641,7 @@ impl Action for DestructiveWave {
             "destructive wave (thunder)",
         );
         // Radiant half: re-walk the same save list rather than re-rolling.
-        let rad_raw = encounter.roll(&Dice::new(5, 6));
+        let rad_raw = encounter.roll_empowered_sum(caster_id, 5, 6);
         encounter.log(format!(
             "  destructive wave (radiant): 5d6({}) shared Radiant",
             rad_raw
@@ -17838,7 +17870,7 @@ impl Action for Catapult {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
-        let raw = encounter.roll(&Dice::new(3, 8));
+        let raw = encounter.roll_empowered_sum(caster_id, 3, 8);
         let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         encounter.log(format!(
             "  catapult: 3d8({}) bludgeoning ({})",
@@ -18767,7 +18799,7 @@ impl Action for SteelWindStrike {
         // is per-target rolls, but a single shared roll keeps the log
         // line concise and the dice pool predictable (matches the AoE
         // shared-roll semantics used by Fireball / Cone of Cold).
-        let raw = encounter.roll(&Dice::new(6, 10));
+        let raw = encounter.roll_empowered_sum(caster_id, 6, 10);
         encounter.log(format!(
             "  steel wind strike: 6d10({}) force (auto-hit, up to 5 targets)",
             raw
@@ -19972,7 +20004,7 @@ impl Action for Weird {
         let dc = caster.spellcasting_save_dc();
         // Shared 10d10 psychic roll. Fail = full damage + Frightened;
         // success = nothing. No half-on-save by RAW for Weird.
-        let raw = encounter.roll(&Dice::new(10, 10));
+        let raw = encounter.roll_empowered_sum(caster_id, 10, 10);
         encounter.log(format!(
             "  weird: 10d10({}) shared {:?}",
             raw,
@@ -21793,7 +21825,7 @@ impl Action for HungerOfHadar {
         };
         let dc = caster.best_spell_save_dc([AbilityScoreType::Charisma]);
         encounter.log("  hunger of hadar: the void opens...".to_string());
-        let cold_raw = encounter.roll(&Dice::new(2, 6));
+        let cold_raw = encounter.roll_empowered_sum(caster_id, 2, 6);
         let targets = encounter.enemy_burst_targets(caster_id, point, 4);
         let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in &targets {
@@ -21948,7 +21980,7 @@ impl Action for EldritchSmite {
             return Vec::new();
         };
         let dc = caster.best_spell_save_dc([AbilityScoreType::Charisma]);
-        let raw = encounter.roll(&Dice::new(4, 8));
+        let raw = encounter.roll_empowered_sum(caster_id, 4, 8);
         encounter.log(format!("  eldritch smite: 4d8({}) force", raw));
         let mut effs: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
             actor_id: tid,
@@ -26846,7 +26878,7 @@ impl Action for Immolation {
         // walks off with half. Matches the canonical
         // `SaveDamagePolicy::HalfOnSave` shape used by single-target save
         // spells (Sacred Burst single, Inflict Wounds variant, etc.).
-        let raw = encounter.roll(&Dice::new(8, 6));
+        let raw = encounter.roll_empowered_sum(caster_id, 8, 6);
         let dmg = SaveDamagePolicy::HalfOnSave.apply(raw, save.passed());
         encounter.log(format!(
             "  immolation: 8d6({}) fire ({})",

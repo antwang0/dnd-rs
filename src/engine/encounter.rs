@@ -68038,4 +68038,78 @@ mod tests {
             e.actors[&cleric].spell_save_dc(AbilityScoreType::Intelligence)
         );
     }
+
+    /// Source-level drift pin: no spell in `spells.rs` rolls damage
+    /// dice outside the shared caster-aware chokepoint.
+    ///
+    /// The behavioral sweep next door
+    /// (`every_damaging_cantrip_reaches_the_shared_damage_chokepoint`)
+    /// covers ten cantrips by actually casting them, which is the
+    /// stronger check but doesn't scale: there are nearly three hundred
+    /// spells, most of them needing a bespoke target setup to fire at
+    /// all. This one reads the file instead. It cannot tell a damage
+    /// roll from a duration roll, so it doesn't try — it asserts on the
+    /// shape that distinguished every real offender: a
+    /// `let <name> = encounter.roll(&Dice::new(..))` binding whose name
+    /// is one of the damage-flavored ones the file uses, in a function
+    /// that goes on to queue a `DealDamage`.
+    ///
+    /// Thirty-four sites matched when this was written, every one of
+    /// them a spell the Sorcerer's Empowered Spell metamagic silently
+    /// did nothing for. The two surviving exceptions are documented at
+    /// their sites and named here, so adding a third is a deliberate
+    /// act with a sentence attached rather than an oversight.
+    #[test]
+    fn no_spell_rolls_damage_outside_the_shared_chokepoint() {
+        // The two bursts that roll fresh dice per target instead of
+        // sharing one roll — Sickening Radiance because that is how it
+        // resolves, Prismatic Spray because RAW gives each target its
+        // own ray. Routing either through the chokepoint would pay the
+        // flat per-cast bonuses once per victim. Both say so at their
+        // roll sites.
+        const DOCUMENTED_EXCEPTIONS: &[&str] = &["sickening radiance", "prismatic spray"];
+        let src = include_str!("../actions/spells.rs");
+        let lines: Vec<&str> = src.lines().collect();
+        let damage_bindings = [
+            "raw", "dmg", "damage", "dmg_full", "full", "splash", "half_splash",
+            "cold_raw", "rad_raw", "thunder", "lightning",
+        ];
+        let mut offenders: Vec<String> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("let ") else {
+                continue;
+            };
+            let Some((name, tail)) = rest.split_once(" = ") else {
+                continue;
+            };
+            if !damage_bindings.contains(&name.trim_start_matches("mut ")) {
+                continue;
+            }
+            if !tail.contains("encounter.roll(&") {
+                continue;
+            }
+            // Only flag it if the enclosing region actually deals
+            // damage — a duration or a count rolled into a `raw` would
+            // otherwise read as an offender.
+            let window = lines[i..lines.len().min(i + 30)].join("\n");
+            if !window.contains("DealDamage") {
+                continue;
+            }
+            let context = lines[i.saturating_sub(40)..i].join("\n");
+            if DOCUMENTED_EXCEPTIONS
+                .iter()
+                .any(|e| context.contains(e) || window.contains(e))
+            {
+                continue;
+            }
+            offenders.push(format!("spells.rs:{} — {}", i + 1, trimmed));
+        }
+        assert!(
+            offenders.is_empty(),
+            "these damage rolls bypass `roll_empowered_sum`, so Empowered Spell / \
+             Empowered Evocation / Potent Spellcasting silently skip them:\n{}",
+            offenders.join("\n")
+        );
+    }
 }
