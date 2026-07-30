@@ -54518,6 +54518,7 @@ mod tests {
                     &*clerics::GRAVE_CLERIC_TEMPLATE,
                     &*clerics::FORGE_CLERIC_TEMPLATE,
                     &*clerics::TWILIGHT_CLERIC_TEMPLATE,
+                    &*clerics::ARCANA_CLERIC_TEMPLATE,
                 ],
             ),
             (
@@ -57766,6 +57767,93 @@ mod tests {
     /// filters — Dreadful Aspect's pass-through closure should still
     /// pick it up. Also verifies the once-per-short-rest charge is
     /// spent regardless of the target's save outcome.
+    /// Arcana Domain template drift pin: the Channel Divinity action, its
+    /// tag and charge, the Spell Resistance flag, and the whole baseline
+    /// Cleric kit inherited through the `..CLERIC_TEMPLATE.clone()` tail —
+    /// Turn Undead included, so the Arcana Cleric answers both the dead
+    /// and the extraplanar.
+    #[test]
+    fn arcana_cleric_ships_its_kit_and_inherits_the_cleric_chassis() {
+        use crate::actions::class_features::{
+            ARCANE_ABJURATION_TAG, DESTROY_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG,
+            TURN_UNDEAD_TAG,
+        };
+        use crate::actors::creatures::clerics::{ARCANA_CLERIC_TEMPLATE, CLERIC_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&ARCANA_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].has_passive_feature(ARCANE_ABJURATION_TAG));
+        assert!(e.actors[&cleric].feature_available(ARCANE_ABJURATION_TAG));
+        assert!(
+            e.actors[&cleric].find_action("arcane abjuration").is_some(),
+            "the Channel Divinity needs an action surface"
+        );
+        for tag in [
+            TURN_UNDEAD_TAG,
+            DIVINE_STRIKE_TAG,
+            PRESERVE_LIFE_TAG,
+            DESTROY_UNDEAD_TAG,
+        ] {
+            assert!(
+                e.actors[&cleric].has_passive_feature(tag),
+                "Arcana Cleric should inherit baseline Cleric tag {}",
+                tag
+            );
+        }
+        // Spell Resistance, on the shared Magic Resistance lane.
+        assert!(e.actors[&cleric].has_magic_resistance());
+        assert!(
+            !CLERIC_TEMPLATE.has_magic_resistance,
+            "the baseline cleric must not already carry it"
+        );
+    }
+
+    /// Arcane Abjuration's type filter is the complement of Turn Undead's:
+    /// it catches a fiend, and leaves a humanoid alone. Sweeps seeds so
+    /// at least one save fails.
+    #[test]
+    fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{ARCANE_ABJURATION, ARCANE_ABJURATION_TAG};
+        use crate::actors::creatures::clerics::ARCANA_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::FastRandRoller;
+        let mut saw_frighten = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let cleric = e
+                .instantiate_creature(&ARCANA_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let imp = e
+                .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 1)
+                .unwrap();
+            let effects = ARCANE_ABJURATION.side_effects(&mut e, cleric, None, None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&cleric].feature_available(ARCANE_ABJURATION_TAG),
+                "the burst must spend its charge"
+            );
+            assert!(
+                !e.actors[&goblin].has_condition(Condition::Frightened),
+                "a humanoid is outside the celestial/elemental/fey/fiend filter"
+            );
+            if e.actors[&imp].has_condition(Condition::Frightened) {
+                saw_frighten = true;
+                break;
+            }
+        }
+        assert!(saw_frighten, "arcane abjuration never landed on the fiend");
+    }
+
     #[test]
     fn dreadful_aspect_frightens_humanoid_and_spends_charge() {
         use crate::actions::action_template::Action;

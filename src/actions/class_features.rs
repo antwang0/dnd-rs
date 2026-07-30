@@ -189,6 +189,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // (Parry, Warding Flare, Protective Field) shares, so a cavalier
     // doesn't lose the maneuver between engagements.
     WARDING_MANEUVER_TAG,
+    // 5e Arcana Domain Cleric Channel Divinity — Arcane Abjuration.
+    // RAW Channel Divinity is once per short rest, the same cadence as
+    // every sibling CD charge above.
+    ARCANE_ABJURATION_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2829,6 +2833,31 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 /// bonus-action grant; the disadvantage clause is the half that makes
 /// the mark worth applying, and it lands at a chokepoint the engine
 /// already has.
+/// 5e Cleric **Arcana Domain** subclass — **Arcane Abjuration** (Channel
+/// Divinity, level 2, SCAG). Action: every celestial, elemental, fey or
+/// fiend within 30 ft rolls a WIS save vs the cleric's WIS-anchored spell
+/// DC and is Frightened for 10 rounds on a fail. Once per short rest;
+/// refreshes via `SHORT_REST_FEATURES`.
+///
+/// Ships as a `TurnBurst` config alongside Turn Undead, Turn the
+/// Faithless and Dreadful Aspect — same 30 ft WIS-save-or-Frighten burst,
+/// differing only in the creature-type filter and the DC anchor.
+///
+/// The type filter is the exact complement of Turn Undead's, which is the
+/// domain's whole argument: an Arcana Cleric standing next to any other
+/// cleric covers every extraplanar creature type in the engine between
+/// them. Wider than Turn the Faithless's fey / fiend narrowing because
+/// there's no ally-flavor reason to spare celestials here — the Arcana
+/// Cleric abjures outsiders, not evil ones.
+///
+/// RAW's second clause — a target whose CR is at or below a
+/// level-scaling threshold is banished to its home plane instead of
+/// merely frightened — is not modeled. Banishment needs an off-board
+/// actor lane the engine doesn't have, and it's also the clause that
+/// would make this strictly better than Turn Undead rather than
+/// sideways from it.
+pub const ARCANE_ABJURATION_TAG: &str = "cleric.arcane_abjuration";
+
 pub const UNWAVERING_MARK_TAG: &str = "fighter.unwavering_mark";
 
 /// 5e Fighter **Cavalier** subclass — **Warding Maneuver** (level 7,
@@ -4604,132 +4633,6 @@ fn resolve_turn_burst(
     effects
 }
 
-/// Turn Undead — Cleric Channel Divinity, action. Every creature of the
-/// Undead type within 30ft (12 tiles) makes a WIS save vs the cleric's
-/// WIS-based DC. On fail, they're Frightened for 10 rounds (1 minute
-/// RAW). Uses the `CreatureType::Undead` tag for accurate type checking.
-/// Once per long rest in our model (RAW Channel Divinity is once per
-/// short rest — collapsed to long-rest here for parity with the other
-/// baseline cleric long-rest features).
-pub struct TurnUndead {}
-
-impl Action for TurnUndead {
-    fn name(&self) -> &str {
-        "turn undead"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["turn", "cd-turn"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_ready(encounter, caster_id, TURN_UNDEAD_TAG)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        resolve_turn_burst(
-            encounter,
-            caster_id,
-            TURN_UNDEAD_TAG,
-            AbilityScoreType::Wisdom,
-            |ct| ct.is_undead(),
-            "turn undead",
-        )
-    }
-}
-
-pub static TURN_UNDEAD: LazyLock<TurnUndead> = LazyLock::new(|| TurnUndead {});
-
-/// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
-/// fey and fiend within 30ft (12 tiles) makes a WIS save vs the paladin's
-/// CHA-based DC. On fail, they're Frightened for 10 rounds (1 minute
-/// RAW). Once per short rest. Uses the shared `resolve_turn_burst`
-/// helper with a fey/fiend creature-type filter and the paladin's
-/// spellcasting ability (Charisma) — sibling to Turn Undead's shape.
-///
-/// RAW gates on "any celestial, elemental, fey, fiend, or undead" the
-/// paladin can see; we narrow to fey / fiend so the paladin has a
-/// distinct-from-cleric target set (celestials are RAW allies of the
-/// Devotion oath; elementals / undead overlap with Turn Undead and
-/// Protection From Evil).
-pub struct TurnTheFaithless {}
-
-impl Action for TurnTheFaithless {
-    fn name(&self) -> &str {
-        "turn the faithless"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["ttf", "cd-turnf", "faithless"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_ready(encounter, caster_id, TURN_THE_FAITHLESS_TAG)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::types::CreatureType;
-        resolve_turn_burst(
-            encounter,
-            caster_id,
-            TURN_THE_FAITHLESS_TAG,
-            // Paladin's spellcasting ability is Charisma per PHB; every
-            // paladin subclass — Devotion, Ancients, Vengeance, Oathbreaker
-            // — uses CHA for spell save DCs. Distinct from Cleric's WIS-
-            // based Turn Undead.
-            AbilityScoreType::Charisma,
-            // RAW target cohort narrowed to fey / fiend (see the tag's
-            // docs). A future "Turn Elemental" / "Turn Celestial" CD
-            // would add its own action + tag with a matching filter.
-            |ct| matches!(ct, CreatureType::Fey | CreatureType::Fiend),
-            "turn the faithless",
-        )
-    }
-}
-
-pub static TURN_THE_FAITHLESS: LazyLock<TurnTheFaithless> =
-    LazyLock::new(|| TurnTheFaithless {});
-
 /// Class-feature tag for the Oathbreaker Paladin's level-3 subclass
 /// Channel Divinity: **Dreadful Aspect**. Mechanically a sibling of
 /// Turn Undead / Turn the Faithless (30ft WIS-save burst → Frightened
@@ -4762,26 +4665,54 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnTheFaithless> =
 /// lockstep PHB progression.
 pub const DREADFUL_ASPECT_TAG: &str = "paladin.dreadful_aspect";
 
-/// Dreadful Aspect — Oathbreaker Paladin Channel Divinity, action.
-/// Every combat-active hostile within 30ft (12 tiles) makes a WIS save
-/// vs the paladin's CHA-based DC. On fail, they're Frightened for 10
-/// rounds (1 minute RAW). Once per short rest.
+/// Config-driven Channel Divinity turn-burst action. Every "action; each
+/// hostile of some creature-type set within 30 ft rolls a WIS save vs the
+/// caster's spell DC or is Frightened for 10 rounds" feature in the engine
+/// is one instance of this struct.
 ///
-/// Routes through the shared `resolve_turn_burst` helper — the shape
-/// is identical to Turn Undead / Turn the Faithless (30ft WIS-save
-/// burst → Frightened install) but the creature-type filter is a
-/// pass-through `|_| true` since RAW Dreadful Aspect ignores creature
-/// type. The team-filter and combat-active gates inside
-/// `resolve_turn_burst` still bounce allies and downed enemies, so
-/// only combat-active hostiles roll the save.
-pub struct DreadfulAspect {}
+/// Four features share the shape, differing only on the alias set, the
+/// per-rest charge tag, which ability anchors the DC, and which creature
+/// types are eligible. They used to be four near-identical `impl Action`
+/// blocks — same `NoArgs` schema, same `is_harmful` / `deals_damage`, same
+/// one-line `custom_validate_input`, same `resolve_turn_burst` call with
+/// four arguments changed — which meant adding a fifth turn variant cost
+/// ~55 lines of boilerplate to express four values. Now it costs a struct
+/// literal, exactly as the sibling config-driven `ManeuverPrime` /
+/// `SpellSlotRecovery` / Smite actions already do.
+///
+/// The creature-type filter is a `fn(CreatureType) -> bool` rather than a
+/// type set, because the variants disagree about shape as well as
+/// contents: Turn Undead delegates to `CreatureType::is_undead()`, Arcane
+/// Abjuration matches four unrelated types, and Dreadful Aspect drops the
+/// gate entirely.
+pub struct TurnBurst {
+    /// Display name — the action list entry, the prompt parser's
+    /// canonical name, and the log line prefix.
+    pub name: &'static str,
+    /// Alias set for the prompt parser. `&'static [&'static str]` keeps
+    /// the struct plain data at LazyLock init.
+    pub aliases: &'static [&'static str],
+    /// Feature tag whose per-rest charge gates the burst. Read via
+    /// `feature_ready` on the validate side; spent inside
+    /// `resolve_turn_burst`.
+    pub tag: &'static str,
+    /// Ability that anchors the save DC — WIS for the cleric domains,
+    /// CHA for the paladin oaths, matching each class's spellcasting
+    /// ability.
+    pub dc_ability: AbilityScoreType,
+    /// Which creature types the burst can frighten. The team and
+    /// combat-active filters live inside `resolve_turn_burst`; this
+    /// closure adds only the RAW type gate, so `|_| true` means "any
+    /// hostile".
+    pub type_filter: fn(crate::engine::types::CreatureType) -> bool,
+}
 
-impl Action for DreadfulAspect {
+impl Action for TurnBurst {
     fn name(&self) -> &str {
-        "dreadful aspect"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["da", "cd-dread", "dreadful", "dread"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
@@ -4800,7 +4731,7 @@ impl Action for DreadfulAspect {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        feature_ready(encounter, caster_id, DREADFUL_ASPECT_TAG)
+        feature_ready(encounter, caster_id, self.tag)
     }
     fn side_effects(
         &self,
@@ -4813,23 +4744,103 @@ impl Action for DreadfulAspect {
         resolve_turn_burst(
             encounter,
             caster_id,
-            DREADFUL_ASPECT_TAG,
-            // CHA-anchored DC per RAW paladin CD. Sibling to Turn the
-            // Faithless (Devotion CHA) and distinct from Turn Undead
-            // (cleric WIS).
-            AbilityScoreType::Charisma,
-            // No creature-type filter — RAW: any creature within 30ft
-            // that can see the paladin. The team + combat-active
-            // filters inside `resolve_turn_burst` handle the "hostile
-            // and standing" half; the pass-through closure drops the
-            // creature-type gate.
-            |_| true,
-            "dreadful aspect",
+            self.tag,
+            self.dc_ability,
+            self.type_filter,
+            self.name,
         )
     }
 }
 
-pub static DREADFUL_ASPECT: LazyLock<DreadfulAspect> = LazyLock::new(|| DreadfulAspect {});
+/// Turn Undead — Cleric Channel Divinity, action. Every Undead within
+/// 30 ft (12 tiles) makes a WIS save vs the cleric's WIS-based DC; on
+/// fail they're Frightened for 10 rounds (1 minute RAW). Once per long
+/// rest in our model (RAW Channel Divinity is once per short rest —
+/// collapsed to long-rest here for parity with the other baseline cleric
+/// long-rest features).
+pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "turn undead",
+    aliases: &["turn", "cd-turn"],
+    tag: TURN_UNDEAD_TAG,
+    dc_ability: AbilityScoreType::Wisdom,
+    type_filter: |ct| ct.is_undead(),
+});
+
+/// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
+/// fey and fiend within 30 ft makes a WIS save vs the paladin's CHA-based
+/// DC. Once per short rest.
+///
+/// RAW gates on "any celestial, elemental, fey, fiend, or undead" the
+/// paladin can see; we narrow to fey / fiend so the paladin has a
+/// distinct-from-cleric target set (celestials are RAW allies of the
+/// Devotion oath; elementals / undead overlap with Turn Undead and
+/// Protection From Evil).
+pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "turn the faithless",
+    aliases: &["ttf", "cd-turnf", "faithless"],
+    tag: TURN_THE_FAITHLESS_TAG,
+    // Paladin spellcasting ability is Charisma per PHB; every paladin
+    // subclass uses CHA for spell save DCs. Distinct from the Cleric
+    // domains' WIS anchor.
+    dc_ability: AbilityScoreType::Charisma,
+    type_filter: |ct| {
+        matches!(
+            ct,
+            crate::engine::types::CreatureType::Fey | crate::engine::types::CreatureType::Fiend
+        )
+    },
+});
+
+/// Arcane Abjuration — Arcana Domain Cleric Channel Divinity (lv2,
+/// SCAG), action. Every celestial, elemental, fey or fiend within 30 ft
+/// makes a WIS save vs the cleric's WIS-based DC; on fail they're
+/// Frightened for 10 rounds. Once per short rest.
+///
+/// The widest type filter of the three gated variants, and deliberately
+/// the complement of Turn Undead rather than an overlap: between an
+/// Arcana Cleric and any other cleric, a party covers every extraplanar
+/// creature type in the engine. That complementarity is the domain's
+/// argument for existing — RAW's Arcane Abjuration also banishes a
+/// low-CR target outright at lv5, which is the half that would make it
+/// strictly better than Turn Undead and is not modeled (banishment needs
+/// an off-board actor lane the engine doesn't have).
+///
+/// Wider than Turn the Faithless's fey / fiend narrowing because there's
+/// no ally-flavor reason to spare celestials here: the Arcana Cleric
+/// abjures *outsiders*, not evil ones.
+pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "arcane abjuration",
+    aliases: &["aa", "cd-abjure", "abjuration", "abjure"],
+    tag: ARCANE_ABJURATION_TAG,
+    dc_ability: AbilityScoreType::Wisdom,
+    type_filter: |ct| {
+        use crate::engine::types::CreatureType;
+        matches!(
+            ct,
+            CreatureType::Celestial
+                | CreatureType::Elemental
+                | CreatureType::Fey
+                | CreatureType::Fiend
+        )
+    },
+});
+
+/// Dreadful Aspect — Oathbreaker Paladin Channel Divinity (lv3), action.
+/// Every hostile within 30 ft makes a WIS save vs the paladin's CHA-based
+/// DC. Once per short rest. The only variant with no creature-type gate:
+/// RAW is "each creature of your choice that you can see within 30 feet",
+/// so the Oathbreaker's dread works on a party of humanoid bandits as
+/// readily as on a horde of undead.
+pub static DREADFUL_ASPECT: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "dreadful aspect",
+    aliases: &["da", "cd-dread", "dreadful", "dread"],
+    tag: DREADFUL_ASPECT_TAG,
+    // CHA-anchored DC per RAW paladin CD.
+    dc_ability: AbilityScoreType::Charisma,
+    // No creature-type filter — the team + combat-active filters inside
+    // `resolve_turn_burst` handle the "hostile and standing" half.
+    type_filter: |_| true,
+});
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
 /// action, they may spend a ki point (modeled as a bonus action — we don't

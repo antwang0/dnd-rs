@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    CIRCLE_OF_MORTALITY_TAG, DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
+    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CIRCLE_OF_MORTALITY_TAG, DESTROY_UNDEAD_TAG,
+    DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
     SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
@@ -653,8 +654,9 @@ pub static FORGE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     // and layers on the Soul of the Forge passive tag. The
     // `..base.clone()` tail inside the helper picks up every other
     // field — the full cleric spell ladder, save profs, stats, slots,
-    // and the WAR_PRIEST / GUIDED_STRIKE / RADIANCE_OF_THE_DAWN /
-    // etc. baseline features — without an N-line field-by-field copy.
+    // and the TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE /
+    // DESTROY_UNDEAD baseline features — without an N-line
+    // field-by-field copy.
     // No new actions are pushed — Soul of the Forge is a purely
     // passive fire-damage halver read at the shared
     // `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage`, not a
@@ -759,8 +761,8 @@ pub static TWILIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // and layers on the Vigilant Blessing passive tag. The
     // `..base.clone()` tail inside the helper picks up every other
     // field — the full cleric spell ladder, save profs, stats, slots,
-    // and the WAR_PRIEST / GUIDED_STRIKE / RADIANCE_OF_THE_DAWN /
-    // TURN_UNDEAD / etc. baseline features — without an N-line
+    // and the TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE /
+    // DESTROY_UNDEAD baseline features — without an N-line
     // field-by-field copy. No new actions are pushed — Vigilant Blessing
     // is a purely passive initiative-advantage grant read at
     // `rolls_initiative_with_advantage`, not a fresh action surface, so
@@ -772,4 +774,80 @@ pub static TWILIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // `SHADOW_MAGIC_SORCERER_TEMPLATE`, `ABERRANT_MIND_SORCERER_TEMPLATE`,
     // `DIVINE_SOUL_SORCERER_TEMPLATE`, `LONG_DEATH_MONK_TEMPLATE`.
     CLERIC_TEMPLATE.with_subclass_tag("Twilight Cleric", 'X', VIGILANT_BLESSING_TAG)
+});
+
+/// Arcana Domain Cleric — Divine Domain **Arcana Domain** subclass build
+/// (SCAG). The domain for a cleric whose god is a god of magic, and the
+/// only cleric build in the engine whose Channel Divinity points at
+/// outsiders rather than the dead.
+///
+/// Two subclass features ship:
+///
+///   - **Arcane Abjuration** (Channel Divinity, lv2) — an action: every
+///     celestial, elemental, fey or fiend within 30 ft rolls a WIS save
+///     vs the cleric's DC or is Frightened for 10 rounds. One charge per
+///     short rest, via the shared `TurnBurst` config.
+///   - **Spell Resistance** (lv6) — advantage on saving throws against
+///     spells, mapped onto the engine's existing `has_magic_resistance`
+///     lane.
+///
+/// The type filter is the exact complement of Turn Undead's, and that
+/// complementarity is the build's argument for existing. Every other
+/// cleric in the engine answers the undead; this one answers everything
+/// that walked in from another plane. A party running an Arcana Cleric
+/// beside any other cleric has a Channel Divinity for every extraplanar
+/// creature type the engine has — and the Arcana Cleric keeps Turn Undead
+/// too, inherited from the baseline chassis, so it loses nothing by
+/// specializing.
+///
+/// Spell Resistance is the more quietly valuable half on a d8 chassis.
+/// The engine doesn't distinguish spell saves from other saves, so the
+/// flag grants advantage on all of them — broader than RAW. That
+/// over-grant is the same one every monster carrying Magic Resistance
+/// already gets (see `has_magic_resistance`), and it is what makes this
+/// the most survivable cleric template: a WIS-primary caster with
+/// advantage on every save is very hard to lock down, which is precisely
+/// the failure mode that kills the other seven domain builds.
+///
+/// RAW's other Arcana features are left out for the usual reasons.
+/// Arcane Initiate (lv1) grants two wizard cantrips — the baseline cleric
+/// already carries Sacred Flame and Toll the Dead, and the engine has no
+/// per-class spell-list gate for the grant to be interesting against.
+/// Potent Spellcasting (lv8) adds WIS to cantrip damage, which needs a
+/// cantrip-damage-bonus lane nothing else in the engine wants yet. Arcane
+/// Mastery (lv17) grants 6th-9th level spells the CR-0.5 chassis has no
+/// slots for.
+///
+/// Glyph 'A' — for **A**rcana. Distinct from baseline cleric 'C', War
+/// 'W', Light 'L', Tempest 'S', Life 'V', Grave 'G', Forge 'F' and
+/// Twilight 'X'.
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW lv2 /
+/// lv6 gates for the same reason `FORGE_CLERIC_TEMPLATE` ships Soul of
+/// the Forge (RAW lv6) — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner the Forge / Twilight domains
+    // use: this subclass adds an action, a tag, and a struct-field flag.
+    // The `..CLERIC_TEMPLATE.clone()` tail still picks up the full cleric
+    // spell ladder, save profs, stats, slots, and the baseline
+    // TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE / DESTROY_UNDEAD
+    // feature set.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    actions.push(&*ARCANE_ABJURATION);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.insert(ARCANE_ABJURATION_TAG);
+    CreatureTemplate {
+        name: "Arcana Cleric",
+        glyph: 'A',
+        actions,
+        features,
+        // 5e Arcana Domain **Spell Resistance** (subclass level 6):
+        // advantage on saves against spells. Rides the engine's existing
+        // Magic Resistance lane, which grants advantage on *every* save
+        // — the engine doesn't split spell saves from the rest. Same
+        // over-grant every Magic Resistance monster already enjoys.
+        has_magic_resistance: true,
+        ..CLERIC_TEMPLATE.clone()
+    }
 });
