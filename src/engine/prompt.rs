@@ -78,15 +78,41 @@ impl Prompt {
         // We try N tokens, then N-1, etc., so multi-word spell names like
         // "scorching ray" or "hold person" work alongside single-token
         // names. Aliases are still single-token (e.g. "sr", "hp").
+        //
+        // At each width, **canonical names are tried before aliases**.
+        // That ordering is load-bearing rather than cosmetic: aliases are
+        // short and collide freely across a big caster's action list, and
+        // some of them collide with another action's real name. A wizard
+        // carries both Darkness and Maddening Darkness, and the latter
+        // aliases "darkness" — so a single-pass search that mixed the two
+        // kinds resolved by *action-list order*, and typing `darkness`
+        // cast Maddening Darkness (a level-8 slot) instead. A canonical
+        // name is the one handle a player can be certain of, so nothing
+        // is allowed to shadow it.
+        //
+        // Alias-vs-alias collisions are left resolved by list order and
+        // are not treated as bugs: short handles are a convenience, every
+        // action stays reachable by its full name, and renaming a few
+        // hundred of them across the spell list would trade a small
+        // ambiguity for a large one.
         let mut action_opt: Option<(usize, &(dyn Action + Send + Sync))> = None;
         for n in (1..=tokens.len()).rev() {
             let candidate = tokens[..n].join(" ");
-            if let Some(act) = self
+            let by_name = self
                 .actions
                 .iter()
-                .find(|e| candidate == e.name() || (n == 1 && e.aliases().contains(&tokens[0])))
-                .copied()
-            {
+                .find(|e| candidate == e.name())
+                .copied();
+            let matched = by_name.or_else(|| {
+                if n != 1 {
+                    return None;
+                }
+                self.actions
+                    .iter()
+                    .find(|e| e.aliases().contains(&tokens[0]))
+                    .copied()
+            });
+            if let Some(act) = matched {
                 action_opt = Some((n, act));
                 break;
             }
@@ -338,5 +364,218 @@ mod tests {
             .expect("scorching ray should parse as a two-token action name");
         assert_eq!(aei.target_ids().and_then(|ids| ids.first().copied()), Some(target));
     }
+
+    /// Every action on every PC template is reachable by typing its own
+    /// canonical name. That is the one addressing guarantee the parser
+    /// makes, and before canonical names were preferred over aliases it
+    /// did not hold: a wizard carries both Darkness and Maddening
+    /// Darkness, the latter aliases "darkness", and the single-pass
+    /// search resolved whichever came first in the action list — so
+    /// `darkness` cast a level-8 spell.
+    ///
+    /// Swept across all twelve class families rather than spot-checked,
+    /// because the failure mode is silent: the wrong spell fires and the
+    /// player is told nothing. The sweep is also what makes the guarantee
+    /// survive new content — a spell added with an alias that happens to
+    /// equal an existing spell's name fails here rather than in play.
+    ///
+    /// Alias-vs-alias collisions are deliberately *not* asserted. They
+    /// are pervasive across the large caster lists ("sphere" is claimed
+    /// by four spells on the sorcerer), resolve by list order, and cost
+    /// nothing that the canonical name doesn't recover.
+    #[test]
+    fn every_pc_action_is_reachable_by_its_canonical_name() {
+        use crate::actions::action_template::Action;
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::{
+            barbarians, bards, clerics, druids, fighters, monks, paladins, rangers, rogues,
+            sorcerers, warlocks, wizards,
+        };
+        let families: Vec<(&str, Vec<&'static CreatureTemplate>)> = vec![
+            (
+                "barbarian",
+                vec![
+                    &*barbarians::BARBARIAN_TEMPLATE,
+                    &*barbarians::TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::WOLVERINE_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::PANTHER_TOTEM_BARBARIAN_TEMPLATE,
+                    &*barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::DESERT_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
+                    &*barbarians::BERSERKER_BARBARIAN_TEMPLATE,
+                    &*barbarians::ZEALOT_BARBARIAN_TEMPLATE,
+                ],
+            ),
+            (
+                "bard",
+                vec![
+                    &*bards::BARD_TEMPLATE,
+                    &*bards::VALOR_BARD_TEMPLATE,
+                    &*bards::SWORDS_BARD_TEMPLATE,
+                    &*bards::LORE_BARD_TEMPLATE,
+                    &*bards::WHISPERS_BARD_TEMPLATE,
+                ],
+            ),
+            (
+                "cleric",
+                vec![
+                    &*clerics::CLERIC_TEMPLATE,
+                    &*clerics::WAR_CLERIC_TEMPLATE,
+                    &*clerics::LIGHT_CLERIC_TEMPLATE,
+                    &*clerics::TEMPEST_CLERIC_TEMPLATE,
+                    &*clerics::LIFE_CLERIC_TEMPLATE,
+                    &*clerics::GRAVE_CLERIC_TEMPLATE,
+                    &*clerics::FORGE_CLERIC_TEMPLATE,
+                    &*clerics::TWILIGHT_CLERIC_TEMPLATE,
+                ],
+            ),
+            (
+                "druid",
+                vec![
+                    &*druids::DRUID_TEMPLATE,
+                    &*druids::LAND_DRUID_TEMPLATE,
+                    &*druids::MOON_DRUID_TEMPLATE,
+                ],
+            ),
+            (
+                "fighter",
+                vec![
+                    &*fighters::FIGHTER_TEMPLATE,
+                    &*fighters::CHAMPION_TEMPLATE,
+                    &*fighters::SAMURAI_FIGHTER_TEMPLATE,
+                    &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                ],
+            ),
+            (
+                "monk",
+                vec![
+                    &*monks::MONK_TEMPLATE,
+                    &*monks::OPEN_HAND_MONK_TEMPLATE,
+                    &*monks::LONG_DEATH_MONK_TEMPLATE,
+                    &*monks::SHADOW_MONK_TEMPLATE,
+                ],
+            ),
+            (
+                "paladin",
+                vec![
+                    &*paladins::PALADIN_TEMPLATE,
+                    &*paladins::DEVOTION_PALADIN_TEMPLATE,
+                    &*paladins::ANCIENTS_PALADIN_TEMPLATE,
+                    &*paladins::VENGEANCE_PALADIN_TEMPLATE,
+                    &*paladins::OATHBREAKER_PALADIN_TEMPLATE,
+                    &*paladins::GLORY_PALADIN_TEMPLATE,
+                    &*paladins::WATCHERS_PALADIN_TEMPLATE,
+                ],
+            ),
+            (
+                "ranger",
+                vec![
+                    &*rangers::RANGER_TEMPLATE,
+                    &*rangers::HUNTER_RANGER_TEMPLATE,
+                    &*rangers::GLOOM_STALKER_RANGER_TEMPLATE,
+                    &*rangers::FEY_WANDERER_RANGER_TEMPLATE,
+                    &*rangers::HORIZON_WALKER_RANGER_TEMPLATE,
+                    &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
+                    &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
+                ],
+            ),
+            (
+                "rogue",
+                vec![
+                    &*rogues::ROGUE_TEMPLATE,
+                    &*rogues::ASSASSIN_ROGUE_TEMPLATE,
+                    &*rogues::SWASHBUCKLER_ROGUE_TEMPLATE,
+                    &*rogues::SCOUT_ROGUE_TEMPLATE,
+                    &*rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE,
+                ],
+            ),
+            (
+                "sorcerer",
+                vec![
+                    &*sorcerers::SORCERER_TEMPLATE,
+                    &*sorcerers::DRACONIC_SORCERER_TEMPLATE,
+                    &*sorcerers::STORM_SORCERER_TEMPLATE,
+                    &*sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE,
+                    &*sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE,
+                    &*sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE,
+                ],
+            ),
+            (
+                "warlock",
+                vec![
+                    &*warlocks::WARLOCK_TEMPLATE,
+                    &*warlocks::FIEND_WARLOCK_TEMPLATE,
+                    &*warlocks::UNDYING_WARLOCK_TEMPLATE,
+                    &*warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+                    &*warlocks::ARCHFEY_WARLOCK_TEMPLATE,
+                    &*warlocks::CELESTIAL_WARLOCK_TEMPLATE,
+                    &*warlocks::MARID_WARLOCK_TEMPLATE,
+                    &*warlocks::DAO_WARLOCK_TEMPLATE,
+                    &*warlocks::DJINNI_WARLOCK_TEMPLATE,
+                    &*warlocks::EFREETI_WARLOCK_TEMPLATE,
+                ],
+            ),
+            (
+                "wizard",
+                vec![
+                    &*wizards::WIZARD_TEMPLATE,
+                    &*wizards::NECROMANCY_WIZARD_TEMPLATE,
+                    &*wizards::WAR_MAGIC_WIZARD_TEMPLATE,
+                    &*wizards::ABJURATION_WIZARD_TEMPLATE,
+                    &*wizards::EVOCATION_WIZARD_TEMPLATE,
+                    &*wizards::DIVINATION_WIZARD_TEMPLATE,
+                    &*wizards::ENCHANTMENT_WIZARD_TEMPLATE,
+                    &*wizards::ILLUSION_WIZARD_TEMPLATE,
+                    &*wizards::CONJURATION_WIZARD_TEMPLATE,
+                    &*wizards::TRANSMUTATION_WIZARD_TEMPLATE,
+                ],
+            ),
+        ];
+        for (_label, family) in families {
+            for template in family {
+                let actions: Vec<&'static (dyn Action + Send + Sync)> =
+                    template.actions.clone();
+                for action in &actions {
+                    let name = action.name();
+                    // Mirror `process_input`'s resolution: longest
+                    // token-prefix first, canonical names before aliases.
+                    let tokens: Vec<&str> = name.split_whitespace().collect();
+                    let mut resolved: Option<&str> = None;
+                    for n in (1..=tokens.len()).rev() {
+                        let candidate = tokens[..n].join(" ");
+                        let by_name =
+                            actions.iter().find(|e| candidate == e.name()).copied();
+                        let matched = by_name.or_else(|| {
+                            if n != 1 {
+                                return None;
+                            }
+                            actions
+                                .iter()
+                                .find(|e| e.aliases().contains(&tokens[0]))
+                                .copied()
+                        });
+                        if let Some(act) = matched {
+                            resolved = Some(act.name());
+                            break;
+                        }
+                    }
+                    assert_eq!(
+                        resolved,
+                        Some(name),
+                        "{}: typing '{}' resolves to {:?}",
+                        template.name,
+                        name,
+                        resolved
+                    );
+                }
+            }
+        }
+    }
+
+
 }
 

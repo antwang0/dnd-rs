@@ -53709,6 +53709,45 @@ mod tests {
         }
     }
 
+    /// Typing a spell's own name casts *that* spell, even when another
+    /// action on the same sheet claims the name as an alias.
+    ///
+    /// The wizard is the live case: Maddening Darkness (level 8) is
+    /// pushed onto the action list before Darkness (level 2) and aliases
+    /// "darkness". Under the old single-pass search — which tested
+    /// canonical name and alias in one `find`, and so resolved by
+    /// action-list order — typing `darkness` burned the wizard's only
+    /// 8th-level slot on the wrong spell, with nothing in the log to say
+    /// so. `every_pc_action_is_reachable_by_its_canonical_name` sweeps
+    /// the invariant across every class; this is the one case driven
+    /// end-to-end through the parser.
+    #[test]
+    fn typing_a_spell_name_beats_another_actions_alias() {
+        use crate::actions::spells::{DARKNESS, MADDENING_DARKNESS};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::prompt::Prompt;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // The collision, in the order `WIZARD_TEMPLATE` builds it.
+        let prompt = Prompt::new(wiz, vec![&*MADDENING_DARKNESS, &*DARKNESS]);
+        let resolved = prompt
+            .process_input("darkness 8,4", &e)
+            .expect("darkness should parse and validate for a wizard");
+        assert_eq!(
+            resolved.action().name(),
+            "darkness",
+            "the canonical name wins over another action's alias"
+        );
+        // And the alias still resolves when nothing shadows it.
+        let by_alias = prompt
+            .process_input("maddening 8,4", &e)
+            .expect("maddening should parse and validate");
+        assert_eq!(by_alias.action().name(), "maddening darkness");
+    }
+
     /// Every PC class family renders unambiguously *within itself*: no
     /// two templates in a family share a name or a map glyph.
     ///
