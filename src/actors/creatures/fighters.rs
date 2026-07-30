@@ -288,8 +288,8 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// Fighter subclasses:
 ///   - **Champion** (`CHAMPION_TEMPLATE`): Improved Critical (crit-on-19)
 ///     + Superior Critical (crit-on-18) + Remarkable Athlete (half-prof
-///     initiative bump) + Defense / Dueling Fighting Styles + Survivor.
-///     The "spike-damage / durable" archetype.
+///       initiative bump) + Defense / Dueling Fighting Styles + Survivor.
+///       The "spike-damage / durable" archetype.
 ///   - **Baseline Fighter** (`FIGHTER_TEMPLATE`): all Battle Master
 ///     maneuvers (Trip / Menacing / Disarming / Pushing / Goading /
 ///     Precision / Sweeping / Feinting / Lunging / Rally /
@@ -340,16 +340,16 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// needs a per-encounter refresh tick), **Rapid Strike** (lv15:
 /// trade advantage for extra attack; needs an advantage-consumption
 /// + bonus-attack hook), and **Strength Before Death** (lv18
-/// capstone: reaction to take a full turn on being reduced to 0 HP;
-/// needs a dying-transition reaction hook). Only the lv7 Elegant
-/// Courtier passive has a mechanical surface on the CR-1 chassis
-/// that plugs cleanly into the shared `FLAG_DRIVEN_SAVE_PROFICIENCIES`
-/// cohort, so we ship that half and leave the rest as future work —
-/// matching the way `CHAMPION_TEMPLATE` ships the lv3 / lv7 / lv15
-/// / lv18 passive Champion features but leaves the reactive Battle
-/// Master lane on the baseline `FIGHTER_TEMPLATE` and the way every
-/// other tag-only subclass template pares down to the load-bearing
-/// passive half of its RAW subclass kit.
+///   capstone: reaction to take a full turn on being reduced to 0 HP;
+///   needs a dying-transition reaction hook). Only the lv7 Elegant
+///   Courtier passive has a mechanical surface on the CR-1 chassis
+///   that plugs cleanly into the shared `FLAG_DRIVEN_SAVE_PROFICIENCIES`
+///   cohort, so we ship that half and leave the rest as future work —
+///   matching the way `CHAMPION_TEMPLATE` ships the lv3 / lv7 / lv15
+///   / lv18 passive Champion features but leaves the reactive Battle
+///   Master lane on the baseline `FIGHTER_TEMPLATE` and the way every
+///   other tag-only subclass template pares down to the load-bearing
+///   passive half of its RAW subclass kit.
 ///
 /// Ships on the CR-1 (level-3) fighter chassis at (or above) its
 /// strict RAW lv7 gate for the same reason `WATCHERS_PALADIN_TEMPLATE`

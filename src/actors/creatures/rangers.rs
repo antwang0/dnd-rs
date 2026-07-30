@@ -629,11 +629,11 @@ pub static HORIZON_WALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// weapon hit), `FOE_SLAYER_TAG` (Ranger lv20 capstone — flat +WIS-mod
 /// on any weapon hit), `DIVINE_FURY_TAG` (Zealot Barbarian lv3 — +1d6
 /// + level/2 Radiant while raging), and `SNEAK_ATTACK_TAG` (Rogue
-/// once-per-turn +Nd6 with the qualifying-attack gate). The eight
-/// rider tags share the `ONCE_PER_TURN_RIDER_TAGS` ledger on
-/// `ActorInstance` — each fires at most once per turn on the shared
-/// per-actor gate, and a hypothetical multiclass carrier stacks every
-/// distinct tag's die cleanly on the opening shot.
+///   once-per-turn +Nd6 with the qualifying-attack gate). The eight
+///   rider tags share the `ONCE_PER_TURN_RIDER_TAGS` ledger on
+///   `ActorInstance` — each fires at most once per turn on the shared
+///   per-actor gate, and a hypothetical multiclass carrier stacks every
+///   distinct tag's die cleanly on the opening shot.
 ///
 /// Distinct from the sibling `COLOSSUS_SLAYER_TAG` on two axes:
 ///   1. **No target gate** — Slayer's Prey fires against any target;

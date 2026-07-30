@@ -397,9 +397,9 @@ pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// counterpart to the Devotion / Ancients / Vengeance chassis:
 /// identical envelope to the baseline `PALADIN_TEMPLATE` (greatsword
 /// + smite suite, half-caster slot ladder, Lay on Hands / Sacred
-/// Weapon / Cleansing Touch, Improved Divine Smite passive, Aura of
-/// Protection / Aura of Courage) with two subclass features layered
-/// on:
+///   Weapon / Cleansing Touch, Improved Divine Smite passive, Aura of
+///   Protection / Aura of Courage) with two subclass features layered
+///   on:
 ///
 ///   - **Aura of Hate** (Oathbreaker subclass level 7) — passive
 ///     template flag: +CHA modifier (min +1) to melee weapon damage

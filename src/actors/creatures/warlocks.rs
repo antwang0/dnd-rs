@@ -456,11 +456,11 @@ pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 ///      attacker" (routes through `viewer_can_see`); Entropic Ward
 ///      does NOT (RAW: the ward hums against your skin regardless of
 ///      sight).
-/// A hypothetical Light Cleric / Great Old One Warlock multiclass
-/// would carry BOTH cohort rows; the iterator returns after the
-/// first firing so at most one per-rest charge burns per incoming
-/// attack, matching the "at most one add-die per save" ordering
-/// semantics on the failed-save recovery cohort.
+///      A hypothetical Light Cleric / Great Old One Warlock multiclass
+///      would carry BOTH cohort rows; the iterator returns after the
+///      first firing so at most one per-rest charge burns per incoming
+///      attack, matching the "at most one add-die per save" ordering
+///      semantics on the failed-save recovery cohort.
 ///
 /// Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing +
 /// Dark One's Own Luck + Fiendish Resilience — the fiery kill-focused

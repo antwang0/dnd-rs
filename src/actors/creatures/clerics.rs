@@ -446,22 +446,22 @@ pub static TEMPEST_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 ///
 /// The Life Domain's support-flavored sibling to Light (radiant burst
 /// + Warding Flare), War (extra weapon swing + accuracy prime), and
-/// Tempest (close-range lightning zap). Where the other domain
-/// subclasses hand the cleric a fresh offensive lever, Life leans into
-/// the healing lane the baseline cleric already carries and amplifies
-/// it in place:
+///   Tempest (close-range lightning zap). Where the other domain
+///   subclasses hand the cleric a fresh offensive lever, Life leans into
+///   the healing lane the baseline cleric already carries and amplifies
+///   it in place:
 ///   - Healing Word (lv1) heals 1d4 + WIS + 3 instead of 1d4 + WIS.
 ///   - Cure Wounds (lv1) heals 1d8 + WIS + 3 instead of 1d8 + WIS.
 ///   - Mass Healing Word (lv3) heals 1d4 + WIS + 5 *each* to up to 6
 ///     allies instead of the flat 1d4 + WIS baseline.
 ///   - Mass Cure Wounds (lv5) heals 3d8 + WIS + 7 *each* to up to 6
 ///     allies inside the burst.
-/// Composes cleanly with Preserve Life (Channel Divinity) already on
-/// the baseline template — the Life Cleric's turn-1 opener is Preserve
-/// Life for the mass-stabilize pool, then Mass Healing Word (bonus
-/// action) for the +5-per-ally follow-up. The two features between
-/// them make the Life Cleric the strongest healer in the party at any
-/// given round.
+///     Composes cleanly with Preserve Life (Channel Divinity) already on
+///     the baseline template — the Life Cleric's turn-1 opener is Preserve
+///     Life for the mass-stabilize pool, then Mass Healing Word (bonus
+///     action) for the +5-per-ally follow-up. The two features between
+///     them make the Life Cleric the strongest healer in the party at any
+///     given round.
 ///
 /// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
 /// War / Light / Tempest cousins so a Life-vs-Baseline / vs-War /

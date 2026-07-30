@@ -502,7 +502,7 @@ pub fn hostile_target_burst_ready(
 ///      caster who vanished between enqueue and execute).
 ///   4. Target resolves to a hostile, combat-active actor (team-mismatch
 ///      + `is_combat_active` — RAW: no CD on your own ally, no CD on a
-///      corpse).
+///        corpse).
 ///
 /// Returns the target's `&ActorInstance` on all-gates-pass so the two
 /// public helpers can layer their own trailing gate (de-dup condition
@@ -2067,10 +2067,10 @@ pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 /// Agonizing / Repelling / Eldritch Mind invocations). Distinct from
 /// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck
 /// + Fiendish Resilience — the fiery kill-focused build),
-/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
-/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the
-/// alien-awareness reactive build), and the baseline
-/// `WARLOCK_TEMPLATE` (patron-less baseline).
+///   `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+///   build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the
+///   alien-awareness reactive build), and the baseline
+///   `WARLOCK_TEMPLATE` (patron-less baseline).
 ///
 /// Ships on the CR-4 template above the strict RAW lv10 gate for the
 /// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
@@ -2117,14 +2117,14 @@ pub const BEGUILING_DEFENSES_TAG: &str = "warlock.beguiling_defenses";
 /// The Celestial subclass template — alongside the baseline Warlock
 /// envelope (CHA-primary half-caster with Pact Magic, Eldritch Blast
 /// + Hex + Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
-/// invocations). Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's
-/// Blessing + Dark One's Own Luck + Fiendish Resilience — the fiery
-/// kill-focused build), `UNDYING_WARLOCK_TEMPLATE` (Aspect of the
-/// Moon — the insomniac's build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`
-/// (Entropic Ward — the alien-awareness reactive build),
-/// `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling Defenses — the Charmed-
-/// bounce build), and the baseline `WARLOCK_TEMPLATE` (patron-less
-/// baseline).
+///   invocations). Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's
+///   Blessing + Dark One's Own Luck + Fiendish Resilience — the fiery
+///   kill-focused build), `UNDYING_WARLOCK_TEMPLATE` (Aspect of the
+///   Moon — the insomniac's build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`
+///   (Entropic Ward — the alien-awareness reactive build),
+///   `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling Defenses — the Charmed-
+///   bounce build), and the baseline `WARLOCK_TEMPLATE` (patron-less
+///   baseline).
 ///
 /// Ships on the CR-4 template above the strict RAW lv6 gate for the
 /// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
@@ -6982,6 +6982,7 @@ fn spend_feature_and_get_dc(
 /// with a distinct (save_ability, dice, damage_type) tuple — no re-
 /// implementation of the spend-tag / roll-DC / roll-damage / save-for-
 /// half dance.
+#[allow(clippy::too_many_arguments)]
 fn resolve_single_target_burst_save_for_half(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -8338,9 +8339,9 @@ pub const AURA_OF_HATE_TAG: &str = "paladin.aura_of_hate";
 ///   - Intimidating Presence is a single-target install with no
 ///     creature-type filter — Wisdom-saved, CHA-anchored, the
 ///     `resolve_single_target_cd_save_condition` helper below.
-/// Adding a future "Cause Fear" class-feature analogue or Ancients
-/// Paladin's Nature's Wrath (below) drops in as a fresh call to the
-/// shared single-target helper with a distinct `(save_ability,
+///     Adding a future "Cause Fear" class-feature analogue or Ancients
+///     Paladin's Nature's Wrath (below) drops in as a fresh call to the
+///     shared single-target helper with a distinct `(save_ability,
 /// condition)` pair.
 ///
 /// Ships on `BERSERKER_BARBARIAN_TEMPLATE` above its strict RAW lv10
@@ -8421,6 +8422,7 @@ pub const NATURES_WRATH_TAG: &str = "paladin.natures_wrath";
 /// target variant, etc.) lands as a fresh call with a distinct
 /// (save_ability, condition, timer) tuple — no re-implementation of
 /// the spend-tag / roll-DC / on-fail-install dance.
+#[allow(clippy::too_many_arguments)]
 fn resolve_single_target_cd_save_condition(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -9424,6 +9426,7 @@ pub static ZEALOUS_PRESENCE: LazyLock<ZealousPresence> = LazyLock::new(|| Zealou
 /// caller that wants a "no allies in range → skip the spend" gate can
 /// pre-filter via `custom_validate_input` (Zealous Presence currently
 /// doesn't since the caster themselves is always a valid target).
+#[allow(clippy::too_many_arguments)]
 fn spend_feature_and_install_ally_burst(
     encounter: &mut EncounterInstance,
     caster_id: usize,

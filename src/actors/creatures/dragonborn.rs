@@ -14,12 +14,12 @@ use std::sync::LazyLock;
 /// dragonborn ancestry variant (Red / Black / Blue / Green / White)
 /// pairs the same Champion-fighter chassis (Second Wind + Action Surge
 /// + Improved Critical crit-on-19) with **one ancestry pick** that
-/// drives (a) which damage type the breath weapon exhales via
-/// `draconic_ancestry` and (b) which damage type the dragonborn is
-/// resistant to via `damage_modifiers`. The per-ancestry swaps are
-/// (1) display name, (2) glyph, and (3) the shared `damage_type`
-/// parameter that lands as both the ancestry pick and the resistance
-/// row.
+///   drives (a) which damage type the breath weapon exhales via
+///   `draconic_ancestry` and (b) which damage type the dragonborn is
+///   resistant to via `damage_modifiers`. The per-ancestry swaps are
+///   (1) display name, (2) glyph, and (3) the shared `damage_type`
+///   parameter that lands as both the ancestry pick and the resistance
+///   row.
 ///
 /// The one-helper pattern (single ancestry parameter over a shared
 /// envelope) mirrors `subclass_barbarian_template` on the barbarian

@@ -166,10 +166,10 @@ pub static OPEN_HAND_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// 15, unarmed strike, Stunning Strike + Patient Defense + Flurry of
 /// Blows + Stillness of Mind + Step of the Wind + Empty Body, evasion
 /// + deflect missiles + extra attack, Purity of Body + Diamond Soul +
-/// Unarmored Movement passives) with one subclass passive layered on:
-/// **Touch of Death** (lv3 subclass tell) — whenever the Long Death
-/// monk's damage reduces a hostile creature to 0 HP, the monk gains
-/// `max(1, 1 + CON mod + monk level)` temporary HP.
+///   Unarmored Movement passives) with one subclass passive layered on:
+///   **Touch of Death** (lv3 subclass tell) — whenever the Long Death
+///   monk's damage reduces a hostile creature to 0 HP, the monk gains
+///   `max(1, 1 + CON mod + monk level)` temporary HP.
 ///
 /// Pairs naturally with the monk's strike-and-move skirmisher kit:
 /// the Long Death monk chains kills into a self-refilling temp HP

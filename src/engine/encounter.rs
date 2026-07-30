@@ -27697,6 +27697,7 @@ mod tests {
     ///   - Slowed → -2 (only debuff-side row)
     ///   - WardingBonded → +1
     ///   - OtherworldlyGuised → +2
+    ///
     /// Plus the empty (no conditions) and stacking (Shield of Faith +
     /// Shielded → +7) cases so the filter-map-sum walk shape is
     /// exercised end-to-end.
@@ -53457,9 +53458,9 @@ mod tests {
     /// action + feature via the shared `with_subclass_tag` helper. Locks
     /// the Battle Master maneuver suite (Trip / Menacing / Disarming /
     /// Pushing / Goading / Precision / Sweeping / Feinting / Lunging /
-    /// Rally / Commander's Strike / Distracting) plus Parry + Riposte
-    /// + Second Wind / Action Surge / Indomitable against a template
-    /// drift on the helper's clone tail.
+    /// Rally / Commander's Strike / Distracting) plus Parry + Riposte +
+    /// Second Wind / Action Surge / Indomitable against a template drift
+    /// on the helper's clone tail.
     #[test]
     fn samurai_fighter_inherits_baseline_features() {
         use crate::actions::class_features::{
@@ -58790,9 +58791,9 @@ mod tests {
     }
 
     /// DOOL can flip a marginal failing save to a pass: with a
-    /// controllable roll pair we pin that the boosted total (raw + mods
-    /// + 1d10) passes and the outer save returns `Pass`. Uses a low DC
-    /// that a max d10 boost lifts across.
+    /// controllable roll pair we pin that the boosted total (raw + mods +
+    /// 1d10) passes and the outer save returns `Pass`. Uses a low DC that
+    /// a max d10 boost lifts across.
     #[test]
     fn dark_ones_own_luck_boost_can_convert_fail_to_pass() {
         use crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG;
@@ -63542,20 +63543,23 @@ mod tests {
     /// shared cross-class "clone base + override name/glyph + insert one
     /// feature tag" helper) preserves the baseline features set AND
     /// installs the new tag on every tag-only subclass template that
-    /// routes through it — LIFE_CLERIC (CLERIC baseline +
-    /// DISCIPLE_OF_LIFE_TAG), FORGE_CLERIC (CLERIC baseline +
-    /// SOUL_OF_THE_FORGE_TAG), TWILIGHT_CLERIC (CLERIC baseline +
-    /// VIGILANT_BLESSING_TAG), NECROMANCY_WIZARD (WIZARD baseline +
-    /// INURED_TO_UNDEATH_TAG), WAR_MAGIC_WIZARD (WIZARD baseline +
-    /// TACTICAL_WIT_TAG), ABERRANT_MIND_SORCERER (SORCERER baseline
-    /// + PSYCHIC_DEFENSES_TAG), DIVINE_SOUL_SORCERER (SORCERER baseline
-    /// + FAVORED_BY_THE_GODS_TAG), SHADOW_MAGIC_SORCERER (SORCERER
-    /// baseline + STRENGTH_OF_THE_GRAVE_TAG), LONG_DEATH_MONK (MONK
-    /// baseline + TOUCH_OF_DEATH_TAG), GLORY_PALADIN (PALADIN baseline
-    /// + AURA_OF_ALACRITY_TAG), WATCHERS_PALADIN (PALADIN baseline
-    /// + AURA_OF_THE_SENTINEL_TAG). Locks the shared helper against a
-    /// regression where a future edit to its body drops the baseline
-    /// feature set OR silently omits the subclass tag insertion.
+    /// routes through it, as (template, baseline, inserted tag):
+    ///
+    ///   - LIFE_CLERIC — CLERIC, DISCIPLE_OF_LIFE_TAG
+    ///   - FORGE_CLERIC — CLERIC, SOUL_OF_THE_FORGE_TAG
+    ///   - TWILIGHT_CLERIC — CLERIC, VIGILANT_BLESSING_TAG
+    ///   - NECROMANCY_WIZARD — WIZARD, INURED_TO_UNDEATH_TAG
+    ///   - WAR_MAGIC_WIZARD — WIZARD, TACTICAL_WIT_TAG
+    ///   - ABERRANT_MIND_SORCERER — SORCERER, PSYCHIC_DEFENSES_TAG
+    ///   - DIVINE_SOUL_SORCERER — SORCERER, FAVORED_BY_THE_GODS_TAG
+    ///   - SHADOW_MAGIC_SORCERER — SORCERER, STRENGTH_OF_THE_GRAVE_TAG
+    ///   - LONG_DEATH_MONK — MONK, TOUCH_OF_DEATH_TAG
+    ///   - GLORY_PALADIN — PALADIN, AURA_OF_ALACRITY_TAG
+    ///   - WATCHERS_PALADIN — PALADIN, AURA_OF_THE_SENTINEL_TAG
+    ///
+    /// Locks the shared helper against a regression where a future edit
+    /// to its body drops the baseline feature set OR silently omits the
+    /// subclass tag insertion.
     ///
     /// Sibling to `subclass_warlock_helper_installs_tag_and_preserves_baseline`
     /// on the same "clone base + insert one tag" lane — the per-class

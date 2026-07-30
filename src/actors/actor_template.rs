@@ -96,7 +96,7 @@ const TYPED_IMMUNITY_CONDITIONS: &[ConditionDrivenTypedImmunity] = &[
 /// than a single one) folds a multi-type resistance condition
 /// (Investiture of Stone → physical trio, Otherworldly Guise → radiant
 /// + poison) through one row rather than duplicating the source
-/// condition per damage type.
+///   condition per damage type.
 struct ConditionDrivenTypedResistance {
     source: Condition,
     types: &'static [DamageType],
@@ -1606,8 +1606,8 @@ struct ConditionSaveBonus {
     /// entry for a save-debuff would sit here as a signed delta.
     /// Summed by `condition_save_bonus` so vertical stacking (Inspired
     /// + WardingBonded → +4 saves) folds through the same walk as
-    /// horizontal stacking on the sibling `CONDITION_AC_BONUSES`
-    /// cohort.
+    ///   horizontal stacking on the sibling `CONDITION_AC_BONUSES`
+    ///   cohort.
     bonus: i32,
 }
 
@@ -2805,18 +2805,18 @@ pub struct CreatureTemplate {
     /// initiative bump: RAW "You have a bonus to your initiative rolls
     /// equal to your Wisdom modifier." (The RAW first-turn extra attack
     /// + bonus damage half is left as future work; the initiative bump
-    /// is the tell that anchors the Gloom Stalker's "always strikes
-    /// first" identity.) Read by `initiative_flat_bonus` through the
-    /// shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort alongside Rakish
-    /// Audacity's CHA-mod bump; Remarkable Athlete's `+ceil(prof / 2)`
-    /// stays as its own if-branch on the same helper. Ships on
-    /// `GLOOM_STALKER_RANGER_TEMPLATE`; no other current template
-    /// carries the flag. Sibling on the "template flag → one-ability-
-    /// mod initiative-bump" cohort lane — the cohort now covers two
-    /// distinct ability modifiers (Rakish Audacity → CHA, Dread
-    /// Ambusher → WIS), each additive so a hypothetical Gloom Stalker
-    /// Ranger / Swashbuckler Rogue multiclass carries both bumps
-    /// cleanly.
+    ///   is the tell that anchors the Gloom Stalker's "always strikes
+    ///   first" identity.) Read by `initiative_flat_bonus` through the
+    ///   shared `ABILITY_MOD_INITIATIVE_BONUSES` cohort alongside Rakish
+    ///   Audacity's CHA-mod bump; Remarkable Athlete's `+ceil(prof / 2)`
+    ///   stays as its own if-branch on the same helper. Ships on
+    ///   `GLOOM_STALKER_RANGER_TEMPLATE`; no other current template
+    ///   carries the flag. Sibling on the "template flag → one-ability-
+    ///   mod initiative-bump" cohort lane — the cohort now covers two
+    ///   distinct ability modifiers (Rakish Audacity → CHA, Dread
+    ///   Ambusher → WIS), each additive so a hypothetical Gloom Stalker
+    ///   Ranger / Swashbuckler Rogue multiclass carries both bumps
+    ///   cleanly.
     pub has_dread_ambusher: bool,
     /// 5e Dragonborn Draconic Ancestry: damage type matching the chosen
     /// ancestor (Red / Gold = Fire, Blue / Bronze = Lightning, etc.).

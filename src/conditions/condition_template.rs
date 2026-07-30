@@ -1869,16 +1869,16 @@ impl Condition {
     ///   - **Class-feature smites**: `Smiting` (Paladin Divine Smite)
     ///     and `DivineStriking` (Cleric Divine Strike / Twilight
     ///     Domain).
-    /// Centralized so the dispellable-buff sweep, the AI's "don't
-    /// double-prime" gates, and any future smite-aware chokepoint read
-    /// a single helper instead of listing each prime by name — adding
-    /// a new smite prime (a hypothetical 2024 paladin smite variant,
-    /// a future ranger smite pickup, etc.) lands as one row on this
-    /// matches! arm and the dispellable-buff sweep picks it up
-    /// automatically without a second edit on the OR list below.
-    /// Mutually exclusive in spirit (only one rider lands per swing
-    /// RAW; the engine doesn't enforce stacking — adding two primes
-    /// lets both ride).
+    ///     Centralized so the dispellable-buff sweep, the AI's "don't
+    ///     double-prime" gates, and any future smite-aware chokepoint read
+    ///     a single helper instead of listing each prime by name — adding
+    ///     a new smite prime (a hypothetical 2024 paladin smite variant,
+    ///     a future ranger smite pickup, etc.) lands as one row on this
+    ///     matches! arm and the dispellable-buff sweep picks it up
+    ///     automatically without a second edit on the OR list below.
+    ///     Mutually exclusive in spirit (only one rider lands per swing
+    ///     RAW; the engine doesn't enforce stacking — adding two primes
+    ///     lets both ride).
     pub fn is_smite_prime(&self) -> bool {
         matches!(
             self,

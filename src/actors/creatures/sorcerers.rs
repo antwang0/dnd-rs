@@ -610,6 +610,7 @@ pub static DRACONIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 ///     AND the eruption clause (a 10ft radius post-cast burst on
 ///     lv1+ lightning / thunder casts, via the `Action::execute`
 ///     chokepoint next to Wild Magic Surge).
+///
 /// The remaining features are future work.
 ///
 /// Ships the CR-4 template above the strict RAW lv6 gate for the same
