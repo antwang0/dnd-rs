@@ -305,6 +305,11 @@ struct ReactiveDamageClamp {
     label: &'static str,
     /// Which swings the row can fire against — see `ClampLane`.
     lane: ClampLane,
+    /// `Some(list)` if the row only answers a fixed set of damage types
+    /// (Nature Domain's Dampen Elements: the five elemental types);
+    /// `None` if it answers any damage, which is every RAW clamp that
+    /// keys off *how* it was hit rather than *what with*.
+    damage_types: Option<&'static [DamageType]>,
     /// Who spends the reaction — see `ClampScope`.
     scope: ClampScope,
     /// How much damage comes off — see `ClampFormula`.
@@ -342,6 +347,10 @@ struct ReactiveDamageClamp {
 ///   - **Warding Maneuver** (Cavalier Fighter lv7, XGtE): halve, any
 ///     attack, self *or* an adjacent ally, burns a
 ///     `WARDING_MANEUVER_TAG` charge.
+///   - **Dampen Elements** (Nature Domain Cleric lv6): halve, but only
+///     acid / cold / fire / lightning / thunder damage; self *or* an ally
+///     within 30 ft, burns a `DAMPEN_ELEMENTS_TAG` charge. The only row
+///     with a damage-type filter.
 ///   - **Protective Field** (Psi Warrior Fighter lv3, TCE): 1d8 + INT,
 ///     any attack, self *or* an ally within 30 ft, burns a
 ///     `PROTECTIVE_FIELD_TAG` charge.
@@ -358,6 +367,7 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         flag: |a| a.has_uncanny_dodge(),
         tag: None,
         label: "uncanny dodge",
+        damage_types: None,
         lane: ClampLane::AnyAttack,
         scope: ClampScope::Holder,
         formula: ClampFormula::Halve,
@@ -366,6 +376,7 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         flag: |a| a.has_deflect_missiles(),
         tag: None,
         label: "deflect missiles",
+        damage_types: None,
         lane: ClampLane::RangedWeapon,
         scope: ClampScope::Holder,
         formula: ClampFormula::RollMinus {
@@ -377,6 +388,7 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         flag: |a| a.has_parry(),
         tag: Some(crate::actions::class_features::PARRY_TAG),
         label: "parry",
+        damage_types: None,
         lane: ClampLane::Melee,
         scope: ClampScope::Holder,
         formula: ClampFormula::RollMinus {
@@ -388,6 +400,7 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         flag: |a| a.has_interception_style(),
         tag: None,
         label: "interception",
+        damage_types: None,
         lane: ClampLane::AnyAttack,
         scope: ClampScope::Ally(0),
         formula: ClampFormula::RollMinus {
@@ -399,14 +412,35 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         flag: |a| a.has_passive_feature(crate::actions::class_features::WARDING_MANEUVER_TAG),
         tag: Some(crate::actions::class_features::WARDING_MANEUVER_TAG),
         label: "warding maneuver",
+        damage_types: None,
         lane: ClampLane::AnyAttack,
         scope: ClampScope::HolderOrAlly(0),
+        formula: ClampFormula::Halve,
+    },
+    ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::DAMPEN_ELEMENTS_TAG),
+        tag: Some(crate::actions::class_features::DAMPEN_ELEMENTS_TAG),
+        label: "dampen elements",
+        // The five RAW elemental damage types. The only row in the cohort
+        // that keys off *what* the damage is rather than *how* it
+        // arrived, and the reason the filter column exists.
+        damage_types: Some(&[
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Lightning,
+            DamageType::Thunder,
+        ]),
+        lane: ClampLane::AnyAttack,
+        // 12 tiles = 30 ft on the 2.5 ft grid.
+        scope: ClampScope::HolderOrAlly(12),
         formula: ClampFormula::Halve,
     },
     ReactiveDamageClamp {
         flag: |a| a.has_passive_feature(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
         tag: Some(crate::actions::class_features::PROTECTIVE_FIELD_TAG),
         label: "protective field",
+        damage_types: None,
         lane: ClampLane::AnyAttack,
         // 12 tiles = 30 ft on the 2.5 ft grid.
         scope: ClampScope::HolderOrAlly(12),
@@ -609,11 +643,12 @@ fn fire_clamp(
 /// applies uniformly to weapon and spell attacks (subject to each row's
 /// `ClampLane`).
 ///
-/// `is_melee` / `is_spell` describe the swing; `damage` is the
-/// pre-resistance total (target-side resistance / immunity is applied
-/// later, at `DealDamage::apply`) — matching RAW, where these features
-/// reduce the attack's damage before the target's damage types are
-/// consulted.
+/// `is_melee` / `is_spell` / `damage_type` describe the swing; `damage`
+/// is the pre-resistance total (target-side resistance / immunity is
+/// applied later, at `DealDamage::apply`) — matching RAW, where these
+/// features reduce the attack's damage before the target's damage types
+/// are consulted. `damage_type` is only read by rows that carry a
+/// `damage_types` filter.
 ///
 /// Short-circuits as soon as the damage hits 0: a clamp that can't
 /// shave anything off shouldn't burn its holder's reaction (or a
@@ -625,12 +660,19 @@ pub fn apply_reactive_damage_clamps(
     mut damage: u32,
     is_melee: bool,
     is_spell: bool,
+    damage_type: DamageType,
 ) -> u32 {
     for row in REACTIVE_DAMAGE_CLAMPS {
         if damage == 0 {
             break;
         }
         if !row.lane.admits(is_melee, is_spell) {
+            continue;
+        }
+        if row
+            .damage_types
+            .is_some_and(|types| !types.contains(&damage_type))
+        {
             continue;
         }
         let Some(reactor_id) = pick_clamp_reactor(encounter, attacker_id, target_id, row) else {
@@ -1168,6 +1210,7 @@ pub fn resolve_attack_outcome(
         damage,
         p.is_melee,
         false,
+        p.damage_type,
     );
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: p.target_id,

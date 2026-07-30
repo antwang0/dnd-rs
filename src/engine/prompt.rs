@@ -432,6 +432,7 @@ mod tests {
                     &*clerics::FORGE_CLERIC_TEMPLATE,
                     &*clerics::TWILIGHT_CLERIC_TEMPLATE,
                     &*clerics::ARCANA_CLERIC_TEMPLATE,
+                    &*clerics::NATURE_CLERIC_TEMPLATE,
                 ],
             ),
             (

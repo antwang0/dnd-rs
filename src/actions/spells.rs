@@ -296,6 +296,7 @@ fn spell_attack_outcome(
         total_dmg,
         is_melee,
         true,
+        damage_type,
     );
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: target_id,

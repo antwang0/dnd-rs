@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CIRCLE_OF_MORTALITY_TAG, DESTROY_UNDEAD_TAG,
-    DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
+    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
+    DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
     SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
@@ -20,7 +20,9 @@ use crate::actions::spells::{
     THORN_WHIP, TOLL_THE_DEAD, TRUE_RESURRECTION, WISH, WORD_OF_RADIANCE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -848,6 +850,82 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // — the engine doesn't split spell saves from the rest. Same
         // over-grant every Magic Resistance monster already enjoys.
         has_magic_resistance: true,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// Nature Domain Cleric — Divine Domain **Nature Domain** subclass build
+/// (PHB). The tenth cleric domain in the engine, and the one whose
+/// signature reaction cares about the *type* of damage coming in rather
+/// than how it arrives.
+///
+/// Two subclass features ship:
+///
+///   - **Acolyte of Nature** (lv1) — a druid cantrip and the Nature
+///     skill. Thorn Whip is the cantrip: a ranged attack that drags the
+///     target 10 ft toward the cleric, which is the only forced-movement
+///     tool on any cleric template.
+///   - **Dampen Elements** (lv6) — a reaction granting the cleric or an
+///     ally within 30 ft resistance to acid, cold, fire, lightning or
+///     thunder damage. A row on the shared `REACTIVE_DAMAGE_CLAMPS`
+///     cohort, and the row that put a damage-type filter on it.
+///
+/// Dampen Elements is the sharpest clamp in the engine and the narrowest
+/// at the same time. Against a dragon's breath or a lightning-heavy
+/// caster it halves the biggest number on the table from across the
+/// battlefield; against a room full of scimitars it never fires. That
+/// makes this a domain you pick knowing what you're walking into — the
+/// opposite of the Cavalier's Warding Maneuver, which halves anything but
+/// only at arm's length.
+///
+/// Thorn Whip pairs with the pull the domain otherwise lacks: a Nature
+/// Cleric can drag an archer out of position into the party's melee, then
+/// spend the reaction halving the fire damage the archer's wizard aims at
+/// the fighter. Neither feature is loud on its own; together they make
+/// the build the one that decides *where* the fight happens.
+///
+/// RAW's other Nature features are left out. Channel Divinity: Charm
+/// Animals and Plants (lv2) is a 30 ft WIS-save burst against beasts and
+/// plants — mechanically a `TurnBurst` sibling, except it applies Charmed
+/// rather than Frightened, and Charmed's `charmed_by` back-link isn't on
+/// the shared `condition_link_side_effect` dispatch the burst resolver
+/// would need. Dampen Elements is the load-bearing half anyway. Divine
+/// Strike (lv8) is already on the baseline chassis via
+/// `DIVINE_STRIKE_TAG`; Master of Nature (lv17) commands charmed beasts,
+/// which needs the charm half first.
+///
+/// Glyph 'N' — for **N**ature. Distinct from baseline cleric 'C', War
+/// 'W', Light 'L', Tempest 'S', Life 'V', Grave 'G', Forge 'F', Twilight
+/// 'X' and Arcana 'A'.
+///
+/// Ships on the CR-0.5 cleric chassis at (or above) its strict RAW lv1 /
+/// lv6 gates for the same reason `FORGE_CLERIC_TEMPLATE` ships Soul of
+/// the Forge (RAW lv6) — class templates target a balanced playable
+/// level, not lockstep PHB progression.
+pub static NATURE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner the Forge / Twilight domains
+    // use: this subclass adds an action, a tag and a skill. The
+    // `..CLERIC_TEMPLATE.clone()` tail still picks up the full cleric
+    // spell ladder, save profs, stats, slots, and the baseline
+    // TURN_UNDEAD / DIVINE_STRIKE / PRESERVE_LIFE / DESTROY_UNDEAD
+    // feature set.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    // 5e Acolyte of Nature (lv1): one druid cantrip of the cleric's
+    // choice. Thorn Whip is the pick with the most combat surface — the
+    // 10 ft pull is forced movement no other cleric template has.
+    actions.push(&*THORN_WHIP);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.insert(DAMPEN_ELEMENTS_TAG);
+    let mut skills = CLERIC_TEMPLATE.skills.clone();
+    // Acolyte of Nature's other half: proficiency in Animal Handling,
+    // Nature or Survival. Nature is the on-the-nose pick.
+    skills.insert(Skill::Nature);
+    CreatureTemplate {
+        name: "Nature Cleric",
+        glyph: 'N',
+        actions,
+        features,
+        skills,
         ..CLERIC_TEMPLATE.clone()
     }
 });

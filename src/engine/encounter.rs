@@ -53646,12 +53646,12 @@ mod tests {
             .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
             .unwrap();
         // Ranged lane so no self-clamp on the wizard can pre-empt the row.
-        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false);
+        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false, DamageType::Slashing);
         assert_eq!(reduced, 10, "the maneuver halves the incoming damage");
         assert!(!e.actors[&cav].feature_available(WARDING_MANEUVER_TAG));
         assert!(!e.actors[&cav].can_consume_resource(Resource::Reaction));
         assert_eq!(
-            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false),
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false, DamageType::Slashing),
             20,
             "the charge is spent for the rest of the short rest"
         );
@@ -53739,7 +53739,7 @@ mod tests {
         let psi = e
             .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(11, 5), 0, 1)
             .unwrap();
-        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false);
+        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing);
         assert!(reduced < 20, "the field should clamp the wizard's damage");
         assert!(
             !e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG),
@@ -53751,7 +53751,7 @@ mod tests {
         );
         // Charge gone: a second hit on the wizard passes through intact.
         assert_eq!(
-            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false),
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing),
             20,
             "the field is spent for the rest of the short rest"
         );
@@ -53777,7 +53777,7 @@ mod tests {
             .instantiate_creature(&PSI_WARRIOR_FIGHTER_TEMPLATE, Coordinate::new(24, 5), 0, 1)
             .unwrap();
         assert_eq!(
-            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false),
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing),
             20
         );
         assert!(e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG));
@@ -54519,6 +54519,7 @@ mod tests {
                     &*clerics::FORGE_CLERIC_TEMPLATE,
                     &*clerics::TWILIGHT_CLERIC_TEMPLATE,
                     &*clerics::ARCANA_CLERIC_TEMPLATE,
+                    &*clerics::NATURE_CLERIC_TEMPLATE,
                 ],
             ),
             (
@@ -56588,7 +56589,7 @@ mod tests {
         // melee swing before the ally's row ever runs. Pin the swing to
         // the ranged lane so this test isolates the Interception row.
         let clamp = |e: &mut EncounterInstance, dmg: u32| {
-            apply_reactive_damage_clamps(e, goblin, target, dmg, false, false)
+            apply_reactive_damage_clamps(e, goblin, target, dmg, false, false, DamageType::Slashing)
         };
         // Zero-damage swing: no-op, no reaction spent.
         assert_eq!(clamp(&mut e, 0), 0);
@@ -56630,7 +56631,7 @@ mod tests {
             .unwrap();
         assert!(e.actors[&rogue].has_uncanny_dodge());
         // Ranged spell attack (`is_melee: false, is_spell: true`).
-        let reduced = apply_reactive_damage_clamps(&mut e, wizard, rogue, 20, false, true);
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, rogue, 20, false, true, DamageType::Slashing);
         assert_eq!(reduced, 10, "uncanny dodge halves an incoming spell attack");
         assert!(
             !e.actors[&rogue].can_consume_resource(Resource::Reaction),
@@ -56658,14 +56659,14 @@ mod tests {
             .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(8, 5), 0, 0)
             .unwrap();
         assert!(e.actors[&monk].has_deflect_missiles());
-        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, true);
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, true, DamageType::Slashing);
         assert_eq!(reduced, 20, "a ranged spell attack is not a missile");
         assert!(
             e.actors[&monk].can_consume_resource(Resource::Reaction),
             "the monk's reaction must survive a spell attack"
         );
         // Same swing as a ranged weapon attack does get deflected.
-        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, false);
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, monk, 20, false, false, DamageType::Slashing);
         assert!(reduced < 20, "a ranged weapon attack is deflectable");
         assert!(!e.actors[&monk].can_consume_resource(Resource::Reaction));
     }
@@ -56690,7 +56691,7 @@ mod tests {
             .unwrap();
         assert!(e.actors[&fighter].has_parry());
         assert!(e.actors[&fighter].feature_available(PARRY_TAG));
-        let reduced = apply_reactive_damage_clamps(&mut e, wizard, fighter, 20, true, true);
+        let reduced = apply_reactive_damage_clamps(&mut e, wizard, fighter, 20, true, true, DamageType::Slashing);
         assert!(reduced < 20, "parry clamps a melee spell attack");
         assert!(
             !e.actors[&fighter].feature_available(PARRY_TAG),
@@ -56717,7 +56718,7 @@ mod tests {
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
         assert_eq!(
-            apply_reactive_damage_clamps(&mut e, goblin, fighter, 0, true, false),
+            apply_reactive_damage_clamps(&mut e, goblin, fighter, 0, true, false, DamageType::Slashing),
             0
         );
         assert!(e.actors[&fighter].feature_available(PARRY_TAG));
@@ -57767,6 +57768,93 @@ mod tests {
     /// filters — Dreadful Aspect's pass-through closure should still
     /// pick it up. Also verifies the once-per-short-rest charge is
     /// spent regardless of the target's save outcome.
+    /// Nature Domain template drift pin: the Dampen Elements tag and
+    /// charge, the Acolyte of Nature cantrip and skill, and the baseline
+    /// Cleric kit inherited through the clone tail.
+    #[test]
+    fn nature_cleric_ships_its_kit_and_inherits_the_cleric_chassis() {
+        use crate::actions::class_features::{
+            DAMPEN_ELEMENTS_TAG, DESTROY_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG,
+            TURN_UNDEAD_TAG,
+        };
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, NATURE_CLERIC_TEMPLATE};
+        use crate::engine::types::Skill;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&NATURE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].has_passive_feature(DAMPEN_ELEMENTS_TAG));
+        assert!(e.actors[&cleric].feature_available(DAMPEN_ELEMENTS_TAG));
+        assert!(
+            e.actors[&cleric].find_action("thorn whip").is_some(),
+            "Acolyte of Nature's druid cantrip should be on the action list"
+        );
+        assert!(NATURE_CLERIC_TEMPLATE.skills.contains(&Skill::Nature));
+        assert!(
+            !CLERIC_TEMPLATE.skills.contains(&Skill::Nature),
+            "the baseline cleric must not already carry the skill"
+        );
+        for tag in [
+            TURN_UNDEAD_TAG,
+            DIVINE_STRIKE_TAG,
+            PRESERVE_LIFE_TAG,
+            DESTROY_UNDEAD_TAG,
+        ] {
+            assert!(
+                e.actors[&cleric].has_passive_feature(tag),
+                "Nature Cleric should inherit baseline Cleric tag {}",
+                tag
+            );
+        }
+    }
+
+    /// Dampen Elements is the cohort's only damage-type-filtered clamp: it
+    /// halves fire aimed at an ally 30 ft away and leaves slashing alone,
+    /// keeping its charge for damage it can actually answer.
+    #[test]
+    fn dampen_elements_halves_only_elemental_damage() {
+        use crate::actions::class_features::DAMPEN_ELEMENTS_TAG;
+        use crate::actors::creatures::clerics::NATURE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        let cleric = e
+            .instantiate_creature(&NATURE_CLERIC_TEMPLATE, Coordinate::new(11, 5), 0, 1)
+            .unwrap();
+        // Slashing: outside the filter, so nothing fires and the charge
+        // stays in hand.
+        assert_eq!(
+            apply_reactive_damage_clamps(
+                &mut e,
+                goblin,
+                wizard,
+                20,
+                false,
+                false,
+                DamageType::Slashing
+            ),
+            20
+        );
+        assert!(e.actors[&cleric].feature_available(DAMPEN_ELEMENTS_TAG));
+        assert!(e.actors[&cleric].can_consume_resource(Resource::Reaction));
+        // Fire: halved from across the battlefield, charge and reaction
+        // spent.
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, false, false, DamageType::Fire),
+            10
+        );
+        assert!(!e.actors[&cleric].feature_available(DAMPEN_ELEMENTS_TAG));
+        assert!(!e.actors[&cleric].can_consume_resource(Resource::Reaction));
+    }
+
     /// Arcana Domain template drift pin: the Channel Divinity action, its
     /// tag and charge, the Spell Resistance flag, and the whole baseline
     /// Cleric kit inherited through the `..CLERIC_TEMPLATE.clone()` tail —

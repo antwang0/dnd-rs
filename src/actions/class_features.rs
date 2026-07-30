@@ -193,6 +193,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
     ARCANE_ABJURATION_TAG,
+    // 5e Nature Domain Cleric **Dampen Elements** — RAW costs only the
+    // reaction with no per-rest cap; the engine's single charge lands on
+    // the short-rest cadence the rest of the reactive per-rest family
+    // (Parry, Warding Flare, Warding Maneuver, Protective Field) shares.
+    DAMPEN_ELEMENTS_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2856,6 +2861,33 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 /// actor lane the engine doesn't have, and it's also the clause that
 /// would make this strictly better than Turn Undead rather than
 /// sideways from it.
+/// 5e Cleric **Nature Domain** subclass — **Dampen Elements** (level 6).
+/// Reactive damage clamp: when the cleric or a creature within 30 ft of
+/// them takes acid, cold, fire, lightning or thunder damage, the cleric
+/// may spend their reaction to grant that creature resistance to it. Once
+/// per short rest; refreshes via `SHORT_REST_FEATURES`.
+///
+/// Ships as a row on the shared `REACTIVE_DAMAGE_CLAMPS` cohort with
+/// `ClampScope::HolderOrAlly(12)` and `ClampFormula::Halve` — and it is
+/// the row that put the `damage_types` filter column on that cohort.
+/// Every clamp before it keyed off *how* the damage arrived (a melee
+/// attack, a ranged weapon attack, any attack); this is the first that
+/// keys off *what* the damage is.
+///
+/// Which makes it the sharpest clamp in the engine and the narrowest at
+/// once. Against a fire-breathing dragon or a lightning-heavy caster it
+/// halves the biggest number on the table; against a room full of
+/// scimitars it never fires at all. Compare Warding Maneuver, the other
+/// `Halve` row: same formula, adjacency instead of 30 ft, no type gate,
+/// so it answers everything at shorter range. The Nature Cleric is the
+/// build you want when you know what's coming.
+///
+/// RAW's uses are unlimited (it costs only the reaction); the engine's
+/// once-per-short-rest charge is the standard collapse, and here it is
+/// also a balance choice — an unlimited 30 ft elemental halve would make
+/// every elemental encounter in the engine a non-event.
+pub const DAMPEN_ELEMENTS_TAG: &str = "cleric.dampen_elements";
+
 pub const ARCANE_ABJURATION_TAG: &str = "cleric.arcane_abjuration";
 
 pub const UNWAVERING_MARK_TAG: &str = "fighter.unwavering_mark";
