@@ -173,6 +173,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''^. Shadow Step — Way of Shadow Monk bonus action,
+        //        at-will, 60 ft. The approach counterpart to the
+        //        `try_teleport_escape` rung far above: that one moves a
+        //        pinned caster away from melee, this one drops a monk
+        //        into it with advantage on the swing that follows.
+        //        Slotted here with the other bonus-action grants
+        //        because it competes with them for the same slot; its
+        //        own gate declines whenever an enemy is already in
+        //        reach, which is when Stunning Strike and Flurry want
+        //        the bonus action more.
+        if let Some(aei) = try_shadow_step(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c''*. War Magic — Eldritch Knight bonus action, at-will,
         //        available only on a turn the knight already spent
         //        their Action on a cantrip. Sits next to Frenzy because
@@ -4439,6 +4453,96 @@ fn try_teleport_escape(
     None
 }
 
+/// Shadow Step — the Way of Shadow Monk's 60 ft bonus-action blink.
+///
+/// The mirror image of `try_teleport_escape`, and deliberately so:
+/// that picker moves a pinned caster *away* from the nearest threat,
+/// this one moves a monk *onto* one. Same candidate-and-validate
+/// shape, opposite objective function.
+///
+/// Three gates:
+///   1. An enemy already in melee reach → don't. The monk's bonus
+///      action is worth more as a Stunning Strike prime or a Flurry
+///      than as a teleport to somewhere they already are, and the
+///      advantage rider is worth less than either when the swing was
+///      going to happen anyway.
+///   2. A reachable enemy exists — the nearest one inside the step's
+///      own 24-tile envelope. Out past that there is nothing to arrive
+///      at.
+///   3. Some compass-neighbour tile of that enemy is a legal landing
+///      spot. The action's own `can_move_to` validation is the
+///      authority; we just propose.
+///
+/// Candidates are the ring around the chosen target, probed outward by
+/// the target's own footprint so a Huge creature's ring is measured
+/// from its far edge rather than its origin tile. Anything that lands
+/// footprint-adjacent is acceptable — there is no "better" adjacency
+/// for a monk, only reachable and not.
+fn try_shadow_step(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    /// Landing spots to run through `validate` before giving up. The
+    /// ring around a Medium target is eight tiles; past that the monk
+    /// is walled in well enough that walking is the better answer.
+    const MAX_VALIDATIONS: usize = 12;
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("shadow step")?;
+    let reach = action.reach_tiles()?;
+    if any_enemy_within(encounter, actor_id, 1) {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+
+    // Nearest reachable enemy. `sorted_actor_ids` keeps the tiebreak
+    // deterministic across runs.
+    let mut target: Option<(isize, Coordinate, usize)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        let t_size = get_tiles_from_size(t.size());
+        let dist = footprint_chebyshev(my_loc, my_size, t.location(), t_size);
+        if dist > reach {
+            continue;
+        }
+        if target.as_ref().is_none_or(|(best, _, _)| dist < *best) {
+            target = Some((dist, t.location(), t_size));
+        }
+    }
+    let (_, target_loc, target_size) = target?;
+
+    let mut candidates: Vec<Coordinate> = Vec::new();
+    for (dx, dy) in COMPASS_DIRECTIONS {
+        // Step out from the target's origin by its own footprint plus
+        // one, so the ring sits just outside a Large / Huge body rather
+        // than inside it.
+        for step in 1..=(target_size as isize + 1) {
+            let cand = Coordinate::new(target_loc.x + dx * step, target_loc.y + dy * step);
+            if footprint_chebyshev(cand, my_size, target_loc, target_size) > 1 {
+                continue;
+            }
+            if footprint_chebyshev(my_loc, my_size, cand, my_size) > reach {
+                continue;
+            }
+            candidates.push(cand);
+        }
+    }
+    for dest in candidates.into_iter().take(MAX_VALIDATIONS) {
+        let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![dest]), None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
 /// Shapechanger — the Transmutation Wizard's emergency self-Polymorph.
 /// Thirty temp HP and a beast body, for an action and a per-short-rest
 /// charge.
@@ -6096,6 +6200,27 @@ mod tests {
                 0,
                 31,
             );
+            // The Arcane Trickster and the Shadow Monk both add a
+            // bonus-action rung whose whole design is competing with
+            // rungs already on the ladder, so the driver is where the
+            // ordering gets exercised: the Trickster's Versatile
+            // Trickster has to lose to Cunning Action when Cunning
+            // Action has something to do, and the monk's Shadow Step
+            // has to decline whenever Stunning Strike or Flurry wants
+            // the slot. The step also drives the only landing-spot
+            // search in the AI that aims *toward* a target rather than
+            // away, so a walled-in monk is the case that exercises its
+            // give-up path.
+            use crate::actors::creatures::monks::SHADOW_MONK_TEMPLATE;
+            use crate::actors::creatures::rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE;
+            let _ = e.instantiate_creature(
+                &ARCANE_TRICKSTER_ROGUE_TEMPLATE,
+                Coordinate::new(6, 10),
+                0,
+                32,
+            );
+            let _ =
+                e.instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(6, 12), 0, 33);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

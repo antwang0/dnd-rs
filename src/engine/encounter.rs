@@ -470,6 +470,15 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     // Inspired / PrecisionAttacking / TidesOfChaos). The flat +10 lives
     // in `condition_attack_bonus`; the one-shot lifecycle lives here.
     Condition::GuidedStriking,
+    // 5e Way of Shadow Monk **Shadow Step** — the teleport grants
+    // advantage on the first melee attack made before the end of the
+    // turn (via `grants_self_melee_attack_advantage`, the melee-gated
+    // sibling of the cohort every other entry here rides). Consumed on
+    // the first swing regardless of lane: this table has no `is_melee`
+    // to read, so a ranged swing burns the prime without collecting it,
+    // the same deviation `LungingAttacking` above already accepts —
+    // and a near-moot one on a chassis whose kit is unarmed strikes.
+    Condition::Shadowstepping,
 ];
 
 /// One row in the `CASTER_SAVE_MODE_RIDERS` cohort — a single
@@ -2027,6 +2036,18 @@ impl EncounterInstance {
                 // clause, but on the attacker side.
                 if !is_melee && c.imposes_attacker_disadvantage_on_ranged() {
                     mode = mode.combine(RollMode::Disadvantage);
+                }
+                // Melee-only attacker advantage cohort: the Shadow Monk's
+                // Shadow Step buffs "the first melee attack you make",
+                // so a thrown-weapon swing after the teleport reads
+                // clean. Mirror of the ranged-only clause directly
+                // above — same attacker side, opposite lane, opposite
+                // polarity. Not routed through the concealment-piercing
+                // suppression: this is footwork, not invisibility, and
+                // Truesight does nothing about a monk who is simply
+                // somewhere else now.
+                if is_melee && c.grants_self_melee_attack_advantage() {
+                    mode = mode.combine(RollMode::Advantage);
                 }
             }
             // 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on
@@ -53545,6 +53566,152 @@ mod tests {
         assert!(
             !WAR_MAGIC_STRIKE.validate_input(&e, knight, None, None, None),
             "and can't be cashed a second time"
+        );
+    }
+
+    /// Shadow Monk template drift pin, plus the monk-family name/glyph
+    /// uniqueness claim its doc comment makes.
+    #[test]
+    fn shadow_monk_ships_its_kit_and_inherits_the_monk_chassis() {
+        use crate::actions::class_features::{
+            EMPTY_BODY_TAG, SHADOW_ARTS_TAG, SHADOW_STEP_TAG, STUNNING_STRIKE_TAG,
+            UNARMORED_MOVEMENT_TAG,
+        };
+        use crate::actors::creatures::monks::{
+            LONG_DEATH_MONK_TEMPLATE, MONK_TEMPLATE, OPEN_HAND_MONK_TEMPLATE, SHADOW_MONK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let monk = e
+            .instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for tag in [SHADOW_ARTS_TAG, SHADOW_STEP_TAG] {
+            assert!(
+                e.actors[&monk].has_passive_feature(tag),
+                "Shadow Monk should carry {}",
+                tag
+            );
+        }
+        // Baseline chassis rides through the clone tail.
+        for tag in [STUNNING_STRIKE_TAG, EMPTY_BODY_TAG, UNARMORED_MOVEMENT_TAG] {
+            assert!(
+                e.actors[&monk].has_passive_feature(tag),
+                "Shadow Monk should inherit baseline Monk tag {}",
+                tag
+            );
+        }
+        assert!(e.actors[&monk].has_evasion());
+        assert!(e.actors[&monk].has_extra_attack());
+        for name in ["shadow step", "silence", "pass without trace", "flurry of blows"] {
+            assert!(
+                e.actors[&monk].find_action(name).is_some(),
+                "Shadow Monk should carry the {} action",
+                name
+            );
+        }
+        // The slot table is Shadow Arts' ki budget: no level-1 slots,
+        // two level-2s — exactly two casts and no other magic.
+        assert_eq!(
+            SHADOW_MONK_TEMPLATE.spell_slots_by_level,
+            vec![0, 2],
+            "two level-2 slots, no level-1"
+        );
+        assert!(
+            MONK_TEMPLATE.spell_slots_by_level.is_empty(),
+            "the baseline monk stays slotless"
+        );
+
+        let templates = [
+            &*MONK_TEMPLATE,
+            &*OPEN_HAND_MONK_TEMPLATE,
+            &*LONG_DEATH_MONK_TEMPLATE,
+            &*SHADOW_MONK_TEMPLATE,
+        ];
+        let names: std::collections::HashSet<&str> = templates.iter().map(|t| t.name).collect();
+        assert_eq!(names.len(), templates.len(), "monk names collide");
+        let glyphs: std::collections::HashSet<char> = templates.iter().map(|t| t.glyph).collect();
+        assert_eq!(glyphs.len(), templates.len(), "monk glyphs collide");
+    }
+
+    /// Shadow Step teleports the monk and arms the melee-only advantage
+    /// prime — which reads as Advantage on a melee swing, Normal on a
+    /// ranged one, and is gone after the first attack either way.
+    #[test]
+    fn shadow_step_teleports_and_arms_a_melee_only_prime() {
+        use crate::actions::class_features::SHADOW_STEP;
+        use crate::actors::creatures::monks::SHADOW_MONK_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let monk = e
+            .instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // Medium creatures are 2x2 on this 2.5 ft grid. Land clear of
+        // the zombie rather than beside it: the point of the assertions
+        // below is the Shadow Step prime alone, and standing in contact
+        // would fold the "ranged attacks while a hostile is adjacent"
+        // disadvantage into the ranged reading.
+        let dest = vec![Coordinate::new(6, 2)];
+        assert!(SHADOW_STEP.validate_input(&e, monk, None, Some(&dest), None));
+        let effects = SHADOW_STEP.execute(&mut e, monk, None, Some(&dest), None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&monk].location(),
+            Coordinate::new(6, 2),
+            "the monk arrives where they aimed"
+        );
+        assert!(e.actors[&monk].has_condition(Condition::Shadowstepping));
+        // Melee reads Advantage; ranged reads Normal — the whole reason
+        // this rides its own melee-gated cohort rather than the broader
+        // `grants_self_attack_advantage` one its siblings use.
+        assert_eq!(
+            e.compute_attack_mode(monk, target, false),
+            RollMode::Normal,
+            "a ranged swing collects nothing from Shadow Step"
+        );
+        assert_eq!(
+            e.compute_attack_mode(monk, target, true),
+            RollMode::Advantage,
+            "a melee swing collects the prime"
+        );
+        // One-shot.
+        e.clear_attack_advantage_riders(monk, target);
+        assert!(!e.actors[&monk].has_condition(Condition::Shadowstepping));
+        assert_eq!(e.compute_attack_mode(monk, target, true), RollMode::Normal);
+    }
+
+    /// Shadow Step is feature-gated: an Open Hand monk handed the action
+    /// directly still can't fire it, because the tag is the gate rather
+    /// than the action list.
+    #[test]
+    fn shadow_step_requires_the_subclass_tag() {
+        use crate::actions::class_features::SHADOW_STEP;
+        use crate::actors::creatures::monks::OPEN_HAND_MONK_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let monk = e
+            .instantiate_creature(&OPEN_HAND_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+        let dest = vec![Coordinate::new(6, 2)];
+        assert!(
+            !SHADOW_STEP.validate_input(&e, monk, None, Some(&dest), None),
+            "no Shadow Step tag, no step"
         );
     }
 

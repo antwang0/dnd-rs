@@ -1,10 +1,12 @@
 use crate::actions::class_features::{
     EMPTY_BODY, EMPTY_BODY_TAG, FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
-    STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
-    TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
+    SHADOW_ARTS_TAG, SHADOW_STEP, SHADOW_STEP_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
+    STUNNING_STRIKE, STUNNING_STRIKE_TAG, TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG,
+    WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
+use crate::actions::spells::{PASS_WITHOUT_TRACE, SILENCE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -229,4 +231,97 @@ pub static LONG_DEATH_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // helper). Glyph 'D' — for the Long **D**eath way; distinct from
     // baseline monk 'M' and Open Hand 'O'.
     MONK_TEMPLATE.with_subclass_tag("Long Death Monk", 'D', TOUCH_OF_DEATH_TAG)
+});
+
+/// Shadow Monk — Monastic Tradition **Way of Shadow** subclass build
+/// (PHB), and with it every PHB Monastic Tradition that has a combat
+/// surface has a build in the engine: Open Hand
+/// (`OPEN_HAND_MONK_TEMPLATE`) and this one. Two subclass features
+/// ship:
+///
+///   - **Shadow Arts** (lv3) — ki spent as spellcasting: Silence and
+///     Pass without Trace.
+///   - **Shadow Step** (lv6) — bonus action, teleport 60 ft, and
+///     advantage on the first melee attack that follows.
+///
+/// Shadow Step is the whole subclass in one button, and what makes it
+/// interesting is that it is an *arrival* tool rather than an escape
+/// one. Misty Step — the engine's other short-range blink — costs a
+/// level-2 slot for 30 ft and is what a caster uses to leave. Shadow
+/// Step costs a bonus action for 60 ft and hands the monk advantage
+/// when they get there. On this chassis that is not a small rider:
+/// Stunning Strike is a bonus-action prime whose CON save only ever
+/// happens if the swing lands, so the shadow monk's two halves are
+/// "teleport into reach with advantage" and "stun what you find" — and
+/// they compete for the same bonus action, which means the monk can
+/// only ever do one of them per turn. Choosing the teleport is
+/// choosing to land the swing; choosing the stun is betting they
+/// already can.
+///
+/// Which is a different axis from the two siblings on the chassis, both
+/// of which are staying-power builds: Open Hand refills the HP bar once
+/// a fight with Wholeness of Body, Long Death refills the temp HP
+/// buffer every time something dies. The Shadow Monk doesn't answer
+/// "how do I survive the round" at all — it answers "how do I reach the
+/// caster in the back line on round one", which no other monk build in
+/// the engine does.
+///
+/// **The slot table is Shadow Arts' ki, and nothing else.** RAW's
+/// Shadow Arts spends 2 ki per cast on Darkness, Darkvision, Pass
+/// without Trace or Silence; both surviving options are level-2 spells,
+/// so `[0, 2]` — zero level-1 slots, two level-2 — reads exactly as
+/// "two Shadow Arts casts, and no other magic." Darkness and Darkvision
+/// are dropped because the engine has no light level for either to act
+/// on, the same reason the Diviner's Third Eye and the Transmuter's
+/// stone drop their own darkvision options; Minor Illusion has no
+/// combat surface. The one deviation worth naming is the rest cadence:
+/// ki refreshes on a short rest and spell slots refresh on a long one,
+/// so a shadow monk gets fewer Shadow Arts casts across a multi-fight
+/// day than RAW allows.
+///
+/// Of the two spells, Silence is the load-bearing one and it is a
+/// genuinely different tool than anything else the monk carries: a
+/// monk who teleports into a caster's face can drop a 20 ft hush on
+/// the spot and lock the caster out of levelled spells entirely — the
+/// only lockdown in the monk's kit that doesn't route through a save.
+/// Pass without Trace's `Untracked` is the escape half.
+///
+/// Cloak of Shadows (lv13) is deliberately not shipped. It grants
+/// invisibility that breaks on attack — and the baseline monk chassis
+/// already carries Empty Body, which grants invisibility *and* damage
+/// resistance for ten rounds and doesn't break on attack at all. A
+/// Cloak of Shadows on this template would be a strictly worse button
+/// sitting next to a strictly better one, which teaches the player
+/// nothing and gives the AI a trap pick. Opportunist (lv17) is left out
+/// for the usual structural reason: it needs an ally-hit reaction hook
+/// the engine doesn't expose.
+///
+/// Glyph 'W' — for the **W**ay of Shadow. Distinct from baseline monk
+/// 'M', Open Hand 'O' and Long Death 'D'.
+pub static SHADOW_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner Long Death uses: this
+    // subclass adds three actions, two tags and a slot table. The
+    // `..MONK_TEMPLATE.clone()` tail still carries the whole monk
+    // chassis — AC 15, the unarmed strike, Stunning Strike, Patient
+    // Defense, Flurry of Blows, Stillness of Mind, Step of the Wind,
+    // Empty Body, Evasion, Deflect Missiles, Extra Attack, and the
+    // Purity of Body / Diamond Soul / Unarmored Movement passives.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*SHADOW_STEP);
+    actions.push(&*SILENCE);
+    actions.push(&*PASS_WITHOUT_TRACE);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(SHADOW_ARTS_TAG);
+    features.insert(SHADOW_STEP_TAG);
+    CreatureTemplate {
+        name: "Shadow Monk",
+        glyph: 'W',
+        // Shadow Arts' ki budget, expressed in the only casting
+        // currency the engine has: no level-1 slots, two level-2s —
+        // exactly two casts of Silence or Pass without Trace.
+        spell_slots_by_level: vec![0, 2],
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
 });

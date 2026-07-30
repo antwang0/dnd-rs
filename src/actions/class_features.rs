@@ -3517,6 +3517,148 @@ impl Action for EmptyBody {
 
 pub static EMPTY_BODY: LazyLock<EmptyBody> = LazyLock::new(|| EmptyBody {});
 
+/// Class-feature tag for the Way of Shadow Monk's **Shadow Arts**
+/// (subclass level 3). RAW: spend 2 ki to cast Darkness, Darkvision,
+/// Pass without Trace or Silence, plus the Minor Illusion cantrip at
+/// will.
+///
+/// Purely a marker — the spells themselves ride the monk's action list
+/// and are paid for out of the shadow monk's slot table, which exists
+/// only to be Shadow Arts' ki budget (see `SHADOW_MONK_TEMPLATE`).
+/// Darkness and Darkvision are dropped: the engine has no light level
+/// for either to act on, the same reason the Diviner's Third Eye and
+/// the Transmuter's stone both drop their darkvision options. Minor
+/// Illusion has no combat surface at all.
+///
+/// The tag earns its keep as the thing that makes the loadout legible:
+/// without it, a shadow monk holding two lv2 slots and two illusion
+/// spells looks like a template that got a caster's fields by accident
+/// rather than one that spent its ki.
+pub const SHADOW_ARTS_TAG: &str = "monk.shadow_arts";
+
+/// Class-feature tag for the Way of Shadow Monk's **Shadow Step**
+/// (subclass level 6). Gates the `SHADOW_STEP` bonus action below.
+///
+/// At-will in RAW (no ki cost at all — it's the one free thing the
+/// subclass does), which is exactly how it ships: the bonus action is
+/// the entire price. That makes it the longest at-will repositioning
+/// tool in the engine at 60 ft, twice Misty Step's range and without
+/// the slot.
+///
+/// RAW gates the teleport on starting *and* ending in dim light or
+/// darkness. The engine has no light level, so the gate is dropped
+/// wholesale rather than approximated — every candidate proxy
+/// (obscuring terrain, distance from allies) would be a different
+/// restriction wearing the clause's name.
+pub const SHADOW_STEP_TAG: &str = "monk.shadow_step";
+
+/// Shadow Step — Way of Shadow Monk bonus action, at-will. Teleport up
+/// to 60 ft (24 tiles) to a spot the monk can see, and gain advantage
+/// on the first melee attack made before the end of the turn.
+///
+/// The teleport half is `MistyStep`'s exactly — same `TeleportActor`
+/// side-effect, same `can_move_to` landing validation, same explicit
+/// OA-freedom (the monk doesn't traverse the intervening tiles). It
+/// differs on price and reach: bonus action and nothing else, at double
+/// the range, where Misty Step spends a level-2 slot for 30 ft.
+///
+/// The advantage half is what makes it an attack rather than an escape.
+/// Misty Step is what a caster uses to *leave*; Shadow Step is what a
+/// monk uses to *arrive*, and the `Shadowstepping` prime is the
+/// difference — it turns a 60 ft gap-closer into a 60 ft gap-closer
+/// that also lands the Stunning Strike the monk primed on the way in.
+/// The prime is melee-gated (`grants_self_melee_attack_advantage`)
+/// because RAW says melee, and one-shot via `CONSUMED_ON_ATTACK`.
+pub struct ShadowStep {}
+
+impl Action for ShadowStep {
+    fn name(&self) -> &str {
+        "shadow step"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss", "shadow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.has_passive_feature(SHADOW_STEP_TAG))
+        {
+            return false;
+        }
+        // Destination must be a legal landing spot for this monk's full
+        // footprint — same constraint Misty Step applies, minus the
+        // movement-budget check the teleport bypasses.
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        encounter.log(
+            "  shadow step: the monk melts into one shadow and rises from another.".to_string(),
+        );
+        vec![
+            // Teleport, not movement — no intervening tiles, so no
+            // opportunity attacks. Same reasoning as Misty Step.
+            Box::new(crate::engine::side_effects::TeleportActor {
+                actor_id: caster_id,
+                dest: point,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Shadowstepping,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+        ]
+    }
+}
+
+pub static SHADOW_STEP: LazyLock<ShadowStep> = LazyLock::new(|| ShadowStep {});
+
 /// Class-feature tag for the Monk's Stunning Strike (once per long
 /// rest, in our model — RAW is one per ki point, but we collapse the
 /// ki pool into a single big-burst prime to keep the once-per-rest

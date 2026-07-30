@@ -1105,6 +1105,25 @@ pub enum Condition {
     /// Strike primes, differing only in what installs it: a completed
     /// cast rather than a resource spend.
     WarMagicPrimed,
+    /// Shadow Step primed (5e Way of Shadow Monk **Shadow Step**,
+    /// subclass level 6). The monk has just stepped through shadow, and
+    /// RAW hands them "advantage on the first melee attack you make
+    /// before the end of the turn."
+    ///
+    /// The engine's only melee-gated self-advantage rider — it rides
+    /// `grants_self_melee_attack_advantage` rather than the broader
+    /// `grants_self_attack_advantage` its one-shot siblings
+    /// (`TidesOfChaos`, `Helped`, `Hidden`) use, because the RAW clause
+    /// is explicit about melee and the monk has thrown-weapon options.
+    ///
+    /// Consumed by `CONSUMED_ON_ATTACK` on the first swing that fires.
+    /// That cohort doesn't distinguish lanes, so a ranged swing burns
+    /// the prime without collecting it — the same deviation
+    /// `LungingAttacking` already documents and accepts, and a near-
+    /// moot one on a chassis whose entire kit is unarmed strikes.
+    /// Tick-down timer (`UntilStartOfNextTurn`) caps an unspent prime so
+    /// the advantage can't carry into the next round.
+    Shadowstepping,
     /// Sworn — 5e Paladin Oath of Vengeance Channel Divinity: Vow of
     /// Enmity (lv3 subclass feature, once per long rest). The target is
     /// marked as the paladin's chosen quarry: the swearing paladin (and
@@ -1577,6 +1596,7 @@ impl Condition {
             Condition::Distracted => "distracted",
             Condition::EldritchStruck => "eldritch-struck",
             Condition::WarMagicPrimed => "primed with war magic",
+            Condition::Shadowstepping => "stepping through shadow",
             Condition::Sworn => "sworn-quarry of a vengeance paladin",
             Condition::Purified => "purified",
             Condition::PhantasmalForced => "haunted by a phantasm",
@@ -2002,6 +2022,24 @@ impl Condition {
     /// `!is_melee` — gated on the ranged lane.
     pub fn imposes_attacker_disadvantage_on_ranged(&self) -> bool {
         matches!(self, Condition::WindBlasted)
+    }
+
+    /// True if the *holder's own* melee swings roll with advantage,
+    /// while their ranged attacks are unaffected. The Shadow Monk's
+    /// Shadow Step is the canonical case — RAW grants advantage on "the
+    /// first melee attack you make before the end of the turn", so a
+    /// shadow-stepped monk who reaches for a thrown weapon instead
+    /// shouldn't collect the buff.
+    ///
+    /// Melee-side sibling of `imposes_attacker_disadvantage_on_ranged`
+    /// (same attacker side, opposite lane and opposite polarity), and
+    /// the melee-gated counterpart of `grants_self_attack_advantage`
+    /// (which fires on either lane). Read by `compute_attack_mode` only
+    /// when `is_melee`; a new "advantage, but only with a weapon in
+    /// hand" rider lands as a one-line addition here rather than a
+    /// fresh branch at the call site.
+    pub fn grants_self_melee_attack_advantage(&self) -> bool {
+        matches!(self, Condition::Shadowstepping)
     }
 
     /// True if the holder cannot take Reactions while this condition is
