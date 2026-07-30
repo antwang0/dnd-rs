@@ -67890,4 +67890,85 @@ mod tests {
                 .contains(POTENT_SPELLCASTING_TAG)
         );
     }
+
+    /// Every damaging cantrip routes its roll through the shared
+    /// caster-aware chokepoint, so the three flat / reroll features
+    /// that live there reach all of them.
+    ///
+    /// Driven through Potent Spellcasting because it is the cheapest of
+    /// the three to observe: a flat, deterministic +WIS that shows up
+    /// in the damage log without any seed sweeping. A cantrip that
+    /// rolls with a bare `roll` instead of `roll_empowered_sum` deals
+    /// exactly the same damage it always did — nothing crashes, nothing
+    /// logs wrong, the bonus is just quietly missing — which is why
+    /// four of them had drifted out of the chokepoint unnoticed.
+    ///
+    /// The Sorcerer's Empowered Spell and the Evocation Wizard's
+    /// Empowered Evocation share the chokepoint and therefore share the
+    /// guarantee; testing one pins all three.
+    #[test]
+    fn every_damaging_cantrip_reaches_the_shared_damage_chokepoint() {
+        use crate::actions::action_template::TargetingSchema;
+        use crate::actions::class_features::POTENT_SPELLCASTING_TAG;
+        use crate::actors::creatures::clerics::KNOWLEDGE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        // One representative per resolution shape a damaging cantrip
+        // can take: single-target save-or-nothing, self-centered burst,
+        // point-target burst, spell attack, and the pull-then-damage
+        // outlier.
+        let cantrips: &[&'static (dyn crate::actions::action_template::Action + Send + Sync)] = &[
+            &*crate::actions::spells::SACRED_FLAME,
+            &*crate::actions::spells::TOLL_THE_DEAD,
+            &*crate::actions::spells::WORD_OF_RADIANCE,
+            &*crate::actions::spells::FROSTBITE,
+            &*crate::actions::spells::SAPPING_STING,
+            &*crate::actions::spells::INFESTATION,
+            &*crate::actions::spells::ACID_SPLASH,
+            &*crate::actions::spells::THUNDERCLAP,
+            &*crate::actions::spells::SWORD_BURST,
+            &*crate::actions::spells::LIGHTNING_LURE,
+        ];
+        for action in cantrips {
+            let mut reached = false;
+            for seed in 0..60 {
+                let mut e = ei_with_terrain(20, 20, &[]);
+                e.roller = FastRandRoller::with_seed(seed);
+                let cleric = e
+                    .instantiate_creature(&KNOWLEDGE_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+                    .unwrap();
+                assert!(e.actors[&cleric].has_passive_feature(POTENT_SPELLCASTING_TAG));
+                // Adjacent so the self-centered bursts and the melee-
+                // range cantrips all have a live target.
+                let ogre = e
+                    .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+                    .unwrap();
+                // Feed each action exactly the argument shape its
+                // schema declares — `execute` re-validates, and a
+                // SingleActor action handed a stray location (or a
+                // burst handed a stray id) bails before it ever rolls.
+                let at = e.actors[&ogre].location();
+                let (ids, locs) = match action.targeting_schema() {
+                    TargetingSchema::SingleActor => (Some(vec![ogre]), None),
+                    TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
+                        (None, Some(vec![at]))
+                    }
+                    TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+                };
+                for ef in action.execute(&mut e, cleric, ids.as_ref(), locs.as_ref(), None) {
+                    ef.apply(&mut e);
+                }
+                if e.messages().iter().any(|m| m.contains("potent spellcasting")) {
+                    reached = true;
+                    break;
+                }
+            }
+            assert!(
+                reached,
+                "{} rolls its damage outside `roll_empowered_sum`, so Potent \
+                 Spellcasting / Empowered Spell / Empowered Evocation all skip it",
+                action.name()
+            );
+        }
+    }
 }

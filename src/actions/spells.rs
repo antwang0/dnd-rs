@@ -546,6 +546,44 @@ fn neutral_burst_save_for_half(
 /// over the shared `burst_save_damage` resolver — distinct from
 /// `neutral_burst_save_for_half` because cantrips canonically don't
 /// half-on-save (a passed save is a clean miss).
+/// Enemy-only sibling of `neutral_burst_save_only`: every combat-active
+/// *hostile* in the burst saves against `dc` using `save_ability`, and
+/// a failed save takes full damage from a shared roll while a passed
+/// one takes none.
+///
+/// The fourth corner of the burst-resolver grid — the other three are
+/// `enemy_burst_save_for_half`, `neutral_burst_save_for_half` and
+/// `neutral_burst_save_only`. This is the one a cantrip whose RAW text
+/// says "each creature *of your choice*" wants: friend-or-foe is the
+/// wrong target set (the caster picks), and half-on-save is the wrong
+/// fold (cantrips miss clean).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn enemy_burst_save_only(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        SaveDamagePolicy::NoneOnSave,
+    )
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn neutral_burst_save_only(
     encounter: &mut EncounterInstance,
@@ -7908,22 +7946,38 @@ impl Action for WordOfRadiance {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
         let center = caster.location();
-        let die = Dice::new(n, 6);
-        let damage = encounter.roll(&die);
-        encounter.log(format!(
-            "  word of radiance: {}({}) = {} radiant (each)",
-            die, damage, damage
-        ));
-        crate::actions::action_template::resolve_burst_save_damage(
+        // RAW: "each creature of your choice that you can see within 5
+        // feet of you must succeed on a Constitution saving throw or
+        // take 1d6 radiant damage." Two clauses the previous
+        // implementation got wrong, both fixed by routing through the
+        // shared resolver instead of hand-rolling the burst:
+        //
+        //   - **"of your choice"** makes this enemy-only. It was going
+        //     through the neutral resolver, so a cleric standing in
+        //     their own front line irradiated the party alongside the
+        //     enemy — the one cleric cantrip that punished being where
+        //     a cleric is supposed to stand.
+        //   - **"or take"** is save-for-nothing, not save-for-half. It
+        //     was folding through `HalfOnSave`, which is the levelled-
+        //     AoE convention; cantrips canonically miss clean, which is
+        //     exactly the distinction `enemy_burst_save_only` exists to
+        //     draw.
+        //
+        // The shared resolver also rolls through `roll_empowered_sum`,
+        // so Empowered Spell / Empowered Evocation / Potent Spellcasting
+        // reach this cantrip for the first time.
+        let (effects, _saves) = enemy_burst_save_only(
             encounter,
             caster_id,
             center,
             1,
             AbilityScoreType::Constitution,
             dc,
-            damage,
+            Dice::new(n, 6),
             DamageType::Radiant,
-        )
+            "word of radiance",
+        );
+        effects
     }
 }
 
@@ -14581,7 +14635,13 @@ impl Action for Frostbite {
             return Vec::new();
         }
         let die = Dice::new(n, 6);
-        let raw = encounter.roll(&die);
+        // Route the roll through the shared caster-aware chokepoint
+        // rather than `roll` directly: that is where the Sorcerer's
+        // Empowered Spell reroll, the Evocation Wizard's Empowered
+        // Evocation bonus and the cleric's Potent Spellcasting bonus
+        // all live. A bare `roll` here meant every one of them
+        // silently skipped this cantrip.
+        let raw = encounter.roll_empowered_sum(caster_id, die.count, die.faces);
         encounter.log(format!("  frostbite: {}({}) = {} cold", die, raw, raw));
         vec![
             Box::new(DealDamage {
@@ -16322,7 +16382,13 @@ impl Action for LightningLure {
             encounter.actors.get(&caster_id).map(|a| a.level()).unwrap_or(1),
         );
         let die = Dice::new(n, 8);
-        let raw = encounter.roll(&die);
+        // Route the roll through the shared caster-aware chokepoint
+        // rather than `roll` directly: that is where the Sorcerer's
+        // Empowered Spell reroll, the Evocation Wizard's Empowered
+        // Evocation bonus and the cleric's Potent Spellcasting bonus
+        // all live. A bare `roll` here meant every one of them
+        // silently skipped this cantrip.
+        let raw = encounter.roll_empowered_sum(caster_id, die.count, die.faces);
         encounter.log(format!("  lightning lure: {}({}) lightning", die, raw));
         vec![Box::new(DealDamage {
             actor_id: target_id,
@@ -19345,7 +19411,13 @@ impl Action for SappingSting {
             return Vec::new();
         }
         let die = Dice::new(n, 4);
-        let raw = encounter.roll(&die);
+        // Route the roll through the shared caster-aware chokepoint
+        // rather than `roll` directly: that is where the Sorcerer's
+        // Empowered Spell reroll, the Evocation Wizard's Empowered
+        // Evocation bonus and the cleric's Potent Spellcasting bonus
+        // all live. A bare `roll` here meant every one of them
+        // silently skipped this cantrip.
+        let raw = encounter.roll_empowered_sum(caster_id, die.count, die.faces);
         encounter.log(format!(
             "  sapping sting: {}({}) = {} necrotic + prone",
             die, raw, raw
@@ -21447,7 +21519,13 @@ impl Action for Infestation {
             return Vec::new();
         }
         let die = Dice::new(n, 6);
-        let dmg = encounter.roll(&die);
+        // Route the roll through the shared caster-aware chokepoint
+        // rather than `roll` directly: that is where the Sorcerer's
+        // Empowered Spell reroll, the Evocation Wizard's Empowered
+        // Evocation bonus and the cleric's Potent Spellcasting bonus
+        // all live. A bare `roll` here meant every one of them
+        // silently skipped this cantrip.
+        let dmg = encounter.roll_empowered_sum(caster_id, die.count, die.faces);
         encounter.log(format!("  infestation: {}({}) poison", die, dmg));
         vec![Box::new(DealDamage {
             actor_id: target_id,

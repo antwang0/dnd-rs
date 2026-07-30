@@ -5453,6 +5453,115 @@ mod tests {
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::DamageType;
 
+    /// Every playable template, driven by the AI, gets through a whole
+    /// fight without panicking, without asking for player input, and
+    /// without stalling.
+    ///
+    /// The `ai_vs_ai_terminates_with_new_content` sweep above is a
+    /// hand-curated roster that grew one `instantiate_creature` line at
+    /// a time as content landed, which means it covers whatever someone
+    /// remembered to add — and of the sixty-odd PC templates in the
+    /// engine it names about a dozen. This one reads
+    /// `pc_template_families()` instead, so a subclass added tomorrow is
+    /// swept the moment it joins the registry and never needs a second
+    /// edit here.
+    ///
+    /// Deliberately narrow per template — one duel, one seed — because
+    /// the value is breadth. The failures this catches are the ones a
+    /// new template actually produces: an action whose `cost` and
+    /// `custom_validate_input` disagree so the AI picks something it
+    /// can't pay for, a picker rung that returns an `ActionExecutionInfo`
+    /// failing its own `validate`, a self-buff with no engagement gate
+    /// that the ladder re-fires every turn forever. All three show up as
+    /// a hang or a panic in the first fight, not the hundredth.
+    ///
+    /// The opponent is an Ogre: enough HP to survive a caster's opening
+    /// round (so the sweep exercises more than one turn of the ladder),
+    /// no reactions or auras of its own (so a failure is attributable to
+    /// the template under test), and melee-only (so it closes rather
+    /// than trading at range forever).
+    #[test]
+    fn every_pc_template_can_be_driven_by_the_ai_to_completion() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::pc_template_families;
+        for (family, templates) in pc_template_families() {
+            for template in templates {
+                let tp = TerrainGenParams {
+                    width: 24,
+                    height: 16,
+                    branch_depth: 0,
+                    branch_prob: 0.0,
+                };
+                let ap = ActorGenParams {
+                    cr_target: 0.0,
+                    n_teams: 0,
+                    pc_template: None,
+                    start_team: 0,
+                };
+                let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+                let pc = e
+                    .instantiate_creature(template, Coordinate::new(3, 8), 0, 0)
+                    .unwrap_or_else(|_| panic!("{} ({}) should instantiate", template.name, family));
+                let ogre = e
+                    .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(18, 8), 1, 0)
+                    .expect("the ogre should instantiate");
+                let ai = SimpleAi;
+                // Generous cap: a stall shows up as exhausting it, and
+                // the assertion below names the template rather than
+                // leaving a bare hang for someone to bisect.
+                let mut steps = 0usize;
+                let settled = loop {
+                    if steps >= 20_000 {
+                        break false;
+                    }
+                    steps += 1;
+                    e.process_stack();
+                    if e.is_complete() {
+                        break true;
+                    }
+                    let Some(prompt) = e.peek_prompt() else {
+                        break true;
+                    };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => panic!(
+                            "{} ({}): SimpleAi asked for player input",
+                            template.name, family
+                        ),
+                        ControllerDecision::Act(aei) => {
+                            assert!(
+                                aei.validate(&e),
+                                "{} ({}): the AI queued an action that fails its own validate",
+                                template.name,
+                                family
+                            );
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                };
+                assert!(
+                    settled,
+                    "{} ({}): the duel never terminated in 20k steps",
+                    template.name, family
+                );
+                // Somebody won. A fight that ends with both sides
+                // untouched means the AI never engaged, which is a
+                // stall wearing a completed encounter's clothes.
+                let pc_hp = e.actors.get(&pc).map(|a| a.hitpoints()).unwrap_or(0);
+                let ogre_hp = e.actors.get(&ogre).map(|a| a.hitpoints()).unwrap_or(0);
+                assert!(
+                    pc_hp == 0 || ogre_hp == 0,
+                    "{} ({}): the duel ended with both sides standing ({} vs {})",
+                    template.name,
+                    family,
+                    pc_hp,
+                    ogre_hp
+                );
+            }
+        }
+    }
+
     fn run_to_completion(seed: u64) -> EncounterInstance {
         let tp = TerrainGenParams {
             width: 30,
