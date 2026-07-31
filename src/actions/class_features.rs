@@ -2485,6 +2485,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     SLAYERS_PREY_TAG,
     GATHERED_SWARM_TAG,
     PSIONIC_STRIKE_TAG,
+    DEFT_STRIKE_TAG,
     // The only entry here that isn't a damage rider: Ancestral
     // Protectors uses the ledger to enforce RAW's "the *first* creature
     // you hit on your turn" rather than to cap a die pool. Same
@@ -12324,3 +12325,85 @@ impl Action for FormOfDreadAction {
 }
 
 pub static FORM_OF_DREAD: LazyLock<FormOfDreadAction> = LazyLock::new(|| FormOfDreadAction {});
+
+/// Passive tag for the Way of the Kensei Monk's **Deft Strike**
+/// (subclass level 6). At-will once per turn — RAW's 1 ki cost is
+/// dropped for the same reason Flurry of Blows' is (the engine tracks
+/// no ki pool), so the tag lives on `features_max` and doubles as the
+/// once-per-turn ledger key for its row on
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS`.
+pub const DEFT_STRIKE_TAG: &str = "monk.deft_strike";
+
+/// Kensei's Shot — Way of the Kensei Monk bonus action (subclass level
+/// 3). Until the end of the turn, every ranged weapon attack the monk
+/// lands carries an extra 1d4.
+///
+/// At-will, no charge: RAW costs the bonus action and nothing else,
+/// which is unusual enough on this chassis to be the point. Every other
+/// bonus action a monk has — Flurry of Blows, Patient Defense, Step of
+/// the Wind — pays them for closing to contact. This one pays them for
+/// staying at range, and it costs the same nothing, so the Kensei is
+/// the first monk build with a reason to hold a bow.
+pub struct KenseisShotAction {}
+
+impl Action for KenseisShotAction {
+    fn name(&self) -> &str {
+        "kensei's shot"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ks", "kensei shot", "kensei"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the rider lands on the shot, not on the prime.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // No charge to check, so this is the live-holder gate plus the
+        // don't-re-prime dedup that every bonus-action prime carries.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::KenseisShot))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  kensei's shot: the monk breathes onto the arrow before drawing.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::KenseisShot,
+            // RAW: "until the end of the current turn".
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static KENSEIS_SHOT: LazyLock<KenseisShotAction> = LazyLock::new(|| KenseisShotAction {});

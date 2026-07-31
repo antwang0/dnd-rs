@@ -2259,6 +2259,21 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "colossus slayer",
         target_gate: |t| t.is_wounded(),
     },
+    // 5e Way of the Kensei Monk **Deft Strike** (subclass level 6):
+    // "when you hit a target with a kensei weapon, you can spend 1 ki
+    // point to cause the weapon to deal extra damage to the target
+    // equal to your Martial Arts die." Weapon-typed, once a turn, no
+    // target gate — the plainest possible row on this cohort. The ki
+    // cost is dropped for the same reason Flurry of Blows' is: the
+    // engine tracks no ki pool, and the once-per-turn cap is already
+    // the limiting resource.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::DEFT_STRIKE_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |p| p.damage_type,
+        label: "deft strike",
+        target_gate: |_| true,
+    },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
         dice: Dice::new(1, 4),
@@ -2536,6 +2551,32 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 hp_threshold: None,
             }),
             once_per_turn_tag: Some(crate::actions::class_features::FORM_OF_DREAD_TAG),
+        },
+        // 5e Way of the Kensei Monk **Kensei's Shot** (subclass level
+        // 3): "you can make your ranged attacks with a kensei weapon
+        // more deadly... the target takes an extra 1d4 damage of the
+        // weapon's damage type."
+        //
+        // The one row on the table using the `RangedWeapon` lane for a
+        // class feature rather than a spell. Damage is fixed to
+        // Piercing rather than resolved from the weapon: every kensei
+        // ranged weapon on this chassis is a bow, and the rider table's
+        // rows carry a compile-time type. The once-per-turn siblings on
+        // `ONCE_PER_TURN_WEAPON_DIE_RIDERS` take a closure for this
+        // because Colossus Slayer genuinely needs one; nothing here
+        // does yet.
+        OnHitRider {
+            condition: Condition::KenseisShot,
+            dice: Dice::new(1, 4),
+            label: "kensei's shot",
+            damage_type: DamageType::Piercing,
+            lane: RiderLane::RangedWeapon,
+            // RAW applies it to every ranged hit for the rest of the
+            // turn, not just the next one — the condition's
+            // `UntilStartOfNextTurn` timer is what ends it.
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Circle of Spores Druid **Symbiotic Entity** (subclass
         // level 2). Persistent +1d6 necrotic rider on every melee swing

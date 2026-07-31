@@ -59594,21 +59594,22 @@ mod tests {
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
-            ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG,
-            FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS,
-            PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
-            SNEAK_ATTACK_TAG,
+            ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG, DIVINE_FURY_TAG,
+            DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG,
+            ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG,
+            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            12,
+            13,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
@@ -70313,6 +70314,113 @@ mod tests {
         assert!(
             e.actors[&paladin].has_condition(Condition::Smiting),
             "and does not burn the prime"
+        );
+    }
+
+    /// Kensei's Shot rides ranged weapon hits and nothing else.
+    ///
+    /// The lane is the whole test: it is the only class feature on the
+    /// rider table using `RiderLane::RangedWeapon`, so a wiring mistake
+    /// would show up as a monk whose unarmed strikes carry an archery
+    /// buff. Both halves are checked against the same primed monk, so
+    /// the negative can't pass by the prime simply not being up.
+    #[test]
+    fn kenseis_shot_rides_the_bow_and_not_the_fist() {
+        use crate::actions::class_features::KENSEIS_SHOT;
+        use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut fired_on_bow = 0;
+        let mut fired_on_fist = 0;
+        for seed in 0..40u64 {
+            for weapon in ["longbow", "martial arts"] {
+                let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+                let monk = e
+                    .instantiate_creature(&KENSEI_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                // Adjacent, so the fist is in reach and the bow is too.
+                let ogre = e
+                    .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                assert!(KENSEIS_SHOT.validate_input(&e, monk, None, None, None));
+                for eff in KENSEIS_SHOT.side_effects(&mut e, monk, None, None, None) {
+                    eff.apply(&mut e);
+                }
+                assert!(e.actors[&monk].has_condition(Condition::KenseisShot));
+                let action = e.actors[&monk]
+                    .actions
+                    .iter()
+                    .copied()
+                    .find(|a| a.name() == weapon)
+                    .unwrap_or_else(|| panic!("the kensei carries a {}", weapon));
+                let messages_before = e.messages().len();
+                let targets = vec![ogre];
+                for eff in action.side_effects(&mut e, monk, Some(&targets), None, None) {
+                    eff.apply(&mut e);
+                }
+                let rode = e.messages()[messages_before..]
+                    .iter()
+                    .any(|m| m.contains("kensei's shot:"));
+                match weapon {
+                    "longbow" if rode => fired_on_bow += 1,
+                    "martial arts" if rode => fired_on_fist += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            fired_on_bow > 0,
+            "40 seeds of bowfire should land at least one primed shot"
+        );
+        assert_eq!(
+            fired_on_fist, 0,
+            "a melee swing must never pick up a ranged-only rider"
+        );
+    }
+
+    /// The prime lasts the turn rather than the shot, and clears on the
+    /// monk's next turn-start.
+    ///
+    /// RAW says "until the end of the current turn", which is why the
+    /// row is not `consume_on_trigger` — a Kensei with Extra Attack
+    /// gets the rider on both arrows, not just the first.
+    #[test]
+    fn the_kensei_prime_outlives_its_first_arrow_and_dies_at_turn_start() {
+        use crate::actions::class_features::KENSEIS_SHOT;
+        use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let monk = e
+            .instantiate_creature(&KENSEI_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        for eff in KENSEIS_SHOT.side_effects(&mut e, monk, None, None, None) {
+            eff.apply(&mut e);
+        }
+        let bow = e.actors[&monk]
+            .actions
+            .iter()
+            .copied()
+            .find(|a| a.name() == "longbow")
+            .expect("the kensei carries a longbow");
+        let targets = vec![ogre];
+        for eff in bow.side_effects(&mut e, monk, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&monk].has_condition(Condition::KenseisShot),
+            "one arrow does not use the prime up"
+        );
+        assert!(
+            !KENSEIS_SHOT.validate_input(&e, monk, None, None, None),
+            "nor should the monk re-prime what is already up"
+        );
+        e.start_turn_for(monk);
+        assert!(
+            !e.actors[&monk].has_condition(Condition::KenseisShot),
+            "the prime ends with the turn it was spent on"
         );
     }
 }

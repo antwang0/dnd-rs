@@ -846,6 +846,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q-. Kensei's Shot — the Kensei Monk's free bonus-action
+        //      prime. Sits with the other bonus-action primes and is
+        //      gated on a hostile inside bow range rather than melee
+        //      reach, because the whole point of the feature is the
+        //      shots the monk takes without closing. Costs nothing but
+        //      the bonus action, so it never competes with a rung below
+        //      it — the only thing it can lose the monk is a Flurry
+        //      they were not in position to throw.
+        if let Some(aei) =
+            try_self_action_when_enemy_within(encounter, actor_id, BOW_RANGE_GAP, "kensei's shot")
+        {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q. Shillelagh — druid bonus-action cantrip prime that adds
         //     +1d8 force damage to the next melee weapon hit. Fire when
         //     an enemy is footprint-adjacent so the prime is consumed
@@ -1868,6 +1882,12 @@ fn try_pass_without_trace(
 /// the warlock to be landing hits; raised across the room it likewise
 /// collapses to temp HP alone.
 const IMMINENT_CONTACT_GAP: isize = 5;
+
+/// Footprint gap a longbow can reach — the engine's bows carry
+/// `reach_tiles == 12`, which is 30 ft on the 2.5 ft grid. Used as the
+/// AI's gate for ranged-only primes, so the prime is spent on a turn
+/// the shot can actually be taken.
+const BOW_RANGE_GAP: isize = 12;
 
 /// Footprint gap inside which the Bladesinger starts the song. Wider
 /// than a melee prime's trigger because none of the song's four clauses
@@ -9359,18 +9379,20 @@ mod tests {
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 5] = [
+        let cases: [(&CreatureTemplate, &str); 6] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
             (&BLADESINGER_WIZARD_TEMPLATE, "bladesong"),
             (&UNDEAD_WARLOCK_TEMPLATE, "form of dread"),
+            (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
         ];
 
         for (template, marker) in cases {

@@ -1671,6 +1671,25 @@ pub enum Condition {
     ///
     /// On `is_dispellable_buff`.
     FormOfDread,
+    /// **Kensei's Shot** (5e Way of the Kensei Monk, subclass level 3).
+    /// A bonus action spent readying the bow: until the end of the
+    /// turn, every ranged weapon attack the monk lands carries an extra
+    /// 1d4.
+    ///
+    /// The engine's only `RiderLane::RangedWeapon` prime that isn't a
+    /// spell, and the reason the monk chassis has a reason to hold a
+    /// bow at all. Everything else on the sheet — Flurry of Blows,
+    /// Stunning Strike, Martial Arts — pays the monk for standing in
+    /// contact; this pays them for not.
+    ///
+    /// `UntilStartOfNextTurn` rather than a round count, because RAW's
+    /// window is "until the end of the current turn" and the timer that
+    /// clears on the holder's own next turn-start is exactly that.
+    ///
+    /// Not on `is_dispellable_buff` — like the maneuver primes, it's a
+    /// declaration about the holder's next shot rather than a magical
+    /// effect sitting on them.
+    KenseisShot,
 }
 
 impl Condition {
@@ -1753,6 +1772,7 @@ impl Condition {
             Condition::AncestrallyHaunted => "haunted by ancestral spirits",
             Condition::Bladesinging => "bladesinging",
             Condition::FormOfDread => "wearing a form of dread",
+            Condition::KenseisShot => "drawing a kensei shot",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
             Condition::Confused => "confused",

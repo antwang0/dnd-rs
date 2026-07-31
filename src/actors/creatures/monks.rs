@@ -439,3 +439,62 @@ pub static FOUR_ELEMENTS_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// Kensei Monk — Monastic Tradition **Way of the Kensei** subclass
+/// build (XGtE), and the first monk on the roster that wants to be
+/// anywhere but in contact.
+///
+/// Two subclass features, plus the weapon that makes them mean
+/// something:
+///
+///   - **Kensei's Shot** (lv3, bonus action, at will): until the end of
+///     the turn, every ranged weapon attack the monk lands carries an
+///     extra 1d4. Free — RAW costs the bonus action and no ki.
+///
+///   - **Deft Strike** (lv6): once on each of the monk's turns, a
+///     connecting kensei-weapon hit deals an extra martial-arts die of
+///     the weapon's own damage type. RAW's 1 ki is dropped for the same
+///     reason Flurry of Blows' is: the engine has no ki pool, and the
+///     once-per-turn cap is the limiting resource anyway.
+///
+///   - **A longbow.** RAW's Kensei Weapons clause is a proficiency
+///     grant, which on its own has no surface here — but a monk with no
+///     ranged weapon has nothing for either feature to ride, so the bow
+///     is the feature.
+///
+/// The chassis is what makes this interesting rather than a strictly
+/// worse Hunter Ranger. Every bonus action a monk already has —
+/// Flurry of Blows, Patient Defense, Step of the Wind — is priced for
+/// standing next to the thing you are hitting. Kensei's Shot is priced
+/// the same and points the opposite way, so the Kensei spends the fight
+/// choosing between a bonus action that rewards closing and one that
+/// rewards holding, on a body with 45 ft of movement and Deflect
+/// Missiles. No other monk build has that decision; the baseline monk
+/// can only ever answer "close".
+///
+/// RAW features not shipped. **Agile Parry** (lv3 — +2 AC when the monk
+/// makes an unarmed strike as part of the Attack action while holding a
+/// kensei weapon) needs a within-turn "have you already swung
+/// unarmed?" trigger the AC lane can't see, and shipping the +2 as a
+/// flat passive would be a real over-grant on a chassis that already
+/// runs unarmored-defense AC. **Sharpen the Blade** (lv11) and
+/// **Unerring Accuracy** (lv17) need a per-weapon enhancement lane and
+/// a miss-reroll lane respectively; neither exists.
+///
+/// Glyph 'K' — for **K**ensei. Distinct from baseline monk 'M', Open
+/// Hand 'O', Shadow 'W' and Four Elements 'E'; Long Death inherits 'M'.
+pub static KENSEI_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{DEFT_STRIKE_TAG, KENSEIS_SHOT};
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*KENSEIS_SHOT);
+    actions.push(&crate::actions::monster_attacks::LONGBOW);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(DEFT_STRIKE_TAG);
+    CreatureTemplate {
+        name: "Kensei Monk",
+        glyph: 'K',
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});
