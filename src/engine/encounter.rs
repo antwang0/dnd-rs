@@ -1356,6 +1356,28 @@ impl CastContext {
 /// the keyed table and already returns `None` unless the flag is held —
 /// so there is no accessor to pass in and no way for a call site to pair
 /// a condition with the wrong one.
+/// Back-linked conditions that impose disadvantage on their holder's
+/// attacks against anyone *other than* the creature the link points at.
+///
+/// Three features arrive at the same shape from different directions —
+/// Compelled Duel (a spell), the Battle Master's Goading Attack (a
+/// maneuver), and the Ancestral Guardian's Ancestral Protectors (a
+/// passive mark) — and the mechanic is identical in all three: the
+/// holder can swing at their counterparty freely and pays for swinging
+/// at anyone else. Listing them means a fourth is a row rather than
+/// another near-identical call in `compute_attack_mode`.
+///
+/// Note that this is only ever half of a feature. Compelled Duel adds a
+/// WIS save to leave, Goading Attack is a one-swing prime, and
+/// Ancestral Protectors also halves the damage the holder deals
+/// elsewhere. The disadvantage is the part they share, and it's the
+/// part that belongs in one place.
+const FOCUS_LINK_DISADVANTAGES: &[Condition] = &[
+    Condition::Dueled,
+    Condition::Goaded,
+    Condition::AncestrallyHaunted,
+];
+
 fn focus_link_mode(
     current: RollMode,
     holder: &ActorInstance,
@@ -2366,48 +2388,17 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Advantage);
             }
-            // 5e Compelled Duel (Dueled + its back-link) and Battle Master
-            // Goading Attack (Goaded + its back-link) share the "locked onto
-            // someone other than this target" pattern: a flag-plus-link
-            // that fires disadvantage only when the wrong counterparty
-            // is being hit. Centralized so both clauses (and any future
-            // sibling — Sentinel rider, Compelled-vow flavor) route
-            // through one helper instead of re-inlining the
-            // `has_condition + link.is_some_and(!=)` shape.
-            mode = focus_link_mode(
-                mode,
-                attacker,
-                target_id,
-                Condition::Dueled,
-                RollMode::Disadvantage,
-            );
-            mode = focus_link_mode(
-                mode,
-                attacker,
-                target_id,
-                Condition::Goaded,
-                RollMode::Disadvantage,
-            );
-            // 5e Ancestral Guardian Barbarian **Ancestral Protectors**:
-            // "that creature has disadvantage on any attack roll that
-            // isn't against you." Same flag-plus-link shape as Compelled
-            // Duel and Goading Attack, and the third caller the
-            // `focus_link_mode` helper was written to expect.
-            //
-            // The half of the feature that doesn't live here is the
-            // other clause — damage the haunted creature deals to
-            // anyone but the barbarian is halved — which lands at
-            // `attacker_scoped_damage_reduction`. The pairing is what
-            // makes the subclass a *guardian*: this clause makes hitting
-            // the wizard unlikely, and that one makes it cheap when it
-            // happens anyway.
-            mode = focus_link_mode(
-                mode,
-                attacker,
-                target_id,
-                Condition::AncestrallyHaunted,
-                RollMode::Disadvantage,
-            );
+            // Every "locked onto someone, and this isn't them" debuff,
+            // through one walk. See `FOCUS_LINK_DISADVANTAGES`.
+            for &condition in FOCUS_LINK_DISADVANTAGES {
+                mode = focus_link_mode(
+                    mode,
+                    attacker,
+                    target_id,
+                    condition,
+                    RollMode::Disadvantage,
+                );
+            }
         }
 
         // Target-side modifiers.

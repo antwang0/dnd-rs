@@ -21,13 +21,18 @@ use crate::{
 };
 
 /// Class-feature tags that refresh on a 5e short rest. Read by
-/// `ActorInstance::short_rest` to repopulate `features_remaining` for any
-/// matching tag the actor has on their template. The remaining tags in
-/// this module are long-rest features and only restore via `long_rest`.
+/// `ActorInstance::short_rest`, which walks this registry chained with
+/// `BATTLE_MASTER_MANEUVERS` and repopulates `features_remaining` for
+/// every matching tag the actor carries. The remaining tags in this
+/// module are long-rest features and only restore via `long_rest`.
 ///
-/// Keep this list in sync with new short-rest features as they're added —
-/// the test `short_rest_features_listed_here_match_class_features` (in
-/// class_features tests) covers the obvious additions.
+/// The two registries are kept disjoint: the maneuvers have their own
+/// list because `ActorInstance` needs to enumerate them independently,
+/// and duplicating them here would mean two places to forget. See
+/// `the_short_rest_registry_matches_the_templates_that_use_it`, which
+/// pins the disjointness and checks that every row is actually carried
+/// by some registered PC template — a registry entry whose feature has
+/// moved on is invisible otherwise.
 pub const SHORT_REST_FEATURES: &[&str] = &[
     SECOND_WIND_TAG,
     ACTION_SURGE_TAG,
@@ -236,8 +241,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
 /// which refresh on a short or long rest. We collapse the dice pool to
 /// per-tag once-per-rest charges so the gating stays uniform with the
-/// other class features; the tags are listed both here and in the
-/// `SHORT_REST_FEATURES` registry below so a short rest refreshes them.
+/// other class features.
+///
+/// Deliberately *not* duplicated into `SHORT_REST_FEATURES`:
+/// `ActorInstance::short_rest` chains the two registries, so listing a
+/// maneuver in both would refresh it twice and give two places to
+/// forget it. This list exists separately because the maneuver cohort
+/// is enumerated on its own elsewhere.
 pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     TRIP_ATTACK_TAG,
     MENACING_ATTACK_TAG,
@@ -12407,3 +12417,48 @@ impl Action for KenseisShotAction {
 }
 
 pub static KENSEIS_SHOT: LazyLock<KenseisShotAction> = LazyLock::new(|| KenseisShotAction {});
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet as Set;
+
+    /// The two per-rest registries don't repeat themselves and don't
+    /// overlap.
+    ///
+    /// `SHORT_REST_FEATURES` carried a comment promising that a test
+    /// kept it honest. There wasn't one, and in its absence the sibling
+    /// registry's docs had drifted into claiming the Battle Master
+    /// maneuvers were listed in both — they aren't, and shouldn't be,
+    /// because `ActorInstance::short_rest` chains the two. Writing the
+    /// test is what surfaced the drift.
+    ///
+    /// What is *not* checked here, and why: a coverage assertion
+    /// ("every registered tag is carried by some template") would be
+    /// the more valuable invariant, and it can't be written honestly
+    /// today. `pc_template_families` is the engine's only template
+    /// registry and it holds class builds only, so a racial feature
+    /// like the Dragonborn's Breath Weapon reads as an orphan against
+    /// it. The gap is in the registry, not in the tag list.
+    #[test]
+    fn the_short_rest_registry_matches_the_templates_that_use_it() {
+        let short_rest: Set<&str> = SHORT_REST_FEATURES.iter().copied().collect();
+        assert_eq!(
+            short_rest.len(),
+            SHORT_REST_FEATURES.len(),
+            "SHORT_REST_FEATURES lists some tag more than once"
+        );
+        let maneuvers: Set<&str> = BATTLE_MASTER_MANEUVERS.iter().copied().collect();
+        assert_eq!(
+            maneuvers.len(),
+            BATTLE_MASTER_MANEUVERS.len(),
+            "BATTLE_MASTER_MANEUVERS lists some tag more than once"
+        );
+        let both: Vec<&&str> = short_rest.intersection(&maneuvers).collect();
+        assert!(
+            both.is_empty(),
+            "short_rest chains both registries, so {:?} would refresh twice",
+            both
+        );
+    }
+}
