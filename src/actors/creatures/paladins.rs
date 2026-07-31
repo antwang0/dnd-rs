@@ -719,3 +719,74 @@ pub static WATCHERS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     // `LONG_DEATH_MONK_TEMPLATE`, `GLORY_PALADIN_TEMPLATE`.
     PALADIN_TEMPLATE.with_subclass_tag("Watchers Paladin", 'H', AURA_OF_THE_SENTINEL_TAG)
 });
+
+/// Conquest Paladin — Oath of **Conquest** subclass build (XGtE). Three
+/// subclass features, and the only paladin oath in the engine whose
+/// pieces are useless apart and lethal together:
+///
+///   - **Conquering Presence** (lv3 Channel Divinity): every hostile
+///     within 30 ft rolls a WIS save or is Frightened for 10 rounds.
+///     On its own this is Dreadful Aspect with a different name —
+///     disadvantage on their attacks, and they walk away.
+///
+///   - **Aura of Conquest** (lv7): a Frightened creature inside 10 ft
+///     can't walk away. Its speed is 0 and it takes 5 psychic at the
+///     start of each of its turns. On its own this is nothing at all,
+///     because nothing the paladin does frightens anyone.
+///
+///   - **Scornful Rebuke** (lv15): anything that hits the paladin takes
+///     CHA-mod psychic back. Unlike every other retaliation in the
+///     engine this one isn't melee-gated — an archer eats it too.
+///
+/// Put the first two together and the oath stops being a fear build.
+/// The presence lands, the aura roots whoever failed inside 10 ft, and
+/// the paladin is then standing in the middle of a group of enemies who
+/// cannot leave, are rolling at disadvantage, are losing 5 HP a turn,
+/// and — via Scornful Rebuke — are paying for every swing they do
+/// land. Every other oath on the roster projects *outward*, protecting
+/// allies (Devotion, Ancients, Glory, Watchers) or sharpening the
+/// paladin's own swing (Oathbreaker, Vengeance). Conquest is the only
+/// one that makes standing next to the paladin the mistake.
+///
+/// It is also the only *hostile* aura in the engine, which is why
+/// `EncounterInstance::aura_emitters` grew a team-side parameter: the
+/// five ally-facing paladin auras all read their emitters through a
+/// helper that filters to the subject's own team, and Conquest needed
+/// exactly that walk with the comparison flipped — including the
+/// clauses that are easy to forget, like an unconscious paladin's aura
+/// going dark.
+///
+/// RAW's remaining Conquest features aren't shipped: the oath spell
+/// list (Armor of Agathys, Command, Hold Person, Spiritual Weapon,
+/// Bestow Curse, Fear, Dominate Beast, Stoneskin, Cloudkill, Dominate
+/// Person) is a spells-known change rather than a mechanical one, and
+/// **Invincible Conqueror** (lv20 capstone: resistance to all damage,
+/// an extra attack, crits on 19-20 for one minute) is a level-20
+/// capstone on a level-3-to-10 chassis.
+///
+/// Glyph 'Q' — for the **Q** in Conquest. Distinct from baseline
+/// paladin 'P', Devotion 'D', Ancients 'A', Vengeance 'V', Oathbreaker
+/// 'O', Glory 'Y' and Watchers 'H'.
+pub static CONQUEST_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{CONQUERING_PRESENCE, CONQUERING_PRESENCE_TAG};
+    // Not the tag-only `with_subclass_tag` clone the Glory and Watchers
+    // oaths use: Conquering Presence is an action, so the action list
+    // has to grow. The two passives ride template flags rather than
+    // tags — both are read by engine chokepoints that take an
+    // `&ActorInstance` (the aura walker, the reflect table) rather than
+    // by an action's validator, which is the same split every other
+    // always-on paladin aura already sits on.
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*CONQUERING_PRESENCE);
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(CONQUERING_PRESENCE_TAG);
+    CreatureTemplate {
+        name: "Conquest Paladin",
+        glyph: 'Q',
+        has_aura_of_conquest: true,
+        has_scornful_rebuke: true,
+        actions,
+        features,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});

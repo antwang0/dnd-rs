@@ -2,7 +2,8 @@ use std::sync::LazyLock;
 
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, CHARM_ANIMALS_AND_PLANTS, DREADFUL_ASPECT, TURN_THE_FAITHLESS, TURN_UNDEAD,
+    ARCANE_ABJURATION, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE, DREADFUL_ASPECT,
+    TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
 };
 use crate::ai::{Controller, ControllerDecision};
@@ -3929,6 +3930,18 @@ const TURN_BURST_PICKS: &[TurnBurstPick] = &[
     TurnBurstPick {
         config: &DREADFUL_ASPECT,
         min_targets: 2,
+    },
+    // Conquering Presence takes the same unfiltered "anything hostile"
+    // shape as Dreadful Aspect but a lower bar, because the Conquest
+    // Paladin is the one holder for whom a *single* frightened enemy
+    // is worth the charge: Aura of Conquest roots whoever failed and
+    // bleeds them 5 psychic a turn, so the fear converts into damage
+    // and a lockdown rather than into disadvantage alone. The
+    // Oathbreaker, with nothing to cash the fear in for, still wants
+    // two.
+    TurnBurstPick {
+        config: &CONQUERING_PRESENCE,
+        min_targets: 1,
     },
 ];
 

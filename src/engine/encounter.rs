@@ -502,6 +502,27 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
 /// axis with a bare condition list because every entry there is a plain
 /// caster-side self-buff; this one covers the save-roll axis and needs
 /// the predicate pair because its rows read *both* sides of the roll.
+/// Psychic damage the Conquest Paladin's Aura of Conquest deals to a
+/// Frightened enemy that starts its turn inside it. RAW is half the
+/// paladin's level; the paladin chassis in this engine ships its
+/// subclass features on a level-10-equivalent build, so 5.
+///
+/// A flat constant rather than a read off `ActorInstance::level()` for
+/// the reason every other level-scaled number on the PC templates is
+/// one: instantiated actors are all level 1 in this engine, so reading
+/// the field would silently collapse the aura to 0.
+const AURA_OF_CONQUEST_PSYCHIC: u32 = 5;
+
+/// Which side of the emitter's team an aura projects onto. Every
+/// paladin aura but one helps the emitter's allies; Oath of Conquest's
+/// hurts their enemies. Read by `EncounterInstance::aura_emitters`,
+/// which is otherwise identical for both.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuraSide {
+    Allied,
+    Hostile,
+}
+
 pub struct CasterSaveModeRider {
     /// Gate: does the rider fire for `(caster_id, target_id)`?
     pub applies: fn(&EncounterInstance, usize, usize) -> bool,
@@ -2879,6 +2900,27 @@ impl EncounterInstance {
         actor_id: usize,
         predicate: fn(&ActorInstance) -> bool,
     ) -> impl Iterator<Item = &ActorInstance> {
+        self.aura_emitters(actor_id, predicate, AuraSide::Allied)
+    }
+
+    /// Team-agnostic body shared by `paladin_aura_emitters` (the five
+    /// ally-facing auras) and `in_hostile_aura_of_conquest` (the one
+    /// enemy-facing aura).
+    ///
+    /// Every clause except the team comparison is identical across the
+    /// two, and the ones that are easy to forget are the ones that
+    /// matter: an emitter has to be conscious *and* not incapacitated
+    /// for its aura to project, which is RAW ("you must be conscious to
+    /// grant this bonus") and is just as true of an aura that hurts
+    /// people as of one that helps them. Lifting the body means the
+    /// Conquest aura inherits those clauses instead of re-deriving
+    /// them.
+    fn aura_emitters(
+        &self,
+        actor_id: usize,
+        predicate: fn(&ActorInstance) -> bool,
+        side: AuraSide,
+    ) -> impl Iterator<Item = &ActorInstance> {
         let target = self.actors.get(&actor_id);
         let target_team = target.map(|t| t.team());
         let target_loc = target.map(|t| t.location());
@@ -2890,8 +2932,12 @@ impl EncounterInstance {
             let Some(loc) = target_loc else {
                 return false;
             };
+            let side_ok = match side {
+                AuraSide::Allied => paladin.team() == team,
+                AuraSide::Hostile => paladin.team() != team,
+            };
             predicate(paladin)
-                && paladin.team() == team
+                && side_ok
                 && paladin.is_combat_active()
                 && !paladin.is_incapacitated()
                 && footprint_chebyshev(
@@ -2901,6 +2947,23 @@ impl EncounterInstance {
                     target_size,
                 ) <= Self::PALADIN_AURA_RADIUS
         })
+    }
+
+    /// True if `actor_id` is standing inside the 10 ft Aura of Conquest
+    /// of any *enemy* Conquest Paladin (Conquest subclass level 7).
+    ///
+    /// The mirror image of `is_in_aura_of_courage` and friends — same
+    /// emitter model, opposite team filter. Read at
+    /// `apply_aura_of_conquest`, which is where both of the aura's
+    /// clauses (speed 0, psychic drip) land.
+    pub fn in_hostile_aura_of_conquest(&self, actor_id: usize) -> bool {
+        self.aura_emitters(
+            actor_id,
+            ActorInstance::has_aura_of_conquest,
+            AuraSide::Hostile,
+        )
+        .next()
+        .is_some()
     }
 
     /// 5e Paladin Aura of Protection bonus for `actor_id`'s saves.
@@ -5982,6 +6045,13 @@ impl EncounterInstance {
             }
             self.log(format!("{}'s displacement reasserts itself.", name));
         }
+        // 5e Conquest Paladin Aura of Conquest: a Frightened creature
+        // standing in an enemy paladin's aura loses its movement for
+        // the turn and takes psychic damage. Runs after
+        // `reset_for_new_round` has handed out the turn's movement,
+        // because zeroing a budget that hasn't been granted yet would
+        // be undone a line later.
+        self.apply_aura_of_conquest(actor_id);
         // 5e Recharge: at the start of each turn, roll a d6 for each
         // spent recharge ability. If the roll >= the ability's threshold,
         // the ability becomes available again.
@@ -6006,6 +6076,50 @@ impl EncounterInstance {
                 }
             }
         }
+    }
+
+    /// 5e Conquest Paladin **Aura of Conquest** (subclass level 7), both
+    /// clauses, at the start of the victim's turn:
+    ///
+    ///   - "its speed is 0, and it can't benefit from any bonus to its
+    ///     speed" — the engine grants the turn's movement budget in
+    ///     `reset_for_new_round`, so draining it here is exactly
+    ///     equivalent, and it covers the "can't benefit from a bonus"
+    ///     clause for free (a bonus applied to a budget of zero that is
+    ///     then zeroed is still zero).
+    ///   - "it takes psychic damage equal to half your paladin level if
+    ///     it starts its turn there".
+    ///
+    /// Gated on the victim being Frightened, which is what makes the
+    /// aura a *combination* rather than a standalone lockdown: the
+    /// Conquest paladin has to land Conquering Presence (or any other
+    /// fear) first, and the aura is what converts that fear from
+    /// "disadvantage on attacks" into "cannot leave." Without the pair,
+    /// a frightened creature simply walks out of the 10 ft and the aura
+    /// never bites.
+    fn apply_aura_of_conquest(&mut self, actor_id: usize) {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let caught = self.actors.get(&actor_id).is_some_and(|a| {
+            a.is_combat_active() && a.has_condition(Condition::Frightened)
+        }) && self.in_hostile_aura_of_conquest(actor_id);
+        if !caught {
+            return;
+        }
+        let name = self.actor_name(actor_id);
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.zero_movement();
+        }
+        self.log(format!(
+            "  aura of conquest: {} is rooted in place by dread, and takes {} psychic.",
+            name,
+            AURA_OF_CONQUEST_PSYCHIC
+        ));
+        DealDamage {
+            actor_id,
+            amount: AURA_OF_CONQUEST_PSYCHIC,
+            damage_type: DamageType::Psychic,
+        }
+        .apply(self);
     }
 
     /// Advance the initiative queue and fire `round_end` if the queue
@@ -69448,5 +69562,180 @@ mod tests {
             }
         }
         assert!(shrugs > 0 && bites > 0, "the sweep should see both outcomes");
+    }
+
+    /// Aura of Conquest roots a Frightened enemy and bleeds it, and does
+    /// neither to anyone who isn't both frightened and in range.
+    ///
+    /// All four combinations in one test because the aura is a
+    /// conjunction and a conjunction is only pinned by checking the
+    /// corners: a bug that dropped either half of the gate would still
+    /// pass a test that only ever set up the passing case.
+    #[test]
+    fn the_conquest_aura_roots_only_frightened_enemies_standing_in_it() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+
+        // (frightened?, tiles away, should the aura bite?)
+        let cases = [
+            (true, 1, true),
+            (true, 9, false),
+            (false, 1, false),
+            (false, 9, false),
+        ];
+        for (frightened, gap, expect_bite) in cases {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let paladin = e
+                .instantiate_creature(&CONQUEST_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(
+                    &OGRE_TEMPLATE,
+                    Coordinate::new(2 + gap, 2),
+                    1,
+                    0,
+                )
+                .unwrap();
+            assert!(e.actors.contains_key(&paladin));
+            if frightened {
+                e.actors
+                    .get_mut(&ogre)
+                    .unwrap()
+                    .add_condition(Condition::Frightened, ConditionTimer::Rounds(10));
+            }
+            let hp_before = e.actors[&ogre].hitpoints();
+            e.start_turn_for(ogre);
+            let rooted = e.actors[&ogre].remaining_movement() <= 0.0;
+            let bled = e.actors[&ogre].hitpoints() < hp_before;
+            assert_eq!(
+                rooted, expect_bite,
+                "frightened={} gap={}: speed-0 clause",
+                frightened, gap
+            );
+            assert_eq!(
+                bled, expect_bite,
+                "frightened={} gap={}: psychic drip clause",
+                frightened, gap
+            );
+        }
+    }
+
+    /// The aura is hostile-scoped: a Conquest Paladin does not root
+    /// their own frightened allies.
+    ///
+    /// Worth its own test because `aura_emitters` grew a team-side
+    /// parameter to support this, and every other caller passes the
+    /// opposite value — a wire-up that flipped the argument would leave
+    /// all five ally auras working and only this one wrong.
+    #[test]
+    fn the_conquest_aura_spares_the_paladins_own_frightened_allies() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let _paladin = e
+            .instantiate_creature(&CONQUEST_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Same team as the paladin.
+        let ally = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(10));
+        let hp_before = e.actors[&ally].hitpoints();
+        e.start_turn_for(ally);
+        assert!(
+            e.actors[&ally].remaining_movement() > 0.0,
+            "an ally standing in the aura keeps their movement"
+        );
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            hp_before,
+            "an ally standing in the aura takes no psychic damage"
+        );
+    }
+
+    /// Scornful Rebuke answers ranged attacks, which is what separates
+    /// it from every other reflect in the engine.
+    ///
+    /// Driven through an ordinary swing rather than by poking the table
+    /// directly, so the test also proves the lane is wired into the
+    /// shared attack chokepoint and not just declared.
+    #[test]
+    fn scornful_rebuke_answers_an_arrow_the_way_it_answers_a_sword() {
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
+        let cha_mod =
+            crate::engine::util::modifier_from_score(CONQUEST_PALADIN_TEMPLATE.charisma).max(1)
+                as u32;
+
+        // Sweep seeds so the assertion rests on the shots that land
+        // rather than on one lucky roll.
+        let mut rebukes = 0;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let paladin = e
+                .instantiate_creature(&CONQUEST_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Well outside melee: nothing on the melee reflect lane can
+            // reach, so anything the archer loses is the rebuke.
+            let archer = e
+                .instantiate_creature(&SCOUT_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+                .unwrap();
+            let bow = e.actors[&archer]
+                .actions
+                .iter()
+                .copied()
+                .find(|a| a.name().contains("longbow"))
+                .expect("the scout carries a longbow");
+            let archer_hp_before = e.actors[&archer].hitpoints();
+            let targets = vec![paladin];
+            for eff in bow.side_effects(&mut e, archer, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            let lost = archer_hp_before - e.actors[&archer].hitpoints();
+            if lost > 0 {
+                assert_eq!(
+                    lost, cha_mod,
+                    "seed {}: the rebuke is exactly the paladin's CHA modifier",
+                    seed
+                );
+                rebukes += 1;
+            }
+        }
+        assert!(
+            rebukes > 0,
+            "30 seeds of longbow fire should connect at least once"
+        );
+    }
+
+    /// An incapacitated paladin rebukes nobody — RAW writes the clause
+    /// into the feature, and the reflect lane enforces it for every row
+    /// rather than per-row.
+    #[test]
+    fn an_incapacitated_paladin_has_no_rebuke_left() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let paladin = e
+            .instantiate_creature(&CONQUEST_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&paladin)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        crate::engine::attack::push_any_attack_reflect_riders(
+            &mut e, &mut effects, ogre, paladin,
+        );
+        assert!(
+            effects.is_empty(),
+            "a stunned paladin queues no rebuke payload"
+        );
     }
 }

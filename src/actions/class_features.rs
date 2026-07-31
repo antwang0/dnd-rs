@@ -212,6 +212,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
     INVOKE_DUPLICITY_TAG,
+    // 5e Conquest Paladin level-3 subclass Channel Divinity —
+    // Conquering Presence. Refreshed on short rest alongside the rest
+    // of the paladin CD family (Dreadful Aspect, Abjure Enemy, Nature's
+    // Wrath, Turn the Faithless).
+    CONQUERING_PRESENCE_TAG,
     // 5e Circle of Spores Druid **Symbiotic Entity** — RAW spends a
     // Wild Shape use, and Wild Shape itself recharges on a short rest,
     // so the charge lands on the short-rest lane rather than the
@@ -12054,3 +12059,35 @@ impl Action for HaloOfSpores {
 }
 
 pub static HALO_OF_SPORES: LazyLock<HaloOfSpores> = LazyLock::new(|| HaloOfSpores {});
+
+/// Tag for the Conquest Paladin's **Conquering Presence** (Oath of
+/// Conquest, subclass level 3 Channel Divinity). Once per short rest,
+/// like every sibling paladin CD charge.
+pub const CONQUERING_PRESENCE_TAG: &str = "paladin.conquering_presence";
+
+/// Conquering Presence — Conquest Paladin Channel Divinity (lv3),
+/// action. Every hostile within 30 ft makes a WIS save vs the paladin's
+/// CHA-anchored DC or is Frightened for 10 rounds.
+///
+/// Mechanically the twin of the Oathbreaker's Dreadful Aspect, and that
+/// is not an accident of modeling — RAW writes the two oaths' level-3
+/// Channel Divinities almost identically, because the difference
+/// between the two subclasses is not the fear, it is what each of them
+/// does *with* the fear afterwards. The Oathbreaker frightens and then
+/// hits harder (Aura of Hate). The Conqueror frightens and then locks
+/// the frightened where they stand (Aura of Conquest), which turns a
+/// crowd-control button into a kill box.
+///
+/// That is the whole reason to ship it as a second `TurnBurst` literal
+/// rather than to reuse Dreadful Aspect on the Conquest chassis: the
+/// two need separate per-rest charges, separate names in the log, and
+/// separate entries in the prompt parser, and the config-driven struct
+/// makes all three cost five lines.
+pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "conquering presence",
+    aliases: &["cp", "cd-conquer", "conquering", "conquer"],
+    tag: CONQUERING_PRESENCE_TAG,
+    dc_ability: AbilityScoreType::Charisma,
+    type_filter: |_| true,
+    installed: Condition::Frightened,
+});

@@ -1546,6 +1546,11 @@ pub fn resolve_attack_outcome_with_rider(
     if p.is_melee {
         push_melee_reflect_riders(encounter, &mut effects, p.caster_id, p.target_id);
     }
+    // Retaliation whose RAW trigger is any connecting attack rather than
+    // a melee one — Scornful Rebuke and future siblings. No `is_melee`
+    // gate: that gate is the only thing separating this lane from the
+    // one directly above.
+    push_any_attack_reflect_riders(encounter, &mut effects, p.caster_id, p.target_id);
     // The action's own extra clause, last so it reads the finished
     // swing. Its damage folds into the returned figure so callers that
     // chain off `damage_dealt` (a half-damage self-heal, a max-HP drain)
@@ -1641,6 +1646,94 @@ fn push_reflect_damage(
         amount,
         damage_type,
     }));
+}
+
+/// Target-side retaliation whose trigger is RAW's *"whenever a creature
+/// hits you with an attack"* — no melee clause — and whose amount is
+/// read off the holder rather than rolled.
+///
+/// The third reflect lane, and the one the other two couldn't express.
+/// `MELEE_REFLECT_RIDERS` keys on a condition and fires only on melee;
+/// `MeleeReflect` keys on the creature's body and also fires only on
+/// melee. The Conquest Paladin's Scornful Rebuke is neither: it is a
+/// permanent class feature (so no condition), it answers arrows and
+/// spell attacks as readily as swords (so no melee gate), and its
+/// damage is the paladin's Charisma modifier (so no die).
+///
+/// `amount` returning 0 skips the row silently, which is what makes the
+/// "minimum of 1" clauses expressible in the row rather than in the
+/// walker.
+pub struct AnyAttackReflect {
+    /// Does this holder carry the feature? Reads the actor rather than
+    /// a tag so a row can gate on a template flag, a passive feature
+    /// tag, or a condition — whichever the feature actually stores.
+    pub holds: fn(&crate::actors::actor_template::ActorInstance) -> bool,
+    /// How much the holder bounces back. Reads the actor because every
+    /// feature on this lane scales with one of their ability
+    /// modifiers.
+    pub amount: fn(&crate::actors::actor_template::ActorInstance) -> u32,
+    pub damage_type: DamageType,
+    /// Log-friendly tag ("scornful rebuke", ...).
+    pub label: &'static str,
+}
+
+/// The any-attack reflect table. One row today; the shape exists
+/// because the alternative was a bespoke block at each of the two
+/// attack chokepoints, and this engine has already learned twice over
+/// what that costs (see `MELEE_CASTER_BUMPS`, `REACTIVE_DAMAGE_CLAMPS`).
+///
+/// Every row is gated on the holder being conscious and not
+/// incapacitated — see `push_any_attack_reflect_riders`. RAW writes
+/// that clause into Scornful Rebuke explicitly, and it is the right
+/// default for the lane: a retaliation the holder is not awake to
+/// deliver shouldn't fire.
+const ANY_ATTACK_REFLECT_FEATURES: &[AnyAttackReflect] = &[
+    // 5e Conquest Paladin **Scornful Rebuke** (subclass level 15).
+    // "Whenever a creature hits you with an attack, that creature takes
+    // psychic damage equal to your Charisma modifier (minimum of 1) if
+    // you're not incapacitated."
+    AnyAttackReflect {
+        holds: |a| a.has_scornful_rebuke(),
+        amount: |a| a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32,
+        damage_type: DamageType::Psychic,
+        label: "scornful rebuke",
+    },
+];
+
+/// Queue every `ANY_ATTACK_REFLECT_FEATURES` payload a landed attack
+/// earns the target against their attacker, melee or not.
+///
+/// Sibling to `push_melee_reflect_riders` and called from the same two
+/// chokepoints, but unconditionally — the melee gate is exactly the
+/// difference between the two lanes.
+pub fn push_any_attack_reflect_riders(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    attacker_id: usize,
+    target_id: usize,
+) {
+    for row in ANY_ATTACK_REFLECT_FEATURES {
+        let amount = match encounter.actors.get(&target_id) {
+            // RAW's "if you're not incapacitated" clause, applied to the
+            // whole lane. A downed or stunned holder retaliates with
+            // nothing.
+            Some(t) if t.is_combat_active() && !t.is_incapacitated() && (row.holds)(t) => {
+                (row.amount)(t)
+            }
+            _ => continue,
+        };
+        if amount == 0 {
+            continue;
+        }
+        push_reflect_damage(
+            encounter,
+            effects,
+            attacker_id,
+            ReflectDamage::Flat(amount),
+            row.damage_type,
+            row.label,
+        );
+    }
 }
 
 /// Damage payload for a melee retaliation rider. Some shields roll dice

@@ -2594,6 +2594,39 @@ pub struct CreatureTemplate {
     /// otherwise carries it. See `class_features::AURA_OF_HATE_TAG`
     /// for the full RAW envelope.
     pub has_aura_of_hate: bool,
+    /// 5e Conquest Paladin (XGtE) level-7 subclass feature — **Aura of
+    /// Conquest**. Passive template flag with two clauses, both scoped
+    /// to Frightened enemies whose footprint sits within 10 ft of the
+    /// paladin: their speed drops to 0, and they take psychic damage
+    /// equal to half the paladin's level at the start of each of their
+    /// turns.
+    ///
+    /// The only *hostile* aura on the paladin chassis. Protection,
+    /// Courage, Devotion, Warding and Alacrity all project onto allies
+    /// and are read through `paladin_aura_emitters`, which filters to
+    /// the subject's own team; Conquest projects onto enemies, so it
+    /// reads through the enemy-scoped
+    /// `EncounterInstance::in_hostile_aura_of_conquest` instead.
+    ///
+    /// Both clauses land at the victim's turn start
+    /// (`apply_aura_of_conquest`), which is where RAW puts the damage
+    /// and where zeroing the movement budget is equivalent to RAW's
+    /// speed-0 clause: the engine hands out the turn's movement in
+    /// `reset_for_new_round`, so draining it there is the same thing as
+    /// never having had it.
+    pub has_aura_of_conquest: bool,
+    /// 5e Conquest Paladin (XGtE) level-15 subclass feature —
+    /// **Scornful Rebuke**. Passive template flag: any creature that
+    /// hits the paladin with an attack takes psychic damage equal to
+    /// the paladin's Charisma modifier (minimum 1), unless the paladin
+    /// is incapacitated.
+    ///
+    /// Read as a row on `engine::attack::ANY_ATTACK_REFLECT_FEATURES`,
+    /// the reflect lane that fires on *any* connecting attack. The two
+    /// older reflect lanes are both melee-gated, which is exactly the
+    /// distinction: an archer who shoots a Conquest Paladin from across
+    /// the room still takes the rebuke.
+    pub has_scornful_rebuke: bool,
     /// 5e Ancients Paladin (PHB) level-7 subclass feature — **Aura of
     /// Warding**. Passive template flag: the paladin and any friendly
     /// creatures whose footprint sits within 10 ft (4 tiles) of the
@@ -3061,6 +3094,8 @@ impl CreatureTemplate {
             has_blindsense: false,
             has_blind_fighting_style: false,
             has_aura_of_hate: false,
+            has_aura_of_conquest: false,
+            has_scornful_rebuke: false,
             has_aura_of_warding: false,
             has_persistent_rage: false,
             has_dwarven_resilience: false,
@@ -3562,6 +3597,13 @@ pub struct ActorInstance {
     /// mod (min +1) to melee weapon damage. See `CreatureTemplate`
     /// docs.
     has_aura_of_hate: bool,
+    /// 5e Conquest Paladin Aura of Conquest (level 7). Hostile 10ft
+    /// aura: Frightened enemies inside it are speed-0 and take psychic
+    /// damage at the start of their turns. See `CreatureTemplate` docs.
+    has_aura_of_conquest: bool,
+    /// 5e Conquest Paladin Scornful Rebuke (level 15). Any attacker who
+    /// connects takes CHA-mod psychic. See `CreatureTemplate` docs.
+    has_scornful_rebuke: bool,
     /// 5e Ancients Paladin Aura of Warding (level 7). Passive 10ft
     /// aura granting spell-typical damage resistance to nearby allies.
     /// See `CreatureTemplate` docs.
@@ -3770,6 +3812,8 @@ impl ActorInstance {
             has_blindsense: ct.has_blindsense,
             has_blind_fighting_style: ct.has_blind_fighting_style,
             has_aura_of_hate: ct.has_aura_of_hate,
+            has_aura_of_conquest: ct.has_aura_of_conquest,
+            has_scornful_rebuke: ct.has_scornful_rebuke,
             has_aura_of_warding: ct.has_aura_of_warding,
             has_persistent_rage: ct.has_persistent_rage,
             has_dwarven_resilience: ct.has_dwarven_resilience,
@@ -4179,6 +4223,21 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_aura_of_hate(&mut self, value: bool) {
         self.has_aura_of_hate = value;
+    }
+
+    /// 5e Conquest Paladin **Aura of Conquest** (level 7): the emitter
+    /// side of the paladin's one hostile aura. Read by
+    /// `EncounterInstance::in_hostile_aura_of_conquest`, which walks
+    /// the emitters from a victim's point of view.
+    pub fn has_aura_of_conquest(&self) -> bool {
+        self.has_aura_of_conquest
+    }
+
+    /// 5e Conquest Paladin **Scornful Rebuke** (level 15): CHA-mod
+    /// psychic back at anything that hits the holder. Read as a row on
+    /// the `ANY_ATTACK_REFLECT_FEATURES` lane in `engine::attack`.
+    pub fn has_scornful_rebuke(&self) -> bool {
+        self.has_scornful_rebuke
     }
 
     /// 5e Ancients Paladin **Aura of Warding** (level 7): the paladin

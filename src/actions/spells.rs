@@ -420,6 +420,16 @@ fn spell_attack_outcome(
             target_id,
         );
     }
+    // Reflect sources whose RAW trigger is "hits you with an attack",
+    // full stop — Scornful Rebuke. A Conquest Paladin answers a Fire
+    // Bolt the same way they answer a longsword, so this lane sits
+    // outside the melee gate above.
+    crate::engine::attack::push_any_attack_reflect_riders(
+        encounter,
+        &mut effects,
+        caster_id,
+        target_id,
+    );
     (effects, total_dmg)
 }
 
