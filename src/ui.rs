@@ -403,6 +403,26 @@ pub fn render_sideinfo(
             action_slots, bonus_slots
         ))),
     ];
+    // Size is fixed for all but a handful of creatures, so this line
+    // appears only when something has moved it — or is trying to. The
+    // refused case is the one that most needs saying: a Rune Knight who
+    // spends Giant's Might in a corridor has burned the charge, is
+    // holding the condition, and has exactly the footprint they started
+    // with, which is otherwise invisible. Naming what they are waiting
+    // to become tells them to take a step.
+    let size = curr_actor.size();
+    let wanted = curr_actor.desired_size();
+    if size != curr_actor.base_size() || wanted != size {
+        let text = if wanted != size {
+            format!("Size: {} — no room to become {}", size, wanted)
+        } else {
+            format!("Size: {}", size)
+        };
+        stats_lines.push(Line::from(Span::styled(
+            text,
+            Style::default().fg(Color::LightYellow),
+        )));
+    }
     // Dodge / Disengage are turn-scoped flags — surface them so the
     // player can see they're spending their action on defense rather
     // than offense.

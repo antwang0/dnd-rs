@@ -71363,4 +71363,49 @@ mod tests {
             "and the refused order leaves the reaction unspent"
         );
     }
+
+    /// Growing changes what the fighter can get their arms around. 5e's
+    /// grapple gate is "no more than one size larger than you", so a
+    /// Medium fighter cannot grapple a Huge creature and a Large one
+    /// can — which means Giant's Might quietly unlocks a whole class of
+    /// target the chassis could never touch before.
+    ///
+    /// Nothing was written to make this happen. It falls out of the
+    /// grapple gate reading `size()` and `size()` finally being able to
+    /// move, which is the argument for putting the growth on the board
+    /// rather than modelling it as a pile of separate bonuses.
+    #[test]
+    fn giants_might_lets_the_fighter_grapple_a_huge_creature() {
+        use crate::actions::default_actions::GRAPPLE;
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+        use crate::engine::types::Size;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // The giant sits north-west of the fighter, who grows south-east
+        // — so the room the growth needs is behind them, not through the
+        // creature they are reaching for.
+        let giant = e
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(0, 0), 1, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&giant].size(), Size::Huge);
+        let targets = vec![giant];
+        assert!(
+            !GRAPPLE.validate_input(&e, f, Some(&targets), None, None),
+            "a Medium creature cannot grapple a Huge one"
+        );
+
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::GiantsMight, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Large);
+        assert!(
+            GRAPPLE.validate_input(&e, f, Some(&targets), None, None),
+            "a Large one can"
+        );
+    }
 }
