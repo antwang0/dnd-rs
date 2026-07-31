@@ -1495,7 +1495,7 @@ pub fn resolve_attack_outcome_with_rider(
     // `spells::spell_attack_outcome` sums the same pair.
     let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id)
         + encounter.curse_damage_bonus(p.caster_id, p.target_id)
-        + weapon_damage_penalty(encounter, p.caster_id);
+        + attack_damage_penalty(encounter, p.caster_id);
     let total_damage_bonus = p.damage_bonus + caster_damage_buff;
     let mut damage = (raw_damage + crit_extra + brutal_extra + total_damage_bonus).max(0) as u32;
     if is_crit {
@@ -2628,7 +2628,7 @@ fn fire_missed_attack_boost(encounter: &mut EncounterInstance, p: &AttackParams)
 
 /// Caster-side per-swing damage *penalties*, the negative image of
 /// `ON_HIT_RIDERS`. Each row is a condition the attacker holds and the
-/// die that is rolled and subtracted from the swing's damage.
+/// die that is rolled and subtracted from the attack's damage.
 ///
 /// A separate table rather than a signed field on `OnHitRider` because
 /// the two resolve at different points: a rider is its own damage
@@ -2637,12 +2637,11 @@ fn fire_missed_attack_boost(encounter: &mut EncounterInstance, p: &AttackParams)
 /// *before* resistance and the floor-at-zero clamp — otherwise a Reduced
 /// creature would deal full damage and then be handed a separate
 /// negative packet the damage pipeline has no meaning for.
-const WEAPON_DAMAGE_PENALTY_DICE: &[(Condition, Dice, &str)] = &[
+const ATTACK_DAMAGE_PENALTY_DICE: &[(Condition, Dice, &str)] = &[
     // 5e Reduce (the shrink half of Enlarge / Reduce): "any attack it
-    // makes deals 1d4 less damage". Weapon attacks only — this
-    // chokepoint is the weapon lane, and spell attacks sum their bonuses
-    // separately in `spells::spell_attack_outcome`, which RAW leaves
-    // alone.
+    // makes deals 1d4 less damage". Any attack, so both chokepoints ask
+    // — the weapon lane here and the spell lane in
+    // `spells::spell_attack_outcome`.
     (Condition::Reduced, Dice::new(1, 4), "reduce"),
 ];
 
@@ -2650,12 +2649,16 @@ const WEAPON_DAMAGE_PENALTY_DICE: &[(Condition, Dice, &str)] = &[
 /// Returns a value ≤ 0 so the caller can add it alongside the positive
 /// bonus lanes. Rolls nothing (and logs nothing) for the overwhelmingly
 /// common case of an attacker holding no penalty condition.
-fn weapon_damage_penalty(encounter: &mut EncounterInstance, caster_id: usize) -> i32 {
+///
+/// Public because the spell-attack chokepoint lives in another module
+/// and has to ask the same question — the two damage-assembly sites sum
+/// the same bonus lanes and must not disagree about the penalty ones.
+pub fn attack_damage_penalty(encounter: &mut EncounterInstance, caster_id: usize) -> i32 {
     let held: Vec<(Dice, &str)> = {
         let Some(actor) = encounter.actors.get(&caster_id) else {
             return 0;
         };
-        WEAPON_DAMAGE_PENALTY_DICE
+        ATTACK_DAMAGE_PENALTY_DICE
             .iter()
             .filter(|(condition, _, _)| actor.has_condition(*condition))
             .map(|(_, dice, label)| (*dice, *label))

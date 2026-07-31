@@ -346,7 +346,8 @@ fn spell_attack_outcome(
     // `caster_damage_buffs` because that helper takes no target — the
     // whole point of this bonus is that it depends on who is being hit.
     let caster_damage_buff = encounter.caster_damage_buffs(caster_id)
-        + encounter.curse_damage_bonus(caster_id, target_id);
+        + encounter.curse_damage_bonus(caster_id, target_id)
+        + crate::engine::attack::attack_damage_penalty(encounter, caster_id);
     let total_damage_bonus = damage_bonus + caster_damage_buff;
     let total_dmg = (dmg + crit_extra + total_damage_bonus).max(0) as u32;
     encounter.log(format!(

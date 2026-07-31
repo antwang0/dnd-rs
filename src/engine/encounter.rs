@@ -7551,7 +7551,7 @@ impl EncounterInstance {
         self.trigger_expert_divination(caster_id, spell_level, school);
         self.trigger_benign_transposition_recharge(caster_id, spell_level, school);
         self.trigger_war_magic_prime(caster_id, spell_level, school);
-        self.trigger_voice_of_authority(caster_id, spell_level, target_ids);
+        effects.append(&mut self.trigger_voice_of_authority(caster_id, spell_level, target_ids));
         effects
     }
 
@@ -7588,20 +7588,20 @@ impl EncounterInstance {
         caster_id: usize,
         spell_level: u32,
         target_ids: Option<&Vec<usize>>,
-    ) {
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::actions::class_features::VOICE_OF_AUTHORITY_TAG;
         if spell_level == 0 {
-            return;
+            return Vec::new();
         }
         if !self
             .actors
             .get(&caster_id)
             .is_some_and(|a| a.has_passive_feature(VOICE_OF_AUTHORITY_TAG))
         {
-            return;
+            return Vec::new();
         }
         let Some(targets) = target_ids else {
-            return;
+            return Vec::new();
         };
         // First eligible ally in the spell's own target list, in the
         // order the spell named them. A multi-target buff orders one
@@ -7612,14 +7612,17 @@ impl EncounterInstance {
             .copied()
             .find(|&id| id != caster_id && self.actors_allied(caster_id, id));
         let Some(ally_id) = ally else {
-            return;
+            return Vec::new();
         };
-        crate::engine::attack::try_fire_directed_attack(
-            self,
-            ally_id,
-            caster_id,
-            "word of command",
-        );
+        // Queued rather than fired here: the spell's own effects are
+        // still unapplied boxes at this point, and the ally has to
+        // receive the spell before they answer for it. See
+        // `side_effects::DirectedAttack`.
+        vec![Box::new(crate::engine::side_effects::DirectedAttack {
+            actor_id: ally_id,
+            director_id: caster_id,
+            label: "word of command",
+        })]
     }
 
     /// 5e Eldritch Knight Fighter **War Magic** (subclass level 7)
@@ -71555,5 +71558,110 @@ mod tests {
             );
             assert!(e.actors[&rogue].feature_available(HOMING_STRIKES_TAG));
         }
+    }
+
+    /// The ordering the deferral buys: a cleric who heals a downed ally
+    /// off the floor gets a swing out of them in the same breath.
+    ///
+    /// Voice of Authority fires from the post-cast dispatcher, which runs
+    /// while the spell's own effects are still unapplied. Swinging inline
+    /// would ask a creature at 0 HP to attack, which they cannot, and the
+    /// order would evaporate — precisely on the cast where it is worth
+    /// the most.
+    #[test]
+    fn voice_of_authority_waits_for_the_heal_to_land() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::ORDER_CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&ORDER_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        // Put the fighter on the floor.
+        let hp = e.actors[&fighter].hitpoints();
+        DealDamage {
+            actor_id: fighter,
+            amount: hp,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&fighter].is_combat_active());
+
+        let targets = vec![fighter];
+        for eff in CURE_WOUNDS.execute(&mut e, cleric, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&fighter].is_combat_active(), "the heal lands");
+        assert!(
+            e.messages().join("\n").contains("word of command"),
+            "and the order finds someone standing to give it to"
+        );
+    }
+
+    /// Reduce's damage clause is "any attack", and the engine has two
+    /// damage-assembly sites — the weapon lane and the spell lane. Both
+    /// have to subtract the die, or a Reduced wizard would be a full
+    /// wizard.
+    #[test]
+    fn reduce_taxes_both_the_weapon_and_the_spell_lane() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        // Weapon lane: a Reduced fighter's scimitar.
+        let mut saw_weapon_tax = false;
+        let mut saw_spell_tax = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let f = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+                .unwrap();
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 6), 0, 1)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 3), 1, 0)
+                .unwrap();
+            for id in [f, wiz] {
+                e.get_actor(id)
+                    .unwrap()
+                    .add_condition(Condition::Reduced, ConditionTimer::Rounds(10));
+            }
+            let targets = vec![ogre];
+            let sword = e.actors[&f]
+                .actions
+                .iter()
+                .copied()
+                .find(|a| a.name() == "scimitar")
+                .expect("the fighter carries a scimitar");
+            for eff in sword.side_effects(&mut e, f, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages().join("\n").contains("reduce: -1d4") {
+                saw_weapon_tax = true;
+            }
+            let before = e.messages().len();
+            for eff in FIRE_BOLT.side_effects(&mut e, wiz, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages()[before..].join("\n").contains("reduce: -1d4") {
+                saw_spell_tax = true;
+            }
+            if saw_weapon_tax && saw_spell_tax {
+                break;
+            }
+        }
+        assert!(saw_weapon_tax, "the weapon lane should pay the die");
+        assert!(saw_spell_tax, "and so should the spell lane");
     }
 }

@@ -817,6 +817,39 @@ impl ApplicableSideEffect for GainTempHp {
     }
 }
 
+/// Make `actor_id` spend their reaction on one weapon attack, at
+/// `director_id`'s order — a side-effect wrapper around
+/// `attack::try_fire_directed_attack`.
+///
+/// The wrapper exists for ordering. Voice of Authority fires from the
+/// post-cast dispatcher, which runs while the spell's own effects are
+/// still a list of unapplied boxes; swinging inline would put the
+/// ordered attack *before* the spell that bought it, so a cleric who
+/// heals a downed ally into standing would find nobody there to give the
+/// order to. Returning a side-effect instead lands the swing after the
+/// spell, which is what "immediately after you cast it" means.
+///
+/// Commander's Strike still swings inline, and correctly so: nothing it
+/// does to the ally needs to land first, and the help-grant it installs
+/// has to be up *before* the roll.
+pub struct DirectedAttack {
+    pub actor_id: usize,
+    pub director_id: usize,
+    /// What the log calls the order — "word of command", "command".
+    pub label: &'static str,
+}
+
+impl ApplicableSideEffect for DirectedAttack {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        crate::engine::attack::try_fire_directed_attack(
+            ei,
+            self.actor_id,
+            self.director_id,
+            self.label,
+        );
+    }
+}
+
 /// Install concentration on an actor. If they were already concentrating
 /// on something else, the prior concentration is dropped first (its
 /// applied conditions cleared). Use this from concentration spells'
