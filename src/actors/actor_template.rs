@@ -1422,6 +1422,16 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
         flag: |a| a.has_condition(Condition::AshardalonStriding),
         bonus_ft: 20.0,
     },
+    // 5e Bladesinging Wizard **Bladesong** (subclass level 2): "your
+    // walking speed increases by 10 feet." One of the three clauses the
+    // trance grants; the AC bump rides
+    // `ABILITY_SCALED_AC_BONUSES` and the concentration-save bump lives
+    // at `roll_concentration_save`, because neither is a flat number
+    // and neither applies to every roll of its kind.
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::Bladesinging),
+        bonus_ft: 10.0,
+    },
 ];
 
 /// One row in the `CONDITION_SPEED_MULTIPLIERS` cohort — a single
@@ -1478,6 +1488,62 @@ const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
     ConditionSpeedMultiplier {
         flag: |a| a.has_condition(Condition::PowerWordPained),
         factor: 0.5,
+    },
+];
+
+/// One row in the ability-scaled condition-bonus cohorts — a condition
+/// whose bonus is not a compile-time number but the holder's own
+/// modifier in some ability, read at the moment the bonus is asked for.
+///
+/// The flat cohorts (`CONDITION_AC_BONUSES`,
+/// `CONDITION_ATTACK_BONUSES`, `CONDITION_SAVE_BONUSES`) each carry an
+/// `i32` per row, which is right for Shield's +5 and Bless's +2 and
+/// wrong for anything that scales with the holder. `condition_attack_bonus`
+/// carried the Paladin's Sacred Weapon (+CHA) as a hand-written branch
+/// underneath its cohort walk for exactly that reason, with a comment
+/// noting that a second variable-magnitude rider would justify a
+/// closure-based sibling table. The Bladesinger's +INT to AC is that
+/// second rider, so this is that table.
+struct AbilityScaledConditionBonus {
+    /// Source condition whose presence gates the row.
+    source: Condition,
+    /// Ability whose modifier the row contributes while `source` is
+    /// held. Read off the holder rather than the installer, so a
+    /// monster who somehow picks the buff up scales off its own stat
+    /// block.
+    ability: AbilityScoreType,
+    /// Floor applied to the modifier. RAW writes "(minimum of +1)" into
+    /// some of these features and not others; `0` means "no floor
+    /// beyond the natural one", which is what Sacred Weapon wants.
+    floor: i32,
+}
+
+/// Ability-scaled attack-roll bonuses. Read by
+/// `condition_attack_bonus` after the flat `CONDITION_ATTACK_BONUSES`
+/// walk; the two sums add.
+const ABILITY_SCALED_ATTACK_BONUSES: &[AbilityScaledConditionBonus] = &[
+    // 5e Channel Divinity: Sacred Weapon — the paladin's weapon glows
+    // with divine light, adding their Charisma modifier to attack
+    // rolls. No RAW minimum.
+    AbilityScaledConditionBonus {
+        source: Condition::Sacred,
+        ability: AbilityScoreType::Charisma,
+        floor: 0,
+    },
+];
+
+/// Ability-scaled AC bonuses. Read by `condition_ac_bonus` after the
+/// flat `CONDITION_AC_BONUSES` walk; the two sums add, so a
+/// bladesinging wizard under Shield of Faith gets both.
+const ABILITY_SCALED_AC_BONUSES: &[AbilityScaledConditionBonus] = &[
+    // 5e Bladesinging Wizard **Bladesong** (subclass level 2): "you gain
+    // a bonus to your AC equal to your Intelligence modifier (minimum
+    // of +1)." The minimum is RAW and is why `floor` exists on the row
+    // shape at all.
+    AbilityScaledConditionBonus {
+        source: Condition::Bladesinging,
+        ability: AbilityScoreType::Intelligence,
+        floor: 1,
     },
 ];
 
@@ -5923,10 +5989,22 @@ impl ActorInstance {
     /// this cohort — the two lanes are compositional (floor wins over
     /// base, then this bonus stacks on top).
     pub fn condition_ac_bonus(&self) -> i32 {
-        CONDITION_AC_BONUSES
+        let flat: i32 = CONDITION_AC_BONUSES
             .iter()
             .filter(|row| self.has_condition(row.source))
             .map(|row| row.bonus)
+            .sum();
+        flat + self.ability_scaled_bonus(ABILITY_SCALED_AC_BONUSES)
+    }
+
+    /// Sum of every held row in an ability-scaled condition-bonus
+    /// cohort. Shared by `condition_ac_bonus` (Bladesong's +INT) and
+    /// `condition_attack_bonus` (Sacred Weapon's +CHA) — the two lanes
+    /// differ only in which table they hand in.
+    fn ability_scaled_bonus(&self, rows: &[AbilityScaledConditionBonus]) -> i32 {
+        rows.iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| self.ability_modifier(row.ability).max(row.floor))
             .sum()
     }
 
@@ -6137,19 +6215,14 @@ impl ActorInstance {
             .filter(|row| self.has_condition(row.source))
             .map(|row| row.bonus)
             .sum();
-        // 5e Channel Divinity: Sacred Weapon — paladin's weapon glows
-        // with divine light, adding their CHA modifier to attack rolls.
-        // Sourced from the holder's own CHA so monsters who somehow grab
-        // the buff still scale off their own stat block (no edge case
-        // today, but the symmetry beats hard-coding a +3). Stays inline
-        // rather than riding `CONDITION_ATTACK_BONUSES` because its
-        // magnitude is variable (per-actor CHA mod), while every cohort
-        // row carries a compile-time flat integer under the shared
-        // declarative-table pattern with `CONDITION_SAVE_BONUSES` /
-        // `CONDITION_AC_BONUSES`.
-        if self.has_condition(Condition::Sacred) {
-            bonus += modifier_from_score(self.charisma);
-        }
+        // Ability-scaled riders — today just Channel Divinity: Sacred
+        // Weapon, whose +CHA is read off the holder's own stat block so
+        // a monster who somehow grabs the buff scales off theirs. Used
+        // to be a hand-written branch here; it now shares
+        // `ABILITY_SCALED_ATTACK_BONUSES` with the Bladesinger's +INT
+        // AC row on the sibling cohort, which is what the old comment
+        // here said should happen once a second such rider existed.
+        bonus += self.ability_scaled_bonus(ABILITY_SCALED_ATTACK_BONUSES);
         bonus
     }
 

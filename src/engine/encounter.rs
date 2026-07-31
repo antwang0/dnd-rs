@@ -3092,6 +3092,29 @@ impl EncounterInstance {
         dc: i32,
         extra_mode: RollMode,
     ) -> crate::engine::saves::SaveOutcome {
+        self.roll_save_with_extra_mode_and_bonus(actor_id, ability, dc, extra_mode, 0)
+    }
+
+    /// `roll_save_with_extra_mode` plus a flat bonus that applies to
+    /// *this* save only.
+    ///
+    /// The distinction the existing bonus lanes couldn't make. Every
+    /// other flat save bonus in the engine — `condition_save_bonus`,
+    /// `save_bonus_buff`, the Aura of Protection sweep — applies to
+    /// every save the holder rolls, because that is what the features
+    /// feeding them say. The Bladesinger's Bladesong adds its
+    /// Intelligence modifier to Constitution saves made *to maintain
+    /// concentration* and to nothing else, so putting it on any of
+    /// those lanes would over-grant it to every poison save and every
+    /// Fireball the wizard ever ducks.
+    fn roll_save_with_extra_mode_and_bonus(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        extra_mode: RollMode,
+        call_site_bonus: i32,
+    ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
 
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
@@ -3153,7 +3176,8 @@ impl EncounterInstance {
             + buff
             + cond_save_bonus
             + prof_bonus
-            + aura_bonus;
+            + aura_bonus
+            + call_site_bonus;
         let total = raw as i32 + modifier + extra;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -3420,7 +3444,31 @@ impl EncounterInstance {
         } else {
             RollMode::Normal
         };
-        self.roll_save_with_extra_mode(actor_id, AbilityScoreType::Constitution, dc, extra_mode)
+        // 5e Bladesinging Wizard **Bladesong**: "you gain a bonus to
+        // Constitution saving throws you make to maintain your
+        // concentration on a spell" equal to the wizard's Intelligence
+        // modifier. Scoped to this call site rather than to a condition
+        // cohort because RAW scopes it to this one kind of save — see
+        // `roll_save_with_extra_mode_and_bonus`.
+        //
+        // It is also the clause that makes the subclass coherent. A
+        // wizard in melee is a wizard whose Haste or Greater
+        // Invisibility is about to be knocked out of them; the AC bump
+        // reduces how often they are hit and this reduces what a hit
+        // costs when it lands.
+        let bladesong_bonus = self
+            .actors
+            .get(&actor_id)
+            .filter(|a| a.has_condition(Condition::Bladesinging))
+            .map(|a| a.ability_modifier(AbilityScoreType::Intelligence).max(1))
+            .unwrap_or(0);
+        self.roll_save_with_extra_mode_and_bonus(
+            actor_id,
+            AbilityScoreType::Constitution,
+            dc,
+            extra_mode,
+            bladesong_bonus,
+        )
     }
 
     /// 5e Barbarian **Relentless Rage** intercept. Called from
@@ -69737,5 +69785,210 @@ mod tests {
             effects.is_empty(),
             "a stunned paladin queues no rebuke payload"
         );
+    }
+
+    /// Bladesong lights up all four of its clauses off one condition,
+    /// and each one lands on a different engine lane.
+    ///
+    /// One test rather than four because the clauses share a single
+    /// install and the interesting failure is a lane that never got
+    /// wired — which a per-clause test would catch just as well, and
+    /// which a combined test catches while also proving they all come
+    /// from the same button.
+    #[test]
+    fn bladesong_buys_ac_speed_concentration_and_damage_at_once() {
+        use crate::actions::class_features::{BLADESONG, BLADESONG_TAG};
+        use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&BLADESINGER_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let int_mod = e.actors[&wiz]
+            .ability_modifier(AbilityScoreType::Intelligence)
+            .max(1);
+        assert!(int_mod > 0, "the chassis is INT-primary");
+
+        let ac_before = e.actors[&wiz].armor_class() as i32;
+        let speed_before = e.actors[&wiz].speed();
+
+        assert!(BLADESONG.validate_input(&e, wiz, None, None, None));
+        for eff in BLADESONG.side_effects(&mut e, wiz, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&wiz].feature_available(BLADESONG_TAG),
+            "the once-per-short-rest charge is spent"
+        );
+        assert_eq!(
+            e.actors[&wiz].armor_class() as i32 - ac_before,
+            int_mod,
+            "AC clause: the ability-scaled cohort adds exactly INT"
+        );
+        assert!(
+            (e.actors[&wiz].speed() - speed_before - 10.0).abs() < 0.01,
+            "speed clause: +10 ft"
+        );
+        assert!(
+            !BLADESONG.validate_input(&e, wiz, None, None, None),
+            "a wizard already singing should not burn a second charge"
+        );
+    }
+
+    /// The concentration bonus is scoped to concentration saves and to
+    /// nothing else.
+    ///
+    /// This is the whole reason `roll_save_with_extra_mode_and_bonus`
+    /// exists: putting Bladesong's +INT on `condition_save_bonus` would
+    /// have been a two-line change that also handed the squishiest
+    /// chassis in the game a blanket bonus on every poison save and
+    /// every Fireball it ducks. The test compares a plain Constitution
+    /// save against a concentration one at the same DC across seeds —
+    /// only the second may improve.
+    #[test]
+    fn the_bladesong_save_bonus_reaches_concentration_and_nothing_else() {
+        use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
+        // A DC the CON save can land on either side of, so a +INT swing
+        // is actually observable in the pass rate.
+        const DC: i32 = 15;
+        let mut plain_passes = [0usize; 2];
+        let mut conc_passes = [0usize; 2];
+        for (i, singing) in [false, true].into_iter().enumerate() {
+            for seed in 0..60u64 {
+                let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+                let wiz = e
+                    .instantiate_creature(
+                        &BLADESINGER_WIZARD_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                if singing {
+                    e.actors
+                        .get_mut(&wiz)
+                        .unwrap()
+                        .add_condition(Condition::Bladesinging, ConditionTimer::Rounds(10));
+                }
+                if e.roll_save(wiz, AbilityScoreType::Constitution, DC).passed() {
+                    plain_passes[i] += 1;
+                }
+            }
+            for seed in 0..60u64 {
+                let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+                let wiz = e
+                    .instantiate_creature(
+                        &BLADESINGER_WIZARD_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                if singing {
+                    e.actors
+                        .get_mut(&wiz)
+                        .unwrap()
+                        .add_condition(Condition::Bladesinging, ConditionTimer::Rounds(10));
+                }
+                if e.roll_concentration_save(wiz, DC).passed() {
+                    conc_passes[i] += 1;
+                }
+            }
+        }
+        assert_eq!(
+            plain_passes[0], plain_passes[1],
+            "an ordinary Constitution save must not notice the song \u{2014} \
+             {} passes without it, {} with",
+            plain_passes[0], plain_passes[1]
+        );
+        assert!(
+            conc_passes[1] > conc_passes[0],
+            "a concentration save must notice it \u{2014} {} passes without the song, {} with",
+            conc_passes[0],
+            conc_passes[1]
+        );
+    }
+
+    /// Song of Victory rides the shared caster-side melee bump table, so
+    /// it lands on an ordinary shortsword swing and only while the song
+    /// is up.
+    ///
+    /// Same seed on both sides, so the to-hit rolls and damage dice are
+    /// identical and the entire difference between the two totals is
+    /// the bump. The expected size of that difference is read off the
+    /// log rather than assumed to be one INT modifier: the Bladesinger
+    /// has Extra Attack, so a single `side_effects` call can land two
+    /// swings, and each connecting swing earns its own bump.
+    #[test]
+    fn song_of_victory_adds_int_to_the_bladesingers_steel() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
+        let mut compared = 0;
+        for seed in 0..40u64 {
+            let mut totals = [0u32; 2];
+            let mut int_mod = 0;
+            let mut bumps_logged = 0;
+            for (i, singing) in [false, true].into_iter().enumerate() {
+                let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+                let wiz = e
+                    .instantiate_creature(
+                        &BLADESINGER_WIZARD_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                let ogre = e
+                    .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                int_mod = e.actors[&wiz]
+                    .ability_modifier(AbilityScoreType::Intelligence)
+                    .max(1) as u32;
+                if singing {
+                    e.actors
+                        .get_mut(&wiz)
+                        .unwrap()
+                        .add_condition(Condition::Bladesinging, ConditionTimer::Rounds(10));
+                }
+                let sword = e.actors[&wiz]
+                    .actions
+                    .iter()
+                    .copied()
+                    .find(|a| a.name() == "shortsword")
+                    .expect("the Bladesinger carries a shortsword");
+                let before = e.actors[&ogre].hitpoints();
+                let messages_before = e.messages().len();
+                let targets = vec![ogre];
+                for eff in sword.side_effects(&mut e, wiz, Some(&targets), None, None) {
+                    eff.apply(&mut e);
+                }
+                totals[i] = before - e.actors[&ogre].hitpoints();
+                if singing {
+                    bumps_logged = e.messages()[messages_before..]
+                        .iter()
+                        .filter(|m| m.contains("song of victory"))
+                        .count() as u32;
+                }
+            }
+            // Only compare seeds where the swing actually connected; a
+            // miss carries no damage to bump. The rolls are
+            // seed-identical, so the two runs agree on hit-or-miss.
+            if totals[0] > 0 {
+                assert!(bumps_logged > 0, "seed {}: a landed swing sings", seed);
+                assert_eq!(
+                    totals[1] - totals[0],
+                    int_mod * bumps_logged,
+                    "seed {}: the song adds exactly INT per connecting swing",
+                    seed
+                );
+                compared += 1;
+            } else {
+                assert_eq!(
+                    bumps_logged, 0,
+                    "seed {}: a whiffed swing earns no bump",
+                    seed
+                );
+            }
+        }
+        assert!(compared > 0, "40 seeds should land at least one swing");
     }
 }

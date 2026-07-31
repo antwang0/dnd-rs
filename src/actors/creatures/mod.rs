@@ -436,6 +436,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*wizards::ILLUSION_WIZARD_TEMPLATE,
                     &*wizards::CONJURATION_WIZARD_TEMPLATE,
                     &*wizards::TRANSMUTATION_WIZARD_TEMPLATE,
+                    &*wizards::BLADESINGER_WIZARD_TEMPLATE,
                 ],
             ),
     ]

@@ -183,6 +183,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
+        //      beside Rage because it is the same kind of decision: a
+        //      once-per-rest, bonus-action, whole-fight defensive
+        //      posture that wants to be up *before* the first swing
+        //      lands, not after. Gated a little wider than Rage's
+        //      melee-reach trigger (`BLADESONG_ENGAGE_GAP`) because the
+        //      wizard is the one who has to close the distance, and a
+        //      song started on arrival has already spent the round it
+        //      was meant to protect.
+        if let Some(aei) =
+            try_self_action_when_enemy_within(encounter, actor_id, BLADESONG_ENGAGE_GAP, "bladesong")
+        {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'. Reckless Attack — barbarian / berserker bonus action.
         //      Self-applies the `Helped` rider for advantage on this
         //      turn's melee swing, trading inbound attacker advantage
@@ -1834,6 +1849,13 @@ fn try_pass_without_trace(
 /// either way, and spending it a turn early is the only way the shield
 /// is already up when the first swing lands.
 const SPORES_ENGAGEMENT_GAP: isize = 5;
+
+/// Footprint gap inside which the Bladesinger starts the song. Wider
+/// than a melee prime's trigger because none of the song's four clauses
+/// needs the enemy adjacent — the AC, the speed, the concentration
+/// bonus and the damage bump all want to be live for the approach, not
+/// just for the swing at the end of it.
+const BLADESONG_ENGAGE_GAP: isize = 8;
 
 /// Reach of the Halo of Spores in tiles, mirroring RAW's 10 ft on the
 /// engine's 2.5 ft grid. The action's own `reach_tiles` is the

@@ -1471,3 +1471,79 @@ pub static TRANSMUTATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         ..WIZARD_TEMPLATE.clone()
     }
 });
+
+/// Bladesinger Wizard — Arcane Tradition **Bladesinging** subclass build
+/// (TCE), and the only wizard on the roster built to be hit. The other
+/// ten answer melee by leaving it: Misty Step, Blink, Benign
+/// Transposition, or the AI's kite rung. The Bladesinger answers it by
+/// being harder to land a swing on than the fighter standing next to
+/// them.
+///
+/// Three subclass features:
+///
+///   - **Bladesong** (lv2, bonus action, once per short rest): +INT to
+///     AC, +10 ft speed, and +INT to the Constitution saves that keep
+///     their concentration alive, for one minute. On the INT-16
+///     chassis that is AC 15 and a +3 on the save that decides whether
+///     the Haste they are holding survives the hit.
+///
+///   - **Extra Attack** (lv6): two swings per Attack action.
+///
+///   - **Song of Victory** (lv14): +INT to melee weapon damage while
+///     the song is up — a `MELEE_CASTER_BUMPS` row, and the clause
+///     that makes the shortsword worth swinging instead of casting a
+///     cantrip.
+///
+/// The shortsword is the fourth piece and it is not a subclass feature
+/// in RAW so much as a consequence of one: Bladesinging grants
+/// proficiency with a one-handed melee weapon, and a wizard who has one
+/// is a different creature from a wizard who doesn't. Every other
+/// template here reaches for Fire Bolt when something closes; this one
+/// reaches for steel, at DEX 14 with two attacks and +3 damage each.
+///
+/// What ties the four together is concentration. A Bladesinger in melee
+/// is a Bladesinger about to be knocked out of their Haste, and the
+/// subclass spends all three of its defensive clauses on that one
+/// problem from different angles — the AC reduces how often a hit
+/// lands, the speed lets them pick their ground, and the save bonus
+/// reduces what a landed hit costs. That is why the concentration bonus
+/// needed its own engine lane rather than riding
+/// `condition_save_bonus`: RAW scopes it to concentration saves, and
+/// granting it on every Constitution save would have handed the
+/// squishiest chassis in the game a blanket poison / Cloudkill defense
+/// it has no business having.
+///
+/// **Song of Defense** (lv10 — expend a spell slot as a reaction to
+/// reduce damage by five times the slot level) isn't shipped: the
+/// reactive-damage-clamp cohort takes a fixed reduction per row and has
+/// no way to price one in slots at the moment the damage lands.
+///
+/// Glyph 'Ω' — the singer's open mouth. Distinct from baseline wizard
+/// 'M', Necromancy 'N', War Magic 'Σ', Abjuration 'Θ', Evocation 'Δ',
+/// Divination 'Ψ', Enchantment 'Φ', Illusion 'Λ', Conjuration 'Γ' and
+/// Transmutation '◊'.
+pub static BLADESINGER_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{BLADESONG, BLADESONG_TAG};
+    let mut actions = WIZARD_TEMPLATE.actions.clone();
+    actions.push(&*BLADESONG);
+    // DEX-based finesse blade — the shared `SHORTSWORD` static rather
+    // than a bespoke one, since the Bladesinger's swing carries no
+    // rider of its own. Song of Victory's +INT arrives through the
+    // caster-side melee bump table, which every weapon on the roster
+    // already reads.
+    actions.push(&crate::actions::monster_attacks::SHORTSWORD);
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(BLADESONG_TAG);
+    CreatureTemplate {
+        name: "Bladesinger Wizard",
+        glyph: 'Ω',
+        // Bladesinging lv6. The flag rather than a tag because the
+        // engine reads Extra Attack off a template field at the
+        // action-economy site, same as it does for the Fighter and the
+        // Paladin.
+        has_extra_attack: true,
+        actions,
+        features,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});

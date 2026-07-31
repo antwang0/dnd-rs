@@ -212,6 +212,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
     INVOKE_DUPLICITY_TAG,
+    // 5e Bladesinging Wizard **Bladesong** — RAW: "you can use this
+    // feature twice, and you regain all expended uses when you finish a
+    // short or long rest." The engine's single charge lands on the same
+    // short-rest cadence.
+    BLADESONG_TAG,
     // 5e Conquest Paladin level-3 subclass Channel Divinity —
     // Conquering Presence. Refreshed on short rest alongside the rest
     // of the paladin CD family (Dreadful Aspect, Abjure Enemy, Nature's
@@ -12091,3 +12096,93 @@ pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst
     type_filter: |_| true,
     installed: Condition::Frightened,
 });
+
+/// Tag for the Bladesinging Wizard's **Bladesong** (subclass level 2).
+/// RAW grants two uses per short rest; the engine's per-tag charge model
+/// collapses that to one, and the tag rides `SHORT_REST_FEATURES` so the
+/// cadence stays RAW's.
+pub const BLADESONG_TAG: &str = "wizard.bladesong";
+
+/// Bladesong — Bladesinging Wizard bonus action (subclass level 2). For
+/// one minute the wizard is a moving blade: +INT to AC, +10 ft of
+/// speed, +INT to the Constitution saves that hold their concentration
+/// together, and (via Song of Victory) +INT to melee weapon damage.
+///
+/// Four clauses, four different engine lanes, and none of them a flat
+/// number — which is why the feature needed three separate pieces of
+/// engine before the action could exist:
+///   - AC: `ABILITY_SCALED_AC_BONUSES`, the closure-based sibling to
+///     the flat AC cohort, which also absorbed Sacred Weapon's
+///     hand-written +CHA branch on the attack lane.
+///   - Speed: an ordinary `CONDITION_SPEED_BONUSES` row — this one
+///     *is* flat.
+///   - Concentration: `roll_save_with_extra_mode_and_bonus`, because
+///     RAW scopes the bonus to concentration saves and every existing
+///     save-bonus lane applies to all of them.
+///   - Damage: a `MELEE_CASTER_BUMPS` row.
+///
+/// RAW's remaining clauses have no combat surface: advantage on
+/// Acrobatics checks (no skill-check surface for it), and the
+/// restriction to light-or-no armor with no shield (the engine doesn't
+/// model armor categories, and the Bladesinger template dresses as a
+/// wizard anyway).
+pub struct Bladesong {}
+
+impl Action for Bladesong {
+    fn name(&self) -> &str {
+        "bladesong"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bs", "sing", "blade song"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_prime_ready(encounter, caster_id, BLADESONG_TAG, Condition::Bladesinging)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            BLADESONG_TAG,
+            Condition::Bladesinging,
+            // 10 rounds = 1 minute RAW, the same window Rage and Sacred
+            // Weapon run on.
+            ConditionTimer::Rounds(10),
+            "  bladesong: the wizard's blade takes up the song.",
+        )
+    }
+}
+
+pub static BLADESONG: LazyLock<Bladesong> = LazyLock::new(|| Bladesong {});

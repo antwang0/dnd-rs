@@ -150,6 +150,17 @@ const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
         }
         a.ability_modifier(AbilityScoreType::Strength).max(0) as u32
     }),
+    // 5e Bladesinging Wizard **Song of Victory** (subclass level 14):
+    // "add your Intelligence modifier (minimum of +1) to the damage of
+    // your melee weapon attacks" while Bladesong is active. The clause
+    // that makes the trance offensive as well as defensive, and the
+    // only reason a wizard's dagger is worth swinging at all.
+    ("song of victory", |a| {
+        if !a.has_condition(Condition::Bladesinging) {
+            return 0;
+        }
+        a.ability_modifier(AbilityScoreType::Intelligence).max(1) as u32
+    }),
     ("aura of hate", |a| {
         if !a.has_aura_of_hate() {
             return 0;
