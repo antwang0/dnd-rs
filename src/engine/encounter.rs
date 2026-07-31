@@ -69239,4 +69239,214 @@ mod tests {
         assert_eq!(e.roll_empowered_sum(cleric, 0, 8), wis);
         e.exit_cast();
     }
+
+    /// Symbiotic Entity hands out its shield, installs the melee rider,
+    /// and — the clause that needed engine work — goes away the moment
+    /// the shield does.
+    ///
+    /// The two halves are one test because the duration rule is the
+    /// interesting part and it is only observable against the grant:
+    /// checking that the condition installs proves nothing if the
+    /// engine would have left it installed forever.
+    #[test]
+    fn the_spore_symbiote_lives_exactly_as_long_as_its_temp_hp() {
+        use crate::actions::class_features::{
+            SYMBIOTIC_ENTITY, SYMBIOTIC_ENTITY_TAG, SYMBIOTIC_ENTITY_TEMP_HP,
+        };
+        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&SPORES_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            SYMBIOTIC_ENTITY.validate_input(&e, druid, None, None, None),
+            "a fresh Spores Druid holds the charge"
+        );
+        for eff in SYMBIOTIC_ENTITY.side_effects(&mut e, druid, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(e.actors[&druid].temp_hp(), SYMBIOTIC_ENTITY_TEMP_HP);
+        assert!(e.actors[&druid].has_condition(Condition::SymbioticEntity));
+        assert!(
+            !e.actors[&druid].feature_available(SYMBIOTIC_ENTITY_TAG),
+            "the once-per-short-rest charge should be spent"
+        );
+        assert!(
+            !SYMBIOTIC_ENTITY.validate_input(&e, druid, None, None, None),
+            "a druid already wearing a symbiote should not burn a second charge"
+        );
+
+        // Chip the pool down without emptying it: the symbiote holds.
+        DealDamage {
+            actor_id: druid,
+            amount: SYMBIOTIC_ENTITY_TEMP_HP - 1,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&druid].temp_hp(), 1);
+        assert!(
+            e.actors[&druid].has_condition(Condition::SymbioticEntity),
+            "one temp HP left is still temp HP \u{2014} the symbiote stays"
+        );
+
+        // Empty it: RAW ends the feature on that tick.
+        DealDamage {
+            actor_id: druid,
+            amount: 1,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&druid].temp_hp(), 0);
+        assert!(
+            !e.actors[&druid].has_condition(Condition::SymbioticEntity),
+            "losing the last temporary hit point ends Symbiotic Entity"
+        );
+    }
+
+    /// The symbiote dies with its shield down *either* damage lane.
+    /// `effective_damage` (resistance-aware, the path `DealDamage`
+    /// takes) and `take_damage` (the raw path) both drain temp HP, and
+    /// before `drain_temp_hp` existed they did it with two separate
+    /// copies of the subtraction. This pins the shared chokepoint.
+    #[test]
+    fn the_symbiote_ends_on_the_raw_damage_path_too() {
+        use crate::actions::class_features::SYMBIOTIC_ENTITY_TEMP_HP;
+        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&SPORES_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let a = e.actors.get_mut(&druid).unwrap();
+        a.gain_temp_hp(SYMBIOTIC_ENTITY_TEMP_HP);
+        a.add_condition(Condition::SymbioticEntity, ConditionTimer::Permanent);
+        a.take_damage(SYMBIOTIC_ENTITY_TEMP_HP);
+        assert_eq!(a.temp_hp(), 0);
+        assert!(
+            !a.has_condition(Condition::SymbioticEntity),
+            "take_damage drains the same pool, so it must end the feature too"
+        );
+    }
+
+    /// The halo costs the reaction and nothing else, and the symbiote
+    /// makes it hit harder.
+    ///
+    /// Both branches run off the same seed, which makes the comparison
+    /// exact rather than statistical: the Constitution save is rolled
+    /// before the damage, so a given seed produces the same save result
+    /// either way, and the doubled roll draws the plain roll's die plus
+    /// one more from the same stream. Doubled can therefore never come
+    /// out *behind* plain on any seed, and must come out ahead on the
+    /// aggregate as soon as one save fails.
+    #[test]
+    fn the_halo_costs_only_a_reaction_and_doubles_under_the_symbiote() {
+        use crate::actions::class_features::HALO_OF_SPORES;
+        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        // The reaction is the whole price: no Action, no Bonus Action,
+        // no slot. That is what lets the AI fire it on a turn it is
+        // also casting.
+        let costs = HALO_OF_SPORES.cost(&ei_with_terrain(15, 15, &[]), 0, None, None, None);
+        assert_eq!(costs, vec![Resource::Reaction]);
+
+        let mut plain_total = 0u32;
+        let mut doubled_total = 0u32;
+        for seed in 0..40u64 {
+            for doubled in [false, true] {
+                let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+                let druid = e
+                    .instantiate_creature(&SPORES_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let ogre = e
+                    .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                if doubled {
+                    e.actors
+                        .get_mut(&druid)
+                        .unwrap()
+                        .add_condition(Condition::SymbioticEntity, ConditionTimer::Permanent);
+                }
+                let before = e.actors[&ogre].hitpoints();
+                let targets = vec![ogre];
+                assert!(
+                    HALO_OF_SPORES.validate_input(&e, druid, Some(&targets), None, None),
+                    "an adjacent hostile is in the halo's 10 ft"
+                );
+                for eff in
+                    HALO_OF_SPORES.side_effects(&mut e, druid, Some(&targets), None, None)
+                {
+                    eff.apply(&mut e);
+                }
+                let dealt = before - e.actors[&ogre].hitpoints();
+                if doubled {
+                    doubled_total += dealt;
+                } else {
+                    plain_total += dealt;
+                }
+            }
+        }
+        assert!(
+            plain_total > 0,
+            "40 seeds against a +3 Constitution save should fail at least once"
+        );
+        assert!(
+            doubled_total > plain_total,
+            "rolling the die twice must out-damage rolling it once ({} vs {})",
+            doubled_total,
+            plain_total
+        );
+    }
+
+    /// The halo is all-or-nothing on the save — RAW's wording is
+    /// "unless it succeeds", not "half as much on a success", and it is
+    /// the rare exception in a codebase where nearly every save-gated
+    /// burst halves.
+    ///
+    /// Swept across seeds because the ogre's +3 Constitution against
+    /// the druid's DC 16 lands on both sides of the line; the test
+    /// asserts the pairing (shrug ⇔ zero damage) on every seed and then
+    /// asserts both outcomes were actually observed, so it can't pass
+    /// vacuously by never rolling one of them.
+    #[test]
+    fn the_halo_deals_no_damage_at_all_on_a_successful_save() {
+        use crate::actions::class_features::HALO_OF_SPORES;
+        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut shrugs = 0;
+        let mut bites = 0;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let druid = e
+                .instantiate_creature(&SPORES_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let before = e.actors[&ogre].hitpoints();
+            let messages_before = e.messages().len();
+            let targets = vec![ogre];
+            for eff in HALO_OF_SPORES.side_effects(&mut e, druid, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            let shrugged = e.messages()[messages_before..]
+                .iter()
+                .any(|m| m.contains("shrugs off the spore cloud"));
+            let dealt = before - e.actors[&ogre].hitpoints();
+            if shrugged {
+                assert_eq!(dealt, 0, "seed {}: a passed save takes nothing", seed);
+                shrugs += 1;
+            } else {
+                assert!(
+                    (1..=6).contains(&dealt),
+                    "seed {}: a failed save takes one full 1d6, got {}",
+                    seed,
+                    dealt
+                );
+                bites += 1;
+            }
+        }
+        assert!(shrugs > 0 && bites > 0, "the sweep should see both outcomes");
+    }
 }

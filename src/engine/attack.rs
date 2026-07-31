@@ -2154,6 +2154,24 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             consume_on_trigger: false,
             follow_up: None,
         },
+        // 5e Circle of Spores Druid **Symbiotic Entity** (subclass
+        // level 2). Persistent +1d6 necrotic rider on every melee swing
+        // the druid lands while the symbiote is riding them. Same shape
+        // as Spirit Shroud — melee-only and non-consumed — but its
+        // lifetime is bounded by the temp-HP pool the feature granted
+        // rather than by concentration: `ActorInstance::take_damage`
+        // strips the condition on the tick the pool empties, which is
+        // RAW's "until you lose all these temporary hit points".
+        OnHitRider {
+            condition: Condition::SymbioticEntity,
+            dice: Dice::new(1, 6),
+            label: "symbiotic entity",
+            damage_type: DamageType::Necrotic,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
         // 5e Flame Arrows (XGE level-3 transmutation, concentration).
         // Persistent +1d6 fire rider on every ranged swing the holder
         // lands. Mirrors Spirit Shroud's shape but ranged-only — the

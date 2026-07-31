@@ -16,6 +16,20 @@ use crate::actions::class_features::{
     LETHAL_DAMAGE_ABSORBER_FEATURES, SHORT_REST_FEATURES, SORCEROUS_RESTORATION_TAG,
 };
 
+/// Conditions whose RAW duration clause is bounded by the temporary hit
+/// points the same feature handed out — the "...or until you lose all
+/// these temporary hit points" wording shared by the Circle of Spores
+/// Druid's Symbiotic Entity and (in RAW, though not yet in this engine)
+/// the Undead Warlock's Form of Dread family.
+///
+/// Read by `drain_temp_hp`, the single chokepoint that decrements the
+/// pool. A feature whose buff should die with its shield adds one row
+/// here and nothing else — the alternative is a bespoke check at each
+/// of the two damage entry points, which is exactly the kind of
+/// duplicated rule that goes stale the first time a third entry point
+/// appears.
+const TEMP_HP_BOUND_CONDITIONS: &[Condition] = &[Condition::SymbioticEntity];
+
 /// Conditions whose resistance covers every damage type — a blanket
 /// "halve all incoming damage" buff. Read by `has_condition_resistance`
 /// so a new generic damage-resistant condition (future Stoneskin /
@@ -6625,9 +6639,7 @@ impl ActorInstance {
         // is only relevant for Active actors — Dying / Stable creatures
         // route damage straight into death-save failures.
         if matches!(self.hp_state, HpState::Active) {
-            let absorbed = scaled.min(self.temp_hp);
-            self.temp_hp -= absorbed;
-            let to_hp = scaled - absorbed;
+            let to_hp = scaled - self.drain_temp_hp(scaled);
             if to_hp == 0 {
                 return (DamageOutcome::Reduced, 0);
             }
@@ -6635,6 +6647,38 @@ impl ActorInstance {
         } else {
             (self.take_damage(scaled), scaled)
         }
+    }
+
+    /// Spend up to `amount` damage against the temporary-hit-point pool
+    /// and report what the pool actually absorbed. The caller subtracts
+    /// the return value from the incoming damage; whatever is left is
+    /// what reaches real hit points.
+    ///
+    /// This is the one place temp HP is decremented, which is what lets
+    /// it also enforce the RAW duration clause shared by every feature
+    /// worded "...until you lose all these temporary hit points" — see
+    /// `TEMP_HP_BOUND_CONDITIONS`. Both damage entry points route
+    /// through it (`effective_damage`'s post-resistance path and
+    /// `take_damage`'s direct path), so a symbiote can't survive its own
+    /// shield running out down one lane and not the other.
+    ///
+    /// The condition is dropped silently, without a log line, for the
+    /// same reason Death Ward's burn-off is silent at this layer:
+    /// `ActorInstance` has no handle on the encounter log. The
+    /// disappearance is visible where it matters — the next melee swing
+    /// simply stops printing its rider.
+    fn drain_temp_hp(&mut self, amount: u32) -> u32 {
+        let absorbed = amount.min(self.temp_hp);
+        if absorbed == 0 {
+            return 0;
+        }
+        self.temp_hp -= absorbed;
+        if self.temp_hp == 0 {
+            for &c in TEMP_HP_BOUND_CONDITIONS {
+                self.remove_condition(c);
+            }
+        }
+        absorbed
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -6658,14 +6702,10 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure,
             HpState::Active => {
-                let after_temp = if self.temp_hp >= amount {
-                    self.temp_hp -= amount;
+                let after_temp = amount - self.drain_temp_hp(amount);
+                if after_temp == 0 {
                     return DamageOutcome::Reduced;
-                } else {
-                    let r = amount - self.temp_hp;
-                    self.temp_hp = 0;
-                    r
-                };
+                }
                 let hp_before = self.hitpoints;
                 self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {

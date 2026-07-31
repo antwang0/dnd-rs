@@ -517,6 +517,24 @@ pub fn free_cost() -> Vec<Resource> {
     Vec::new()
 }
 
+/// Reaction-only cost — one Reaction, nothing else. The third member of
+/// the `action_only` / `bonus_action_only` family, and the one that had
+/// no callers until the Circle of Spores Druid's Halo of Spores arrived.
+///
+/// Everything reactive in the engine before it was *dispatched* — an
+/// opportunity attack, Uncanny Dodge, Parry, Bend Luck — fired from
+/// inside a trigger site that spent the slot itself. Halo of Spores is
+/// the first reaction a player *declares*: RAW lets the druid spend it
+/// on their own turn or anyone else's, and the engine's turn model only
+/// hands the player a decision point on their own turn, so what makes it
+/// work is that the reaction slot is a resource distinct from the Action
+/// and Bonus Action ones. A druid who spends it on their turn has
+/// genuinely given up their Uncanny-Dodge-equivalent for the round,
+/// which is the real cost RAW charges.
+pub fn reaction_only() -> Vec<Resource> {
+    vec![Resource::Reaction]
+}
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,

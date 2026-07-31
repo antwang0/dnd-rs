@@ -130,6 +130,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a'''. Symbiotic Entity — the Spores Druid's Action-cost
+        //        shield. Sits with the self-heals because that is what
+        //        36 temp HP on a d8 chassis amounts to, and above the
+        //        casting rungs for the reason the Moon Druid's Wild
+        //        Heal is: a druid who is about to be hit has a better
+        //        use for the Action than a spell. Its own gate carries
+        //        the "is anything close enough to matter?" judgement —
+        //        the melee rider and the doubled halo are both
+        //        short-ranged, so a symbiote raised across the room
+        //        spends the charge and buys only the temp HP.
+        if let Some(aei) = try_symbiotic_entity(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b. Mage Armor — self-only AC boost. Casts once per combat
         //     since the condition lasts ~100 rounds; gated by "don't
         //     re-cast" via the condition check. Bonus action, so it
@@ -976,6 +990,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3s. Halo of Spores — Circle of Spores Druid reaction. Costs
+        //     neither the Action nor the Bonus Action, so it never
+        //     competes with anything below it; the only thing it can
+        //     lose the druid is a reaction they had no other use for.
+        //     That is exactly why it sits above the casting rungs
+        //     rather than in them — deferring it risks the turn ending
+        //     with the slot unspent, and an unspent reaction is worth
+        //     nothing at all.
+        if let Some(aei) = try_halo_of_spores(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -1799,6 +1825,21 @@ fn try_pass_without_trace(
 /// Sweeping Attack's two-adjacent-enemies rung sits between it and
 /// this table in the ladder, and collapsing the two would silently
 /// reorder them.
+/// Footprint gap inside which the Spores Druid counts as engaged, and
+/// therefore inside which Symbiotic Entity buys its full value rather
+/// than just the temp HP. One tile wider than the halo's own 10 ft
+/// reach, so the symbiote goes up on the turn *before* the enemy closes
+/// into halo range rather than the turn after — the Action is spent
+/// either way, and spending it a turn early is the only way the shield
+/// is already up when the first swing lands.
+const SPORES_ENGAGEMENT_GAP: isize = 5;
+
+/// Reach of the Halo of Spores in tiles, mirroring RAW's 10 ft on the
+/// engine's 2.5 ft grid. The action's own `reach_tiles` is the
+/// authority; this is the AI's pre-filter so the picker doesn't build
+/// and validate an AEI for every hostile on the map.
+const HALO_OF_SPORES_GAP: isize = 4;
+
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "divine strike",
     "divine strike poison",
@@ -2527,6 +2568,50 @@ fn try_transmuted_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "transmuted spell")
+}
+
+/// Symbiotic Entity — Circle of Spores Druid Action, once per short
+/// rest. 36 temp HP plus a +1d6 necrotic melee rider and a doubled
+/// Halo of Spores die.
+///
+/// Gate: a hostile within `SPORES_ENGAGEMENT_GAP`. Two of the feature's
+/// three payoffs are short-ranged (the melee rider needs contact, the
+/// doubled halo needs 10 ft), so raising the symbiote while the nearest
+/// enemy is still crossing the room converts a once-per-rest charge and
+/// a whole Action into temp HP alone. Waiting one turn costs nothing —
+/// the charge doesn't expire — and buys the full feature.
+///
+/// The action's own validator carries the rest: charge unspent, holder
+/// alive, no symbiote already riding.
+fn try_symbiotic_entity(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(
+        encounter,
+        actor_id,
+        SPORES_ENGAGEMENT_GAP,
+        "symbiotic entity",
+    )
+}
+
+/// Halo of Spores — Circle of Spores Druid reaction. 1d6 necrotic
+/// (2d6 with the symbiote up) to one creature within 10 ft on a failed
+/// Constitution save.
+///
+/// Nearest eligible hostile inside the halo's own reach. There is no
+/// cleverer target choice available: the damage doesn't scale with
+/// anything about the target, the save is the target's own, and the
+/// reach is short enough that "in range at all" is usually a
+/// one-candidate question. Nearest also keeps the pick deterministic,
+/// which the AI-vs-AI sweep relies on.
+fn try_halo_of_spores(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_action_on_nearest_enemy(encounter, actor_id, "halo of spores", |gap| {
+        gap <= HALO_OF_SPORES_GAP
+    })
 }
 
 /// Steady Aim — Tasha's Rogue lv3 bonus action. Installs an advantage-

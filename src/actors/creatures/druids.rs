@@ -440,3 +440,71 @@ pub static MOON_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..DRUID_TEMPLATE.clone()
     }
 });
+
+/// Spores Druid — Druid Circle **Circle of Spores** subclass build
+/// (TCE), and the first druid circle in the engine that keeps the whole
+/// spell list *and* asks the druid to stand in the front rank. Two
+/// subclass features, both level 2:
+///
+///   - **Halo of Spores** — a reaction, at will: one creature within
+///     10 ft takes 1d6 necrotic unless it makes a Constitution save
+///     against the druid's spell DC. The engine's only *declared*
+///     reaction (see `action_template::reaction_only`), and the reason
+///     the subclass plays differently from every other caster on the
+///     roster: the halo is paid for out of a slot the druid was not
+///     otherwise going to spend, so a Spores Druid who casts and then
+///     retreats still deals damage on the way out.
+///
+///   - **Symbiotic Entity** — an Action, once per short rest: 36
+///     temporary hit points, +1d6 necrotic on every melee weapon hit,
+///     and the halo's die rolled twice. It ends when the temp HP runs
+///     out, which the engine enforces at the temp-HP chokepoint rather
+///     than on a timer (`TEMP_HP_BOUND_CONDITIONS`).
+///
+/// The two halves are one decision. The halo alone is a 3.5-damage
+/// consolation prize; the symbiote alone is 36 temp HP on a d8 chassis.
+/// Together they turn the druid's *proximity* into a resource — the
+/// halo only reaches 10 ft, the melee rider only fires on a scimitar
+/// swing, and both scale up the moment the symbiote is riding, so the
+/// circle rewards a druid who spends the fight closer to it than a
+/// WIS-18 full caster has any business being. The 36 temp HP is what
+/// makes that survivable, and the fact that it is also the feature's
+/// clock is what keeps it honest: standing in melee spends the
+/// shield, and spending the shield ends the rider that made standing
+/// there worthwhile.
+///
+/// Contrast the sibling circles. The Moon Druid gives up its entire
+/// spell list for a bear. The Land Druid hands slots *back* so it can
+/// keep casting from range. Spores is the only one that asks the druid
+/// to be both things at once, and it is the only one whose defining
+/// resource is depleted by the enemy rather than by the druid.
+///
+/// RAW features not shipped: **Fungal Infestation** (lv6 — reanimate a
+/// beast or humanoid that dies within 10 ft as a zombie; a
+/// summon-on-death lane the engine's drop hook doesn't expose yet),
+/// **Spreading Spores** (lv10 — a movable 10-ft damage cube, which
+/// needs persistent terrain-anchored AoE), and **Fungal Body** (lv14 —
+/// crit immunity plus Blinded / Frightened / Poisoned immunity, RAW-
+/// gated well past this chassis's level).
+///
+/// Glyph 'F' — for the **F**ungus. Distinct from baseline druid 'D',
+/// Land Druid 'L' and Moon Druid 'B'.
+pub static SPORES_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        HALO_OF_SPORES, HALO_OF_SPORES_TAG, SYMBIOTIC_ENTITY, SYMBIOTIC_ENTITY_TAG,
+    };
+    // Two actions on top of the baseline caster chassis; nothing else
+    // about the druid changes, which is the same shape the Moon Druid
+    // uses. The stat line stays a druid's because the subclass adds
+    // survivability rather than replacing the body.
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(&*HALO_OF_SPORES);
+    actions.push(&*SYMBIOTIC_ENTITY);
+    CreatureTemplate {
+        name: "Spores Druid",
+        glyph: 'F',
+        actions,
+        features: HashSet::from([HALO_OF_SPORES_TAG, SYMBIOTIC_ENTITY_TAG]),
+        ..DRUID_TEMPLATE.clone()
+    }
+});

@@ -336,6 +336,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*druids::DRUID_TEMPLATE,
                     &*druids::LAND_DRUID_TEMPLATE,
                     &*druids::MOON_DRUID_TEMPLATE,
+                    &*druids::SPORES_DRUID_TEMPLATE,
                 ],
             ),
             (

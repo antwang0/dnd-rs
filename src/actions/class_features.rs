@@ -4,7 +4,8 @@ use std::sync::LazyLock;
 use crate::{
     actions::action_template::{
         Action, TargetingSchema, action_only, bonus_action_and_slot, bonus_action_only,
-        first_target_id, first_target_location, free_cost, resolve_enemy_burst_save_damage,
+        first_target_id, first_target_location, free_cost, reaction_only,
+        resolve_enemy_burst_save_damage,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -211,6 +212,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
     INVOKE_DUPLICITY_TAG,
+    // 5e Circle of Spores Druid **Symbiotic Entity** — RAW spends a
+    // Wild Shape use, and Wild Shape itself recharges on a short rest,
+    // so the charge lands on the short-rest lane rather than the
+    // long-rest default.
+    SYMBIOTIC_ENTITY_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -11771,3 +11777,280 @@ impl Action for HexbladesCurse {
 }
 
 pub static HEXBLADES_CURSE: LazyLock<HexbladesCurse> = LazyLock::new(|| HexbladesCurse {});
+
+/// Tag for the Circle of Spores Druid's **Symbiotic Entity** (subclass
+/// level 2). Once per short rest — RAW spends a Wild Shape use, and
+/// Wild Shape recharges on a short rest, so the tag rides
+/// `SHORT_REST_FEATURES` rather than the long-rest default.
+pub const SYMBIOTIC_ENTITY_TAG: &str = "druid.symbiotic_entity";
+
+/// Passive tag for the Circle of Spores Druid's **Halo of Spores**
+/// (subclass level 2). Never spent — the halo is at-will, priced in the
+/// druid's reaction rather than in a per-rest charge — so it lives on
+/// `features_max` and is read with `has_passive_feature`.
+pub const HALO_OF_SPORES_TAG: &str = "druid.halo_of_spores";
+
+/// Temporary hit points **Symbiotic Entity** hands out. RAW is 4 × druid
+/// level; the druid chassis in this engine is a level-9 build, so 36.
+///
+/// Deliberately in the same weight class as the Moon Druid's
+/// `BEAST_FORM_TEMP_HP` (34), because the two subclasses are making the
+/// same offer from opposite directions and the offer should cost about
+/// the same. The Moon Druid buys a body — 34 HP and a 2d6+4 claw — and
+/// pays for it by locking out every spell slot they own. The Spores
+/// Druid buys a rider — 36 HP and +1d6 necrotic on each melee swing —
+/// and pays for it with nothing at all except the charge, because the
+/// symbiote leaves their spell list entirely intact.
+///
+/// That looks lopsided until you notice what the two are actually
+/// worth. The bear's claw is the Moon Druid's whole offense while the
+/// form is up; the symbiote's 1d6 rides a scimitar, which is the worst
+/// attack on a druid's sheet and the one they were least likely to make.
+/// The Spores Druid's shield is real and their sword is not, so the
+/// feature reads as "stay a caster, but stop dying to the first thing
+/// that reaches you" — which is exactly the niche RAW gives the circle.
+pub const SYMBIOTIC_ENTITY_TEMP_HP: u32 = 36;
+
+/// Symbiotic Entity — Circle of Spores Druid action (subclass level 2).
+/// Animates the druid's spore halo into a symbiote: they gain
+/// `SYMBIOTIC_ENTITY_TEMP_HP` temporary hit points, their melee weapon
+/// hits pick up +1d6 necrotic (the `SymbioticEntity` row on
+/// `ON_HIT_RIDERS`), and Halo of Spores rolls its damage die twice.
+///
+/// The condition carries no timer of its own: RAW ends the feature
+/// "when you lose all these temporary hit points," and the engine
+/// enforces exactly that at `ActorInstance::drain_temp_hp` via the
+/// `TEMP_HP_BOUND_CONDITIONS` cohort. A `Permanent` install is therefore
+/// the honest encoding — the shield is the clock. RAW's other two end
+/// conditions (10 minutes elapsed, or a second Wild Shape) have no
+/// encounter surface: ten minutes outlasts every fight the engine runs,
+/// and no Spores Druid template carries Wild Shape.
+pub struct SymbioticEntityAction {}
+
+impl Action for SymbioticEntityAction {
+    fn name(&self) -> &str {
+        "symbiotic entity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["symbiote", "se"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temp HP, not healing — but the AI's support pipeline is the
+        // right lane for "this makes the holder harder to kill," and
+        // that pipeline reads `is_heal`. Same call the Armor of Agathys
+        // and False Life self-buffs make.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same shape as every once-per-rest self-prime: charge unspent,
+        // holder alive, and don't re-install a symbiote that is already
+        // riding them (the temp HP wouldn't stack — `gain_temp_hp` keeps
+        // the larger pool — so a second cast would burn the charge for
+        // nothing).
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            SYMBIOTIC_ENTITY_TAG,
+            Condition::SymbioticEntity,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(druid) = encounter.actors.get_mut(&caster_id) {
+            druid.spend_feature(SYMBIOTIC_ENTITY_TAG);
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "  symbiotic entity: {}'s spore halo condenses into a symbiote.",
+            name
+        ));
+        vec![
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: SYMBIOTIC_ENTITY_TEMP_HP,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::SymbioticEntity,
+                // Permanent because the temp-HP pool is the real timer —
+                // see the type docs.
+                timer: ConditionTimer::Permanent,
+            }),
+        ]
+    }
+}
+
+pub static SYMBIOTIC_ENTITY: LazyLock<SymbioticEntityAction> =
+    LazyLock::new(|| SymbioticEntityAction {});
+
+/// Halo of Spores — Circle of Spores Druid reaction (subclass level 2).
+/// One creature within 10 ft takes 1d6 necrotic unless it succeeds on a
+/// Constitution save against the druid's spell save DC. While Symbiotic
+/// Entity is up, the die is rolled twice.
+///
+/// The only player-declared reaction in the engine — see
+/// `reaction_only` for why that matters. In play it gives the Spores
+/// Druid something no other full caster has: a damage floor that costs
+/// them nothing they were going to spend. A druid who casts Moonbeam
+/// with their Action and steps back with their movement still gets to
+/// pull the halo's trigger on whatever chased them, and the reaction was
+/// otherwise going to expire unused.
+///
+/// RAW's damage die scales with druid level (1d4 at 2, 1d6 at 6, 1d8 at
+/// 10, 1d10 at 14). The chassis is a level-9 build, so 1d6.
+pub struct HaloOfSpores {}
+
+/// The Halo of Spores damage die, before Symbiotic Entity doubles it.
+const HALO_OF_SPORES_DIE: Dice = Dice::new(1, 6);
+
+/// Reach of the Halo of Spores, in tiles. RAW 10 ft on the engine's
+/// 2.5 ft grid.
+const HALO_OF_SPORES_REACH: isize = 4;
+
+impl Action for HaloOfSpores {
+    fn name(&self) -> &str {
+        "halo of spores"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["halo", "spores"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(HALO_OF_SPORES_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "one creature you can see within 10 feet of you."
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        reaction_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Passive feature, so there is no charge to check — just the
+        // flag, a live holder, and a live hostile target. The reach and
+        // line-of-sight gates are the engine's, via `reach_tiles` /
+        // `requires_los`.
+        let holds = encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.has_passive_feature(HALO_OF_SPORES_TAG));
+        if !holds {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.actors_enemies(caster_id, target_id)
+            && encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.is_combat_active())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(druid) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = druid.spell_save_dc(AbilityScoreType::Wisdom);
+        // RAW Symbiotic Entity: "when you damage a creature with your
+        // Halo of Spores, roll the damage die a second time and add it
+        // to the total."
+        let doubled = druid.has_condition(Condition::SymbioticEntity);
+        let dice = if doubled {
+            Dice::new(HALO_OF_SPORES_DIE.count * 2, HALO_OF_SPORES_DIE.faces)
+        } else {
+            HALO_OF_SPORES_DIE
+        };
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            caster_id,
+        );
+        let target_name = encounter.actor_name(target_id);
+        if save.passed() {
+            // RAW is all-or-nothing here, unlike the engine's usual
+            // half-on-save bursts — the halo is a small die that a
+            // successful save shrugs off entirely.
+            encounter.log(format!(
+                "  halo of spores: {} shrugs off the spore cloud.",
+                target_name
+            ));
+            return Vec::new();
+        }
+        let damage = encounter.roll(&dice);
+        encounter.log(format!(
+            "  halo of spores: {} breathes in {} necrotic{}",
+            target_name,
+            damage,
+            if doubled { " (symbiote-fed)." } else { "." }
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static HALO_OF_SPORES: LazyLock<HaloOfSpores> = LazyLock::new(|| HaloOfSpores {});

@@ -1588,6 +1588,70 @@ pub enum Condition {
     /// Ten-round timer (1 minute RAW). Not on `is_dispellable_buff` —
     /// it's a debuff on the enemy rather than a friendly buff.
     HexbladeCursed,
+    /// **Symbiotic Entity** (5e Circle of Spores Druid, subclass level
+    /// 2). The druid animates their spore halo into a symbiote that
+    /// rides their body: they gain a slab of temporary hit points and,
+    /// while the temp HP lasts, every melee weapon hit they land deals
+    /// an extra 1d6 necrotic and Halo of Spores rolls its damage die
+    /// twice.
+    ///
+    /// The two riders read the flag from opposite ends of the engine —
+    /// the melee bump is an `ON_HIT_RIDERS` row keyed on this condition
+    /// (persistent, `melee_only`), and the halo's double-die is a
+    /// branch inside the halo action itself. What ties them together is
+    /// RAW's duration clause: the feature "lasts for 10 minutes, until
+    /// you lose all these temporary hit points, or until you use your
+    /// Wild Shape again." We enforce the load-bearing half of that at
+    /// the temp-HP chokepoint — `ActorInstance::take_damage` drops the
+    /// condition on the tick the temp-HP pool empties — so the
+    /// symbiote's lifetime is genuinely tied to the shield it came
+    /// with, rather than to a timer that could outlive it.
+    ///
+    /// On `is_dispellable_buff`: it's a magical effect the druid put on
+    /// themselves, and the same reasoning that puts Investiture of Ice
+    /// and Barkskin on that list applies here.
+    SymbioticEntity,
+    /// **Ancestral Protectors** (5e Path of the Ancestral Guardian
+    /// Barbarian, subclass level 3). A back-linked debuff: the flag
+    /// says the creature is haunted by the barbarian's ancestors, and
+    /// the link says which barbarian, which is load-bearing because
+    /// both of the feature's clauses are scoped relative to that one
+    /// creature.
+    ///
+    ///   - The haunted creature has disadvantage on attack rolls
+    ///     against anyone *other than* the barbarian
+    ///     (`compute_attack_mode` reads the link and compares it to the
+    ///     defender).
+    ///   - Any damage it deals to a creature other than the barbarian
+    ///     is halved (`DealDamage::apply` reads the same link).
+    ///
+    /// The pairing is the whole feature: it doesn't stop the target
+    /// hitting the barbarian, it makes hitting anyone else a bad
+    /// trade. Marking a second creature moves the mark — RAW installs
+    /// it on "the first creature you hit" each turn, and the engine
+    /// stores one link per condition, so the newest mark wins in both.
+    ///
+    /// `UntilStartOfNextTurn` on the barbarian's own clock would be
+    /// wrong (the mark is meant to survive the target's next turn, which
+    /// is when it matters), so it carries a short `Rounds` timer
+    /// instead. Not on `is_dispellable_buff` — it's a debuff.
+    AncestrallyHaunted,
+    /// **Bladesong** (5e Bladesinging Wizard, subclass level 2). The
+    /// wizard's martial trance: while it is up they add their
+    /// Intelligence modifier to AC, move 10 ft faster, and add the same
+    /// modifier to Constitution saves made to maintain concentration.
+    ///
+    /// Three separate lanes read the one flag —
+    /// `condition_ac_bonus` (the AC row is INT-scaled, so it sits in
+    /// the scaling arm next to Sacred rather than in the flat table),
+    /// `condition_speed_bonus`, and `roll_concentration_save` — which
+    /// is what makes Bladesong the wizard's answer to standing in melee
+    /// at all: it patches the AC that lets them survive the swing and
+    /// the concentration save that decides whether the spell they are
+    /// holding survives it too.
+    ///
+    /// Ten-round timer (1 minute RAW). On `is_dispellable_buff`.
+    Bladesinging,
 }
 
 impl Condition {
@@ -1666,6 +1730,9 @@ impl Condition {
             Condition::Inspired => "inspired",
             Condition::Exhausted => "exhausted",
             Condition::SpiritShrouded => "wreathed in spirits",
+            Condition::SymbioticEntity => "bonded to a spore symbiote",
+            Condition::AncestrallyHaunted => "haunted by ancestral spirits",
+            Condition::Bladesinging => "bladesinging",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
             Condition::Confused => "confused",
@@ -1830,6 +1897,8 @@ impl Condition {
                 | Condition::Sacred
                 | Condition::Inspired
                 | Condition::SpiritShrouded
+                | Condition::SymbioticEntity
+                | Condition::Bladesinging
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Flying
