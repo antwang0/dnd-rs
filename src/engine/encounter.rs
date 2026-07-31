@@ -5891,6 +5891,16 @@ impl EncounterInstance {
             "  hexblade's curse: {} falls and {} draws {} hit points from the curse.",
             target_name, hexblade_name, amount
         ));
+        // The curse ends on the payout — RAW's clause is "if the cursed
+        // target dies", which happens once. Clearing it matters because
+        // a creature can reach 0 HP more than once: a downed ally healed
+        // back up and dropped again re-enters this hook, and without
+        // this the one curse would pay every time. Removing the
+        // condition takes the back-link with it, so there is nothing
+        // else to unwind.
+        if let Some(target) = self.actors.get_mut(&dropped_target_id) {
+            target.remove_condition(Condition::HexbladeCursed);
+        }
         Heal {
             actor_id: hexblade_id,
             amount,
@@ -53393,6 +53403,22 @@ mod tests {
             e.actors[&hexblade].hitpoints(),
             (wounded + expected).min(full),
             "the curse should pay the hexblade level + CHA hit points"
+        );
+
+        // And it pays once. A creature can reach 0 HP more than once —
+        // healed off the floor and dropped again — but one curse is one
+        // payout, so the curse comes off with the first.
+        assert_eq!(
+            e.hexblade_curse_holder(quarry),
+            None,
+            "the curse should end when it pays out"
+        );
+        let after_first = e.actors[&hexblade].hitpoints();
+        e.trigger_creature_dropped(quarry);
+        assert_eq!(
+            e.actors[&hexblade].hitpoints(),
+            after_first,
+            "a second drop must not pay the same curse again"
         );
     }
 
