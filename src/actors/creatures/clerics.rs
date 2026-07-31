@@ -1148,3 +1148,80 @@ pub static KNOWLEDGE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..CLERIC_TEMPLATE.clone()
     }
 });
+
+/// Death Domain Cleric — Divine Domain **Death Domain** subclass build
+/// (DMG). The thirteenth cleric domain in the engine, and the only one
+/// whose signature feature fires on a cantrip.
+///
+/// Three subclass features ship:
+///
+///   - **Reaper** (lv1) — a necromancy cantrip that targets one
+///     creature can target two standing within 5 ft of each other
+///     instead. Passive, free, always on.
+///   - **Reaper's Touch** (lv2, RAW "Touch of Death") — the domain's
+///     Channel Divinity. A bonus action primes the cleric's next melee
+///     hit for 3d8 extra necrotic.
+///   - **Divine Strike (necrotic)** (lv8) — the domain's typing of the
+///     shared level-8 cleric feature, +1d8 necrotic on a primed melee
+///     hit.
+///
+/// Reaper is the interesting one, and it is interesting because of what
+/// it doesn't cost. Every other domain's signature is a button with a
+/// charge behind it — one Radiance of the Dawn per rest, one Invoke
+/// Duplicity, one Divine Strike prime — so the domain's contribution to
+/// a fight is bounded by its rest cadence. Reaper has no charge, no
+/// action and no off switch: from the first round to the last, every
+/// Chill Touch and every Toll the Dead the cleric casts hits two
+/// creatures instead of one, provided the two are standing together.
+///
+/// That proviso is the whole tactical shape. The Death cleric is the
+/// first PC in the engine that wants the enemy *clustered*, which is the
+/// opposite of what every AoE-carrying caster wants, since an AoE picks
+/// its own centre and Reaper has to take the board as it finds it. The
+/// domain's payoff comes from fighting in corridors and doorways, and
+/// evaporates on an open map where the enemy has spread out.
+///
+/// The two melee primes point the other way, and deliberately so. A
+/// domain whose at-will is a doubled ranged cantrip has no reason to
+/// walk forward, so the features that reward walking forward are the
+/// heaviest melee riders any caster has: 3d8 plus 1d8 in a round where
+/// both primes are up is more than a Champion's greatsword. The Death
+/// cleric spends the fight deciding which of the two clerics it is.
+///
+/// Left out: **Inescapable Destruction** (lv6) makes the cleric's
+/// necrotic damage ignore resistance, and the engine's damage pipeline
+/// carries no attacker identity into `effective_damage` — a target
+/// halves what it is handed without ever learning who handed it over.
+/// Threading a source through every `DealDamage` is a real change and a
+/// separate one. **Improved Reaper** (lv17) sits above this chassis's
+/// level.
+///
+/// Glyph 'D' — for **D**eath. Distinct from every sibling domain: 'C'
+/// baseline, 'W' War, 'L' Light, 'S' Tempest, 'V' Life, 'G' Grave, 'F'
+/// Forge, 'X' Twilight, 'A' Arcana, 'N' Nature, 'K' Trickery, 'B'
+/// Knowledge.
+pub static DEATH_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        DIVINE_STRIKE_NECROTIC, DIVINE_STRIKE_NECROTIC_TAG, REAPER_TAG, REAPERS_TOUCH,
+        REAPERS_TOUCH_TAG,
+    };
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
+    actions.push(&*REAPERS_TOUCH);
+    actions.push(&*DIVINE_STRIKE_NECROTIC);
+    // Reaper needs a single-target necromancy cantrip to double, and the
+    // baseline cleric chassis carries only Toll the Dead. Chill Touch is
+    // on the Death Domain's RAW bonus spell list in spirit — the domain
+    // is the one that hands out necromancy — and without a second one
+    // the feature reads as a rider on one spell rather than a domain.
+    actions.push(&*crate::actions::spells::CHILL_TOUCH);
+    features.insert(REAPER_TAG);
+    features.insert(REAPERS_TOUCH_TAG);
+    features.insert(DIVINE_STRIKE_NECROTIC_TAG);
+    CreatureTemplate {
+        name: "Death Cleric",
+        glyph: 'D',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});

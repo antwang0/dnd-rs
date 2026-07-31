@@ -1872,33 +1872,37 @@ fn try_pass_without_trace(
 /// **The order is the priority and it is load-bearing**, which is the
 /// one thing a table must not lose:
 ///
-///   1. `divine strike` / `divine strike poison` — the cleric's flat
-///      damage rider. First because it is pure upside with no save to
+///   1. `reaper's touch` — the Death Domain's Channel Divinity, 3d8
+///      necrotic on the next melee hit. Ahead of the Divine Strikes
+///      below because it is the same shape for triple the die, and the
+///      chassis has one bonus action to spend on the lane.
+///   2. `divine strike` / `divine strike poison` / `divine strike
+///      necrotic` — the cleric's flat damage rider, in its three
+///      domain typings. Early because it is pure upside with no save to
 ///      fail and no positioning to set up; a cleric in melee always
-///      wants it. The two typings never co-occur on one template (the
-///      Trickery domain swaps rather than stacks), so listing both
-///      costs nothing.
-///   2. `fangs of the fire snake` — the Four Elements monk's +1d10
+///      wants it. The typings never co-occur on one template (a domain
+///      swaps rather than stacks), so listing all three costs nothing.
+///   3. `fangs of the fire snake` — the Four Elements monk's +1d10
 ///      fire rider. Same shape as Divine Strike and sits with it for
 ///      the same reason; the monk carries no other entry on this lane.
-///   3. `fire rune` — the Rune Knight's prime, and the only entry on
+///   4. `fire rune` — the Rune Knight's prime, and the only entry on
 ///      this lane that pays twice: 2d6 fire on the hit *and* a STR
 ///      save against Restrained, which is prone's advantage-granting
 ///      clause plus a speed of zero plus disadvantage on the target's
 ///      own swings. Ahead of every maneuver below because it strictly
 ///      contains what they buy.
-///   4. `trip attack` — prone is the strongest maneuver rider: it
+///   5. `trip attack` — prone is the strongest maneuver rider: it
 ///      hands every melee ally advantage against the target *and*
 ///      costs the target its movement.
-///   5. `menacing attack` — Frightened sticks on tough-STR monsters
+///   6. `menacing attack` — Frightened sticks on tough-STR monsters
 ///      that shrug off the trip, but only disadvantages the target's
 ///      own swings rather than enabling the party's.
-///   6. `disarming attack` — attacker disadvantage, which bites
+///   7. `disarming attack` — attacker disadvantage, which bites
 ///      hardest on ranged and multiattack threats but lasts a single
 ///      round in this engine.
-///   7. `pushing attack` — pure displacement, no accuracy or save
+///   8. `pushing attack` — pure displacement, no accuracy or save
 ///      rider attached; the finisher when nothing above is available.
-///   8. `goading attack` — the tank-anchor. Last because its value is
+///   9. `goading attack` — the tank-anchor. Last because its value is
 ///      conditional on the fighter *wanting* to be attacked, which is
 ///      the situation left over once the debuff riders are spent.
 ///
@@ -1941,8 +1945,10 @@ const BLADESONG_ENGAGE_GAP: isize = 8;
 const HALO_OF_SPORES_GAP: isize = 4;
 
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
+    "reaper's touch",
     "divine strike",
     "divine strike poison",
+    "divine strike necrotic",
     "fangs of the fire snake",
     "fire rune",
     "trip attack",
@@ -9417,6 +9423,7 @@ mod tests {
     #[test]
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::clerics::DEATH_CLERIC_TEMPLATE;
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
@@ -9426,7 +9433,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 8] = [
+        let cases: [(&CreatureTemplate, &str); 9] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9435,6 +9442,7 @@ mod tests {
             (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),
+            (&DEATH_CLERIC_TEMPLATE, "reaper's touch"),
         ];
 
         for (template, marker) in cases {

@@ -244,6 +244,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // Master's maneuvers on the same chassis.
     GIANTS_MIGHT_TAG,
     FIRE_RUNE_TAG,
+    // 5e Death Domain Cleric Channel Divinity — Reaper's Touch (RAW
+    // "Touch of Death"). Same short-rest cadence as the rest of the
+    // cleric CD family (Turn Undead, Preserve Life, Guided Strike,
+    // Radiance of the Dawn).
+    REAPERS_TOUCH_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -12557,6 +12562,75 @@ pub static FIRE_RUNE: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
     // opportunity attack before their next one, matching the maneuvers.
     timer: ConditionTimer::Rounds(2),
     log_line: "  fire rune: the rune on the fighter's weapon kindles.",
+});
+
+/// Passive tag for the Death Domain Cleric's **Reaper** (subclass level
+/// 1): a necromancy cantrip that targets one creature can target two
+/// standing within 5 ft of each other instead.
+///
+/// A passive with no charge and no action — the tag is the whole gate,
+/// read by `EncounterInstance::consume_reaper` from the cast-doubling
+/// chain in `Action::execute`. It lives on `features` (and therefore on
+/// `features_max`) the same way `SPLIT_ENCHANTMENT_TAG` does, because
+/// `has_passive_feature` is what both are asked.
+pub const REAPER_TAG: &str = "cleric.reaper";
+
+/// Channel Divinity charge for the Death Domain Cleric's **Reaper's
+/// Touch** (subclass level 2). Short-rest cadence, like every other
+/// cleric Channel Divinity in the engine.
+///
+/// RAW calls the feature Touch of Death, but so does the Way of the
+/// Long Death Monk's level-3 feature, and both a tag and an action name
+/// have to be unique here. The cleric's is renamed rather than the
+/// monk's because the monk's shipped first and is already wired into
+/// templates and prose; "reaper's touch" also names the domain feature
+/// it shares a chassis with.
+pub const REAPERS_TOUCH_TAG: &str = "cleric.reapers_touch";
+
+/// Reaper's Touch — Death Domain Cleric Channel Divinity (subclass
+/// level 2, RAW "Touch of Death"), bonus action. Primes the cleric's
+/// next melee hit to carry a slab of extra necrotic damage.
+///
+/// RAW pays a flat `5 + twice your cleric level`, which on the level-5
+/// chassis these templates target is 15. The rider table speaks in dice,
+/// so the row pays 3d8 — the same average as a level-4 cleric's flat
+/// value, and unlike the flat number it has a spread, which suits a
+/// once-per-rest burst better than a guaranteed constant would.
+///
+/// The biggest single rider on a cleric's melee lane by some distance:
+/// Divine Strike is 1d8, and this is triple it. That is the Death
+/// Domain's shape — a caster domain whose Channel Divinity is spent
+/// standing next to something.
+pub static REAPERS_TOUCH: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "reaper's touch",
+    aliases: &["rt", "cd-death"],
+    tag: REAPERS_TOUCH_TAG,
+    prime: Condition::TouchingDeath,
+    log_line: "  reaper's touch: the cleric's palm goes cold to the wrist.",
+});
+
+/// Class-feature tag for the Death Domain Cleric's **Divine Strike
+/// (necrotic)** (subclass level 8) — the domain's own typing of the
+/// shared cleric feature, sibling to the radiant baseline and the
+/// Trickery domain's poison.
+pub const DIVINE_STRIKE_NECROTIC_TAG: &str = "cleric.divine_strike_necrotic";
+
+/// Divine Strike (necrotic) — Death Domain Cleric level-8 subclass
+/// feature, bonus action. Same envelope as the radiant baseline; the
+/// `DivineStrikingNecrotic` rider row swaps 1d8 radiant for 1d8
+/// necrotic.
+///
+/// The three-token canonical name follows `divine strike poison` for
+/// the same parser reason: the longest token-prefix that names an
+/// action wins, so a template carrying both would still resolve each by
+/// its full name. No template does — the domains swap rather than
+/// stack.
+pub static DIVINE_STRIKE_NECROTIC: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "divine strike necrotic",
+    aliases: &["nstrike", "cd-necrotic"],
+    tag: DIVINE_STRIKE_NECROTIC_TAG,
+    prime: Condition::DivineStrikingNecrotic,
+    log_line: "  divine strike (necrotic): cleric's next melee hit will land withering.",
 });
 
 #[cfg(test)]

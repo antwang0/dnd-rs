@@ -2860,6 +2860,41 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
+        // 5e Death Domain Cleric Divine Strike (subclass level 8) — the
+        // necrotic arm of the same row. Third typing of one feature, and
+        // the domain that pairs it with the heaviest melee Channel
+        // Divinity in the engine.
+        OnHitRider {
+            condition: Condition::DivineStrikingNecrotic,
+            dice: Dice::new(1, 8),
+            label: "divine strike (necrotic)",
+            damage_type: DamageType::Necrotic,
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: None,
+            once_per_turn_tag: None,
+        },
+        // 5e Death Domain Cleric **Reaper's Touch** (subclass level 2,
+        // RAW "Touch of Death"), the Channel Divinity. RAW pays a flat
+        // `5 + twice your cleric level` — 15 on the level-5 chassis
+        // these templates target. This table speaks in dice, so the row
+        // pays 3d8: the same average as a level-4 cleric's flat value,
+        // with a spread, which suits a once-per-rest burst better than a
+        // guaranteed constant.
+        //
+        // Three times Divine Strike's die, and the largest melee rider a
+        // caster carries anywhere in the engine. It is what makes the
+        // Death Domain a caster whose best round is spent in contact.
+        OnHitRider {
+            condition: Condition::TouchingDeath,
+            dice: Dice::new(3, 8),
+            label: "reaper's touch",
+            damage_type: DamageType::Necrotic,
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: None,
+            once_per_turn_tag: None,
+        },
         // 5e Way of the Four Elements Monk **Fangs of the Fire Snake**
         // elemental discipline. The biggest single die on this table
         // (1d10) riding the smallest base weapon die in the engine (the

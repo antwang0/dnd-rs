@@ -147,23 +147,14 @@ impl Size {
         target.ordinal() <= self.ordinal() + 1
     }
 
-    /// The category one step up, saturating at Gargantuan. 5e's growth
-    /// effects (Enlarge, the Rune Knight's Giant's Might, Enlarge-flavored
-    /// potions) all say "increases in size by one category… if there is
-    /// enough room", and every one of them stops at Gargantuan.
-    pub fn grown(self) -> Size {
-        Size::from_ordinal(self.ordinal() + 1)
-    }
-
-    /// The category one step down, saturating at Tiny — the Reduce half of
-    /// Enlarge / Reduce, and the mirror of `grown`.
-    pub fn shrunk(self) -> Size {
-        Size::from_ordinal(self.ordinal() - 1)
-    }
-
-    /// Inverse of `ordinal`, clamped to the enum's range. Private-ish
-    /// helper for `grown` / `shrunk`; exposed because the size lane's
-    /// tests want to walk the ladder without repeating the match.
+    /// Inverse of `ordinal`, clamped to the enum's range at both ends.
+    ///
+    /// The clamp is the point. 5e's growth and shrink effects all say
+    /// "one size category larger / smaller", and a Gargantuan creature
+    /// that is told to grow simply stays Gargantuan — the same at the
+    /// Tiny end. Callers move along the ladder by arithmetic on
+    /// `ordinal` and land here, so no caller has to carry the
+    /// saturation.
     pub fn from_ordinal(n: i32) -> Size {
         match n {
             i32::MIN..=0 => Size::Tiny,
@@ -203,7 +194,7 @@ impl fmt::Display for Size {
 /// fails the gate closed (no ward recharge, no damage bump) rather than
 /// firing on the wrong school.
 ///
-/// Four variants have consumers today:
+/// Six variants have consumers today:
 ///
 ///   - **Abjuration** — the Abjuration Wizard's Arcane Ward
 ///     form/recharge hook.
@@ -215,13 +206,16 @@ impl fmt::Display for Size {
 ///     doubling.
 ///   - **Evocation** — the Evocation Wizard's Sculpt Spells / Potent
 ///     Cantrip / Empowered Evocation trio.
+///   - **Necromancy** — the Death Domain Cleric's Reaper, which doubles
+///     a single-target necromancy cantrip onto a second creature
+///     standing beside the first.
 ///
-/// Illusion, Necromancy and Transmutation are declared but unread: the
-/// three wizard traditions that carry those names key off reactions,
-/// passives and a carried stone rather than off the school of what
-/// they cast, so tagging their spells would add rows nothing consults.
-/// A future feature that does read one lands as spell-side `school()`
-/// overrides plus one consumer, with no enum churn.
+/// Illusion and Transmutation are declared but unread: the two wizard
+/// traditions that carry those names key off reactions and passives
+/// rather than off the school of what they cast, so tagging their
+/// spells would add rows nothing consults. A future feature that does
+/// read one lands as spell-side `school()` overrides plus one consumer,
+/// with no enum churn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpellSchool {
     Abjuration,

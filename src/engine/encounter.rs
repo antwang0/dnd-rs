@@ -6526,12 +6526,20 @@ impl EncounterInstance {
     /// one did. A `None` reach means the action does its own range
     /// logic and the distance gate is skipped.
     ///
+    /// `max_gap_from_original` adds a second envelope, measured from the
+    /// first target rather than from the caster. Twinned Spell and Split
+    /// Enchantment pass `None` — RAW lets the second creature stand
+    /// anywhere in range. The Death Domain's Reaper passes `Some(1)`,
+    /// because its RAW clause is "two creatures within 5 feet of each
+    /// other", which is a constraint on the pair, not on the caster's
+    /// reach.
+    ///
     /// Extracted from `consume_twinned_spell`, which used to own this
-    /// walk inline. The two callers differ on everything *around* the
-    /// pick — one is a consumable prime paid for in sorcery points, the
-    /// other an always-on passive gated on the spell's school — and on
-    /// nothing about the pick itself, which is why it is worth exactly
-    /// one copy.
+    /// walk inline. The callers differ on everything *around* the
+    /// pick — a consumable prime paid for in sorcery points, an
+    /// always-on passive gated on the spell's school, a domain feature
+    /// gated on the two targets being neighbours — and on nothing about
+    /// the pick itself, which is why it is worth exactly one copy.
     fn pick_second_spell_target(
         &self,
         caster_id: usize,
@@ -6539,6 +6547,7 @@ impl EncounterInstance {
         reach: Option<isize>,
         requires_los: bool,
         original_target_id: usize,
+        max_gap_from_original: Option<isize>,
     ) -> Option<usize> {
         let caster = self.actors.get(&caster_id)?;
         let caster_team = caster.team();
@@ -6571,6 +6580,18 @@ impl EncounterInstance {
                 }
                 if requires_los && !self.actor_has_line_of_sight(caster_id, *id) {
                     return None;
+                }
+                if let Some(pair_gap) = max_gap_from_original {
+                    let original = self.actors.get(&original_target_id)?;
+                    let gap = crate::engine::util::footprint_chebyshev(
+                        original.location(),
+                        crate::engine::util::get_tiles_from_size(original.size()),
+                        a.location(),
+                        crate::engine::util::get_tiles_from_size(a.size()),
+                    );
+                    if gap > pair_gap {
+                        return None;
+                    }
                 }
                 Some((*id, dist, a.hitpoints()))
             })
@@ -6629,6 +6650,7 @@ impl EncounterInstance {
             reach,
             requires_los,
             original_target_id,
+            None,
         )?;
         let twin_name = self.actor_name(twin_id);
         // Consume prime + SP atomically. Spending SP can fail in principle
@@ -6711,10 +6733,73 @@ impl EncounterInstance {
             reach,
             requires_los,
             original_target_id,
+            None,
         )?;
         let second_name = self.actor_name(second_id);
         self.log(format!(
             "  split enchantment: {} splits {} onto {}",
+            caster_name, action_name, second_name
+        ));
+        Some(second_id)
+    }
+
+    /// 5e Death Domain Cleric **Reaper** (subclass level 1) — the third
+    /// and last member of the cast-doubling family, and the only one
+    /// that fires on cantrips.
+    ///
+    /// RAW: "when you learn a necromancy cantrip that targets only one
+    /// creature, the spell can instead target two creatures within 5
+    /// feet of each other." Always on, no charge, no resource — which is
+    /// why it is last in the `.or_else` chain in `Action::execute`: a
+    /// cleric who somehow held a paid prime should spend that first, and
+    /// a free passive is never the thing you regret not using.
+    ///
+    /// Two gates distinguish it from its siblings. It is cantrips *only*
+    /// (`spell_level == 0`), where Split Enchantment is leveled spells
+    /// only — the exact inverse, and both for the same reason: a free
+    /// doubling has to be restricted to one tier or it dominates the
+    /// other. And the second creature has to be within 5 ft of the
+    /// *first*, not merely in the caster's range, which is the pair
+    /// constraint `pick_second_spell_target`'s `max_gap_from_original`
+    /// exists for. A Death cleric wants two enemies standing together,
+    /// and gets nothing from a battlefield that has spread out.
+    // Same flat argument list as its two siblings for the same reason —
+    // all three are called from one `.or_else` chain and read every
+    // argument straight off the action.
+    #[allow(clippy::too_many_arguments)]
+    pub fn consume_reaper(
+        &mut self,
+        caster_id: usize,
+        action_name: &str,
+        school: Option<SpellSchool>,
+        spell_level: u32,
+        is_harmful: bool,
+        reach: Option<isize>,
+        requires_los: bool,
+        original_target_id: usize,
+    ) -> Option<usize> {
+        use crate::actions::class_features::REAPER_TAG;
+        if school != Some(SpellSchool::Necromancy) || spell_level != 0 {
+            return None;
+        }
+        let caster = self.actors.get(&caster_id)?;
+        if !caster.has_passive_feature(REAPER_TAG) {
+            return None;
+        }
+        let caster_name = caster.name().to_string();
+        let second_id = self.pick_second_spell_target(
+            caster_id,
+            is_harmful,
+            reach,
+            requires_los,
+            original_target_id,
+            // RAW's "within 5 feet of each other" — one tile-gap on the
+            // engine's 2.5 ft grid, measured between the two targets.
+            Some(1),
+        )?;
+        let second_name = self.actor_name(second_id);
+        self.log(format!(
+            "  reaper: {}'s {} reaches {} as well",
             caster_name, action_name, second_name
         ));
         Some(second_id)
@@ -70898,6 +70983,153 @@ mod tests {
         assert!(
             !e.actors[&f].has_condition(Condition::FireRuneInvoked),
             "the swing consumes the prime"
+        );
+    }
+
+    /// Reaper doubles a single-target necromancy cantrip onto a second
+    /// creature standing beside the first — the Death Domain's headline
+    /// feature, and the only member of the cast-doubling family that
+    /// fires on cantrips.
+    #[test]
+    fn reaper_doubles_a_necromancy_cantrip_onto_a_neighbour() {
+        use crate::actions::spells::CHILL_TOUCH;
+        use crate::actors::creatures::clerics::DEATH_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        // Chill Touch is an attack roll, so sweep seeds until one lands
+        // on both. What is under test is that the second goblin is
+        // *reached at all* — before Reaper, nothing could touch it.
+        let mut doubled = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let cleric = e
+                .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let first = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            // Second goblin footprint-adjacent to the first, which is
+            // RAW's "within 5 feet of each other".
+            let second = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 1)
+                .unwrap();
+            let before = e.actors[&second].hitpoints();
+            let targets = vec![first];
+            for eff in CHILL_TOUCH.execute(&mut e, cleric, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.actors.get(&second).is_none_or(|a| a.hitpoints() < before) {
+                doubled = true;
+                break;
+            }
+        }
+        assert!(
+            doubled,
+            "Reaper should carry Chill Touch onto the neighbouring goblin"
+        );
+    }
+
+    /// Reaper's two gates, both negative cases. It is cantrips only —
+    /// the exact inverse of Split Enchantment — and the second creature
+    /// has to be beside the first, not merely in the caster's range.
+    #[test]
+    fn reaper_declines_a_leveled_spell_and_a_distant_second_target() {
+        use crate::actions::spells::CHILL_TOUCH;
+        use crate::actors::creatures::clerics::DEATH_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::SpellSchool;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cleric = e
+            .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let first = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        // Well inside Chill Touch's 48-tile reach, but nowhere near the
+        // first goblin.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 1)
+            .unwrap();
+        assert_eq!(
+            e.consume_reaper(
+                cleric,
+                CHILL_TOUCH.name(),
+                Some(SpellSchool::Necromancy),
+                0,
+                true,
+                CHILL_TOUCH.reach_tiles(),
+                CHILL_TOUCH.requires_los(),
+                first,
+            ),
+            None,
+            "the pair has to be within 5 ft of each other"
+        );
+
+        // Move the second goblin next door and the same call finds it —
+        // then the level gate refuses the identical situation.
+        let neighbour = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 2)
+            .unwrap();
+        assert_eq!(
+            e.consume_reaper(
+                cleric,
+                CHILL_TOUCH.name(),
+                Some(SpellSchool::Necromancy),
+                0,
+                true,
+                CHILL_TOUCH.reach_tiles(),
+                CHILL_TOUCH.requires_los(),
+                first,
+            ),
+            Some(neighbour)
+        );
+        assert_eq!(
+            e.consume_reaper(
+                cleric,
+                "inflict wounds",
+                Some(SpellSchool::Necromancy),
+                1,
+                true,
+                CHILL_TOUCH.reach_tiles(),
+                CHILL_TOUCH.requires_los(),
+                first,
+            ),
+            None,
+            "Reaper is cantrips only"
+        );
+    }
+
+    /// A cleric without the Death Domain gets nothing: the tag is the
+    /// whole gate, so the baseline cleric's Toll the Dead stays
+    /// single-target.
+    #[test]
+    fn reaper_needs_the_domain() {
+        use crate::actions::spells::CHILL_TOUCH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::SpellSchool;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let first = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 1)
+            .unwrap();
+        assert_eq!(
+            e.consume_reaper(
+                cleric,
+                CHILL_TOUCH.name(),
+                Some(SpellSchool::Necromancy),
+                0,
+                true,
+                CHILL_TOUCH.reach_tiles(),
+                CHILL_TOUCH.requires_los(),
+                first,
+            ),
+            None
         );
     }
 }

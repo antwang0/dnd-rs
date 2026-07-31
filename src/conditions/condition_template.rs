@@ -789,6 +789,19 @@ pub enum Condition {
     /// will do and is consumed by that swing. Off `is_dispellable_buff`
     /// for the same reason the maneuver primes are.
     FireRuneInvoked,
+    /// **Reaper's Touch** primed (5e Death Domain Cleric, subclass level
+    /// 2, RAW "Touch of Death"). The cleric's Channel Divinity spent on
+    /// a bonus action: their next melee hit carries a slab of extra
+    /// necrotic damage.
+    ///
+    /// Sibling to `DivineStriking` and `DivineStrikingPoison` on the
+    /// cleric's melee-prime lane, three times the die.
+    TouchingDeath,
+    /// **Divine Strike (necrotic)** primed (5e Death Domain Cleric,
+    /// subclass level 8) — the domain's typing of the shared cleric
+    /// feature. Identical in every respect to `DivineStriking` except
+    /// the damage type its rider row carries.
+    DivineStrikingNecrotic,
     /// Bonded by Warding Bond (5e level-2 abjuration). The bonded actor
     /// gains +1 AC, +1 saving throws, and resistance to all damage. Any
     /// damage that lands on the bonded actor is mirrored onto their
@@ -1868,6 +1881,8 @@ impl Condition {
             Condition::Reduced => "reduced",
             Condition::GiantsMight => "wreathed in giant's might",
             Condition::FireRuneInvoked => "burning with a fire rune",
+            Condition::TouchingDeath => "wreathed in the reaper's touch",
+            Condition::DivineStrikingNecrotic => "primed to strike withering",
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",

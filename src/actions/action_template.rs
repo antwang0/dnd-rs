@@ -946,21 +946,26 @@ pub trait Action {
             let sp_cost = crate::engine::side_effects::spell_slot_level(&costs)
                 .unwrap_or(1)
                 .max(1);
-            // Two features double a single-target cast onto a second
-            // creature: the Sorcerer's Twinned Spell (a consumable
-            // prime charging sorcery points, any single-target spell)
-            // and the Enchantment Wizard's Split Enchantment (free,
-            // always on, leveled enchantments only). They resolve
-            // through the same twin block below because the *effect* is
-            // identical — re-run the action's side-effects against one
-            // more id — and differ only in the gate.
+            // They all resolve through the same twin block below
+            // because the *effect* is identical — re-run the action's
+            // side-effects against one more id — and they differ only in
+            // the gate.
             //
-            // The paid prime is offered first and the free passive only
-            // gets a look if it didn't fire. That ordering is what
-            // keeps a caster holding both from doubling twice, and it
-            // errs the right way: a sorcerer/enchanter would rather
-            // spend nothing, but the prime is already up and would
-            // otherwise sit unspent across a cast it was declared for.
+            // Three features double a single-target cast, and they are
+            // offered paid-first: the Sorcerer's Twinned Spell (a
+            // consumable prime charging sorcery points, any
+            // single-target spell), then the Enchantment Wizard's Split
+            // Enchantment (free, leveled enchantments only), then the
+            // Death Domain Cleric's Reaper (free, necromancy cantrips
+            // only, and the second target must stand beside the first).
+            //
+            // The ordering is what keeps a caster holding more than one
+            // from doubling twice, and it errs the right way: a sorcerer
+            // would rather spend nothing, but the prime is already up
+            // and would otherwise sit unspent across a cast it was
+            // declared for. The two free passives cannot collide with
+            // each other — one is leveled-only and the other
+            // cantrip-only.
             let second_target = encounter
                 .consume_twinned_spell(
                     caster_id,
@@ -973,6 +978,18 @@ pub trait Action {
                 )
                 .or_else(|| {
                     encounter.consume_split_enchantment(
+                        caster_id,
+                        self.name(),
+                        self.school(),
+                        crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0),
+                        self.is_harmful(),
+                        self.reach_tiles(),
+                        self.requires_los(),
+                        original_target_id,
+                    )
+                })
+                .or_else(|| {
+                    encounter.consume_reaper(
                         caster_id,
                         self.name(),
                         self.school(),
