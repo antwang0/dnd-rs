@@ -175,7 +175,12 @@ fn spell_attack_outcome(
     // non-Champion casters, and so a Hexblade's Curse on *this* target
     // widens the range for the hexblade who cast it.
     let mut nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
-    let mut hit = nat_crit || total >= target_ac;
+    // 5e: "If the d20 roll for an attack is a 1, the attack misses
+    // regardless of any modifiers or the target's AC." The rule is
+    // written about attack rolls, not about weapons, so a spell attack
+    // auto-misses on a natural 1 exactly like a longsword swing.
+    let mut is_nat_one = raw == 1;
+    let mut hit = !is_nat_one && (nat_crit || total >= target_ac);
     // 5e Tasha's Sorcerer Seeking Spell metamagic: on a miss, if the
     // caster has the prime up, reroll the d20 and use the new result
     // (RAW: "you must use the new roll"). Routed through the same
@@ -186,7 +191,8 @@ fn spell_attack_outcome(
             raw = new_raw;
             total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
             nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
-            hit = nat_crit || total >= target_ac;
+            is_nat_one = raw == 1;
+            hit = !is_nat_one && (nat_crit || total >= target_ac);
         }
     }
     // 5e Wild Magic Sorcerer Bend Luck (lv6): the target may burn 2 SP +
@@ -196,7 +202,7 @@ fn spell_attack_outcome(
     // bend fires whether the incoming attack is a longsword or a Fire
     // Bolt. Bypassed on nat-crit (the d20 face stands) and nat-1 (already
     // a miss).
-    let bend_penalty = if hit && !nat_crit && raw != 1 {
+    let bend_penalty = if hit && !nat_crit && !is_nat_one {
         encounter.apply_bend_luck_penalty(target_id, caster_id) as i32
     } else {
         0
@@ -213,7 +219,9 @@ fn spell_attack_outcome(
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
     let is_crit = nat_crit
         || (hit && encounter.target_grants_melee_auto_crit(caster_id, target_id, is_melee));
-    let outcome = if is_crit {
+    let outcome = if is_nat_one {
+        "miss (nat 1)"
+    } else if is_crit {
         "CRIT!"
     } else if hit {
         "hit"

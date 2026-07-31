@@ -52780,6 +52780,92 @@ mod tests {
         );
     }
 
+    /// A natural 1 misses on **both** attack resolvers, even when the
+    /// modifiers would otherwise carry it past the target's AC.
+    ///
+    /// RAW: "If the d20 roll for an attack is a 1, the attack misses
+    /// regardless of any modifiers or the target's AC." The rule is
+    /// written about attack rolls, and a spell attack is an attack roll
+    /// — but the weapon resolver enforced it and the shared spell-attack
+    /// resolver did not, so a caster with a good attack bonus hit a
+    /// low-AC creature on a 1. A gelatinous cube is AC 6; +5 or better
+    /// clears that on the worst face of the die.
+    ///
+    /// Swept over seeds because the failure needs the d20 to actually
+    /// come up 1. Every logged natural 1 on either path must read as a
+    /// miss, and the sweep refuses to pass if it never saw one.
+    #[test]
+    fn a_natural_one_misses_on_both_attack_paths() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::PACT_BLADE;
+        use crate::actions::spells::CHILL_TOUCH;
+        use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+
+        // One spell per resolver, and the pick matters: the two are
+        // reached by different actions rather than by different kinds of
+        // action. Fire Bolt looks like the obvious spell to use and is
+        // the wrong one — it routes through `engine::attack` under
+        // `is_spell`, which is the resolver that already enforced the
+        // rule. Chill Touch is on `spells::spell_attack_outcome`, the
+        // one that didn't.
+        for &(label, action) in &[
+            ("chill touch", &*CHILL_TOUCH as &dyn Action),
+            ("pact blade", &PACT_BLADE as &dyn Action),
+        ] {
+            let mut nat_ones = 0;
+            for seed in 0..120u64 {
+                let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+                let caster = e
+                    .instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let cube = e
+                    .instantiate_creature(
+                        &GELATINOUS_CUBE_TEMPLATE,
+                        Coordinate::new(3, 2),
+                        1,
+                        0,
+                    )
+                    .unwrap();
+                let before = e.actors[&cube].hitpoints();
+                for eff in action.side_effects(&mut e, caster, Some(&vec![cube]), None, None) {
+                    eff.apply(&mut e);
+                }
+
+                let Some(roll_line) = e
+                    .messages()
+                    .iter()
+                    .find(|m| m.contains(&format!("{}: 1d20(", label)))
+                else {
+                    continue;
+                };
+                if !roll_line.contains("1d20(1)") {
+                    continue;
+                }
+                nat_ones += 1;
+                assert!(
+                    roll_line.contains("miss"),
+                    "seed {}: {} rolled a natural 1 and did not miss: {}",
+                    seed,
+                    label,
+                    roll_line
+                );
+                assert_eq!(
+                    e.actors[&cube].hitpoints(),
+                    before,
+                    "seed {}: {} rolled a natural 1 and still dealt damage",
+                    seed,
+                    label
+                );
+            }
+            assert!(
+                nat_ones > 0,
+                "{}: no natural 1 came up across 120 seeds — the sweep proved nothing",
+                label
+            );
+        }
+    }
+
     /// The curse's damage bonus reaches the actual damage roll, on both
     /// chokepoints that resolve an attack.
     ///
