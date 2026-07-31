@@ -1067,6 +1067,7 @@ pub trait Action {
             spell_level,
             &damage_types,
             self.school(),
+            target_ids,
         );
         side_effects.append(&mut post_cast_effects);
         for cost in costs {

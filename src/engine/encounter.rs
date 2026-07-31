@@ -7537,6 +7537,7 @@ impl EncounterInstance {
         spell_level: u32,
         damage_types: &[DamageType],
         school: Option<SpellSchool>,
+        target_ids: Option<&Vec<usize>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         let mut effects = Vec::new();
         effects.append(&mut self.trigger_wild_magic_surge(caster_id, spell_level));
@@ -7550,7 +7551,75 @@ impl EncounterInstance {
         self.trigger_expert_divination(caster_id, spell_level, school);
         self.trigger_benign_transposition_recharge(caster_id, spell_level, school);
         self.trigger_war_magic_prime(caster_id, spell_level, school);
+        self.trigger_voice_of_authority(caster_id, spell_level, target_ids);
         effects
+    }
+
+    /// 5e Order Domain Cleric **Voice of Authority** (subclass level 1)
+    /// post-cast hook: a spell of 1st level or higher cast on an ally
+    /// lets that ally spend their reaction on one weapon attack, right
+    /// now.
+    ///
+    /// The first hook in this family to care *who the spell landed on*,
+    /// which is why the dispatcher grew a `target_ids` parameter. Every
+    /// other member keys off the caster and the cast (level, school,
+    /// damage type) and needs nothing from the target list.
+    ///
+    /// The feature is deliberately not free: it turns the cleric's
+    /// support actions into damage, so a round spent healing the
+    /// front-line is also a round the front-line gets an extra swing.
+    /// What bounds it is the ally's reaction — one per round, shared
+    /// with opportunity attacks and every reactive defence they have —
+    /// so the cleric is spending someone else's resource, and the ally
+    /// pays for it the next time an enemy walks away from them.
+    ///
+    /// Self-targeted spells don't count: RAW says "an ally", and a
+    /// cleric who could Shield of Faith themselves into a free attack
+    /// every round would never cast anything else.
+    ///
+    /// Unlike its cantrip-gated sibling `trigger_war_magic_prime`, this
+    /// hook takes no `school`. It doesn't need one: a non-zero
+    /// `spell_level` means the cast paid a `SpellSlot`, and nothing but
+    /// a spell does. Asking for a school as well would quietly exclude
+    /// every levelled spell whose school no feature reads — which is
+    /// most of the cleric's buff list, Shield of Faith included.
+    fn trigger_voice_of_authority(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        target_ids: Option<&Vec<usize>>,
+    ) {
+        use crate::actions::class_features::VOICE_OF_AUTHORITY_TAG;
+        if spell_level == 0 {
+            return;
+        }
+        if !self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(VOICE_OF_AUTHORITY_TAG))
+        {
+            return;
+        }
+        let Some(targets) = target_ids else {
+            return;
+        };
+        // First eligible ally in the spell's own target list, in the
+        // order the spell named them. A multi-target buff orders one
+        // swing, not one per creature — RAW's "target an ally with the
+        // spell" reads as a single grant per cast.
+        let ally = targets
+            .iter()
+            .copied()
+            .find(|&id| id != caster_id && self.actors_allied(caster_id, id));
+        let Some(ally_id) = ally else {
+            return;
+        };
+        crate::engine::attack::try_fire_directed_attack(
+            self,
+            ally_id,
+            caster_id,
+            "word of command",
+        );
     }
 
     /// 5e Eldritch Knight Fighter **War Magic** (subclass level 7)
@@ -34595,18 +34664,18 @@ mod tests {
 
         // A levelled conjuration re-arms it; a cantrip and a
         // non-conjuration do not.
-        e.dispatch_post_cast_triggers(conjurer, 0, &[], Some(SpellSchool::Conjuration));
+        e.dispatch_post_cast_triggers(conjurer, 0, &[], Some(SpellSchool::Conjuration), None);
         assert!(
             !e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
             "RAW excludes cantrips"
         );
-        e.dispatch_post_cast_triggers(conjurer, 3, &[], Some(SpellSchool::Evocation));
-        e.dispatch_post_cast_triggers(conjurer, 3, &[], None);
+        e.dispatch_post_cast_triggers(conjurer, 3, &[], Some(SpellSchool::Evocation), None);
+        e.dispatch_post_cast_triggers(conjurer, 3, &[], None, None);
         assert!(
             !e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
             "a Fireball is not a conjuration, and an untagged spell fails closed"
         );
-        e.dispatch_post_cast_triggers(conjurer, 2, &[], Some(SpellSchool::Conjuration));
+        e.dispatch_post_cast_triggers(conjurer, 2, &[], Some(SpellSchool::Conjuration), None);
         assert!(
             e.actors[&conjurer].feature_available(BENIGN_TRANSPOSITION_TAG),
             "a levelled conjuration re-anchors the transposition"
@@ -34630,7 +34699,7 @@ mod tests {
         let plain = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        e.dispatch_post_cast_triggers(plain, 5, &[], Some(SpellSchool::Conjuration));
+        e.dispatch_post_cast_triggers(plain, 5, &[], Some(SpellSchool::Conjuration), None);
         assert!(
             !e.actors[&plain].feature_available(BENIGN_TRANSPOSITION_TAG),
             "the refill is gated on the template's own feature set"
@@ -43769,11 +43838,16 @@ mod tests {
         assert_eq!(e.actors[&f].extra_melee_reach(24), 0);
     }
 
-    /// Commander's Strike (Fighter Battle Master): bonus-action ally-buff
-    /// that hands a target ally a fresh reaction and queues a help-grant
-    /// for advantage on their next swing against the nearest enemy.
+    /// Commander's Strike (Fighter Battle Master): the ordered ally
+    /// swings *now*, with advantage, spending the reaction the order
+    /// hands them.
+    ///
+    /// The swing is the whole maneuver. Before `try_fire_directed_attack`
+    /// existed the action installed a help-grant and a spare reaction and
+    /// hoped the ally would find an opportunity attack to spend them on;
+    /// this pins that the attack actually happens.
     #[test]
-    fn commanders_strike_grants_ally_reaction_and_help() {
+    fn commanders_strike_makes_the_ally_swing_now() {
         use crate::actions::class_features::{COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG};
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -43781,40 +43855,66 @@ mod tests {
         let f = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
             .unwrap();
+        // The ally stands in contact with the goblin; the fighter does
+        // not, which is the situation the maneuver exists for.
         let ally = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
             .unwrap();
-        let _enemy = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
             .unwrap();
-        // Spend the ally's reaction so the grant is observable.
+        // Spend the ally's reaction first, so the swing can only happen
+        // via the fresh one the order grants.
         let _ = e
             .actors
             .get_mut(&ally)
             .unwrap()
             .consume_resource(crate::engine::side_effects::Resource::Reaction);
         assert!(e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
-        let effects = COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None);
-        for ef in effects {
+        for ef in COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None) {
             ef.apply(&mut e);
         }
         assert!(!e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
-        // Ally should have a fresh reaction.
+        let log = e.messages().join("\n");
+        assert!(
+            log.contains("at Fighter 0's command"),
+            "the ally should have taken the ordered swing:\n{}",
+            log
+        );
+        assert!(
+            !e.actors[&ally].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+            "the ordered swing spends the reaction the order granted"
+        );
+    }
+
+    /// The other half: an ally with nothing in reach can't swing, so the
+    /// order leaves them holding the reaction RAW gave them rather than
+    /// burning it on nothing.
+    #[test]
+    fn commanders_strike_leaves_the_reaction_when_nothing_is_in_reach() {
+        use crate::actions::class_features::COMMANDERS_STRIKE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        // Far enough that no melee weapon reaches.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        let _ = e
+            .actors
+            .get_mut(&ally)
+            .unwrap()
+            .consume_resource(crate::engine::side_effects::Resource::Reaction);
+        for ef in COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None) {
+            ef.apply(&mut e);
+        }
         assert!(
             e.actors[&ally].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
-            "ally should get a fresh reaction"
-        );
-        // Ally should have a help-grant against the goblin (the nearest
-        // enemy to the ally).
-        let goblin_id = e
-            .actors
-            .iter()
-            .find(|(_, a)| a.team() == 1)
-            .map(|(id, _)| *id)
-            .unwrap();
-        assert!(
-            e.actors[&ally].help_grant(goblin_id),
-            "ally should have a help-grant vs the nearest enemy"
+            "the reaction stands when the geometry refuses the swing"
         );
     }
 
@@ -55559,7 +55659,7 @@ mod tests {
             .unwrap();
 
         // A levelled cast is not a cantrip.
-        let _ = e.dispatch_post_cast_triggers(knight, 2, &[], Some(SpellSchool::Evocation));
+        let _ = e.dispatch_post_cast_triggers(knight, 2, &[], Some(SpellSchool::Evocation), None);
         assert!(
             !e.actors[&knight].has_condition(Condition::WarMagicPrimed),
             "a levelled spell doesn't arm War Magic"
@@ -55569,19 +55669,19 @@ mod tests {
         // school tag separates a Fire Bolt from a scimitar swing. A
         // knight who could arm the prime by swinging would get the
         // War Magic follow-up for free.
-        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], None);
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], None, None);
         assert!(
             !e.actors[&knight].has_condition(Condition::WarMagicPrimed),
             "an untagged level-0 action is a weapon swing, not a cantrip"
         );
         // A cantrip is.
-        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation));
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation), None);
         assert!(
             e.actors[&knight].has_condition(Condition::WarMagicPrimed),
             "a cantrip arms War Magic"
         );
         // No tag, no prime.
-        let _ = e.dispatch_post_cast_triggers(plain, 0, &[], Some(SpellSchool::Evocation));
+        let _ = e.dispatch_post_cast_triggers(plain, 0, &[], Some(SpellSchool::Evocation), None);
         assert!(
             !e.actors[&plain].has_condition(Condition::WarMagicPrimed),
             "a fighter without the tag never arms War Magic"
@@ -55607,7 +55707,7 @@ mod tests {
             "War Magic needs a cantrip cast first"
         );
 
-        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation));
+        let _ = e.dispatch_post_cast_triggers(knight, 0, &[], Some(SpellSchool::Evocation), None);
         let actor = e.actors.get_mut(&knight).unwrap();
         actor.give_resource(Resource::BonusAction);
         // Spend the Action the (notional) cantrip cost so the grant is
@@ -67687,7 +67787,7 @@ mod tests {
             e.exit_cast();
             let log_before = e.messages().len();
             let _ =
-                e.dispatch_post_cast_triggers(evoker, lvl, &[], Some(SpellSchool::Evocation));
+                e.dispatch_post_cast_triggers(evoker, lvl, &[], Some(SpellSchool::Evocation), None);
             e.messages()[log_before..]
                 .iter()
                 .find(|m| m.contains("overchannel backlash"))
@@ -71130,6 +71230,137 @@ mod tests {
                 first,
             ),
             None
+        );
+    }
+
+    /// Voice of Authority: a levelled spell cast on an ally buys that
+    /// ally an immediate weapon attack, paid for out of their reaction.
+    #[test]
+    fn voice_of_authority_turns_a_buff_into_an_allys_swing() {
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::ORDER_CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&ORDER_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // The fighter is in contact with the goblin; the cleric is not.
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let targets = vec![fighter];
+        for eff in SHIELD_OF_FAITH.execute(&mut e, cleric, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        let log = e.messages().join("\n");
+        assert!(
+            log.contains("at Order Cleric 0's word of command"),
+            "the buffed ally should have swung:\n{}",
+            log
+        );
+        assert!(
+            !e.actors[&fighter]
+                .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+            "the swing is paid for out of the ally's own reaction"
+        );
+    }
+
+    /// The feature's three gates, each on its own: cantrips don't
+    /// qualify, the cleric buffing themselves doesn't qualify, and a
+    /// cleric without the domain gets nothing at all.
+    #[test]
+    fn voice_of_authority_declines_cantrips_self_targets_and_other_domains() {
+        use crate::actions::spells::{SACRED_FLAME, SHIELD_OF_FAITH};
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        // Self-target: the cleric is standing in contact with the goblin
+        // themselves, so a swing was geometrically available and the
+        // ally gate is what refused it.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&ORDER_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let selfie = vec![cleric];
+        for eff in SHIELD_OF_FAITH.execute(&mut e, cleric, Some(&selfie), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.messages().join("\n").contains("word of command"),
+            "RAW says an ally, and the cleric is not their own ally"
+        );
+
+        // Cantrip on an enemy: no ally in the target list, and level 0
+        // besides.
+        let enemy = vec![goblin];
+        for eff in SACRED_FLAME.execute(&mut e, cleric, Some(&enemy), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(!e.messages().join("\n").contains("word of command"));
+
+        // A baseline cleric doing exactly what worked above.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let plain = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let targets = vec![fighter];
+        for eff in SHIELD_OF_FAITH.execute(&mut e, plain, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.messages().join("\n").contains("word of command"),
+            "the tag is the whole gate"
+        );
+    }
+
+    /// A directed swing is refused rather than wasted when the swinger
+    /// is charmed by the only thing they could reach — the same clause
+    /// that stops a charmed creature riposting its charmer.
+    #[test]
+    fn a_directed_attack_will_not_swing_at_a_charmer() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::attack::try_fire_directed_attack;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+            .unwrap();
+        assert!(try_fire_directed_attack(&mut e, fighter, cleric, "command"));
+
+        // Refresh the reaction, then charm the swinger onto the goblin.
+        if let Some(a) = e.actors.get_mut(&fighter) {
+            a.give_resource(crate::engine::side_effects::Resource::Reaction);
+            a.add_condition(Condition::Charmed, ConditionTimer::Rounds(5));
+            a.set_condition_link(Condition::Charmed, Some(goblin));
+        }
+        assert!(
+            !try_fire_directed_attack(&mut e, fighter, cleric, "command"),
+            "a charmed creature cannot be ordered to attack its charmer"
+        );
+        assert!(
+            e.actors[&fighter]
+                .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+            "and the refused order leaves the reaction unspent"
         );
     }
 }

@@ -910,6 +910,92 @@ pub fn apply_reactive_damage_clamps(
 /// if we later extend RAW to trigger Riposte on missed spell attacks
 /// too — the current RAW clause is melee-only so the caller in
 /// `resolve_attack_outcome` gates on `p.is_melee` at the call site.
+/// Spend `actor_id`'s reaction on one melee weapon attack, at
+/// `director_id`'s order — the shared body behind every "an ally you
+/// name takes a swing right now" feature.
+///
+/// The engine's other out-of-turn swings are things the swinger decides:
+/// an opportunity attack fires because someone walked away from *them*,
+/// a Riposte because someone missed *them*. This is the third shape, and
+/// the only one where the reason to swing belongs to a different
+/// creature entirely. Two features want it — the Battle Master's
+/// Commander's Strike and the Order Domain Cleric's Voice of Authority —
+/// and they differ only in what buys the order.
+///
+/// Target selection is the nearest hostile inside the swinger's own
+/// reach. RAW lets the director name the creature, but the engine has no
+/// picker for a target chosen by one actor and attacked by another, and
+/// "nearest thing you could already hit" is both the usual answer and a
+/// deterministic one, which the seeded AI sweeps need.
+///
+/// Returns true if a swing actually happened. Every gate that can refuse
+/// it is a real one — no reaction left, nothing in reach, no melee
+/// weapon, the swinger is charmed by the only thing they could hit — so
+/// the caller logging a miss is telling the truth rather than covering
+/// for a silent failure.
+pub fn try_fire_directed_attack(
+    encounter: &mut EncounterInstance,
+    actor_id: usize,
+    director_id: usize,
+    label: &str,
+) -> bool {
+    use crate::actions::action_template::MELEE_REACH;
+
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    if !actor.is_combat_active() || !actor.has_reaction() {
+        return false;
+    }
+    let Some(attack) = actor.first_melee_weapon_action() else {
+        return false;
+    };
+    let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
+    let my_team = actor.team();
+    // Nearest hostile inside the swinger's reach, ties broken on id so a
+    // seeded run reproduces. Charmed targets are dropped rather than
+    // sorted past: RAW forbids the swing, and picking one anyway would
+    // spend the reaction on nothing.
+    let mut candidates: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != actor_id && a.team() != my_team && a.is_combat_active()
+        })
+        .filter_map(|(id, _)| {
+            let dist = encounter.footprint_distance(actor_id, *id)?;
+            (dist <= reach).then_some((dist, *id))
+        })
+        .filter(|(_, id)| !encounter.charm_blocks_hostility(actor_id, *id))
+        .collect();
+    candidates.sort_unstable();
+    let Some((_, target_id)) = candidates.first().copied() else {
+        return false;
+    };
+
+    let actor_name = encounter.actor_name(actor_id);
+    let director_name = encounter.actor_name(director_id);
+    let target_name = encounter.actor_name(target_id);
+    encounter.log(format!(
+        "[reaction] {} strikes {} at {}'s {}",
+        actor_name, target_name, director_name, label
+    ));
+    // Fire the attack's side_effects directly, the same way the
+    // opportunity-attack and Riposte dispatchers do: the swing is a
+    // reaction, so the action's own Action-slot cost is bypassed and the
+    // reaction slot is spent below instead.
+    let target_vec = vec![target_id];
+    let effects = attack.side_effects(encounter, actor_id, Some(&target_vec), None, None);
+    for e in effects {
+        e.apply(encounter);
+    }
+    if let Some(a) = encounter.actors.get_mut(&actor_id) {
+        a.consume_resource(crate::engine::side_effects::Resource::Reaction);
+    }
+    encounter.cleanup_dead_actors();
+    true
+}
+
 pub fn try_fire_riposte(
     encounter: &mut EncounterInstance,
     target_id: usize,
@@ -2869,6 +2955,21 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "divine strike (necrotic)",
             damage_type: DamageType::Necrotic,
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: None,
+            once_per_turn_tag: None,
+        },
+        // 5e Order Domain Cleric Divine Strike (subclass level 8) — the
+        // psychic arm. Fourth typing of one feature, and the one that
+        // lands most reliably: almost nothing in the bestiary resists
+        // psychic, where poison is shrugged off by every undead and
+        // construct and radiant by the celestials.
+        OnHitRider {
+            condition: Condition::DivineStrikingPsychic,
+            dice: Dice::new(1, 8),
+            label: "divine strike (psychic)",
+            damage_type: DamageType::Psychic,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,

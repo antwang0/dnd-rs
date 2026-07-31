@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::actions::class_features::{
     ARCANE_ABJURATION, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE, DREADFUL_ASPECT,
-    TURN_THE_FAITHLESS, TURN_UNDEAD,
+    ORDERS_DEMAND, TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
 };
 use crate::ai::{Controller, ControllerDecision};
@@ -1876,12 +1876,12 @@ fn try_pass_without_trace(
 ///      necrotic on the next melee hit. Ahead of the Divine Strikes
 ///      below because it is the same shape for triple the die, and the
 ///      chassis has one bonus action to spend on the lane.
-///   2. `divine strike` / `divine strike poison` / `divine strike
-///      necrotic` — the cleric's flat damage rider, in its three
-///      domain typings. Early because it is pure upside with no save to
-///      fail and no positioning to set up; a cleric in melee always
-///      wants it. The typings never co-occur on one template (a domain
-///      swaps rather than stacks), so listing all three costs nothing.
+///   2. `divine strike` and its domain typings (`poison`, `necrotic`,
+///      `psychic`) — the cleric's flat damage rider. Early because it
+///      is pure upside with no save to fail and no positioning to set
+///      up; a cleric in melee always wants it. The typings never
+///      co-occur on one template (a domain swaps rather than stacks),
+///      so listing all four costs nothing.
 ///   3. `fangs of the fire snake` — the Four Elements monk's +1d10
 ///      fire rider. Same shape as Divine Strike and sits with it for
 ///      the same reason; the monk carries no other entry on this lane.
@@ -1949,6 +1949,7 @@ const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "divine strike",
     "divine strike poison",
     "divine strike necrotic",
+    "divine strike psychic",
     "fangs of the fire snake",
     "fire rune",
     "trip attack",
@@ -4048,6 +4049,17 @@ const TURN_BURST_PICKS: &[TurnBurstPick] = &[
     TurnBurstPick {
         config: &CONQUERING_PRESENCE,
         min_targets: 1,
+    },
+    // Order's Demand is the other unfiltered variant, and it takes
+    // Dreadful Aspect's bar rather than Conquering Presence's: the Order
+    // Cleric has nothing that cashes the condition in for damage, so its
+    // value is breadth. Charmed does more per target than Frightened —
+    // it forbids attacking the cleric outright rather than merely
+    // taxing the roll — but one charmed enemy is still worth less than
+    // a swing.
+    TurnBurstPick {
+        config: &ORDERS_DEMAND,
+        min_targets: 2,
     },
 ];
 
@@ -8229,6 +8241,33 @@ mod tests {
         assert_eq!(cleric_pick.action().name(), "arcane abjuration");
     }
 
+    /// Order's Demand takes Dreadful Aspect's `min_targets: 2` bar for
+    /// the same reason — an unfiltered burst against a single enemy is
+    /// worth less than a swing — and the Order Cleric is the only
+    /// unfiltered *cleric* row, so it also pins that the cohort reaches
+    /// past the paladins.
+    #[test]
+    fn ai_orders_demand_waits_for_a_second_enemy() {
+        use crate::actors::creatures::clerics::ORDER_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&ORDER_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _one = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_turn_burst(&e, cleric).is_none(),
+            "one enemy is not worth the Channel Divinity"
+        );
+        let _two = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 7), 1, 1)
+            .unwrap();
+        let pick = try_turn_burst(&e, cleric).expect("two enemies should draw the demand");
+        assert_eq!(pick.action().name(), "order's demand");
+    }
+
     /// Dreadful Aspect's row carries `min_targets: 2` because its filter
     /// is unconditional — against one enemy an ordinary swing is worth
     /// more than a frighten, so the charge is held.
@@ -9423,7 +9462,7 @@ mod tests {
     #[test]
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
-        use crate::actors::creatures::clerics::DEATH_CLERIC_TEMPLATE;
+        use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
@@ -9433,7 +9472,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 9] = [
+        let cases: [(&CreatureTemplate, &str); 10] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9443,6 +9482,11 @@ mod tests {
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),
             (&DEATH_CLERIC_TEMPLATE, "reaper's touch"),
+            // Not Voice of Authority: this fixture is one PC against one
+            // ogre, and the feature needs an ally to order. It fires
+            // automatically off any levelled cast, so the AI has nothing
+            // to choose — the engine-side test is where it belongs.
+            (&ORDER_CLERIC_TEMPLATE, "divine strike (psychic)"),
         ];
 
         for (template, marker) in cases {

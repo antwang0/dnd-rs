@@ -1225,3 +1225,69 @@ pub static DEATH_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ..CLERIC_TEMPLATE.clone()
     }
 });
+
+/// Order Domain Cleric — Divine Domain **Order Domain** subclass build
+/// (TCoE / GGtR). The fourteenth cleric domain in the engine, and the
+/// only character of any class whose signature feature turns someone
+/// else's turn into damage.
+///
+/// Three subclass features ship:
+///
+///   - **Voice of Authority** (lv1) — every spell of 1st level or higher
+///     the cleric casts on an ally lets that ally spend their reaction
+///     on one weapon attack, immediately.
+///   - **Order's Demand** (lv2) — the domain's Channel Divinity. Every
+///     hostile within 30 ft makes a WIS save or is Charmed.
+///   - **Divine Strike (psychic)** (lv8) — the domain's typing of the
+///     shared level-8 cleric feature.
+///
+/// Voice of Authority is what makes the domain worth building. Healing
+/// and buffing are the cleric's least exciting turns in every other
+/// build: the numbers go up, nothing dies, and the fight is one round
+/// longer. On this chassis a Bless or a Cure Wounds is also a free
+/// greataxe swing from whoever received it — so the support turn and the
+/// damage turn stop being different turns.
+///
+/// What keeps it honest is whose resource it spends. The reaction
+/// belongs to the ally, and it is the same reaction they need for an
+/// opportunity attack, an Uncanny Dodge, a Parry or a Shield. The Order
+/// cleric is not making damage from nothing; they are spending the front
+/// line's defensive budget on offence, and the front line finds out the
+/// next time an enemy walks away from them.
+///
+/// Order's Demand is the widest Channel Divinity on the cleric roster.
+/// Turn Undead needs undead, Arcane Abjuration needs one of four types,
+/// Charm Animals and Plants needs a beast or a plant; this one has no
+/// creature-type gate at all, and Charmed stops a failed-save target
+/// attacking the cleric outright. Against a mixed warband it does what
+/// none of its siblings can.
+///
+/// Left out: **Embodiment of the Law** (lv1) lets the cleric cast an
+/// enchantment spell as a bonus action a few times per rest, which needs
+/// a per-cast action-cost override lane the engine doesn't have — the
+/// action cost is a property of the spell, not of the caster.
+/// **Order's Wrath** (lv17) sits above this chassis's level.
+///
+/// Glyph 'O' — for **O**rder. Distinct from every sibling domain: 'C'
+/// baseline, 'W' War, 'L' Light, 'S' Tempest, 'V' Life, 'G' Grave, 'F'
+/// Forge, 'X' Twilight, 'A' Arcana, 'N' Nature, 'K' Trickery, 'B'
+/// Knowledge, 'D' Death.
+pub static ORDER_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        DIVINE_STRIKE_PSYCHIC, DIVINE_STRIKE_PSYCHIC_TAG, ORDERS_DEMAND, ORDERS_DEMAND_TAG,
+        VOICE_OF_AUTHORITY_TAG,
+    };
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
+    actions.push(&*ORDERS_DEMAND);
+    actions.push(&*DIVINE_STRIKE_PSYCHIC);
+    features.insert(VOICE_OF_AUTHORITY_TAG);
+    features.insert(ORDERS_DEMAND_TAG);
+    features.insert(DIVINE_STRIKE_PSYCHIC_TAG);
+    CreatureTemplate {
+        name: "Order Cleric",
+        glyph: 'O',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});

@@ -249,6 +249,9 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // cleric CD family (Turn Undead, Preserve Life, Guided Strike,
     // Radiance of the Dawn).
     REAPERS_TOUCH_TAG,
+    // 5e Order Domain Cleric Channel Divinity — Order's Demand. Same
+    // short-rest cadence as the rest of the cleric CD family.
+    ORDERS_DEMAND_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -6825,17 +6828,22 @@ pub const COMMANDERS_STRIKE_TAG: &str = "fighter.commanders_strike";
 
 /// Commander's Strike — Fighter Battle Master maneuver. Bonus action
 /// targeting one ally within 60 ft (24 tiles). The fighter directs the
-/// ally to make one weapon attack with advantage as a reaction. We model
-/// this by granting the ally a self-help-grant against the fighter's
-/// nearest visible enemy — `attack_mode_with_riders` folds in advantage
-/// on their next attack roll vs that target. RAW also gives the ally a
-/// fresh Reaction; we mirror via a `GiveResource(Reaction)` so the ally
-/// can immediately spend it on an opportunity-style attack out of turn.
+/// ally to make one weapon attack with advantage, right now, as a
+/// reaction.
 ///
-/// Conceptually closer to Feinting Attack (advantage on next swing
-/// against a specific target) than the prime-style maneuvers — the
-/// effect is the pre-roll advantage + the bonus reaction, both of which
-/// land through existing engine lanes without a new OnHitRider entry.
+/// Two engine lanes together: a help-grant against the ally's target so
+/// `attack_mode_with_riders` folds advantage into the roll, and
+/// `try_fire_directed_attack` to actually take the swing. The grant is
+/// installed first so the swing it fires reads it.
+///
+/// It used to be the grant plus a `GiveResource(Reaction)` and nothing
+/// else, which meant the maneuver's headline clause — "the creature
+/// makes one weapon attack" — depended on the ally later finding an
+/// opportunity attack to spend that reaction on. Usually they didn't,
+/// and a bonus action and a per-rest charge bought a stray reaction and
+/// some idle advantage. The fresh reaction still goes in: RAW hands the
+/// ally the reaction, and if the geometry refuses the swing they should
+/// at least keep it.
 pub struct CommandersStrike {}
 
 impl Action for CommandersStrike {
@@ -6946,7 +6954,8 @@ impl Action for CommandersStrike {
             }
         ));
         // Install the help-grant on the ally — advantage on next swing
-        // against the chosen enemy (if any).
+        // against the chosen enemy (if any). Before the reaction is
+        // handed over, so the directed swing below rolls with it.
         if let Some(target_id) = strike_target
             && let Some(ally) = encounter.actors.get_mut(&ally_id)
         {
@@ -6955,12 +6964,28 @@ impl Action for CommandersStrike {
                 against: target_id,
             }));
         }
-        // Give the ally a fresh Reaction so they can spend it on an
-        // attack of opportunity / reaction-attack lane immediately.
-        vec![Box::new(GiveResource {
-            actor_id: ally_id,
-            resource: Resource::Reaction,
-        })]
+        // RAW hands the ally a reaction and has them spend it on one
+        // weapon attack immediately. Grant it in place rather than
+        // through the returned `GiveResource`, because the swing has to
+        // see it — side-effects apply after this builder returns.
+        if let Some(ally) = encounter.actors.get_mut(&ally_id) {
+            ally.give_resource(Resource::Reaction);
+        }
+        if !crate::engine::attack::try_fire_directed_attack(
+            encounter,
+            ally_id,
+            caster_id,
+            "command",
+        ) {
+            // Nothing in the ally's reach, or no melee weapon to swing.
+            // The reaction stays granted — RAW gave it to them, and the
+            // geometry is what refused the swing.
+            encounter.log(
+                "  commander's strike: the ally has nothing in reach; the reaction stands."
+                    .to_string(),
+            );
+        }
+        Vec::new()
     }
 }
 
@@ -12631,6 +12656,66 @@ pub static DIVINE_STRIKE_NECROTIC: LazyLock<PrimeStrike> = LazyLock::new(|| Prim
     tag: DIVINE_STRIKE_NECROTIC_TAG,
     prime: Condition::DivineStrikingNecrotic,
     log_line: "  divine strike (necrotic): cleric's next melee hit will land withering.",
+});
+
+/// Passive tag for the Order Domain Cleric's **Voice of Authority**
+/// (subclass level 1): casting a spell of 1st level or higher on an ally
+/// lets that ally spend their reaction on one weapon attack immediately.
+///
+/// No charge and no action of its own — the tag is the whole gate, read
+/// by `EncounterInstance::trigger_voice_of_authority` from the post-cast
+/// dispatcher. Sibling in shape to `REAPER_TAG` and
+/// `SPLIT_ENCHANTMENT_TAG`: an always-on passive that changes what the
+/// cleric's *other* actions do.
+pub const VOICE_OF_AUTHORITY_TAG: &str = "cleric.voice_of_authority";
+
+/// Channel Divinity charge for the Order Domain Cleric's **Order's
+/// Demand** (subclass level 2). Short-rest cadence, like every other
+/// cleric Channel Divinity in the engine.
+pub const ORDERS_DEMAND_TAG: &str = "cleric.orders_demand";
+
+/// Order's Demand — Order Domain Cleric Channel Divinity (subclass level
+/// 2). Action; every hostile within 30 ft makes a WIS save or is Charmed
+/// for 10 rounds.
+///
+/// A `TurnBurst` literal with no creature-type gate and Charmed in place
+/// of Frightened — the same shape as the Nature Domain's Charm Animals
+/// and Plants, minus that feature's beast-or-plant filter. The missing
+/// filter is the whole difference and it is a large one: Order's Demand
+/// works on the humanoid bandits and the fiends alike, where Nature's
+/// version needs the right bestiary.
+///
+/// RAW also drops what each target is holding. The engine has no held-
+/// item lane for monsters, and the Charmed install is the load-bearing
+/// half either way — a charmed creature can't attack the cleric at all.
+pub static ORDERS_DEMAND: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "order's demand",
+    aliases: &["od", "demand", "cd-order"],
+    tag: ORDERS_DEMAND_TAG,
+    dc_ability: AbilityScoreType::Wisdom,
+    type_filter: |_| true,
+    installed: Condition::Charmed,
+});
+
+/// Class-feature tag for the Order Domain Cleric's **Divine Strike
+/// (psychic)** (subclass level 8) — the domain's typing of the shared
+/// cleric feature, fourth after radiant, poison and necrotic.
+pub const DIVINE_STRIKE_PSYCHIC_TAG: &str = "cleric.divine_strike_psychic";
+
+/// Divine Strike (psychic) — Order Domain Cleric level-8 subclass
+/// feature, bonus action. Same envelope as the radiant baseline; the
+/// `DivineStrikingPsychic` rider row swaps 1d8 radiant for 1d8 psychic.
+///
+/// Psychic is the widest-landing typing of the four: almost nothing in
+/// the bestiary resists it, where poison is shrugged off by every undead
+/// and construct and radiant by the celestials. The Order cleric's
+/// smaller die lands more often than the Death cleric's larger one.
+pub static DIVINE_STRIKE_PSYCHIC: LazyLock<PrimeStrike> = LazyLock::new(|| PrimeStrike {
+    name: "divine strike psychic",
+    aliases: &["ystrike", "cd-psychic"],
+    tag: DIVINE_STRIKE_PSYCHIC_TAG,
+    prime: Condition::DivineStrikingPsychic,
+    log_line: "  divine strike (psychic): cleric's next melee hit will land as a verdict.",
 });
 
 #[cfg(test)]

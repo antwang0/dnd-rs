@@ -802,6 +802,10 @@ pub enum Condition {
     /// feature. Identical in every respect to `DivineStriking` except
     /// the damage type its rider row carries.
     DivineStrikingNecrotic,
+    /// **Divine Strike (psychic)** primed (5e Order Domain Cleric,
+    /// subclass level 8) — the fourth typing of the same feature, after
+    /// radiant, poison and necrotic. Same rider row, different type.
+    DivineStrikingPsychic,
     /// Bonded by Warding Bond (5e level-2 abjuration). The bonded actor
     /// gains +1 AC, +1 saving throws, and resistance to all damage. Any
     /// damage that lands on the bonded actor is mirrored onto their
@@ -1883,6 +1887,7 @@ impl Condition {
             Condition::FireRuneInvoked => "burning with a fire rune",
             Condition::TouchingDeath => "wreathed in the reaper's touch",
             Condition::DivineStrikingNecrotic => "primed to strike withering",
+            Condition::DivineStrikingPsychic => "primed to strike a verdict",
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
