@@ -1079,6 +1079,48 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
     },
 ];
 
+/// One row in the `RESIZING_CONDITIONS` cohort: a condition that moves
+/// its holder along the size ladder while it is up. `steps` is +1 for a
+/// growth effect and -1 for a shrink, and is summed then clamped by
+/// `ActorInstance::desired_size` so two growth effects stacked on one
+/// creature still only buy one category — RAW's "this spell has no
+/// effect on a creature already enlarged" without needing each effect to
+/// know about the others.
+struct ResizingCondition {
+    condition: Condition,
+    steps: i32,
+}
+
+/// Every condition that changes its holder's size category, and by how
+/// much. Read only by `ActorInstance::desired_size`; the actual board
+/// move is `EncounterInstance::reconcile_footprints`, which is the sole
+/// writer of `ActorInstance::size`.
+///
+/// Entries:
+///   - **Enlarged** (Enlarge / Reduce, the growth half; also the two
+///     growth potions in `item_actions`): +1 category.
+///   - **Reduced** (Enlarge / Reduce, the shrink half): -1 category.
+///   - **GiantsMight** (Rune Knight Fighter, subclass level 3): +1
+///     category.
+///
+/// A new growth or shrink effect lands as one row here and inherits the
+/// room check, the retry-when-space-appears behavior, and the restore-on-
+/// expiry for free.
+const RESIZING_CONDITIONS: &[ResizingCondition] = &[
+    ResizingCondition {
+        condition: Condition::Enlarged,
+        steps: 1,
+    },
+    ResizingCondition {
+        condition: Condition::Reduced,
+        steps: -1,
+    },
+    ResizingCondition {
+        condition: Condition::GiantsMight,
+        steps: 1,
+    },
+];
+
 /// One row in the `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort — a single
 /// passive-feature-driven advantage on saving throws. `flag` is a
 /// closure over `(&ActorInstance, AbilityScoreType)` so a row can gate
@@ -6315,8 +6357,59 @@ impl ActorInstance {
         self.movement = 0.0;
     }
 
+    /// The actor's size *as the board currently sees it*. Every footprint
+    /// calculation in the engine — reach, LOS, spawn room, the actor map
+    /// stamp — reads this one value, so it is deliberately a plain field
+    /// rather than a derivation: a size the geometry hasn't been told
+    /// about is worse than no size change at all.
+    ///
+    /// Growth and shrink effects therefore do not write here. They install
+    /// a condition, `desired_size` reports what that condition asks for,
+    /// and `EncounterInstance::reconcile_footprints` is the one place
+    /// allowed to move the field — because it is the only place that can
+    /// check whether the tiles are free and restamp the map in the same
+    /// breath.
     pub fn size(&self) -> Size {
         self.size
+    }
+
+    /// The size this actor's template shipped with, before any growth or
+    /// shrink effect. `size()` returns to this the moment the last
+    /// resizing condition drops.
+    pub fn base_size(&self) -> Size {
+        self.base_size
+    }
+
+    /// The size the actor's current conditions ask for: one category up
+    /// from `base_size` per growth effect held, one down per shrink
+    /// effect. Growth and shrink cancel — RAW says the two spells "have
+    /// no effect on a creature already under the other's influence", and
+    /// netting the two ladders is the same answer with no ordering
+    /// question.
+    ///
+    /// Only ever a *request*. The board may not have room, in which case
+    /// `size()` stays where it is and the reconciler retries on the next
+    /// pump — a creature hemmed in by a wall grows the moment the wall
+    /// stops being the problem, which is what RAW's "if there is enough
+    /// room" clause means over a whole combat rather than at one instant.
+    pub fn desired_size(&self) -> Size {
+        let step = RESIZING_CONDITIONS
+            .iter()
+            .filter(|entry| self.has_condition(entry.condition))
+            .map(|entry| entry.steps)
+            .sum::<i32>();
+        if step == 0 {
+            return self.base_size;
+        }
+        Size::from_ordinal(self.base_size.ordinal() + step.clamp(-1, 1))
+    }
+
+    /// Move the actor's effective size. Engine-only: the caller is
+    /// responsible for having cleared the old footprint from the actor map
+    /// and for stamping the new one, which is why nothing outside
+    /// `EncounterInstance::reconcile_footprints` calls this.
+    pub fn set_size(&mut self, size: Size) {
+        self.size = size;
     }
 
     pub fn creature_type(&self) -> CreatureType {

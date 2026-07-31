@@ -700,3 +700,85 @@ pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..FIGHTER_TEMPLATE.clone()
     }
 });
+
+/// Rune Knight Fighter — Martial Archetype **Rune Knight** subclass
+/// build (TCoE). The seventh fighter in the engine, and the first
+/// character of any class whose signature feature changes the shape of
+/// the space they occupy rather than a number on a sheet.
+///
+/// Two subclass features ship:
+///
+///   - **Giant's Might** (lv3, bonus action, one charge per rest): for a
+///     minute the fighter grows one size category, saves with advantage
+///     on STR, and once on each of their turns a connecting weapon hit
+///     carries an extra 1d6.
+///   - **Fire Rune** (lv3, bonus action, one charge per rest): primes
+///     the next weapon hit for an extra 2d6 fire, with a STR save
+///     against being Restrained by chains of fire on top.
+///
+/// Giant's Might is the reason this build exists. Every other fighter on
+/// the roster spends its subclass on the swing — the Champion's crit
+/// window, the Battle Master's riders, the Samurai's saves, the Psi
+/// Warrior's shield. The Rune Knight spends it on the *board*: a Large
+/// fighter's footprint is 4 tiles wide instead of 2, and every reach
+/// measurement in the engine is taken from the footprint, so growing
+/// widens the ring in which the fighter threatens opportunity attacks
+/// and shortens the walk to anything they want to hit. A Rune Knight in
+/// a corridor is not the same obstacle a Fighter is.
+///
+/// It is also the one feature in the engine the map is allowed to
+/// refuse. RAW grows the fighter "if there is enough room", and pressed
+/// into a doorway there may not be — the charge is spent, the damage
+/// rider still fires, and `EncounterInstance::reconcile_footprints`
+/// grows them the moment the space opens up. Which gives the build a
+/// consideration no other fighter has: where you stand when you press
+/// the button matters.
+///
+/// The two features are deliberately not redundant. Fire Rune wants to
+/// be spent the turn a big swing lands (its Restrained rider is worth
+/// more than its 2d6); Giant's Might wants to be spent early, because
+/// its value is spread across a minute of standing in the right place.
+/// Both are bonus actions and the chassis has one per turn, so the Rune
+/// Knight opens every fight choosing which kind of fight it is going to
+/// be — the same shape of choice the Kensei Monk got, on a heavier body.
+///
+/// Left out: **Cloud Rune** (lv3) redirects an incoming attack onto
+/// another creature, which needs an attack-roll interception lane that
+/// can retarget rather than just modify; **Stone Rune** (lv3) is a
+/// reaction to a creature merely *approaching*, and the engine has no
+/// movement-proximity trigger; **Storm** / **Hill** / **Frost Runes**
+/// (lv7 and up) sit above this chassis's level; **Great Stature** (lv7)
+/// and **Master of Runes** (lv10) only scale what already ships;
+/// **Runic Shield** (lv15) needs a force-a-reroll-of-someone-else's-
+/// attack lane.
+///
+/// **Stats** inherit the baseline Fighter wholesale — AC 16 chain mail,
+/// STR 16, CON 14, every maneuver, Parry / Riposte, Second Wind /
+/// Action Surge / Indomitable, Extra Attack, the Dueling style. The
+/// build's distinction is entirely in the two runes, which is the honest
+/// way to ship it: a Rune Knight is a fighter who occasionally becomes a
+/// giant, not a different fighter.
+///
+/// Glyph 'R' — for **R**une Knight. Distinct from baseline Fighter 'F',
+/// Champion 'C', Samurai 'S', Eldritch Knight 'E', Psi Warrior 'P' and
+/// Cavalier 'V'.
+pub static RUNE_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{FIRE_RUNE, FIRE_RUNE_TAG, GIANTS_MIGHT, GIANTS_MIGHT_TAG};
+    let mut actions = FIGHTER_TEMPLATE.actions.clone();
+    actions.push(&*GIANTS_MIGHT);
+    actions.push(&*FIRE_RUNE);
+    // Two per-rest charges. `GIANTS_MIGHT_RIDER_TAG` deliberately does
+    // *not* appear here: it is a once-per-turn ledger key, not a charge,
+    // and `once_per_turn_used` reads a separate set that no template
+    // populates.
+    let mut features = FIGHTER_TEMPLATE.features.clone();
+    features.insert(GIANTS_MIGHT_TAG);
+    features.insert(FIRE_RUNE_TAG);
+    CreatureTemplate {
+        name: "Rune Knight",
+        glyph: 'R',
+        actions,
+        features,
+        ..FIGHTER_TEMPLATE.clone()
+    }
+});

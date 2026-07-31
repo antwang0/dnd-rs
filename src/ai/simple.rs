@@ -204,6 +204,23 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'''. Giant's Might — the Rune Knight's bonus-action
+        //        growth. Same rung and the same reasoning as Rage and
+        //        Form of Dread: a per-rest bonus-action posture worth
+        //        more the earlier it is up. The tighter melee-ish gate
+        //        applies here for a reason the others don't have — the
+        //        feature's best half is the widened footprint, and a
+        //        wider footprint is only worth anything once there is
+        //        someone close enough to be caught by it.
+        if let Some(aei) = try_self_action_when_enemy_within(
+            encounter,
+            actor_id,
+            IMMINENT_CONTACT_GAP,
+            "giant's might",
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
         //      beside Rage because it is the same kind of decision: a
         //      once-per-rest, bonus-action, whole-fight defensive
@@ -771,10 +788,9 @@ impl Controller for SimpleAi {
         //     rather than N near-identical rungs. See
         //     `MELEE_ADJACENT_PRIMES` for the roster and the reasoning
         //     behind the order.
-        if let Some(aei) = MELEE_ADJACENT_PRIMES
-            .iter()
-            .find_map(|name| try_self_action_when_enemy_within(encounter, actor_id, 0, name))
-        {
+        if let Some(aei) = MELEE_ADJACENT_PRIMES.iter().find_map(|name| {
+            try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, name)
+        }) {
             return ControllerDecision::Act(aei);
         }
 
@@ -1841,9 +1857,17 @@ fn try_pass_without_trace(
 /// action's own `custom_validate_input` supplies the rest (charge
 /// available, flag not already up). That uniformity is why the lane is
 /// a table: each entry used to be a three-line wrapper function around
-/// the identical `try_self_action_when_enemy_within(.., 0, name)` call,
+/// the identical `try_self_action_when_enemy_within(.., name)` call,
 /// plus a rung in the ladder, so a new prime cost two edits in two
 /// places to express one string.
+///
+/// The gate is `MELEE_REACH`, the same gap the swing that cashes the
+/// prime is allowed to cross. It used to be a literal 0 — strictly
+/// tighter than melee reach — which meant a fighter standing at the
+/// far edge of its own envelope, which is where the AI's approach
+/// routinely stops, never primed anything at all. Every entry on this
+/// table was unreachable in that stance, so the whole lane was mostly
+/// theoretical.
 ///
 /// **The order is the priority and it is load-bearing**, which is the
 /// one thing a table must not lose:
@@ -1857,18 +1881,24 @@ fn try_pass_without_trace(
 ///   2. `fangs of the fire snake` — the Four Elements monk's +1d10
 ///      fire rider. Same shape as Divine Strike and sits with it for
 ///      the same reason; the monk carries no other entry on this lane.
-///   3. `trip attack` — prone is the strongest maneuver rider: it
+///   3. `fire rune` — the Rune Knight's prime, and the only entry on
+///      this lane that pays twice: 2d6 fire on the hit *and* a STR
+///      save against Restrained, which is prone's advantage-granting
+///      clause plus a speed of zero plus disadvantage on the target's
+///      own swings. Ahead of every maneuver below because it strictly
+///      contains what they buy.
+///   4. `trip attack` — prone is the strongest maneuver rider: it
 ///      hands every melee ally advantage against the target *and*
 ///      costs the target its movement.
-///   4. `menacing attack` — Frightened sticks on tough-STR monsters
+///   5. `menacing attack` — Frightened sticks on tough-STR monsters
 ///      that shrug off the trip, but only disadvantages the target's
 ///      own swings rather than enabling the party's.
-///   5. `disarming attack` — attacker disadvantage, which bites
+///   6. `disarming attack` — attacker disadvantage, which bites
 ///      hardest on ranged and multiattack threats but lasts a single
 ///      round in this engine.
-///   6. `pushing attack` — pure displacement, no accuracy or save
+///   7. `pushing attack` — pure displacement, no accuracy or save
 ///      rider attached; the finisher when nothing above is available.
-///   7. `goading attack` — the tank-anchor. Last because its value is
+///   8. `goading attack` — the tank-anchor. Last because its value is
 ///      conditional on the fighter *wanting* to be attacked, which is
 ///      the situation left over once the debuff riders are spent.
 ///
@@ -1914,6 +1944,7 @@ const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "divine strike",
     "divine strike poison",
     "fangs of the fire snake",
+    "fire rune",
     "trip attack",
     "menacing attack",
     "disarming attack",
@@ -2426,7 +2457,7 @@ fn try_extended_spell(
         "death ward",
         "magic weapon",
         "protection from energy",
-        "enlarge / reduce",
+        "enlarge",
         "shadow blade",
     ];
     let has_extendable = EXTENDABLE
@@ -9387,6 +9418,7 @@ mod tests {
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
@@ -9394,13 +9426,15 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 6] = [
+        let cases: [(&CreatureTemplate, &str); 8] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
             (&BLADESINGER_WIZARD_TEMPLATE, "bladesong"),
             (&UNDEAD_WARLOCK_TEMPLATE, "form of dread"),
             (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
+            (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
+            (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),
         ];
 
         for (template, marker) in cases {

@@ -349,6 +349,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
                     &*fighters::PSI_WARRIOR_FIGHTER_TEMPLATE,
                     &*fighters::CAVALIER_FIGHTER_TEMPLATE,
+                    &*fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE,
                 ],
             ),
             (

@@ -17624,27 +17624,51 @@ impl Action for IceKnife {
 
 pub static ICE_KNIFE: LazyLock<IceKnife> = LazyLock::new(|| IceKnife {});
 
-/// Enlarge / Reduce (Enlarge half) — level-2 transmutation, concentration
-/// (sorcerer / wizard). The caster touches a willing creature; the
-/// target's size category bumps up by one and they roll +1d4 extra
-/// damage on every weapon attack. RAW also gives advantage on STR checks
-/// and saves; we surface only the damage rider since the engine doesn't
-/// have a per-stat-advantage hook on checks / saves. The damage rider
-/// is consumed via the central `on_hit_riders` table — adding a new
-/// rider entry there is one line; the spell here just installs the
-/// `Enlarged` flag and the concentration anchor.
+/// Enlarge / Reduce — level-2 transmutation, concentration (sorcerer /
+/// wizard). One spell with two halves, and this struct is both of them:
+/// the caster touches a creature and moves it one category along the size
+/// ladder, up or down.
 ///
-/// The Reduce half (the symmetric debuff) isn't modeled separately — we
-/// treat the spell as the buff variant since the rider table only
-/// carries one direction of the size-change effect.
-pub struct EnlargeReduce {}
+/// Enlarge is the buff: +1 size, +1d4 on every weapon hit, advantage on
+/// STR saves, cast on a willing ally with no save. Reduce is its mirror:
+/// -1 size, -1d4 on every weapon hit, disadvantage on STR saves, cast on
+/// an enemy who gets a CON save to shrug it off.
+///
+/// The spell itself installs a condition and an anchor; everything the
+/// condition *does* lives on shared tables — `RESIZING_CONDITIONS` for
+/// the size move, `ON_HIT_RIDERS` and `WEAPON_DAMAGE_PENALTY_DICE` for
+/// the damage, `STRENGTH_SAVE_MODE_CONDITIONS` for the save. That is why
+/// two directions cost one struct: the halves differ in which condition
+/// they name and whether a save can refuse it, and in nothing else.
+pub struct SizeShiftSpell {
+    /// Canonical name for the prompt parser and the action list.
+    name: &'static str,
+    /// Alias set for the prompt parser.
+    aliases: &'static [&'static str],
+    /// Which end of the ladder this half installs.
+    condition: Condition,
+    /// Concentration anchor label, shown when the caster's focus breaks.
+    anchor_label: &'static str,
+    /// The save that refuses the effect, or `None` for the willing-target
+    /// half. RAW gives Reduce a CON save and Enlarge none, because you do
+    /// not resist a spell you asked for.
+    save_ability: Option<AbilityScoreType>,
+}
 
-impl Action for EnlargeReduce {
+impl SizeShiftSpell {
+    /// True when this half is the debuff — derived from whether RAW lets
+    /// the target refuse it, which is the same question.
+    fn is_debuff(&self) -> bool {
+        self.save_ability.is_some()
+    }
+}
+
+impl Action for SizeShiftSpell {
     fn name(&self) -> &str {
-        "enlarge"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["enlarge-reduce", "er"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -17653,10 +17677,13 @@ impl Action for EnlargeReduce {
         Some(crate::actions::action_template::MELEE_REACH)
     }
     fn is_harmful(&self) -> bool {
-        false
+        self.is_debuff()
     }
     fn deals_damage(&self) -> bool {
         false
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn cost(
         &self,
@@ -17676,10 +17703,9 @@ impl Action for EnlargeReduce {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Don't burn a slot re-casting on an already-enlarged ally, and
-        // don't re-prime if the caster is already holding concentration
-        // (the buff anchors on the caster's concentration slot — if
-        // a higher-value buff already holds it, skip).
+        // Don't re-prime if the caster is already holding concentration
+        // (the effect anchors on the caster's concentration slot — if
+        // a higher-value spell already holds it, skip).
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return false;
         };
@@ -17689,14 +17715,22 @@ impl Action for EnlargeReduce {
         let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
+        // Sides must match the half being cast: the buff goes on an ally,
+        // the debuff on an enemy. Without the gate the AI's support
+        // pipeline would happily Reduce its own front line.
+        if encounter.actors_allied(caster_id, target_id) == self.is_debuff() {
+            return false;
+        }
+        // Don't burn a slot on a target already at this end of the
+        // ladder.
         encounter
             .actors
             .get(&target_id)
-            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::Enlarged))
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(self.condition))
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
@@ -17705,25 +17739,62 @@ impl Action for EnlargeReduce {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
+        // The debuff half offers a save; a pass spends the slot and
+        // nothing else, which is what RAW's "on a successful save, the
+        // spell has no effect" costs.
+        if let Some(ability) = self.save_ability {
+            let Some(dc) = encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.spellcasting_save_dc())
+            else {
+                return Vec::new();
+            };
+            if encounter
+                .roll_save_against_caster(target_id, ability, dc, caster_id)
+                .passed()
+            {
+                return Vec::new();
+            }
+        }
         vec![
             Box::new(ApplyCondition {
                 actor_id: target_id,
-                condition: Condition::Enlarged,
+                condition: self.condition,
                 // 10 rounds = 1 minute RAW (concentration cap).
                 timer: ConditionTimer::Rounds(10),
             }),
             Box::new(StartConcentration {
                 caster_id,
                 data: ConcentrationData::with_conditions(
-                    "Enlarge / Reduce",
-                    vec![(target_id, Condition::Enlarged)],
+                    self.anchor_label,
+                    vec![(target_id, self.condition)],
                 ),
             }),
         ]
     }
 }
 
-pub static ENLARGE_REDUCE: LazyLock<EnlargeReduce> = LazyLock::new(|| EnlargeReduce {});
+pub static ENLARGE_REDUCE: LazyLock<SizeShiftSpell> = LazyLock::new(|| SizeShiftSpell {
+    name: "enlarge",
+    aliases: &["enlarge-reduce", "er"],
+    condition: Condition::Enlarged,
+    anchor_label: "Enlarge",
+    save_ability: None,
+});
+
+/// The Reduce half of Enlarge / Reduce, as its own entry in the action
+/// list. RAW is one spell with a choice made at cast time; the engine's
+/// prompt takes a name and a target and nothing else, so the choice has
+/// to live in the name — the alternative would be an override flag the
+/// player has no way to type.
+pub static REDUCE: LazyLock<SizeShiftSpell> = LazyLock::new(|| SizeShiftSpell {
+    name: "reduce",
+    aliases: &["shrink"],
+    condition: Condition::Reduced,
+    anchor_label: "Reduce",
+    save_ability: Some(AbilityScoreType::Constitution),
+});
 
 /// Destructive Wave — level-5 evocation (paladin). The caster slams the
 /// ground; every enemy within 30 ft (6-tile burst centered on the

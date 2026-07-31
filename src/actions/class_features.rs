@@ -236,6 +236,14 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // so the charge lands on the short-rest lane rather than the
     // long-rest default.
     SYMBIOTIC_ENTITY_TAG,
+    // 5e Rune Knight Fighter subclass level 3 — Giant's Might and Fire
+    // Rune. RAW gives Giant's Might proficiency-bonus uses per long rest
+    // and recharges every rune on a short rest; the engine's one-charge-
+    // per-tag model lands both on the short-rest lane, which keeps a
+    // Rune Knight's per-fight budget in the same shape as the Battle
+    // Master's maneuvers on the same chassis.
+    GIANTS_MIGHT_TAG,
+    FIRE_RUNE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2496,6 +2504,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     GATHERED_SWARM_TAG,
     PSIONIC_STRIKE_TAG,
     DEFT_STRIKE_TAG,
+    GIANTS_MIGHT_RIDER_TAG,
     // The only entry here that isn't a damage rider: Ancestral
     // Protectors uses the ledger to enforce RAW's "the *first* creature
     // you hit on your turn" rather than to cap a die pool. Same
@@ -12417,6 +12426,138 @@ impl Action for KenseisShotAction {
 }
 
 pub static KENSEIS_SHOT: LazyLock<KenseisShotAction> = LazyLock::new(|| KenseisShotAction {});
+
+/// Per-rest charge for the Rune Knight Fighter's **Giant's Might**
+/// (subclass level 3). RAW hands out proficiency-bonus uses per long
+/// rest; the engine's feature set holds one charge per tag, so this is
+/// one use that comes back on a short rest — the same collapse every
+/// other multi-use fighter charge on this chassis takes.
+pub const GIANTS_MIGHT_TAG: &str = "fighter.giants_might";
+
+/// Once-per-turn ledger key for Giant's Might's damage rider. Separate
+/// from `GIANTS_MIGHT_TAG` because the two count different things: the
+/// charge is spent once to turn the feature on for a minute, and the
+/// ledger is what stops the +1d6 from landing on every swing inside that
+/// minute. Sharing one tag would let the first hit of the fight consume
+/// the rest of the fight's growth.
+pub const GIANTS_MIGHT_RIDER_TAG: &str = "fighter.giants_might.rider";
+
+/// Giant's Might — Rune Knight Fighter bonus action (subclass level 3).
+/// For a minute the fighter grows one size category, saves with
+/// advantage on STR, and once on each of their turns a connecting weapon
+/// hit carries an extra 1d6.
+///
+/// The interesting half is the one that isn't damage. Growing widens the
+/// fighter's own footprint, and a footprint is what the engine measures
+/// reach from — so a Large Rune Knight threatens opportunity attacks
+/// across a wider ring than a Medium one, and can reach a caster hiding
+/// one tile further back. That makes it the first class feature on the
+/// roster whose main effect is geometric rather than numeric.
+///
+/// It is also the first feature that can be *refused by the board*: RAW
+/// grows the fighter "if there is enough room", and in a corridor there
+/// may not be. The charge is still spent and the damage rider still
+/// fires — the fighter is holding the effect, the walls are just in the
+/// way — and `reconcile_footprints` grows them the moment a neighbour
+/// steps aside.
+pub struct GiantsMightAction {}
+
+impl Action for GiantsMightAction {
+    fn name(&self) -> &str {
+        "giant's might"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gm", "giants might", "giant might"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the rider lands on the swing, not on the prime.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            GIANTS_MIGHT_TAG,
+            Condition::GiantsMight,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            GIANTS_MIGHT_TAG,
+            Condition::GiantsMight,
+            // 10 rounds = the 1 minute RAW gives it.
+            ConditionTimer::Rounds(10),
+            "  giant's might: rune-light runs down the fighter's arms as they grow.",
+        )
+    }
+}
+
+pub static GIANTS_MIGHT: LazyLock<GiantsMightAction> = LazyLock::new(|| GiantsMightAction {});
+
+/// Per-rest charge for the Rune Knight Fighter's **Fire Rune** (subclass
+/// level 3). RAW recharges every rune on a short rest, which is the
+/// cadence `SHORT_REST_FEATURES` already carries.
+pub const FIRE_RUNE_TAG: &str = "fighter.fire_rune";
+
+/// Fire Rune — Rune Knight Fighter (subclass level 3). Bonus action;
+/// primes the next weapon hit to burn for an extra 2d6 fire and force a
+/// STR save, with a failure leaving the target Restrained by chains of
+/// fire.
+///
+/// Rides the `ManeuverPrime` shape the Battle Master's maneuvers use,
+/// because it is mechanically the same object: a per-rest charge spent
+/// on a bonus action to hang a condition on the fighter that the next
+/// swing cashes in. The shape was named after the feature that arrived
+/// first, not after a restriction — a rune spends its charge exactly the
+/// way a maneuver does.
+///
+/// Where it differs from every maneuver is what it pays out. The
+/// maneuvers trade their superiority die away for control (Trip's prone,
+/// Menacing's fear) and the engine drops the die entirely; Fire Rune
+/// carries real damage *and* a hard control rider, which is why it costs
+/// its own charge rather than sharing the maneuver pool.
+pub static FIRE_RUNE: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "fire rune",
+    aliases: &["fr", "rune of fire"],
+    tag: FIRE_RUNE_TAG,
+    prime_condition: Condition::FireRuneInvoked,
+    // Long enough to survive the fighter's own turn and be spent on an
+    // opportunity attack before their next one, matching the maneuvers.
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  fire rune: the rune on the fighter's weapon kindles.",
+});
 
 #[cfg(test)]
 mod tests {

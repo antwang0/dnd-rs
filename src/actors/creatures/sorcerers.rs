@@ -140,12 +140,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Newer sorcerer additions:
     //   - lv1 **Ice Knife**: ranged attack + neutral-burst cold
     //     shatter rider, fires hit-or-miss.
-    //   - lv2 **Enlarge / Reduce**: single-target +1d4 weapon damage
-    //     buff (concentration). Routes through the on-hit rider
-    //     table — lets the sorcerer prop up an ally's martial
-    //     output between the bigger-leverage Haste / Polymorph picks.
+    //   - lv2 **Enlarge / Reduce**, both halves. Enlarge props up an
+    //     ally's martial output between the bigger-leverage Haste /
+    //     Polymorph picks; Reduce points the same spell at an enemy
+    //     bruiser and takes a die off every swing they land. Both
+    //     concentration, so it is one choice, not two.
     actions.push(&*crate::actions::spells::ICE_KNIFE);
     actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
+    actions.push(&*crate::actions::spells::REDUCE);
     // Latest cantrip / lv1-2 additions shared with the wizard / druid:
     //   - cantrip **Sword Burst**: 1-tile force burst around caster.
     //   - cantrip **Blade Ward**: self damage-resistance till next turn.

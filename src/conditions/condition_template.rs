@@ -742,15 +742,53 @@ pub enum Condition {
     /// drip. Self-clears via `Rounds(1)` timer.
     VitriolicAcidCoated,
     /// Enlarged by the Enlarge / Reduce spell (5e level-2 transmutation,
-    /// concentration; the Reduce twin is the symmetric debuff and isn't
-    /// modeled separately here). The target's size category bumps up by
-    /// one and they roll +1d4 extra damage on weapon attacks (read by the
-    /// on-hit rider table). RAW also grants advantage on STR checks and
-    /// STR saves — we surface only the load-bearing damage rider since the
-    /// engine's check / save lanes don't have a per-stat advantage hook
-    /// that other buffs use. Concentration-bound on the caster; dropping
-    /// concentration drops the buff.
+    /// concentration), by one of the two growth potions, or by any future
+    /// growth effect. The target's size category bumps up by one — really,
+    /// on the board: the condition is a row on `RESIZING_CONDITIONS`, so
+    /// `desired_size` asks for the larger footprint and the engine's
+    /// reconciler stamps it once there is room. They also roll +1d4 extra
+    /// damage on weapon attacks (read by the on-hit rider table) and save
+    /// with advantage on STR.
+    ///
+    /// Concentration-bound on the caster when it comes from the spell;
+    /// dropping concentration drops the buff, and the actor shrinks back
+    /// on the next pump.
     Enlarged,
+    /// Reduced by the Reduce half of Enlarge / Reduce (5e level-2
+    /// transmutation, concentration) — the symmetric debuff to `Enlarged`
+    /// and its mirror image on every lane: one size category down, -1d4
+    /// on weapon damage, disadvantage on STR saves.
+    ///
+    /// The two cancel rather than fight: `desired_size` sums the ladder
+    /// steps, so a creature holding both sits at its base size, which is
+    /// RAW's "no effect on a creature already under the other's
+    /// influence" reached by arithmetic instead of by a precedence rule.
+    Reduced,
+    /// **Giant's Might** (5e Rune Knight Fighter, subclass level 3).
+    /// A bonus action spent drawing on giant blood: for a minute the
+    /// fighter grows one size category, saves with advantage on STR, and
+    /// once on each of their turns a connecting weapon hit carries an
+    /// extra 1d6.
+    ///
+    /// The first *class feature* to ride `RESIZING_CONDITIONS` — every
+    /// other size effect in the engine is a spell or a potion — and the
+    /// reason the size lane earns its keep on a martial chassis: growing
+    /// widens the fighter's own footprint, which widens the envelope in
+    /// which they threaten opportunity attacks.
+    ///
+    /// On `is_dispellable_buff`: it is explicitly magical in RAW ("you
+    /// magically become larger"), unlike the maneuver primes it sits
+    /// beside on the fighter's sheet.
+    GiantsMight,
+    /// **Fire Rune** invoked (5e Rune Knight Fighter, subclass level 3).
+    /// A bonus action spent kindling the rune etched on the fighter's
+    /// weapon: the next hit burns for an extra 2d6 fire and forces a STR
+    /// save, and a failure wraps the target in chains of fire.
+    ///
+    /// A prime, not a buff — it describes what the fighter's next swing
+    /// will do and is consumed by that swing. Off `is_dispellable_buff`
+    /// for the same reason the maneuver primes are.
+    FireRuneInvoked,
     /// Bonded by Warding Bond (5e level-2 abjuration). The bonded actor
     /// gains +1 AC, +1 saving throws, and resistance to all damage. Any
     /// damage that lands on the bonded actor is mirrored onto their
@@ -1827,6 +1865,9 @@ impl Condition {
             Condition::EarthenGrasped => "crushed by an earthen grasp",
             Condition::VitriolicAcidCoated => "coated in vitriolic acid",
             Condition::Enlarged => "enlarged",
+            Condition::Reduced => "reduced",
+            Condition::GiantsMight => "wreathed in giant's might",
+            Condition::FireRuneInvoked => "burning with a fire rune",
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
@@ -1973,6 +2014,7 @@ impl Condition {
                 | Condition::WindWalled
                 | Condition::Shillelaghed
                 | Condition::Enlarged
+                | Condition::GiantsMight
                 | Condition::WardingBonded
                 | Condition::MindBlanked
                 | Condition::Barkskinned

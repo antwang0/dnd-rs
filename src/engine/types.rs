@@ -146,6 +146,34 @@ impl Size {
     pub fn can_grapple(self, target: Size) -> bool {
         target.ordinal() <= self.ordinal() + 1
     }
+
+    /// The category one step up, saturating at Gargantuan. 5e's growth
+    /// effects (Enlarge, the Rune Knight's Giant's Might, Enlarge-flavored
+    /// potions) all say "increases in size by one category… if there is
+    /// enough room", and every one of them stops at Gargantuan.
+    pub fn grown(self) -> Size {
+        Size::from_ordinal(self.ordinal() + 1)
+    }
+
+    /// The category one step down, saturating at Tiny — the Reduce half of
+    /// Enlarge / Reduce, and the mirror of `grown`.
+    pub fn shrunk(self) -> Size {
+        Size::from_ordinal(self.ordinal() - 1)
+    }
+
+    /// Inverse of `ordinal`, clamped to the enum's range. Private-ish
+    /// helper for `grown` / `shrunk`; exposed because the size lane's
+    /// tests want to walk the ladder without repeating the match.
+    pub fn from_ordinal(n: i32) -> Size {
+        match n {
+            i32::MIN..=0 => Size::Tiny,
+            1 => Size::Small,
+            2 => Size::Medium,
+            3 => Size::Large,
+            4 => Size::Huge,
+            _ => Size::Gargantuan,
+        }
+    }
 }
 
 impl fmt::Display for Size {

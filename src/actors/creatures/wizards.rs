@@ -233,11 +233,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //   - lv1 **Ice Knife**: ranged attack + neutral-burst cold
     //     shatter rider, fires hit-or-miss. Round out the lv1 lane
     //     next to Chromatic Orb / Magic Missile.
-    //   - lv2 **Enlarge / Reduce**: single-target +1d4 weapon damage
-    //     buff (concentration). Plays the support role next to the
-    //     wizard's traditional Slow / Haste concentration picks.
+    //   - lv2 **Enlarge / Reduce**, both halves. Enlarge grows an ally
+    //     one size category for +1d4 a swing and STR-save advantage;
+    //     Reduce is the same spell pointed the other way, shrinking an
+    //     enemy on a failed CON save. Both are concentration, so the
+    //     wizard picks a direction per fight the same way they pick
+    //     between Slow and Haste.
     actions.push(&*crate::actions::spells::ICE_KNIFE);
     actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
+    actions.push(&*crate::actions::spells::REDUCE);
     // Latest cantrip / lv1-2 utility additions:
     //   - cantrip **Sword Burst**: 1-tile DEX-save force burst around
     //     caster (force-typed at-will, slots between Thunderclap and

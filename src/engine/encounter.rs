@@ -643,6 +643,26 @@ const BLANKET_SAVE_ADVANTAGE_CONDITIONS: &[Condition] = &[
     Condition::Foreseen,
 ];
 
+/// Conditions that flip the roll mode on **Strength** saves only, and
+/// which way. Read by `compute_save_mode` inside its single STR gate.
+///
+/// Sibling to the two blanket tables above, one ability narrower. The
+/// membership is really one idea seen from four angles: RAW gives
+/// advantage on STR saves to a creature that is angrier or bigger than
+/// it was, and disadvantage to one that is smaller.
+const STRENGTH_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
+    // 5e Barbarian Rage: advantage on STR checks and saves while raging.
+    (Condition::Raging, RollMode::Advantage),
+    // 5e Enlarge (the growth half of Enlarge / Reduce): "the target has
+    // advantage on Strength checks and Strength saving throws".
+    (Condition::Enlarged, RollMode::Advantage),
+    // 5e Reduce, the mirror clause: disadvantage on both.
+    (Condition::Reduced, RollMode::Disadvantage),
+    // 5e Rune Knight **Giant's Might**: same advantage clause as Enlarge,
+    // reached by the same "you are briefly a bigger creature" flavor.
+    (Condition::GiantsMight, RollMode::Advantage),
+];
+
 /// A single "reroll the failed save once" source read at
 /// `roll_save_with_extra_mode` after the initial roll lands on a
 /// `Fail`. Each entry's `consume` closure returns true iff its
@@ -2781,12 +2801,18 @@ impl EncounterInstance {
                 mode = mode.combine(RollMode::Disadvantage);
             }
         }
-        // 5e Barbarian Rage: advantage on STR checks / saves while raging.
-        // STR-specific so lives outside the blanket table above.
-        if matches!(ability, AbilityScoreType::Strength)
-            && actor.has_condition(Condition::Raging)
-        {
-            mode = mode.combine(RollMode::Advantage);
+        // STR-save cluster. Every entry gates on Strength in RAW, so the
+        // ability check happens once and the per-condition rows ride a
+        // table — same shape as the blanket cohorts above, scoped to one
+        // ability. Rage was the only member until the size lane arrived
+        // and brought three more; a fourth "you are bigger / smaller than
+        // you were" effect lands as one row.
+        if matches!(ability, AbilityScoreType::Strength) {
+            for (condition, effect) in STRENGTH_SAVE_MODE_CONDITIONS {
+                if actor.has_condition(*condition) {
+                    mode = mode.combine(*effect);
+                }
+            }
         }
         // 5e Feeblemind: target's INT and CHA effectively drop to 1, so
         // INT / WIS / CHA save rolls suffer disadvantage. STR / DEX / CON
@@ -3762,20 +3788,97 @@ impl EncounterInstance {
         self.terrain.get(idx)
     }
 
-    pub fn can_move_to(&self, actor_id: usize, coord: Coordinate) -> bool {
-        if let Some(actor) = self.actors.get(&actor_id) {
-            let actor_width = get_tiles_from_size(actor.size());
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset: Coordinate = Coordinate::new(x_off as isize, y_off as isize);
-                    if !self.can_move_to_subtile(coord + offset, actor_id) {
-                        return false;
-                    }
+    /// True if a `size`-wide footprint anchored at `coord` would sit
+    /// entirely on passable tiles that are either empty or already this
+    /// actor's own. Takes the size explicitly rather than reading it off
+    /// the actor so the resize lane can ask the counterfactual question
+    /// — "would this actor fit here if it were one category bigger?" —
+    /// which is exactly what `reconcile_footprints` needs before it grows
+    /// anyone.
+    fn footprint_fits(&self, actor_id: usize, coord: Coordinate, size: Size) -> bool {
+        let actor_width = get_tiles_from_size(size);
+        for x_off in 0..actor_width {
+            for y_off in 0..actor_width {
+                let offset: Coordinate = Coordinate::new(x_off as isize, y_off as isize);
+                if !self.can_move_to_subtile(coord + offset, actor_id) {
+                    return false;
                 }
             }
-            return true;
         }
-        false
+        true
+    }
+
+    pub fn can_move_to(&self, actor_id: usize, coord: Coordinate) -> bool {
+        match self.actors.get(&actor_id) {
+            Some(actor) => self.footprint_fits(actor_id, coord, actor.size()),
+            None => false,
+        }
+    }
+
+    /// Bring every actor's stamped footprint back in line with the size
+    /// their conditions ask for. The single writer of
+    /// `ActorInstance::size`, and the only place that may change a
+    /// footprint without also moving the actor.
+    ///
+    /// Growth and shrink effects install a condition and stop there;
+    /// `desired_size` reports what the conditions want and this sweep is
+    /// what the board actually agrees to. Splitting it that way is what
+    /// makes the lane safe: a condition can arrive or expire down any of
+    /// the engine's many paths (a cast, a dispel, a dropped
+    /// concentration, a round-end timer tick) without any of them needing
+    /// to know that the actor map exists.
+    ///
+    /// Growing is refused when the wider footprint would overlap a wall,
+    /// the map edge, or another creature — RAW's "if there is enough
+    /// room" clause. A refusal is silent and *not* final: the sweep runs
+    /// on every pump, so a fighter hemmed in against a wall grows the
+    /// moment the neighbour who was in the way moves or dies. Shrinking
+    /// always succeeds, since a smaller box is a subset of a larger one.
+    pub fn reconcile_footprints(&mut self) {
+        // Collected first so the loop below can take `&mut self` — and,
+        // more importantly, so one actor's growth is stamped before the
+        // next one's room check runs, rather than every check racing
+        // against a stale map.
+        let pending: Vec<(usize, Size, Size)> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                let want = a.desired_size();
+                (want != a.size()).then_some((*id, a.size(), want))
+            })
+            .collect();
+        for (actor_id, from, to) in pending {
+            self.resize_actor(actor_id, from, to);
+        }
+    }
+
+    /// Move one actor from footprint `from` to footprint `to` in place,
+    /// keeping the actor map and the actor's own size field in step.
+    /// Called only by `reconcile_footprints`, which owns the decision of
+    /// when a resize is due.
+    fn resize_actor(&mut self, actor_id: usize, from: Size, to: Size) {
+        let Some((origin, name)) = self
+            .actors
+            .get(&actor_id)
+            .map(|a| (a.location(), a.name().to_string()))
+        else {
+            return;
+        };
+        let growing = to.ordinal() > from.ordinal();
+        // Only growth can be refused, and it is checked against the map
+        // *including* this actor's own current tiles — `footprint_fits`
+        // treats them as free, so the check is "is the extra ring clear?"
+        // rather than "is the whole box empty?".
+        if growing && !self.footprint_fits(actor_id, origin, to) {
+            return;
+        }
+        self.write_footprint(None, origin, from);
+        if let Some(a) = self.get_actor(actor_id) {
+            a.set_size(to);
+        }
+        self.write_footprint(Some(actor_id), origin, to);
+        let verb = if growing { "swells" } else { "dwindles" };
+        self.log(format!("{} {} to {}.", name, verb, to));
     }
 
     /// True if a straight Bresenham line from `from` to `to` passes through
@@ -6135,6 +6238,11 @@ impl EncounterInstance {
                 }
             }
         }
+        // `reset_for_new_round` above expires the UntilStartOfNextTurn
+        // conditions, which can include a growth effect — so the actor
+        // shrinks back before they spend a single tile of the movement
+        // they were just handed.
+        self.reconcile_footprints();
     }
 
     /// 5e Conquest Paladin **Aura of Conquest** (subclass level 7), both
@@ -8527,6 +8635,9 @@ impl EncounterInstance {
             }
         }
         self.cleanup_dead_actors();
+        // Round-end timers just expired; anything that was holding a
+        // creature at a larger size has now let go of it.
+        self.reconcile_footprints();
     }
 
     pub fn set_actor_map(
@@ -9146,6 +9257,14 @@ impl EncounterInstance {
                 StackElementEntry::SideEffect(s) => {
                     s.apply(self);
                     self.cleanup_dead_actors();
+                    // Per-effect rather than once after the drain: a
+                    // single action can grow someone and then move them,
+                    // and the move has to measure the footprint the
+                    // growth just bought. Running after
+                    // `cleanup_dead_actors` also means a growth blocked
+                    // by a neighbour lands the instant that neighbour
+                    // falls.
+                    self.reconcile_footprints();
                 }
             }
         }
@@ -59594,20 +59713,21 @@ mod tests {
         use crate::actions::class_features::{
             ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG, DIVINE_FURY_TAG,
             DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG,
-            ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG,
-            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            GIANTS_MIGHT_RIDER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
+            PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            13,
+            14,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GIANTS_MIGHT_RIDER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
@@ -70473,6 +70593,311 @@ mod tests {
         assert!(
             e.actors[&ogre].remaining_movement() > 0.0,
             "the root is re-checked every  turn, so a creature that shakes the fear walks"
+        );
+    }
+
+    /// The size lane's core promise: a growth condition actually moves
+    /// the creature's footprint on the board, and losing the condition
+    /// puts it back. Verified through the reconciler rather than through
+    /// any one feature, because every growth effect in the engine is
+    /// meant to reach the board the same way.
+    #[test]
+    fn a_growth_condition_moves_the_footprint_and_gives_it_back() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::Size;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&f].size(), Size::Medium);
+        // A Medium creature stamps a 2x2 box; the tile just outside it
+        // is free before the growth and claimed after.
+        assert_eq!(e.actor_id_at(Coordinate::new(6, 6)), None);
+
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::Enlarged, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert_eq!(
+            e.actors[&f].size(),
+            Size::Large,
+            "the reconciler should have granted the growth"
+        );
+        assert_eq!(
+            e.actor_id_at(Coordinate::new(6, 6)),
+            Some(f),
+            "a Large footprint is 4 tiles wide, so (6,6) is now the fighter"
+        );
+
+        e.get_actor(f).unwrap().remove_condition(Condition::Enlarged);
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Medium);
+        assert_eq!(
+            e.actor_id_at(Coordinate::new(6, 6)),
+            None,
+            "shrinking back has to release the tiles it claimed"
+        );
+    }
+
+    /// RAW grows a creature only "if there is enough room". A fighter
+    /// boxed in by walls keeps the condition and stays Medium — and
+    /// grows the moment the wall stops being in the way, because the
+    /// reconciler re-asks the question on every pump rather than
+    /// deciding once.
+    #[test]
+    fn a_growth_with_no_room_waits_until_there_is_room() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+        use crate::engine::types::Size;
+
+        // Walls along the two edges a growing footprint would expand
+        // into (anchored top-left, growth claims x+2..x+3 / y+2..y+3).
+        let walls: Vec<(isize, isize)> = (4..8).flat_map(|n| [(6, n), (n, 6)]).collect();
+        let mut e = ei_with_terrain(20, 20, &walls);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::Enlarged, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert_eq!(
+            e.actors[&f].size(),
+            Size::Medium,
+            "there is no room, so the growth waits"
+        );
+        assert!(
+            e.actors[&f].has_condition(Condition::Enlarged),
+            "the effect is still on the fighter — only the board refused"
+        );
+
+        // Knock the walls down and pump again.
+        for (x, y) in &walls {
+            let idx = e.idx(Coordinate::new(*x, *y)).unwrap();
+            e.terrain[idx].terrain_type = TerrainType::Floor;
+        }
+        e.reconcile_footprints();
+        assert_eq!(
+            e.actors[&f].size(),
+            Size::Large,
+            "the same condition should grow the fighter once the room appears"
+        );
+    }
+
+    /// Enlarge and Reduce cancel. RAW says each spell "has no effect on
+    /// a creature already under the other's influence"; the engine gets
+    /// there by summing ladder steps, so holding both is the same as
+    /// holding neither — no precedence rule, no ordering question.
+    #[test]
+    fn enlarge_and_reduce_cancel_on_the_ladder() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::Size;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let actor = e.get_actor(f).unwrap();
+        actor.add_condition(Condition::Enlarged, ConditionTimer::Rounds(10));
+        actor.add_condition(Condition::Reduced, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&f].desired_size(), Size::Medium);
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Medium);
+
+        // Drop the growth and the shrink is left holding the ladder.
+        e.get_actor(f).unwrap().remove_condition(Condition::Enlarged);
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Small);
+    }
+
+    /// Two stacked growth effects still only buy one category — the
+    /// clamp in `desired_size` is what keeps a Rune Knight who is also
+    /// the target of an Enlarge from becoming Huge.
+    #[test]
+    fn stacked_growths_only_buy_one_category() {
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::engine::types::Size;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let actor = e.get_actor(f).unwrap();
+        actor.add_condition(Condition::Enlarged, ConditionTimer::Rounds(10));
+        actor.add_condition(Condition::GiantsMight, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Large);
+    }
+
+    /// Growing widens the ring the fighter threatens: a Large Rune
+    /// Knight reaches a target a Medium one cannot. This is the half of
+    /// Giant's Might that isn't a damage die, and the reason the size
+    /// lane is worth having at all.
+    #[test]
+    fn giants_might_extends_the_fighters_reach() {
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // The Medium fighter's footprint is (4,4)-(5,5); the goblin sits
+        // far enough east to be outside a melee envelope measured from
+        // it.
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let reach = crate::actions::action_template::MELEE_REACH;
+        assert!(
+            e.footprint_distance(f, g).unwrap() > reach,
+            "the goblin should start out of reach"
+        );
+
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::GiantsMight, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert!(
+            e.footprint_distance(f, g).unwrap() <= reach,
+            "a Large footprint reaches a tile the Medium one could not"
+        );
+    }
+
+    /// Giant's Might's damage rider fires once per turn and no more —
+    /// the growth lasts a minute, so without the ledger the first swing
+    /// of the fight would be paying for every swing after it.
+    #[test]
+    fn giants_might_rider_fires_once_per_turn() {
+        use crate::actions::class_features::GIANTS_MIGHT_RIDER_TAG;
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::GiantsMight, ConditionTimer::Rounds(10));
+
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        let swing = RiderSwing {
+            is_melee: true,
+            is_spell: false,
+            is_crit: false,
+            damage_so_far: 0,
+        };
+        let first = push_on_hit_riders(&mut e, &mut effects, f, g, swing);
+        assert!(first > 0, "the first swing of the turn carries the rider");
+        assert!(e.actors[&f].once_per_turn_used(GIANTS_MIGHT_RIDER_TAG));
+        let second = push_on_hit_riders(&mut e, &mut effects, f, g, swing);
+        assert_eq!(second, 0, "the second swing of the same turn does not");
+        assert!(
+            e.actors[&f].has_condition(Condition::GiantsMight),
+            "the growth itself outlives the turn's rider"
+        );
+    }
+
+    /// The Reduce half of Enlarge / Reduce shrinks its target, takes a
+    /// die off their swings, and turns their STR saves sour — the three
+    /// clauses RAW gives it, each landing on a different shared table.
+    #[test]
+    fn reduce_shrinks_and_weakens_its_target() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::{AbilityScoreType, Size};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(matches!(
+            e.compute_save_mode(f, AbilityScoreType::Strength),
+            RollMode::Normal
+        ));
+
+        e.get_actor(f)
+            .unwrap()
+            .add_condition(Condition::Reduced, ConditionTimer::Rounds(10));
+        e.reconcile_footprints();
+        assert_eq!(e.actors[&f].size(), Size::Small);
+        assert!(
+            matches!(
+                e.compute_save_mode(f, AbilityScoreType::Strength),
+                RollMode::Disadvantage
+            ),
+            "Reduce sours STR saves"
+        );
+        // ...and Enlarge sweetens them, off the same table.
+        let g = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        e.get_actor(g)
+            .unwrap()
+            .add_condition(Condition::Enlarged, ConditionTimer::Rounds(10));
+        assert!(matches!(
+            e.compute_save_mode(g, AbilityScoreType::Strength),
+            RollMode::Advantage
+        ));
+    }
+
+    /// Fire Rune spends its charge on the prime, and the prime is
+    /// consumed by the swing that cashes it — both halves of a
+    /// once-per-rest resource, checked together so a regression in
+    /// either shows up here.
+    #[test]
+    fn fire_rune_primes_once_and_is_spent_by_the_swing() {
+        use crate::actions::class_features::{FIRE_RUNE, FIRE_RUNE_TAG};
+        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f = e
+            .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(FIRE_RUNE_TAG));
+        assert!(FIRE_RUNE.validate_input(&e, f, None, None, None));
+        for eff in FIRE_RUNE.side_effects(&mut e, f, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::FireRuneInvoked));
+        assert!(
+            !e.actors[&f].feature_available(FIRE_RUNE_TAG),
+            "priming the rune spends its charge"
+        );
+        assert!(
+            !FIRE_RUNE.validate_input(&e, f, None, None, None),
+            "and a spent rune cannot be primed again"
+        );
+
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        let rider = push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            f,
+            g,
+            RiderSwing {
+                is_melee: true,
+                is_spell: false,
+                is_crit: false,
+                damage_so_far: 0,
+            },
+        );
+        assert!((2..=12).contains(&rider), "2d6 fire, got {}", rider);
+        assert!(
+            !e.actors[&f].has_condition(Condition::FireRuneInvoked),
+            "the swing consumes the prime"
         );
     }
 }

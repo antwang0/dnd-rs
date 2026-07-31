@@ -1397,7 +1397,8 @@ pub fn resolve_attack_outcome_with_rider(
     // the receiving end. The spell-attack chokepoint in
     // `spells::spell_attack_outcome` sums the same pair.
     let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id)
-        + encounter.curse_damage_bonus(p.caster_id, p.target_id);
+        + encounter.curse_damage_bonus(p.caster_id, p.target_id)
+        + weapon_damage_penalty(encounter, p.caster_id);
     let total_damage_bonus = p.damage_bonus + caster_damage_buff;
     let mut damage = (raw_damage + crit_extra + brutal_extra + total_damage_bonus).max(0) as u32;
     if is_crit {
@@ -2461,6 +2462,50 @@ pub enum FollowUpEffect {
     },
 }
 
+/// Caster-side per-swing damage *penalties*, the negative image of
+/// `ON_HIT_RIDERS`. Each row is a condition the attacker holds and the
+/// die that is rolled and subtracted from the swing's damage.
+///
+/// A separate table rather than a signed field on `OnHitRider` because
+/// the two resolve at different points: a rider is its own damage
+/// instance pushed after the hit lands (it can carry a type, a save, a
+/// splash), whereas a penalty has to fold into the swing's own total
+/// *before* resistance and the floor-at-zero clamp — otherwise a Reduced
+/// creature would deal full damage and then be handed a separate
+/// negative packet the damage pipeline has no meaning for.
+const WEAPON_DAMAGE_PENALTY_DICE: &[(Condition, Dice, &str)] = &[
+    // 5e Reduce (the shrink half of Enlarge / Reduce): "any attack it
+    // makes deals 1d4 less damage". Weapon attacks only — this
+    // chokepoint is the weapon lane, and spell attacks sum their bonuses
+    // separately in `spells::spell_attack_outcome`, which RAW leaves
+    // alone.
+    (Condition::Reduced, Dice::new(1, 4), "reduce"),
+];
+
+/// Roll and sum every damage penalty `caster_id` is currently under.
+/// Returns a value ≤ 0 so the caller can add it alongside the positive
+/// bonus lanes. Rolls nothing (and logs nothing) for the overwhelmingly
+/// common case of an attacker holding no penalty condition.
+fn weapon_damage_penalty(encounter: &mut EncounterInstance, caster_id: usize) -> i32 {
+    let held: Vec<(Dice, &str)> = {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return 0;
+        };
+        WEAPON_DAMAGE_PENALTY_DICE
+            .iter()
+            .filter(|(condition, _, _)| actor.has_condition(*condition))
+            .map(|(_, dice, label)| (*dice, *label))
+            .collect()
+    };
+    let mut total = 0;
+    for (dice, label) in held {
+        let rolled = encounter.roll(&dice) as i32;
+        encounter.log(format!("  {}: -{}({}) damage", label, dice, rolled));
+        total -= rolled;
+    }
+    total
+}
+
 /// Caster-side on-hit rider table. Every per-hit damage rider that keys
 /// off a caster condition (Smite spells, Crown of Stars, Crusader's
 /// Mantle, persistent weapon-buff concentration spells, Battle Master
@@ -2974,6 +3019,60 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
+        },
+        // 5e Rune Knight Fighter **Giant's Might** (subclass level 3):
+        // "once on each of your turns when you hit a creature with an
+        // attack, you can deal an extra 1d6 damage." Persistent for the
+        // minute the growth lasts, so `consume_on_trigger` is false and
+        // the once-per-turn ledger is what rations it — the two flags
+        // together are exactly RAW's "for a minute, once a turn".
+        //
+        // Bludgeoning stands in for the weapon's own type, the same
+        // stand-in the Enlarge row above makes for the same reason: this
+        // table's rows carry a compile-time damage type and the swing's
+        // type isn't in scope here.
+        OnHitRider {
+            condition: Condition::GiantsMight,
+            dice: Dice::new(1, 6),
+            label: "giant's might",
+            damage_type: DamageType::Bludgeoning,
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: Some(
+                crate::actions::class_features::GIANTS_MIGHT_RIDER_TAG,
+            ),
+        },
+        // 5e Rune Knight Fighter **Fire Rune** (subclass level 3): "the
+        // target takes an extra 2d6 fire damage, and it must succeed on
+        // a Strength saving throw or be restrained… for 1 minute."
+        //
+        // The only prime on the table that pays both a real damage die
+        // *and* a hard-control follow-up — the Battle Master maneuvers it
+        // sits beside on the fighter's sheet trade their die away for
+        // their rider, and Ensnaring Strike buys the same Restrained with
+        // a spell slot and the caster's concentration. That is what the
+        // rune's separate charge is buying.
+        OnHitRider {
+            condition: Condition::FireRuneInvoked,
+            dice: Dice::new(2, 6),
+            label: "fire rune",
+            damage_type: DamageType::Fire,
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                // The rune's DC is the fighter's, off the stat the
+                // chassis is built on — same anchor the maneuvers use.
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(10),
+                },
+                label: "fire rune chains",
+                hp_threshold: None,
+            }),
             once_per_turn_tag: None,
         },
         // 5e Lightning Arrow — 3rd-level ranger evocation, bonus action,
