@@ -301,6 +301,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*barbarians::TUNDRA_STORM_HERALD_BARBARIAN_TEMPLATE,
                     &*barbarians::BERSERKER_BARBARIAN_TEMPLATE,
                     &*barbarians::ZEALOT_BARBARIAN_TEMPLATE,
+                    &*barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
                 ],
             ),
             (

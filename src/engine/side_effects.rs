@@ -1302,6 +1302,10 @@ impl ApplicableSideEffect for StabilizeActor {
 ///   (advantage on attacks, and disadvantage on the target's next save
 ///   against their spell, respectively).
 /// * **WardingBonded** — the partner damage is mirrored onto.
+/// * **AncestrallyHaunted** — the barbarian the ancestors are guarding,
+///   so both of the mark's clauses ("disadvantage on attacks against
+///   anyone but them" and "damage dealt to anyone but them is halved")
+///   can be scoped to the one creature the spirits care about.
 /// * **HexbladeCursed** — the hexblade, so their damage bonus, their
 ///   expanded crit range, and their heal-on-kill all key off the one
 ///   creature they cursed rather than off the condition being present at
@@ -1322,6 +1326,7 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::EldritchStruck,
     crate::conditions::Condition::WardingBonded,
     crate::conditions::Condition::HexbladeCursed,
+    crate::conditions::Condition::AncestrallyHaunted,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

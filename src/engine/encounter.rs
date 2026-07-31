@@ -2388,6 +2388,26 @@ impl EncounterInstance {
                 Condition::Goaded,
                 RollMode::Disadvantage,
             );
+            // 5e Ancestral Guardian Barbarian **Ancestral Protectors**:
+            // "that creature has disadvantage on any attack roll that
+            // isn't against you." Same flag-plus-link shape as Compelled
+            // Duel and Goading Attack, and the third caller the
+            // `focus_link_mode` helper was written to expect.
+            //
+            // The half of the feature that doesn't live here is the
+            // other clause — damage the haunted creature deals to
+            // anyone but the barbarian is halved — which lands at
+            // `attacker_scoped_damage_reduction`. The pairing is what
+            // makes the subclass a *guardian*: this clause makes hitting
+            // the wizard unlikely, and that one makes it cheap when it
+            // happens anyway.
+            mode = focus_link_mode(
+                mode,
+                attacker,
+                target_id,
+                Condition::AncestrallyHaunted,
+                RollMode::Disadvantage,
+            );
         }
 
         // Target-side modifiers.
@@ -59567,25 +59587,26 @@ mod tests {
     /// registered tags — a Sneak Attack mark doesn't accidentally
     /// suppress a Colossus Slayer / Foe Slayer / Divine Fury / Dreadful
     /// Strikes / Psychic Blades / Planar Warrior / Slayer's Prey /
-    /// Gathered Swarm / Psionic Strike swing (and vice versa). Locks the
-    /// HashSet-backed
+    /// Gathered Swarm / Psionic Strike / Ancestral Protectors swing (and
+    /// vice versa). Locks the HashSet-backed
     /// decoupling that the pre-refactor bool cohort trivially had by
     /// construction.
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
-            COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG,
-            GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG,
-            PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG,
+            FOE_SLAYER_TAG, GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
+            PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            10,
+            11,
             "once-per-turn rider tag registry drifted"
         );
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
@@ -69990,5 +70011,167 @@ mod tests {
             }
         }
         assert!(compared > 0, "40 seeds should land at least one swing");
+    }
+
+    /// Ancestral Protectors marks exactly one creature per turn, moves
+    /// the mark rather than accumulating it, and does nothing at all
+    /// when the barbarian isn't raging.
+    ///
+    /// The three clauses are one test because they are one row on
+    /// `ON_HIT_CONDITION_MARKS` and each is a distinct way that row can
+    /// be wired wrong: a missing `holder_gate` marks out of rage, a
+    /// missing once-per-turn check marks twice, and a missing move
+    /// sweep leaves the old target haunted.
+    #[test]
+    fn the_ancestral_mark_is_exclusive_moves_and_needs_the_rage() {
+        use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        // Deterministic hits: pick a seed where the greataxe connects,
+        // then drive the whole scenario on it.
+        let swing = |e: &mut EncounterInstance, barb: usize, target: usize| {
+            let axe = e.actors[&barb]
+                .actions
+                .iter()
+                .copied()
+                .find(|a| a.name() == "greataxe")
+                .expect("the barbarian carries a greataxe");
+            let targets = vec![target];
+            for eff in axe.side_effects(e, barb, Some(&targets), None, None) {
+                eff.apply(e);
+            }
+        };
+
+        let mut proved_no_rage = false;
+        let mut proved_exclusive = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let barb = e
+                .instantiate_creature(
+                    &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+                    Coordinate::new(2, 2),
+                    0,
+                    0,
+                )
+                .unwrap();
+            let first = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let second = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 3), 1, 0)
+                .unwrap();
+
+            // Out of rage: a landed hit marks nobody.
+            let unhurt = e.actors[&first].hitpoints();
+            swing(&mut e, barb, first);
+            if e.actors[&first].hitpoints() < unhurt {
+                assert!(
+                    !e.actors[&first].has_condition(Condition::AncestrallyHaunted),
+                    "seed {}: a hit outside the rage marks nobody",
+                    seed
+                );
+                proved_no_rage = true;
+            }
+
+            // In rage: the first landed hit of the turn marks, the
+            // second does not, and a mark laid on a later turn moves.
+            e.actors
+                .get_mut(&barb)
+                .unwrap()
+                .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+            swing(&mut e, barb, first);
+            if !e.actors[&first].has_condition(Condition::AncestrallyHaunted) {
+                // The swing missed on this seed; nothing to check.
+                continue;
+            }
+            assert_eq!(
+                e.actors[&first].linked_by(Condition::AncestrallyHaunted),
+                Some(barb),
+                "seed {}: the mark links back to the barbarian",
+                seed
+            );
+            swing(&mut e, barb, second);
+            assert!(
+                !e.actors[&second].has_condition(Condition::AncestrallyHaunted),
+                "seed {}: only the turn's *first* hit marks",
+                seed
+            );
+
+            // New turn, new mark — and the old one lets go.
+            e.start_turn_for(barb);
+            swing(&mut e, barb, second);
+            if e.actors[&second].has_condition(Condition::AncestrallyHaunted) {
+                assert!(
+                    !e.actors[&first].has_condition(Condition::AncestrallyHaunted),
+                    "seed {}: the mark moves rather than accumulating",
+                    seed
+                );
+                proved_exclusive = true;
+            }
+        }
+        assert!(
+            proved_no_rage && proved_exclusive,
+            "the sweep should exercise both the no-rage and the move cases"
+        );
+    }
+
+    /// Both clauses of the mark are scoped to the barbarian: the haunted
+    /// creature swings at everyone else with disadvantage and for half
+    /// damage, and at the barbarian normally.
+    ///
+    /// The disadvantage half and the damage half are checked together
+    /// because the feature is the *pair* — a redirect works only if
+    /// hitting the guarded ally is worse on both axes than hitting the
+    /// barbarian.
+    #[test]
+    fn the_haunted_creature_is_worse_off_attacking_anyone_but_the_guardian() {
+        use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let barb = e
+            .instantiate_creature(
+                &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(Condition::AncestrallyHaunted, ConditionTimer::Rounds(2));
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .set_condition_link(Condition::AncestrallyHaunted, Some(barb));
+
+        assert_eq!(
+            e.peek_attack_mode(ogre, barb, true),
+            RollMode::Normal,
+            "the spirits don't hinder a blow aimed at the barbarian"
+        );
+        assert_eq!(
+            e.peek_attack_mode(ogre, wizard, true),
+            RollMode::Disadvantage,
+            "any other target draws disadvantage"
+        );
+
+        assert_eq!(
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, barb, 20),
+            20,
+            "damage to the barbarian is not reduced"
+        );
+        assert_eq!(
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, wizard, 20),
+            10,
+            "damage to anyone else is halved"
+        );
     }
 }

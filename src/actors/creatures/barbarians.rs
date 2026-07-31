@@ -782,3 +782,58 @@ pub static ZEALOT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..BARBARIAN_TEMPLATE.clone()
     }
 });
+
+/// Ancestral Guardian Barbarian — Primal Path **Path of the Ancestral
+/// Guardian** subclass build (XGtE), and the only barbarian on the
+/// roster whose rage protects someone else.
+///
+/// One subclass feature, **Ancestral Protectors** (lv3), with two
+/// clauses that only make sense together. While the barbarian is
+/// raging, the first creature they hit each turn is marked, and until
+/// the start of the barbarian's next turn that creature:
+///
+///   - has disadvantage on any attack roll that isn't against the
+///     barbarian, and
+///   - deals halved damage to anyone who isn't the barbarian.
+///
+/// Read separately, either clause is a mediocre debuff. Read together
+/// they are a redirect: the marked creature can attack the barbarian at
+/// full effect, or attack the wizard at disadvantage for half damage.
+/// Nothing forces the choice — RAW never says the creature *must* target
+/// the barbarian — but the arithmetic does, which is a more interesting
+/// way to taunt than the Cavalier's Unwavering Mark or Compelled Duel,
+/// both of which impose the disadvantage half and stop there.
+///
+/// The mark is exclusive and moves. `MarkCadence::FirstHitOfTurn` is
+/// what encodes that: the once-per-turn ledger stops a barbarian with
+/// Extra Attack from marking two creatures in a turn, and the
+/// move-the-mark sweep stops last turn's target from keeping it. Both
+/// halves are needed, and the second is the one that is easy to miss —
+/// without it the guardian slowly accumulates a crowd of half-damage
+/// enemies, which is a much stronger feature than RAW wrote.
+///
+/// RAW's later features aren't shipped. **Spirit Shield** (lv6 — a
+/// reaction that reduces damage to an ally within 30 ft by 2d6) would
+/// fit the reactive-damage-clamp cohort except that its scope is
+/// ally-only-not-self and its reactor is a third party who has to be
+/// raging; **Consult the Spirits** (lv10) is a divination with no
+/// combat surface; **Vengeful Ancestors** (lv14) is Spirit Shield plus
+/// a reflect and therefore waits on it.
+///
+/// Glyph 'G' — for **G**uardian. Distinct from baseline barbarian 'B',
+/// Berserker 'Z' and Zealot 'X'; the totem and storm-herald builds all
+/// inherit 'B' from the baseline.
+pub static ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> =
+    LazyLock::new(|| {
+        // Tag-only subclass: Ancestral Protectors adds no action, and
+        // its whole surface is a row on `ON_HIT_CONDITION_MARKS` plus
+        // the two clauses that read the mark's back-link. The shared
+        // `with_subclass_tag` helper carries the rest of the chassis —
+        // greataxe, Rage, Reckless Attack, Danger Sense, Fast Movement,
+        // Brutal Critical, Relentless Rage — unchanged.
+        BARBARIAN_TEMPLATE.with_subclass_tag(
+            "Ancestral Guardian Barbarian",
+            'G',
+            crate::actions::class_features::ANCESTRAL_PROTECTORS_TAG,
+        )
+    });

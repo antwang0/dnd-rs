@@ -2481,6 +2481,12 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     SLAYERS_PREY_TAG,
     GATHERED_SWARM_TAG,
     PSIONIC_STRIKE_TAG,
+    // The only entry here that isn't a damage rider: Ancestral
+    // Protectors uses the ledger to enforce RAW's "the *first* creature
+    // you hit on your turn" rather than to cap a die pool. Same
+    // mechanism, different purpose — which is the argument for the
+    // ledger being keyed by plain tag rather than by rider identity.
+    ANCESTRAL_PROTECTORS_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -12186,3 +12192,13 @@ impl Action for Bladesong {
 }
 
 pub static BLADESONG: LazyLock<Bladesong> = LazyLock::new(|| Bladesong {});
+
+/// Passive tag for the Path of the Ancestral Guardian Barbarian's
+/// **Ancestral Protectors** (subclass level 3). Never spent — the mark
+/// is at-will, gated on the barbarian's Rage rather than on a charge —
+/// so it lives on `features_max` and is read with `has_passive_feature`.
+///
+/// Doubles as the once-per-turn ledger key: the `FirstHitOfTurn` row on
+/// `ON_HIT_CONDITION_MARKS` marks the tag used on the turn's first
+/// connecting swing and reads it back on every swing after.
+pub const ANCESTRAL_PROTECTORS_TAG: &str = "barbarian.ancestral_protectors";

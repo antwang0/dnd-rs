@@ -523,11 +523,12 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
 /// whose holder stamps a condition — plus whatever back-link that
 /// condition carries — onto every target their weapon connects with.
 ///
-/// These are deliberately *not* once-per-turn. Every connecting swing
-/// re-stamps the mark, which is a no-op while one is already up
-/// (`add_condition` keeps the longer timer) and refreshes a window that
-/// has partly decayed, matching RAW on both current rows: each fires "when
-/// you hit", not "the first time you hit".
+/// Most rows are *not* once-per-turn. Every connecting swing re-stamps
+/// the mark, which is a no-op while one is already up (`add_condition`
+/// keeps the longer timer) and refreshes a window that has partly
+/// decayed, matching RAW on Eldritch Strike and Unwavering Mark: each
+/// fires "when you hit", not "the first time you hit". Ancestral
+/// Protectors is worded the other way and says so with its `cadence`.
 struct OnHitConditionMark {
     /// Passive-feature tag the mark keys off, read via
     /// `has_passive_feature`. No per-rest charge — every row here is
@@ -549,8 +550,39 @@ struct OnHitConditionMark {
     /// Spell attacks never qualify for either row, so the walker gates
     /// on `!is_spell` unconditionally.
     melee_only: bool,
+    /// Extra caster-side precondition beyond holding `tag`. `None` for
+    /// always-on marks; Ancestral Protectors uses it for RAW's "while
+    /// raging" clause, which is a condition rather than a feature and so
+    /// can't be folded into the tag check.
+    holder_gate: Option<fn(&crate::actors::actor_template::ActorInstance) -> bool>,
+    /// How often the mark lands. See `MarkCadence`.
+    cadence: MarkCadence,
     /// Full log line for the stamp, minus the leading indent.
     log: &'static str,
+}
+
+/// How often a row on `ON_HIT_CONDITION_MARKS` stamps its mark.
+///
+/// RAW draws this distinction with two different phrasings and the
+/// difference is mechanically large, so the row carries it explicitly
+/// rather than leaving it to the reader of the trigger site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkCadence {
+    /// "When you hit a creature…" — every connecting swing re-stamps,
+    /// and a holder who hits three creatures in a turn has marked all
+    /// three. Eldritch Strike, Unwavering Mark.
+    EveryHit,
+    /// "The first creature you hit on your turn becomes the target…" —
+    /// only the turn's first connecting swing stamps, and the mark
+    /// *moves*: whoever the holder had marked before loses it, because
+    /// RAW makes the mark a relationship with one creature at a time
+    /// rather than a debuff that accumulates. Ancestral Protectors.
+    ///
+    /// Both halves matter. Without the once-per-turn gate a barbarian
+    /// with Extra Attack marks two creatures a turn; without the move,
+    /// last turn's target keeps the mark until its own timer runs out
+    /// and the barbarian ends up guarded against a growing crowd.
+    FirstHitOfTurn,
 }
 
 /// Cohort of passive weapon-hit condition marks, walked by
@@ -576,6 +608,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         condition: Condition::EldritchStruck,
         timer: ConditionTimer::Rounds(2),
         melee_only: false,
+        holder_gate: None,
+        cadence: MarkCadence::EveryHit,
         log: "eldritch strike: the blow rattles the target's guard",
     },
     OnHitConditionMark {
@@ -583,7 +617,28 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         condition: Condition::Dueled,
         timer: ConditionTimer::Rounds(2),
         melee_only: true,
+        holder_gate: None,
+        cadence: MarkCadence::EveryHit,
         log: "unwavering mark: the target is locked onto its attacker",
+    },
+    // 5e Path of the Ancestral Guardian Barbarian **Ancestral
+    // Protectors** (subclass level 3). "While you're raging, the first
+    // creature you hit with an attack on your turn becomes the target
+    // of the warriors."
+    OnHitConditionMark {
+        tag: crate::actions::class_features::ANCESTRAL_PROTECTORS_TAG,
+        condition: Condition::AncestrallyHaunted,
+        // RAW's window is "until the start of your next turn", which is
+        // the marker's clock, not the target's — the same reason the
+        // two rows above use `Rounds(2)` rather than
+        // `UntilStartOfNextTurn`.
+        timer: ConditionTimer::Rounds(2),
+        // RAW is "hit with an attack", not "with a melee weapon
+        // attack" — a thrown handaxe marks just as well.
+        melee_only: false,
+        holder_gate: Some(|a| a.has_condition(Condition::Raging)),
+        cadence: MarkCadence::FirstHitOfTurn,
+        log: "ancestral protectors: the spirits fix on the barbarian's first mark",
     },
 ];
 
@@ -604,12 +659,28 @@ fn push_on_hit_condition_marks(
         if row.melee_only && !p.is_melee {
             continue;
         }
-        let holds = encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| a.has_passive_feature(row.tag));
+        let holds = encounter.actors.get(&p.caster_id).is_some_and(|a| {
+            a.has_passive_feature(row.tag)
+                && row.holder_gate.is_none_or(|gate| gate(a))
+                && !(row.cadence == MarkCadence::FirstHitOfTurn
+                    && a.once_per_turn_used(row.tag))
+        });
         if !holds {
             continue;
+        }
+        if row.cadence == MarkCadence::FirstHitOfTurn {
+            // Spend the turn's single stamp, then move the mark off
+            // whoever was carrying it. Both halves of `FirstHitOfTurn`
+            // — see the variant docs.
+            if let Some(a) = encounter.actors.get_mut(&p.caster_id) {
+                a.mark_once_per_turn_used(row.tag);
+            }
+            for stale in previously_marked_by(encounter, row.condition, p.caster_id, p.target_id) {
+                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                    actor_id: stale,
+                    condition: row.condition,
+                }));
+            }
         }
         encounter.log(format!("  {}", row.log));
         effects.push(Box::new(ApplyCondition {
@@ -625,6 +696,29 @@ fn push_on_hit_condition_marks(
             effects.push(link);
         }
     }
+}
+
+/// Sorted ids of every actor other than `new_target` currently carrying
+/// `condition` back-linked to `holder`. Used by `MarkCadence::FirstHitOfTurn`
+/// to move an exclusive mark rather than accumulate it.
+///
+/// Sorted so the generated `RemoveCondition` effects land in a
+/// deterministic order; in practice the list is almost always empty or a
+/// single id, since the mark is exclusive by construction.
+fn previously_marked_by(
+    encounter: &EncounterInstance,
+    condition: Condition,
+    holder: usize,
+    new_target: usize,
+) -> Vec<usize> {
+    let mut ids: Vec<usize> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| **id != new_target && a.linked_by(condition) == Some(holder))
+        .map(|(id, _)| *id)
+        .collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Resolve which actor (if any) spends a reaction for `row` against this
@@ -721,6 +815,54 @@ fn fire_clamp(
 /// Short-circuits as soon as the damage hits 0: a clamp that can't
 /// shave anything off shouldn't burn its holder's reaction (or a
 /// per-rest charge) for nothing.
+/// Damage reductions that depend on who is *swinging* rather than on who
+/// is being hit or on anyone spending a reaction.
+///
+/// The engine had no lane for this. `DealDamage` carries no attacker, so
+/// a rule of the form "damage *this creature* deals to *anyone but
+/// them* is halved" can't live in the target's resistance pipeline;
+/// `REACTIVE_DAMAGE_CLAMPS` is about a defender or ally spending a
+/// reaction, which this costs nobody. So it sits between the two, called
+/// from both attack chokepoints with both ids in hand.
+///
+/// One rule today - the Ancestral Guardian's half of Ancestral
+/// Protectors. RAW words it as the *victim* gaining resistance, but the
+/// gate is entirely on the attacker (are they haunted, and is their
+/// target someone other than the barbarian who haunted them), so the
+/// attacker-scoped framing is the one that can actually be evaluated.
+pub fn attacker_scoped_damage_reduction(
+    encounter: &mut EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    damage: u32,
+) -> u32 {
+    if damage == 0 {
+        return 0;
+    }
+    // 5e Ancestral Protectors: "when the creature hits a creature other
+    // than you with an attack, that target has resistance to the damage
+    // dealt by the attack."
+    let guarded_by = encounter
+        .actors
+        .get(&attacker_id)
+        .and_then(|a| a.linked_by(Condition::AncestrallyHaunted));
+    let Some(barbarian) = guarded_by else {
+        return damage;
+    };
+    if barbarian == target_id {
+        // The spirits don't protect anyone from a blow aimed at the
+        // barbarian themselves - that is the trade the feature offers.
+        return damage;
+    }
+    let reduced = damage / 2;
+    let target_name = encounter.actor_name(target_id);
+    encounter.log(format!(
+        "  ancestral protectors: the spirits blunt the blow against {} ({} -> {})",
+        target_name, damage, reduced
+    ));
+    reduced
+}
+
 pub fn apply_reactive_damage_clamps(
     encounter: &mut EncounterInstance,
     attacker_id: usize,
@@ -1320,6 +1462,12 @@ pub fn resolve_attack_outcome_with_rider(
     // ranged swings that arrive here. The spell-attack chokepoint in
     // `spells::spell_attack_outcome` calls the same walker with
     // `is_spell: true`.
+    // Attacker-scoped reductions land before the reactive clamps so a
+    // blunted blow is what Uncanny Dodge then halves - the same order
+    // RAW resolves resistance and damage-reduction reactions in, and
+    // the order that keeps a doubly-protected ally from taking more
+    // than a singly-protected one.
+    damage = attacker_scoped_damage_reduction(encounter, p.caster_id, p.target_id, damage);
     damage = apply_reactive_damage_clamps(
         encounter,
         p.caster_id,
