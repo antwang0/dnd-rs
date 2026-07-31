@@ -9339,4 +9339,85 @@ mod tests {
             "Blur is not invisibility; the spell would do nothing"
         );
     }
+
+    /// Every subclass added in this batch is actually reached for by the
+    /// AI in a real fight.
+    ///
+    /// The per-feature tests next to the engine lanes drive the effects
+    /// directly, which proves the mechanics work but not that anything
+    /// ever asks for them — a feature the AI never selects is a feature
+    /// no player sees used, and the failure is invisible because every
+    /// mechanical test still passes. This closes that loop for all five
+    /// at once: run each of them through eight fights and require their
+    /// signature line in the log.
+    ///
+    /// Ancestral Protectors is deliberately absent. It has no action to
+    /// select — the mark rides an ordinary greataxe swing — so an AI
+    /// wiring test would only be re-testing the rider, which the
+    /// engine-side sweep already covers.
+    #[test]
+    fn the_ai_reaches_for_each_new_subclass_signature() {
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+        use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
+
+        // (template, the log fragment its headline feature prints)
+        let cases: [(&CreatureTemplate, &str); 5] = [
+            (&SPORES_DRUID_TEMPLATE, "halo of spores"),
+            (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
+            (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
+            (&BLADESINGER_WIZARD_TEMPLATE, "bladesong"),
+            (&UNDEAD_WARLOCK_TEMPLATE, "form of dread"),
+        ];
+
+        for (template, marker) in cases {
+            let mut seen_in = 0;
+            for seed in 0..8u64 {
+                let tp = TerrainGenParams {
+                    width: 24,
+                    height: 16,
+                    branch_depth: 0,
+                    branch_prob: 0.0,
+                };
+                let ap = ActorGenParams {
+                    cr_target: 0.0,
+                    n_teams: 0,
+                    pc_template: None,
+                    start_team: 0,
+                };
+                let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+                e.instantiate_creature(template, Coordinate::new(3, 8), 0, 0)
+                    .unwrap_or_else(|_| panic!("{} should instantiate", template.name));
+                e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 8), 1, 0)
+                    .expect("the ogre should instantiate");
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 20_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").contains(marker) {
+                    seen_in += 1;
+                }
+            }
+            assert!(
+                seen_in > 0,
+                "an AI {} should use \"{}\" in at least one of 8 fights",
+                template.name,
+                marker
+            );
+        }
+    }
 }
