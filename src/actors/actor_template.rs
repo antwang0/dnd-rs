@@ -5170,48 +5170,41 @@ impl ActorInstance {
     /// `resisted` and skip further halving once it's set. Immunity still
     /// trumps everything and zeros the amount immediately.
     pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
-        // Immunity from any source zeroes damage outright — walk the
-        // four immunity lanes (template modifier, condition table, item
-        // grant, Monk Purity of Body) through the shared helper.
+        // 5e's three stacking rules for typed damage, in the order they
+        // resolve:
+        //
+        //   1. Immunity beats everything. Four lanes can grant it
+        //      (template modifier, condition, item, passive feature);
+        //      `is_immune_to_damage_type` walks all four.
+        //   2. Resistance and vulnerability to the same type cancel.
+        //   3. Multiple resistances still only halve once, however many
+        //      sources agree.
+        //
+        // Collapsing the four resistance lanes into one boolean before
+        // the match is what makes rules 2 and 3 hold by construction
+        // rather than by the order the lanes happen to be tested in.
+        // The previous shape applied vulnerability first and then
+        // consulted each resistance lane in turn, each gated on the
+        // earlier ones having missed — which got rule 3 right, got
+        // rule 2 right for the condition and item lanes, and quietly
+        // dropped it for the passive-feature lane, so a creature with a
+        // feature-granted resistance and a template vulnerability to the
+        // same type took double rather than full.
         if self.is_immune_to_damage_type(dt) {
             return 0;
         }
-        // Template-level modifier (resistance / vulnerability) — the
-        // immunity case is already handled above.
-        let modifier = self.damage_modifiers.get(&dt).copied();
-        // Passive-feature typed resistance cohort (Dwarven Resilience →
-        // Poison, Fiendish Resilience → Fire, ...). Folds into the same
-        // template-resistance lane below so the 5e "only one halving"
-        // rule still holds when a creature has one of these AND a
-        // condition-based halver active (e.g. a dwarf barbarian raging
-        // wouldn't get double resistance to poison — only one /2).
-        let template_resisted = matches!(modifier, Some(DamageModifier::Resistance))
-            || self.has_passive_typed_resistance(dt);
-        // Start with raw and apply vulnerability / template resistance.
-        let mut amt = match modifier {
-            Some(DamageModifier::Vulnerability) => raw.saturating_mul(2),
-            Some(DamageModifier::Resistance) => raw / 2,
-            _ if template_resisted => raw / 2,
-            _ => raw,
-        };
-        // Collect condition-based resistance sources. Per 5e stacking
-        // rules, only one halving applies regardless of how many sources
-        // grant resistance. If the template (or dwarven resilience) has
-        // already halved, condition-based halving is skipped.
-        let condition_resistance = !template_resisted && self.has_condition_resistance(dt);
-        if condition_resistance {
-            amt /= 2;
+        let template_modifier = self.damage_modifiers.get(&dt).copied();
+        let vulnerable = matches!(template_modifier, Some(DamageModifier::Vulnerability));
+        let resistant = matches!(template_modifier, Some(DamageModifier::Resistance))
+            || self.has_passive_typed_resistance(dt)
+            || self.has_condition_resistance(dt)
+            || self.item_resistance_to(dt);
+        match (vulnerable, resistant) {
+            (true, true) => raw,
+            (true, false) => raw.saturating_mul(2),
+            (false, true) => raw / 2,
+            (false, false) => raw,
         }
-        // Item-granted resistance (Brooch of Shielding → force, Boots
-        // of the Winterlands → cold). Honors the same "one halving"
-        // rule — only fires if neither template-level nor condition-
-        // based resistance has already halved the amount. Empty
-        // `damage_resistances` on every loot-pool item makes this a
-        // cheap walk for the common case.
-        if !template_resisted && !condition_resistance && self.item_resistance_to(dt) {
-            amt /= 2;
-        }
-        amt
     }
 
     /// True iff the actor holds a condition that grants outright immunity
@@ -7290,6 +7283,7 @@ impl ActorInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::slimes::SLIME_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -7998,6 +7992,77 @@ mod tests {
         assert!(
             f.effectively_immune_to_condition(Condition::Frightened),
             "Heroic should fold into Frightened immunity"
+        );
+    }
+
+    /// Resistance and vulnerability to the same damage type cancel,
+    /// whichever lane the resistance came from.
+    ///
+    /// The condition and item lanes always got this right, because the
+    /// old pipeline doubled first and then let those two lanes halve.
+    /// The passive-feature lane did not: it shared its gate with the
+    /// template's own resistance, so on a vulnerable creature the whole
+    /// gate went dark and the feature's halving vanished. A creature
+    /// with a feature-granted resistance and a template vulnerability to
+    /// the same type took double instead of full — the exact opposite of
+    /// the direction the extra feature should push.
+    #[test]
+    fn a_resistance_and_a_vulnerability_to_the_same_type_cancel() {
+        // The skeleton is the engine's canonical vulnerable creature:
+        // vulnerable to bludgeoning, and to nothing else.
+        let mut s = make(&SKELETON_TEMPLATE);
+        assert_eq!(
+            s.effective_damage(10, DamageType::Bludgeoning),
+            20,
+            "vulnerability alone doubles"
+        );
+
+        // Condition lane: Rage's blanket physical resistance.
+        s.add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert_eq!(
+            s.effective_damage(10, DamageType::Bludgeoning),
+            10,
+            "a condition-granted resistance cancels the vulnerability"
+        );
+        s.remove_condition(Condition::Raging);
+
+        assert_eq!(
+            s.effective_damage(10, DamageType::Bludgeoning),
+            20,
+            "and the vulnerability comes back when the rage drops"
+        );
+
+        // Passive-feature lane — the one that was wrong. The Shadow
+        // Demon is vulnerable to radiant; the Celestial Warlock's
+        // Radiant Soul grants resistance to it. Nothing on the roster
+        // pairs the two today, which is why the bug went unnoticed and
+        // why the pairing has to be built by hand here.
+        let mut d = make(&SHADOW_DEMON_TEMPLATE);
+        assert_eq!(
+            d.effective_damage(10, DamageType::Radiant),
+            20,
+            "the shadow demon is vulnerable to radiant"
+        );
+        d.grant_feature_for_test(crate::actions::class_features::RADIANT_SOUL_TAG);
+        assert_eq!(
+            d.effective_damage(10, DamageType::Radiant),
+            10,
+            "a feature-granted resistance cancels it like any other"
+        );
+    }
+
+    /// However many sources agree that a creature is resistant, the
+    /// damage is halved once.
+    #[test]
+    fn stacked_resistances_still_only_halve_once() {
+        let mut z = make(&ZOMBIE_TEMPLATE);
+        // Two independent condition-driven blanket resistances at once.
+        z.add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        z.add_condition(Condition::DamageResistant, ConditionTimer::Rounds(10));
+        assert_eq!(
+            z.effective_damage(20, DamageType::Slashing),
+            10,
+            "two resistances are still one halving"
         );
     }
 }
