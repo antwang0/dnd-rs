@@ -170,9 +170,11 @@ fn spell_attack_outcome(
     let mut total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     // 5e Improved Critical: template-driven crit threshold. Spell attacks
     // honor the lower threshold too — a Champion fighter multiclassed
-    // into Eldritch Knight crits Fire Bolt on 19s. Read via the engine
-    // helper so the default (20) folds in for non-Champion casters.
-    let mut nat_crit = raw >= encounter.crit_threshold(caster_id);
+    // into Eldritch Knight crits Fire Bolt on 19s. Read via the
+    // target-aware engine helper so the default (20) folds in for
+    // non-Champion casters, and so a Hexblade's Curse on *this* target
+    // widens the range for the hexblade who cast it.
+    let mut nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
     let mut hit = nat_crit || total >= target_ac;
     // 5e Tasha's Sorcerer Seeking Spell metamagic: on a miss, if the
     // caster has the prime up, reroll the d20 and use the new result
@@ -183,7 +185,7 @@ fn spell_attack_outcome(
         if new_raw != raw {
             raw = new_raw;
             total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
-            nat_crit = raw >= encounter.crit_threshold(caster_id);
+            nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
             hit = nat_crit || total >= target_ac;
         }
     }
@@ -277,7 +279,14 @@ fn spell_attack_outcome(
     // spell-installed buff) so spell attacks see the same `+N weapon`
     // damage half that weapon swings get via `engine::attack`. Read
     // through the shared encounter helper.
-    let caster_damage_buff = encounter.caster_damage_buffs(caster_id);
+    //
+    // `curse_damage_bonus` is the target-scoped half: a hexblade adds
+    // their proficiency bonus against the one creature they cursed, and
+    // nobody else's beam picks it up. Added here rather than to
+    // `caster_damage_buffs` because that helper takes no target — the
+    // whole point of this bonus is that it depends on who is being hit.
+    let caster_damage_buff = encounter.caster_damage_buffs(caster_id)
+        + encounter.curse_damage_bonus(caster_id, target_id);
     let total_damage_bonus = damage_bonus + caster_damage_buff;
     let total_dmg = (dmg + crit_extra + total_damage_bonus).max(0) as u32;
     encounter.log(format!(
@@ -21692,8 +21701,8 @@ impl Action for RayOfEnfeeblement {
             .map(|a| a.armor_class() as i32)
             .unwrap_or(10);
         let total = raw + attack_mod;
-        let hit =
-            raw >= encounter.crit_threshold(caster_id) || (raw != 1 && total >= target_ac);
+        let hit = raw >= encounter.crit_threshold_against(caster_id, target_id)
+            || (raw != 1 && total >= target_ac);
         encounter.log(format!(
             "  ray of enfeeblement: 1d20({}){:+} = {} vs AC {}{} — {}",
             raw,

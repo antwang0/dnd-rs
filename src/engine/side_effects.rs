@@ -635,7 +635,7 @@ impl ApplicableSideEffect for DealDamage {
                     // Fires after Relentless Rage since a raging
                     // barbarian who pins at 1 HP wasn't actually
                     // reduced to 0 per RAW.
-                    ei.trigger_kill_triggered_temp_hp(self.actor_id);
+                    ei.trigger_creature_dropped(self.actor_id);
                 }
             }
             DamageOutcome::Killed => {
@@ -647,7 +647,7 @@ impl ApplicableSideEffect for DealDamage {
                 // (monster HP → 0) is functionally a "reduced to 0
                 // HP" event per RAW. Attributed to whoever's turn is
                 // currently active via `current_turn_actor_id`.
-                ei.trigger_kill_triggered_temp_hp(self.actor_id);
+                ei.trigger_creature_dropped(self.actor_id);
             }
             DamageOutcome::Reduced if was_concentrating && landed > 0 => {
                 // 5e: take damage while concentrating → CON save vs
@@ -1302,6 +1302,10 @@ impl ApplicableSideEffect for StabilizeActor {
 ///   (advantage on attacks, and disadvantage on the target's next save
 ///   against their spell, respectively).
 /// * **WardingBonded** — the partner damage is mirrored onto.
+/// * **HexbladeCursed** — the hexblade, so their damage bonus, their
+///   expanded crit range, and their heal-on-kill all key off the one
+///   creature they cursed rather than off the condition being present at
+///   all.
 ///
 /// One list, read by `condition_link_side_effect`. Every consumer of the
 /// link reads it back through `ActorInstance::linked_by`, which returns
@@ -1317,6 +1321,7 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::Sworn,
     crate::conditions::Condition::EldritchStruck,
     crate::conditions::Condition::WardingBonded,
+    crate::conditions::Condition::HexbladeCursed,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

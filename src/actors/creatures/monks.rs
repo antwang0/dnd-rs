@@ -183,7 +183,7 @@ pub static OPEN_HAND_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// The signature "kill-triggered temp HP" tell is a chassis-level
 /// cousin of Fiend Warlock's **Dark One's Blessing** (CHA mod + level
 /// on the same trigger). Both share the `KILL_TRIGGERED_TEMP_HP_SOURCES`
-/// cohort in `EncounterInstance::trigger_kill_triggered_temp_hp` — one
+/// cohort in `EncounterInstance::pay_kill_triggered_temp_hp` — one
 /// shared iteration reads whichever tag the swinger holds and applies
 /// the row's stat + level formula. The two never legally co-occur on
 /// a single build (Warlock Fiend Patron vs. Monk Long Death Way are

@@ -3144,6 +3144,32 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
+/// Pact Blade — the Hexblade Warlock's **Hex Warrior** weapon: 1d8
+/// slashing, but keyed to **Charisma** rather than Strength.
+///
+/// RAW's Hex Warrior reads "you can use your Charisma modifier instead
+/// of Strength or Dexterity for the attack and damage rolls" of one
+/// weapon you've bonded with. Because `SimpleWeapon` already carries its
+/// own `attack_ability` (and derives `damage_ability` from it), the
+/// feature needs no engine lane at all — it *is* a weapon whose ability
+/// is CHA, which is also how it plays at the table: the hexblade swings
+/// one specific blade with their casting stat and every other weapon
+/// normally.
+///
+/// Mechanically a longsword with the ability swapped. That swap is the
+/// entire subclass identity on the martial half: a CHA-18 hexblade
+/// swings at +7 with a blade where the baseline warlock's STR-8 dagger
+/// swings at +1, which is the difference between a caster who owns a
+/// dagger and one who can stand in the front rank — and standing in the
+/// front rank is what makes Armor of Hexes worth having.
+pub static PACT_BLADE: SimpleWeapon = SimpleWeapon::melee(
+    "pact blade",
+    &["pact", "blade", "pb"],
+    AbilityScoreType::Charisma,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+);
+
 /// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
 /// drop the mount gate so the Knight gets a polearm option to swing from
 /// 10 ft (one tile beyond a standard sword reach).

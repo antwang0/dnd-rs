@@ -867,7 +867,7 @@ const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
 /// swinging actor temporary hit points whenever their damage drops a
 /// hostile creature to 0 HP. Rows carry the identifying tag plus a
 /// stat-block-driven amount closure — the shared trigger body lives
-/// in `EncounterInstance::trigger_kill_triggered_temp_hp` so a new
+/// in `EncounterInstance::pay_kill_triggered_temp_hp` so a new
 /// sibling drops in as a fresh row rather than a new open-coded
 /// method.
 ///
@@ -891,7 +891,7 @@ struct KillTriggeredTempHpSource {
 }
 
 /// Ordered cohort of "kill-triggered temp HP" sources, walked by
-/// `EncounterInstance::trigger_kill_triggered_temp_hp` at the
+/// `EncounterInstance::pay_kill_triggered_temp_hp` under the
 /// `DealDamage::apply` chokepoint on the `Downed` / `Killed` outcome
 /// branches. Iteration stops as soon as the first row's tag matches
 /// on the swinger, so at most one temp HP grant fires per kill —
@@ -1835,6 +1835,78 @@ impl EncounterInstance {
             .get(&actor_id)
             .map(|a| a.crit_threshold() as i32)
             .unwrap_or(20)
+    }
+
+    /// The crit threshold `attacker_id` uses **against this particular
+    /// target** — their own `crit_threshold`, lowered by any expansion
+    /// that is scoped to one victim rather than to the attacker.
+    ///
+    /// Champion's Improved Critical widens the attacker's crit range
+    /// against everyone, which is what `crit_threshold` alone can
+    /// express. **Hexblade's Curse** widens it against exactly one
+    /// creature, and only for the hexblade who cursed them — a
+    /// distinction the attacker-only accessor had no way to carry, so
+    /// every attack-resolution site now asks this instead.
+    ///
+    /// The two combine by taking the lower face, matching how Superior
+    /// Critical stacks onto Improved Critical: a hypothetical
+    /// Champion/Hexblade swinging at their cursed quarry crits on 19
+    /// from either source, not on 18 from both. Nothing in 5e adds crit
+    /// ranges together, so `min` is the general rule rather than a
+    /// special case for this pair.
+    pub fn crit_threshold_against(&self, attacker_id: usize, target_id: usize) -> i32 {
+        let base = self.crit_threshold(attacker_id);
+        if self.hexblade_curse_holder(target_id) == Some(attacker_id) {
+            // RAW: "your attack rolls against the cursed target score a
+            // critical hit on a roll of 19 or 20."
+            base.min(19)
+        } else {
+            base
+        }
+    }
+
+    /// The hexblade whose **Hexblade's Curse** is currently on
+    /// `target_id`, if any.
+    ///
+    /// Reads the `HexbladeCursed` back-link, which returns `None` unless
+    /// the flag is still held — so a curse that timed out stops paying
+    /// out without any of the three consumers checking the timer
+    /// themselves. All three (the damage bonus, the crit range, the
+    /// heal-on-drop) route through here so they can never disagree about
+    /// whose curse is live.
+    pub fn hexblade_curse_holder(&self, target_id: usize) -> Option<usize> {
+        self.actors
+            .get(&target_id)
+            .and_then(|t| t.linked_by(Condition::HexbladeCursed))
+    }
+
+    /// Flat damage bonus `attacker_id` adds to a damage roll against
+    /// `target_id` because they cursed them — their proficiency bonus,
+    /// per RAW, or 0 when there is no curse between the two.
+    ///
+    /// Folded in at both attack-damage chokepoints (weapon swings in
+    /// `engine::attack`, spell attacks in `spells::spell_attack_outcome`)
+    /// rather than at one, because a hexblade's output is split across
+    /// them: Eldritch Blast is a spell attack and the pact weapon is a
+    /// weapon swing, and a bonus that only paid on one of the two would
+    /// silently pick a build for the player.
+    ///
+    /// Save-for-damage spells are deliberately *not* covered. RAW's
+    /// "damage rolls against that target" does include them, but the
+    /// engine rolls save-spell damage once and applies it to every
+    /// creature in the area, so there is no per-target damage roll to
+    /// add to — folding the bonus in there would either pay it to every
+    /// target in the burst or require splitting the shared roll. Neither
+    /// is worth it for a subclass whose damage is overwhelmingly single-
+    /// target attack rolls.
+    pub fn curse_damage_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
+        if self.hexblade_curse_holder(target_id) != Some(attacker_id) {
+            return 0;
+        }
+        self.actors
+            .get(&attacker_id)
+            .map(|a| a.proficiency_bonus())
+            .unwrap_or(0)
     }
 
     /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
@@ -5727,11 +5799,27 @@ impl EncounterInstance {
         self.initiative_tracker.current_player()
     }
 
-    /// **Kill-triggered temp HP** trigger — shared entry point for the
-    /// family of passive subclass features that grant the swinging
-    /// actor temporary hit points whenever their damage drops a
-    /// hostile creature to 0 HP. Called from `DealDamage::apply` on
-    /// the `Downed` / `Killed` outcome branches.
+    /// **A creature just went down** — the shared chokepoint for every
+    /// feature that pays out when a creature is reduced to 0 HP. Called
+    /// from `DealDamage::apply` on the `Downed` / `Killed` outcome
+    /// branches, which are the only two places a drop can happen.
+    ///
+    /// Two lanes hang off it, and they are scoped differently on
+    /// purpose:
+    ///
+    ///   - **Kill-triggered temp HP** (`KILL_TRIGGERED_TEMP_HP_SOURCES`)
+    ///     pays the *killer*. Dark One's Blessing and Touch of Death
+    ///     both read "whenever you reduce a hostile creature to 0 hit
+    ///     points", so the beneficiary is whoever is swinging.
+    ///   - **Hexblade's Curse** pays the *curser*. RAW is "if the cursed
+    ///     target dies, you regain hit points" — it says nothing about
+    ///     who landed the blow, so an ally's arrow, a failed death save
+    ///     or the target walking into a wall of fire all pay the
+    ///     hexblade just the same.
+    ///
+    /// Keeping both on one entry point is what stops the second lane
+    /// from having to find its own drop hook. A future "on kill" feature
+    /// picks whichever scoping matches its RAW text and joins here.
     ///
     /// Walks the `KILL_TRIGGERED_TEMP_HP_SOURCES` cohort — each row
     /// pairs a passive-feature tag with a temp-HP formula closure. If
@@ -5767,7 +5855,52 @@ impl EncounterInstance {
     /// same "walk a table of `{tag, closure}` rows at a chokepoint"
     /// pattern that lets a new feature drop in as a one-line row
     /// entry rather than a fresh open-coded trigger function.
-    pub fn trigger_kill_triggered_temp_hp(&mut self, dropped_target_id: usize) {
+    pub fn trigger_creature_dropped(&mut self, dropped_target_id: usize) {
+        self.pay_hexblade_curse_on_death(dropped_target_id);
+        self.pay_kill_triggered_temp_hp(dropped_target_id);
+    }
+
+    /// The curser-scoped half of `trigger_creature_dropped`: a hexblade
+    /// whose **Hexblade's Curse** was on the dropped creature regains
+    /// `warlock level + CHA modifier` hit points (RAW, minimum 1 so a
+    /// low-CHA build still gets something).
+    ///
+    /// Reads the curse through `hexblade_curse_holder`, so a curse that
+    /// had already timed out pays nothing, and a curse that was
+    /// overwritten by a second hexblade pays the second one. The heal is
+    /// routed through the standard `Heal` side effect, which means it
+    /// respects the hexblade's HP cap and, notably, does nothing if the
+    /// hexblade is themselves down — RAW's "you regain hit points"
+    /// doesn't revive.
+    fn pay_hexblade_curse_on_death(&mut self, dropped_target_id: usize) {
+        use crate::engine::side_effects::{ApplicableSideEffect, Heal};
+        let Some(hexblade_id) = self.hexblade_curse_holder(dropped_target_id) else {
+            return;
+        };
+        let Some(hexblade) = self.actors.get(&hexblade_id) else {
+            return;
+        };
+        if !hexblade.is_combat_active() {
+            return;
+        }
+        let cha = hexblade.ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+        let amount = (cha + hexblade.level() as i32).max(1) as u32;
+        let hexblade_name = hexblade.name().to_string();
+        let target_name = self.actor_name(dropped_target_id);
+        self.log(format!(
+            "  hexblade's curse: {} falls and {} draws {} hit points from the curse.",
+            target_name, hexblade_name, amount
+        ));
+        Heal {
+            actor_id: hexblade_id,
+            amount,
+        }
+        .apply(self);
+    }
+
+    /// The killer-scoped half of `trigger_creature_dropped` — see the
+    /// entry point and `KILL_TRIGGERED_TEMP_HP_SOURCES` for the cohort.
+    fn pay_kill_triggered_temp_hp(&mut self, dropped_target_id: usize) {
         use crate::engine::side_effects::{ApplicableSideEffect, GainTempHp};
         let Some(swinger_id) = self.current_turn_actor_id() else {
             return;
@@ -7659,11 +7792,26 @@ impl EncounterInstance {
     ///   2. **Illusory Self** (Illusion Wizard lv10) — one charge per
     ///      short rest *and* the target's reaction for the round. Stops
     ///      anything, crits included.
+    ///   3. **Armor of Hexes** (Hexblade Warlock lv10) — free, but only
+    ///      against the hexblade's own cursed quarry, and only on a d6
+    ///      that comes up 4 or better.
     ///
     /// So a decoy soaks the swing when one is available and the hit
     /// isn't a crit, and the illusionist's per-rest charge is held for
-    /// what gets through. A future interception ("Instinctive Charm",
-    /// a Shield Guardian's redirect) drops in as a third row.
+    /// what gets through.
+    ///
+    /// Armor of Hexes costs nothing at all, which by the
+    /// cheapest-first rule would put it top of the list. It goes last
+    /// instead, because it is the only row that can decline: the two
+    /// above it always eat the swing, this one eats half of them. A free
+    /// coin-flip run *first* would spend the reliable resources on the
+    /// swings it happened to lose, which is exactly backwards — so the
+    /// certain rows go first and the coin-flip catches the remainder.
+    /// Ordering by reliability and ordering by cost agree on the first
+    /// two rows and disagree on the third; reliability wins.
+    ///
+    /// A future interception ("Instinctive Charm", a Shield Guardian's
+    /// redirect) drops in as a fourth row.
     pub fn attack_intercepted(
         &mut self,
         target_id: usize,
@@ -7672,6 +7820,59 @@ impl EncounterInstance {
     ) -> bool {
         self.mirror_image_deflect(target_id, is_crit)
             || self.illusory_self_deflect(target_id, attacker_id)
+            || self.armor_of_hexes_deflect(target_id, attacker_id)
+    }
+
+    /// 5e Hexblade Warlock **Armor of Hexes** (subclass level 10) — the
+    /// hexblade's cursed quarry swings at them and the curse turns the
+    /// blow aside on a d6 of 4 or better. Third row of the
+    /// `attack_intercepted` cohort; see `ARMOR_OF_HEXES_TAG`.
+    ///
+    /// Returns `true` when the attack is negated (the caller treats it
+    /// as a miss and rolls no damage).
+    ///
+    /// Three gates, all of them RAW:
+    ///   - The defender holds the feature and is combat-active.
+    ///   - The attacker is *the* creature this defender cursed — read
+    ///     through `hexblade_curse_holder`, so an ally of the quarry,
+    ///     or the quarry after the curse has timed out, gets nothing.
+    ///   - The d6 comes up 4+.
+    ///
+    /// Costs nothing on a failure, which is why it needs no charge and
+    /// no reaction: RAW's price for the feature is that the hexblade had
+    /// to spend a bonus action and a rest charge naming this creature in
+    /// the first place, and it only ever protects against that one
+    /// creature. Crits are *not* exempt — RAW says the attack "misses
+    /// you" with no carve-out, unlike Mirror Image's explicit one.
+    pub fn armor_of_hexes_deflect(&mut self, target_id: usize, attacker_id: usize) -> bool {
+        if self.hexblade_curse_holder(attacker_id) != Some(target_id) {
+            return false;
+        }
+        let Some(target) = self.actors.get(&target_id) else {
+            return false;
+        };
+        if !target.is_combat_active()
+            || !target.has_passive_feature(crate::actions::class_features::ARMOR_OF_HEXES_TAG)
+        {
+            return false;
+        }
+        let target_name = target.name().to_string();
+        let roll = self.roll(&crate::engine::dice::Dice::new(1, 6)) as i32;
+        if roll < 4 {
+            self.log(format!(
+                "  armor of hexes: 1d6({}) — the curse fails to turn the blow from {}.",
+                roll,
+                self.actor_name(attacker_id)
+            ));
+            return false;
+        }
+        self.log(format!(
+            "  armor of hexes: 1d6({}) — {}'s curse turns {}'s attack aside; it misses.",
+            roll,
+            target_name,
+            self.actor_name(attacker_id)
+        ));
+        true
     }
 
     /// 5e Illusion Wizard **Illusory Self** (subclass level 10) — the
@@ -52576,6 +52777,382 @@ mod tests {
         assert_eq!(
             e.compute_attack_mode(attacker, target, true),
             RollMode::Normal
+        );
+    }
+
+    /// The curse's damage bonus reaches the actual damage roll, on both
+    /// chokepoints that resolve an attack.
+    ///
+    /// The accessor test above proves `curse_damage_bonus` computes the
+    /// right number; this proves the number is *summed in*. Both are
+    /// needed because the two are wired separately — a weapon swing goes
+    /// through `engine::attack` and a spell attack through
+    /// `spells::spell_attack_outcome`, and a hexblade's output is split
+    /// across them, so covering one would leave half the subclass
+    /// silently unpaid.
+    ///
+    /// Reads the bonus back out of the log line rather than comparing
+    /// totals, because the dice are random but the `+N` the resolver
+    /// prints is not.
+    #[test]
+    fn the_curse_damage_bonus_reaches_both_attack_chokepoints() {
+        use crate::actions::monster_attacks::PACT_BLADE;
+        use crate::actions::spells::ELDRITCH_BLAST;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+        use crate::actions::action_template::Action;
+
+        /// Every `+N` / `-N` damage-bonus figure the resolver logged for
+        /// `action_name`, in order.
+        ///
+        /// The resolver logs two lines per swing that share the action's
+        /// name prefix — the attack roll (`1d20(9)+6 = 15 vs AC 11`) and
+        /// the damage roll (`1d8(7)+6 = 13 Slashing damage`). Only the
+        /// second is the damage bonus, so the filter requires the
+        /// damage-type tail; matching on the prefix alone would read the
+        /// to-hit modifier as if it were a damage modifier.
+        fn logged_bonuses(e: &EncounterInstance, action_name: &str) -> Vec<i32> {
+            e.messages()
+                .iter()
+                .filter(|m| m.trim_start().starts_with(&format!("{}:", action_name)))
+                .filter(|m| !m.contains(" vs AC "))
+                .map(|m| {
+                    // Everything left of " = " is the dice expression
+                    // plus its flat modifier, and the modifier is the
+                    // last signed term: `1d8(7)+6` on a normal hit,
+                    // `1d8(3)+1d8(4)+6` on a crit. Scanning from the
+                    // right is what keeps the crit's doubled die out of
+                    // the answer. No sign at all means the resolver
+                    // omitted a zero modifier.
+                    let expr = m.split(" = ").next().unwrap_or("");
+                    let Some(at) = expr.rfind(['+', '-']) else {
+                        return 0;
+                    };
+                    let magnitude: i32 = expr[at + 1..].parse().unwrap_or(0);
+                    if expr.as_bytes()[at] == b'-' {
+                        -magnitude
+                    } else {
+                        magnitude
+                    }
+                })
+                .collect()
+        }
+
+        // Sweep seeds so a run that whiffs every swing doesn't decide
+        // the test; the assertion is on the *difference* the curse makes
+        // to whatever landed.
+        for &(action_name, action) in &[
+            ("pact blade", &PACT_BLADE as &dyn Action),
+            ("eldritch blast", &*ELDRITCH_BLAST as &dyn Action),
+        ] {
+            let mut compared = 0;
+            for seed in 0..40u64 {
+                let mut plain = ei_with_terrain_seeded(15, 15, &[], seed);
+                let mut cursed = ei_with_terrain_seeded(15, 15, &[], seed);
+                let mut bonuses = Vec::new();
+                for (idx, e) in [&mut plain, &mut cursed].into_iter().enumerate() {
+                    let hexblade = e
+                        .instantiate_creature(
+                            &HEXBLADE_WARLOCK_TEMPLATE,
+                            Coordinate::new(2, 2),
+                            0,
+                            0,
+                        )
+                        .unwrap();
+                    let ogre = e
+                        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                        .unwrap();
+                    if idx == 1 {
+                        for eff in crate::engine::side_effects::install_condition_with_link(
+                            Condition::HexbladeCursed,
+                            ogre,
+                            hexblade,
+                            ConditionTimer::Rounds(10),
+                        ) {
+                            eff.apply(e);
+                        }
+                    }
+                    for eff in
+                        action.side_effects(e, hexblade, Some(&vec![ogre]), None, None)
+                    {
+                        eff.apply(e);
+                    }
+                    bonuses.push(logged_bonuses(e, action_name));
+                }
+                let prof = cursed
+                    .actors
+                    .values()
+                    .find(|a| a.name().starts_with("Hexblade"))
+                    .unwrap()
+                    .proficiency_bonus();
+                assert!(prof > 0, "the test is vacuous without a proficiency bonus");
+                // Compare only the swings that landed in both runs —
+                // same seed, same rolls, so a hit in one is a hit in the
+                // other and the lists line up.
+                for (plain_bonus, cursed_bonus) in bonuses[0].iter().zip(bonuses[1].iter()) {
+                    assert_eq!(
+                        cursed_bonus - plain_bonus,
+                        prof,
+                        "seed {}: {} should gain exactly the proficiency bonus against a \
+                         cursed target ({} vs {})",
+                        seed,
+                        action_name,
+                        cursed_bonus,
+                        plain_bonus
+                    );
+                    compared += 1;
+                }
+            }
+            assert!(
+                compared > 0,
+                "{}: no landed swing was ever compared \u{2014} the sweep proved nothing",
+                action_name
+            );
+        }
+    }
+
+    /// Casting Hexblade's Curse installs the flag *and* the back-link,
+    /// spends the once-per-short-rest charge, and refuses to be spent
+    /// twice on the same creature.
+    #[test]
+    fn hexblades_curse_marks_one_quarry_and_spends_its_charge() {
+        use crate::actions::class_features::{HEXBLADES_CURSE, HEXBLADES_CURSE_TAG};
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let hexblade = e
+            .instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let targets = vec![ogre];
+        assert!(
+            HEXBLADES_CURSE.validate_input(&e, hexblade, Some(&targets), None, None),
+            "a hostile ogre in range with the charge unspent is a legal target"
+        );
+        for eff in HEXBLADES_CURSE.side_effects(&mut e, hexblade, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.hexblade_curse_holder(ogre),
+            Some(hexblade),
+            "the curse should link the quarry back to the hexblade who cast it"
+        );
+        assert!(
+            !e.actors[&hexblade].feature_available(HEXBLADES_CURSE_TAG),
+            "the once-per-short-rest charge should be spent"
+        );
+        assert!(
+            !HEXBLADES_CURSE.validate_input(&e, hexblade, Some(&targets), None, None),
+            "re-cursing our own quarry should be refused rather than burn the charge again"
+        );
+    }
+
+    /// The three clauses of the curse are scoped to the hexblade who
+    /// cast it, and all three go quiet when the curse lifts.
+    ///
+    /// Sweeping the crit range and the damage bonus together (rather
+    /// than one test each) is deliberate: both read the same
+    /// `hexblade_curse_holder` link, so what actually needs pinning is
+    /// that the *scoping* holds — right hexblade / right target yes,
+    /// every other pairing no.
+    #[test]
+    fn the_curse_pays_only_the_hexblade_who_cast_it() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::{
+            HEXBLADE_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let hexblade = e
+            .instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+            .unwrap();
+
+        // Baseline: nobody crits early and nobody gets a bonus.
+        assert_eq!(e.crit_threshold_against(hexblade, quarry), 20);
+        assert_eq!(e.curse_damage_bonus(hexblade, quarry), 0);
+
+        for eff in crate::engine::side_effects::install_condition_with_link(
+            Condition::HexbladeCursed,
+            quarry,
+            hexblade,
+            ConditionTimer::Rounds(10),
+        ) {
+            eff.apply(&mut e);
+        }
+
+        let prof = e.actors[&hexblade].proficiency_bonus();
+        assert!(prof > 0, "the bonus is only meaningful if there is one");
+        // The pairing that pays.
+        assert_eq!(e.crit_threshold_against(hexblade, quarry), 19);
+        assert_eq!(e.curse_damage_bonus(hexblade, quarry), prof);
+        // Every other pairing does not: the hexblade against someone
+        // else, an ally against the quarry, the quarry swinging back.
+        assert_eq!(e.crit_threshold_against(hexblade, bystander), 20);
+        assert_eq!(e.curse_damage_bonus(hexblade, bystander), 0);
+        assert_eq!(e.crit_threshold_against(ally, quarry), 20);
+        assert_eq!(e.curse_damage_bonus(ally, quarry), 0);
+        assert_eq!(e.curse_damage_bonus(quarry, hexblade), 0);
+
+        // And the curse lifting takes all of it with it — the link is
+        // keyed to the condition, so nothing has to clear separately.
+        e.actors
+            .get_mut(&quarry)
+            .unwrap()
+            .remove_condition(Condition::HexbladeCursed);
+        assert_eq!(e.hexblade_curse_holder(quarry), None);
+        assert_eq!(e.crit_threshold_against(hexblade, quarry), 20);
+        assert_eq!(e.curse_damage_bonus(hexblade, quarry), 0);
+    }
+
+    /// A Champion/Hexblade doesn't stack the two crit expansions — the
+    /// lower face wins, matching how Superior Critical layers over
+    /// Improved Critical rather than adding to it.
+    #[test]
+    fn curse_and_improved_critical_take_the_lower_face_not_the_sum() {
+        use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let champion = e
+            .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        // The Champion template ships Improved Critical (19) — read the
+        // chassis rather than hard-coding it so a retune of the template
+        // doesn't silently make this test vacuous.
+        let own = e.crit_threshold(champion);
+        assert!(own <= 19, "Champion should already crit early: {}", own);
+        for eff in crate::engine::side_effects::install_condition_with_link(
+            Condition::HexbladeCursed,
+            quarry,
+            champion,
+            ConditionTimer::Rounds(10),
+        ) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.crit_threshold_against(champion, quarry),
+            own.min(19),
+            "the curse should not add to an existing crit expansion"
+        );
+    }
+
+    /// The quarry drops and the hexblade heals for `level + CHA` — even
+    /// though somebody else landed the killing blow, which is what RAW's
+    /// "if the cursed target dies" says and what separates this lane
+    /// from the killer-scoped temp-HP cohort next to it.
+    #[test]
+    fn the_curse_heals_the_hexblade_when_its_quarry_falls_to_anyone() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::{AbilityScoreType, DamageType};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // The goblin ally is instantiated first so it, not the hexblade,
+        // holds the active initiative slot — the killer-scoped temp-HP
+        // lane reads that slot, and the whole point here is that the
+        // curse's heal doesn't.
+        let executioner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let hexblade = e
+            .instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        for eff in crate::engine::side_effects::install_condition_with_link(
+            Condition::HexbladeCursed,
+            quarry,
+            hexblade,
+            ConditionTimer::Rounds(10),
+        ) {
+            eff.apply(&mut e);
+        }
+        // Wound the hexblade so the heal has room to land.
+        let full = e.actors[&hexblade].hitpoints();
+        DealDamage {
+            actor_id: hexblade,
+            amount: full / 2,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        let wounded = e.actors[&hexblade].hitpoints();
+        assert!(wounded < full, "the hexblade should be hurt before the heal");
+
+        let expected = {
+            let h = &e.actors[&hexblade];
+            (h.ability_modifier(AbilityScoreType::Charisma) + h.level() as i32).max(1) as u32
+        };
+
+        assert_eq!(
+            e.current_turn_actor_id(),
+            Some(executioner),
+            "test setup: the goblin ally should be the one whose turn it is"
+        );
+        // The goblin ally, not the hexblade, deals the finishing blow.
+        e.trigger_creature_dropped(quarry);
+        assert_eq!(
+            e.actors[&hexblade].hitpoints(),
+            (wounded + expected).min(full),
+            "the curse should pay the hexblade level + CHA hit points"
+        );
+    }
+
+    /// Armor of Hexes turns aside the quarry's attacks and nobody
+    /// else's. Swept over seeds because the deflection rides a d6.
+    #[test]
+    fn armor_of_hexes_only_deflects_the_cursed_quarry() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+        let mut deflected_quarry = 0;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let hexblade = e
+                .instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let quarry = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let other = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            for eff in crate::engine::side_effects::install_condition_with_link(
+                Condition::HexbladeCursed,
+                quarry,
+                hexblade,
+                ConditionTimer::Rounds(10),
+            ) {
+                eff.apply(&mut e);
+            }
+            // An uncursed attacker is never deflected, on any seed.
+            assert!(
+                !e.armor_of_hexes_deflect(hexblade, other),
+                "seed {}: only the cursed quarry's swings should be turned aside",
+                seed
+            );
+            if e.armor_of_hexes_deflect(hexblade, quarry) {
+                deflected_quarry += 1;
+            }
+        }
+        // 4+ on a d6 is half the faces; over 30 rolls both outcomes
+        // should show up. The bounds are loose on purpose — this pins
+        // "the roll is consulted", not the RNG's distribution.
+        assert!(
+            (5..=25).contains(&deflected_quarry),
+            "expected the d6 gate to both fire and fail across 30 seeds, got {}",
+            deflected_quarry
         );
     }
 

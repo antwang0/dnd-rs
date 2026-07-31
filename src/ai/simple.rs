@@ -266,6 +266,23 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'''''. Hexblade's Curse — Hexblade Warlock subclass level 1,
+        //          bonus action, once per short rest. Sits next to Vow of
+        //          Enmity on this lane and for the same reason: it is a
+        //          bonus-action mark whose payoff is spread over every
+        //          later swing, so it wants to be up before the turn's
+        //          Action is spent rather than after.
+        //
+        //          Longer reach than the vow (12 tiles = 30 ft RAW vs 4)
+        //          because the hexblade may still be closing when they
+        //          name their quarry — the curse costs a bonus action the
+        //          warlock has nothing else to do with on an approach
+        //          turn, and having it up on arrival is worth more than
+        //          waiting to be adjacent.
+        if let Some(aei) = try_hexblades_curse(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c''''a. Nature's Wrath — Ancients Paladin Channel Divinity,
         //          action, once per short rest. Restrains one in-reach
         //          (4 tiles = 10 ft RAW) hostile via a STR save vs the
@@ -3470,6 +3487,32 @@ fn try_vow_of_enmity(
     try_single_target_class_feature_hostile(encounter, actor_id, "vow of enmity", 4)
 }
 
+/// Hexblade Warlock Hexblade's Curse — bonus-action subclass feature,
+/// once per short rest. Marks one in-reach (12 tiles = 30 ft RAW)
+/// hostile so the hexblade adds their proficiency bonus to damage
+/// against it, crits it on 19-20, and heals when it drops.
+///
+/// Highest-HP candidate wins per the shared picker, and here that is the
+/// heuristic doing real work rather than inheriting a default. The
+/// curse's reliable payout is the per-hit damage bonus, which pays once
+/// per swing that lands on the cursed creature — so its value is
+/// proportional to how many swings the creature survives, and the
+/// beefiest enemy on the field is the one that absorbs the most.
+///
+/// The heal-on-death clause pulls the other way, and it loses. Cursing
+/// something nearly dead cashes the heal a round later and then leaves
+/// the hexblade with eight rounds of a curse stuck to a corpse — the
+/// engine ships no *Master of Hexes*, so the mark cannot move once
+/// placed. Treating the heal as a bonus that arrives when the fight is
+/// won, rather than as the thing to aim for, is what keeps the curse on
+/// the target it can actually earn out on.
+fn try_hexblades_curse(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "hexblade's curse", 12)
+}
+
 /// Berserker Barbarian Intimidating Presence — action, once per short
 /// rest. Frightens one in-reach (12 tiles = 30 ft RAW) hostile creature
 /// on a failed WIS save vs the barbarian's CHA-anchored DC. Highest-HP
@@ -5549,6 +5592,75 @@ mod tests {
     /// round (so the sweep exercises more than one turn of the ladder),
     /// no reactions or auras of its own (so a failure is attributable to
     /// the template under test), and melee-only (so it closes rather
+    /// An AI-driven Hexblade Warlock actually reaches for the curse,
+    /// and the engine pays out on it.
+    ///
+    /// The per-clause tests next to the engine lanes drive the effects
+    /// directly, which proves they work but not that anything ever asks
+    /// for them — a feature the AI never selects is a feature no player
+    /// sees the AI use. This closes that loop: run a real fight and
+    /// require the curse to be cast and at least one of its riders to
+    /// show up in the log.
+    #[test]
+    fn an_ai_driven_hexblade_curses_its_quarry_and_the_curse_pays_out() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::HEXBLADE_WARLOCK_TEMPLATE;
+        let mut cast_in = 0;
+        let mut paid_in = 0;
+        for seed in 0..8u64 {
+            let tp = TerrainGenParams {
+                width: 24,
+                height: 16,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.instantiate_creature(&HEXBLADE_WARLOCK_TEMPLATE, Coordinate::new(3, 8), 0, 0)
+                .expect("the hexblade should instantiate");
+            e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 8), 1, 0)
+                .expect("the ogre should instantiate");
+            let ai = SimpleAi;
+            let mut steps = 0usize;
+            while steps < 20_000 && !e.is_complete() {
+                steps += 1;
+                e.process_stack();
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            let log = e.messages().join("\n");
+            if log.contains("hexblade's curse") {
+                cast_in += 1;
+            }
+            // Any of the three clauses landing counts: the heal line
+            // names the curse, and the damage bonus / crit expansion
+            // show up as a larger total on the swing that follows.
+            if log.contains("draws") || log.contains("armor of hexes") {
+                paid_in += 1;
+            }
+        }
+        assert!(
+            cast_in > 0,
+            "an AI hexblade should reach for its curse in at least one of 8 fights"
+        );
+        assert!(
+            paid_in > 0,
+            "the curse should pay out visibly in at least one of 8 fights"
+        );
+    }
+
     /// than trading at range forever).
     #[test]
     fn every_pc_template_can_be_driven_by_the_ai_to_completion() {

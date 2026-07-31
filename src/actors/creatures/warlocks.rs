@@ -1028,3 +1028,71 @@ pub static EFREETI_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         crate::actions::class_features::EFREETI_ELEMENTAL_GIFT_TAG,
     )
 });
+
+/// Hexblade Warlock — Otherworldly Patron **The Hexblade** (XGtE). The
+/// only patron on the warlock chassis whose build is martial rather than
+/// purely a spell-list variation, which is why it is the one that
+/// doesn't collapse to `subclass_warlock_template`'s single-tag shape.
+///
+/// Four changes to the baseline envelope, and they interlock:
+///
+///   - **Hex Warrior** (lv1) — the pact blade, `PACT_BLADE`: a 1d8
+///     slashing weapon keyed to **Charisma**. On a CHA-18 chassis that
+///     is +7 to hit where the baseline warlock's STR-8 dagger is +1.
+///     Ships as a weapon rather than as an engine flag because
+///     `SimpleWeapon` already carries its own ability — a CHA-typed
+///     blade *is* the feature, and the baseline dagger stays on the
+///     template so the STR-8 fallback is still visible for what it is.
+///   - **Medium armor and shield proficiency** (lv1) — AC 12 → 18. The
+///     RAW clause nobody quotes, and the one that actually lets the
+///     subclass exist: a d8-hit-die caster in the front rank at AC 12
+///     is a caster who dies in the front rank.
+///   - **Hexblade's Curse** (lv1) — `HEXBLADES_CURSE`, bonus action,
+///     once per short rest. +proficiency to damage against one creature,
+///     crits on 19-20 against it, and `level + CHA` hit points back when
+///     it drops. See `HEXBLADES_CURSE_TAG`.
+///   - **Armor of Hexes** (lv10) — the cursed quarry's attacks on the
+///     hexblade miss on a d6 of 4+. See `ARMOR_OF_HEXES_TAG`.
+///
+/// **How it plays differently from the other ten patrons.** Every other
+/// warlock in the engine wins at range and loses on contact; the
+/// Hexblade wants contact. The curse rewards hitting one creature over
+/// and over, the pact blade is the only thing on the chassis that swings
+/// at a martial's accuracy, AC 18 is what survives the round it takes to
+/// close, and Armor of Hexes only ever protects against the one creature
+/// the curse named — which is to say, all four features pay out on the
+/// same play: pick a target, walk to it, and stay there. The baseline
+/// warlock's Eldritch Blast is still on the template and still good, and
+/// the curse's damage bonus rides it too (both attack-damage chokepoints
+/// sum `curse_damage_bonus`), so the build degrades gracefully into a
+/// blaster when closing isn't safe.
+///
+/// **Deliberately not shipped.** *Accursed Specter* (lv6) — a slain
+/// humanoid rises to serve until the next long rest — belongs on the
+/// summon lane rather than here, and RAW's *Master of Hexes* (lv14)
+/// moves the curse on the quarry's death, which is a second decision
+/// point on a feature whose whole cost is the first one.
+///
+/// Glyph 'X' for the hex — distinct from baseline warlock 'L', Fiend
+/// 'F', Undying 'U', Great Old One 'O', Archfey 'A', Celestial 'C',
+/// Marid 'M', Dao 'D', Djinni 'J', and Efreeti 'Y'.
+pub static HEXBLADE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = WARLOCK_TEMPLATE.actions.clone();
+    actions.push(&crate::actions::monster_attacks::PACT_BLADE);
+    actions.push(&*crate::actions::class_features::HEXBLADES_CURSE);
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::HEXBLADES_CURSE_TAG);
+    features.insert(crate::actions::class_features::ARMOR_OF_HEXES_TAG);
+    CreatureTemplate {
+        name: "Hexblade Warlock",
+        glyph: 'X',
+        // Medium armor (half plate, 15) + shield (+2) + DEX 14 capped at
+        // +1 by medium armor = 18. The single largest stat departure any
+        // warlock subclass makes from the baseline chassis, and the
+        // reason the rest of the kit is playable.
+        ac: 18,
+        actions,
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

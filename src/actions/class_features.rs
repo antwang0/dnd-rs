@@ -65,6 +65,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // on the failed-save recovery lane, but adds a die to the total
     // rather than re-rolling the d20.
     DARK_ONES_OWN_LUCK_TAG,
+    // 5e Hexblade Warlock level-1 subclass feature — Hexblade's Curse.
+    // RAW: "you can't use this feature again until you finish a short
+    // or long rest", which is the same cadence as Dark One's Own Luck
+    // directly above and the Channel Divinity family, so it refreshes
+    // here rather than on the warlock's long-rest lane.
+    HEXBLADES_CURSE_TAG,
     // 5e Devotion Paladin level-3 subclass Channel Divinity — Turn the
     // Faithless. Fey / fiend within 30ft roll a WIS save vs the
     // paladin's spell save DC; on fail they're Frightened for 10 rounds
@@ -7275,7 +7281,7 @@ pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 ///
 /// Sibling to `TOUCH_OF_DEATH_TAG` (Long Death Monk lv3) on the shared
 /// **kill-triggered temp HP** cohort in
-/// `EncounterInstance::trigger_kill_triggered_temp_hp` — same
+/// `EncounterInstance::pay_kill_triggered_temp_hp` — same
 /// "reduce hostile to 0 HP → grant self temp HP" pattern with a
 /// different stat + level formula and a different class chassis. Both
 /// rows fold through the same `KILL_TRIGGERED_TEMP_HP_SOURCES` table so
@@ -11598,3 +11604,170 @@ impl Action for Shapechanger {
 }
 
 pub static SHAPECHANGER: LazyLock<Shapechanger> = LazyLock::new(|| Shapechanger {});
+
+/// 5e Warlock — Otherworldly Patron **The Hexblade** (XGtE), subclass
+/// level 1: **Hexblade's Curse**. Bonus action, once per short rest.
+///
+/// The tag gates the [`HEXBLADES_CURSE`] action's charge. The three
+/// clauses it buys are all engine-side and all keyed off the
+/// `HexbladeCursed` back-link rather than off this tag, because they
+/// have to distinguish *the hexblade who cursed this creature* from any
+/// other hexblade in the fight:
+///
+///   - **+proficiency bonus to damage** against the cursed target —
+///     `EncounterInstance::curse_damage_bonus`, summed alongside
+///     `caster_damage_buffs` at both attack-damage chokepoints.
+///   - **Crit on 19-20** against the cursed target —
+///     `EncounterInstance::crit_threshold_against`.
+///   - **Heal on the target's death** — the curser-scoped row on
+///     `EncounterInstance::trigger_creature_dropped`.
+///
+/// Registered in `SHORT_REST_FEATURES`: RAW is "until you finish a short
+/// or long rest", which puts it on the same cadence as the Channel
+/// Divinity family and Dark One's Own Luck rather than on the warlock's
+/// long-rest features.
+pub const HEXBLADES_CURSE_TAG: &str = "warlock.hexblades_curse";
+
+/// 5e Warlock — Otherworldly Patron **The Hexblade** (XGtE), subclass
+/// level 10: **Armor of Hexes**. Passive. When the target of the
+/// hexblade's curse hits the hexblade with an attack roll, roll a d6; on
+/// a 4 or higher the attack misses regardless of its total.
+///
+/// Third row on the `attack_intercepted` cohort, below Mirror Image and
+/// Illusory Self. The ordering rule on that cohort is
+/// cheapest-resource-first, and Armor of Hexes is the cheapest of the
+/// three by a distance: it costs nothing at all — no reaction, no
+/// charge, no spell — so it would seem to belong at the top. It sits at
+/// the bottom instead because it is the only row that can *fail*. A
+/// decoy or an Illusory Self always eats the swing; the hex armor eats
+/// it half the time. Running the two certain rows first means their
+/// resources are spent on hits the armor might have let through anyway,
+/// which is the wrong trade — so the free-but-unreliable row goes last
+/// and catches what the reliable ones didn't cover.
+///
+/// Unlike the two rows above it, this one is gated on *who* is swinging:
+/// only the cursed target's own attacks are deflected, which is what
+/// makes it a fair trade for a subclass that spends its bonus action
+/// picking that creature out.
+pub const ARMOR_OF_HEXES_TAG: &str = "warlock.armor_of_hexes";
+
+/// Hexblade's Curse — Hexblade Warlock subclass level 1, bonus action,
+/// once per short rest. Mark one hostile creature within 30 ft (12
+/// tiles) for 10 rounds (1 minute RAW).
+///
+/// Installs `Condition::HexbladeCursed` plus its back-link to the
+/// hexblade, through the shared `install_condition_with_link` helper so
+/// the flag and the link can't come apart. Everything the curse does is
+/// read back off that pair.
+///
+/// **Why it's worth a bonus action and a rest charge.** The curse is
+/// three riders that all point the same way, and their value scales with
+/// how many attacks the hexblade lands on one creature before it dies:
+/// +proficiency per hit, a doubled crit rate, and a heal that only pays
+/// if the target actually falls. That makes it the opposite of the
+/// warlock's other openers — Hex spreads across whatever the warlock
+/// swings at and follows the kill, Hexblade's Curse commits to a single
+/// creature and cannot move once placed — the engine ships no *Master of
+/// Hexes*. So the target to want is the one that will absorb the most
+/// swings, not the one closest to dying: the heal is a bonus that
+/// arrives when the fight is already won, and a curse spent on something
+/// that drops next round leaves eight rounds of nothing. The AI's picker
+/// takes the highest-HP hostile in range for exactly that reason.
+///
+/// **Stacking with Hex.** Both can be up at once and they compose:
+/// Hex is concentration and adds 1d6 necrotic per hit, the curse is
+/// neither and adds a flat proficiency bonus. A hexblade who lands both
+/// on the same creature is playing the subclass as intended — the two
+/// riders are the reason the build's single-target damage outruns the
+/// baseline warlock's even though its spell list is the same.
+pub struct HexbladesCurse {}
+
+impl Action for HexbladesCurse {
+    fn name(&self) -> &str {
+        "hexblade's curse"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hexblades curse", "curse", "hex curse", "hc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn is_harmful(&self) -> bool {
+        // No damage and no save, but it may only be aimed at an enemy —
+        // same declaration Vow of Enmity makes for the same reason: it
+        // keeps the AI's helpful-action lane from ever considering it,
+        // and `custom_validate_input` enforces the hostile-target
+        // requirement independently.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Shared "charge unspent + hostile, living target" preamble, then
+        // the one clause it doesn't cover: don't re-curse a creature we
+        // have already cursed. Re-applying only refreshes a 10-round
+        // timer that has barely started and costs the whole rest charge
+        // to do it. Same dedup Vow of Enmity carries, and for the same
+        // reason — a target cursed by a *different* hexblade is still a
+        // legal target, and the install takes the link over.
+        if !hostile_target_burst_ready(encounter, caster_id, target_ids, HEXBLADES_CURSE_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.hexblade_curse_holder(target_id) != Some(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(hexblade) = encounter.actors.get_mut(&caster_id) {
+            hexblade.spend_feature(HEXBLADES_CURSE_TAG);
+        }
+        let target_name = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "  hexblade's curse: the patron's mark settles on {}.",
+            target_name
+        ));
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::HexbladeCursed,
+            target_id,
+            caster_id,
+            // 10 rounds = 1 minute RAW, the same window Vow of Enmity
+            // and Hunter's Mark run on.
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static HEXBLADES_CURSE: LazyLock<HexbladesCurse> = LazyLock::new(|| HexbladesCurse {});

@@ -955,10 +955,12 @@ pub fn resolve_attack_outcome(
     // the trait.
     let mut raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
     // 5e Improved Critical: the d20 face that promotes to a crit is
-    // template-driven (Champion fighter: 19+; Superior Critical: 18+).
-    // The engine-level `crit_threshold` accessor folds in the default of
-    // 20 for missing actors / non-Champion builds.
-    let mut nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
+    // template-driven (Champion fighter: 19+; Superior Critical: 18+)
+    // and can also be target-scoped (Hexblade's Curse: 19+ against the
+    // one cursed creature). The engine-level `crit_threshold_against`
+    // accessor combines both and folds in the default of 20 for missing
+    // actors / builds with neither.
+    let mut nat_crit = raw_attack >= encounter.crit_threshold_against(p.caster_id, p.target_id);
     let mut attack_total =
         raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die + archery_bonus;
     let mut is_nat_one = raw_attack == 1;
@@ -973,7 +975,7 @@ pub fn resolve_attack_outcome(
         let new_raw = encounter.reroll_seeking_spell(p.caster_id, raw_attack as u32, mode) as i32;
         if new_raw != raw_attack {
             raw_attack = new_raw;
-            nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
+            nat_crit = raw_attack >= encounter.crit_threshold_against(p.caster_id, p.target_id);
             attack_total = raw_attack
                 + p.attack_bonus
                 + buff
@@ -1153,7 +1155,15 @@ pub fn resolve_attack_outcome(
     // `damage_bonus` + caster damage buff) is added once per RAW.
     // Picked up at this site so weapon AND spell attacks both see
     // the bonus through the same chokepoint.
-    let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id);
+    //
+    // `curse_damage_bonus` rides alongside as the target-scoped half —
+    // a hexblade's proficiency bonus against the one creature they
+    // cursed. It lives outside `caster_damage_buffs` because that
+    // helper takes no target, and this bonus is defined by who is on
+    // the receiving end. The spell-attack chokepoint in
+    // `spells::spell_attack_outcome` sums the same pair.
+    let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id)
+        + encounter.curse_damage_bonus(p.caster_id, p.target_id);
     let total_damage_bonus = p.damage_bonus + caster_damage_buff;
     let mut damage = (raw_damage + crit_extra + brutal_extra + total_damage_bonus).max(0) as u32;
     if is_crit {

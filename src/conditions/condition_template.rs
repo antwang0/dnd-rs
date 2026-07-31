@@ -1565,6 +1565,29 @@ pub enum Condition {
     /// Not on `is_dispellable_buff`: it's a declaration about the
     /// caster's next cast, not a magical effect on them.
     Overchanneling,
+    /// Marked by **Hexblade's Curse** (5e Hexblade Warlock, subclass
+    /// level 1). A back-linked condition: the flag says the creature is
+    /// cursed, and the link says by whom, which is load-bearing here
+    /// because every one of the curse's three clauses is scoped to the
+    /// hexblade personally.
+    ///
+    ///   - The hexblade adds their proficiency bonus to damage rolls
+    ///     against the cursed target (`curse_damage_bonus`, folded in at
+    ///     both attack-damage chokepoints).
+    ///   - The hexblade's attack rolls against the cursed target crit on
+    ///     19-20 (`crit_threshold_against`).
+    ///   - If the cursed target drops, the hexblade regains
+    ///     `warlock level + CHA mod` hit points (the curse-death row on
+    ///     the shared drop-reward chokepoint).
+    ///
+    /// A second warlock's curse on the same creature takes over the
+    /// link, which is the right reading of RAW — the curse is a single
+    /// relationship between one hexblade and one target, and the engine
+    /// stores exactly one link per condition.
+    ///
+    /// Ten-round timer (1 minute RAW). Not on `is_dispellable_buff` —
+    /// it's a debuff on the enemy rather than a friendly buff.
+    HexbladeCursed,
 }
 
 impl Condition {
@@ -1743,6 +1766,7 @@ impl Condition {
             Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
             Condition::GuidedStriking => "primed with a guided strike",
+            Condition::HexbladeCursed => "cursed by a hexblade",
         }
     }
 
