@@ -3369,7 +3369,6 @@ impl SpellSlotManager {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ActorInstance {
     name: String,
     location: Coordinate,
@@ -3388,6 +3387,15 @@ pub struct ActorInstance {
     skills: HashSet<Skill>,
     items: Vec<&'static Item>,
     senses: HashSet<SpecialSense>,
+    /// Languages the creature speaks, copied from its template.
+    ///
+    /// The one genuinely unread field on this struct, and kept
+    /// deliberately: it is part of what a creature *is*, the templates
+    /// all fill it in, and combat simply has no surface that asks. The
+    /// allow is scoped to this field rather than to the struct — a
+    /// blanket one used to sit on `ActorInstance` and it is what let
+    /// `base_size` be written and never read for as long as it was.
+    #[allow(dead_code)]
     languages: HashSet<Language>,
     cr: f32,
     hitpoints: u32,

@@ -1944,6 +1944,116 @@ const BLADESONG_ENGAGE_GAP: isize = 8;
 /// and validate an AEI for every hostile on the map.
 const HALO_OF_SPORES_GAP: isize = 4;
 
+/// Spells worth spending the Sorcerer's Heightened Spell prime on
+/// because a single failed save decides the fight — the concentration
+/// lockdowns. Read only as a "does this kit contain one?" gate, so the
+/// prime isn't declared into an empty hand.
+const HEIGHTENED_LOCKDOWN: &[&str] = &[
+    "hold person",
+    "hold monster",
+    "polymorph",
+    "banishment",
+    "dominate person",
+    "dominate monster",
+];
+
+/// The other half of the Heightened Spell gate: save-for-half bursts,
+/// where forcing disadvantage on the first save doubles that target's
+/// damage. Unlike the lockdown half this one doesn't care whether the
+/// sorcerer is already concentrating.
+const HEIGHTENED_BURST: &[&str] = &[
+    "fireball",
+    "cone of cold",
+    "sunburst",
+    "burning hands",
+    "thunderwave",
+    "shatter",
+];
+
+/// Long-duration casts worth doubling with the Sorcerer's Extended
+/// Spell prime. Read only as a "does this kit contain one?" gate — the
+/// prime itself applies to whatever is cast next, so a false negative
+/// costs a wasted declaration and a false positive costs nothing.
+const EXTENDABLE: &[&str] = &[
+    "mage armor",
+    "hunters mark",
+    "bless",
+    "hold person",
+    "hold monster",
+    "polymorph",
+    "fly",
+    "spider climb",
+    "haste",
+    "invisibility",
+    "greater invisibility",
+    "stoneskin",
+    "mirror image",
+    "shield of faith",
+    "false life",
+    "heroism",
+    "blur",
+    "barkskin",
+    "pass without trace",
+    "spirit guardians",
+    "spirit shroud",
+    "crusader's mantle",
+    "holy weapon",
+    "wind wall",
+    "globe of invulnerability",
+    "fire shield",
+    "mind blank",
+    "warding bond",
+    "death ward",
+    "magic weapon",
+    "protection from energy",
+    "enlarge",
+    "shadow blade",
+];
+
+/// Elemental-damage spells, for the Sorcerer's Transmuted Spell gate.
+/// The engine tags damage types on the action rather than the spell
+/// list, but `damage_types()` is UI-only on most impls, so this
+/// whitelist stands in. A false positive wastes one bonus action, not
+/// the sorcery point.
+const ELEMENTAL_SPELLS: &[&str] = &[
+    // Acid
+    "acid splash",
+    "acid arrow",
+    "vitriolic sphere",
+    // Cold
+    "ray of frost",
+    "cone of cold",
+    "ice knife",
+    "ice storm",
+    "frostbite",
+    "snowball swarm",
+    // Fire
+    "fire bolt",
+    "burning hands",
+    "fireball",
+    "scorching ray",
+    "wall of fire",
+    "flame strike",
+    "produce flame",
+    "delayed blast fireball",
+    "incendiary cloud",
+    "fire storm",
+    // Lightning
+    "lightning bolt",
+    "chain lightning",
+    "shocking grasp",
+    "call lightning",
+    "lightning lure",
+    // Poison
+    "poison spray",
+    "stinking cloud",
+    "cloudkill",
+    // Thunder
+    "thunderwave",
+    "shatter",
+    "thunderclap",
+    "thunder step",
+];
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "reaper's touch",
     "divine strike",
@@ -2210,22 +2320,6 @@ fn try_heightened_spell(
     // lockdown half is gated on `!is_concentrating` since casting a new
     // concentration spell would drop the old one; the burst half doesn't
     // care about concentration.
-    const HEIGHTENED_LOCKDOWN: &[&str] = &[
-        "hold person",
-        "hold monster",
-        "polymorph",
-        "banishment",
-        "dominate person",
-        "dominate monster",
-    ];
-    const HEIGHTENED_BURST: &[&str] = &[
-        "fireball",
-        "cone of cold",
-        "sunburst",
-        "burning hands",
-        "thunderwave",
-        "shatter",
-    ];
     let has_lockdown = !actor.is_concentrating()
         && HEIGHTENED_LOCKDOWN
             .iter()
@@ -2432,41 +2526,6 @@ fn try_extended_spell(
     // signaling "this kit has at least one extendable cast." Keep in
     // sync with the canonical long-buff / lockdown spells the sorcerer
     // ships with.
-    const EXTENDABLE: &[&str] = &[
-        "mage armor",
-        "hunter's mark",
-        "bless",
-        "hold person",
-        "hold monster",
-        "polymorph",
-        "fly",
-        "spider climb",
-        "haste",
-        "invisibility",
-        "greater invisibility",
-        "stoneskin",
-        "mirror image",
-        "shield of faith",
-        "false life",
-        "heroism",
-        "blur",
-        "barkskin",
-        "pass without trace",
-        "spirit guardians",
-        "spirit shroud",
-        "crusader's mantle",
-        "holy weapon",
-        "wind wall",
-        "globe of invulnerability",
-        "fire shield",
-        "mind blank",
-        "warding bond",
-        "death ward",
-        "magic weapon",
-        "protection from energy",
-        "enlarge",
-        "shadow blade",
-    ];
     let has_extendable = EXTENDABLE
         .iter()
         .any(|name| actor.find_action(name).is_some());
@@ -2601,45 +2660,6 @@ fn try_transmuted_spell(
     // covers the elemental staples sorcerers / warlocks / wizards / druids
     // typically carry. The prime no-ops on non-elemental casts anyway, so a
     // false-positive here just wastes one bonus action, not the SP.
-    const ELEMENTAL_SPELLS: &[&str] = &[
-        // Acid
-        "acid splash",
-        "acid arrow",
-        "vitriolic sphere",
-        // Cold
-        "ray of frost",
-        "cone of cold",
-        "ice knife",
-        "ice storm",
-        "frostbite",
-        "snilloc's snowball swarm",
-        // Fire
-        "fire bolt",
-        "burning hands",
-        "fireball",
-        "scorching ray",
-        "wall of fire",
-        "flame strike",
-        "produce flame",
-        "delayed blast fireball",
-        "incendiary cloud",
-        "fire storm",
-        // Lightning
-        "lightning bolt",
-        "chain lightning",
-        "shocking grasp",
-        "call lightning",
-        "lightning lure",
-        // Poison
-        "poison spray",
-        "stinking cloud",
-        "cloudkill",
-        // Thunder
-        "thunderwave",
-        "shatter",
-        "thunderclap",
-        "thunder step",
-    ];
     let has_elemental_spell = ELEMENTAL_SPELLS
         .iter()
         .any(|name| actor.find_action(name).is_some());
@@ -5355,7 +5375,7 @@ fn best_burst_placement(
 const AREA_CONTROL_SPELLS: &[&str] = &[
     "web",
     "hypnotic pattern",
-    "evard's black tentacles",
+    "black tentacles",
     "entangle",
     "sleet storm",
 ];
@@ -9535,5 +9555,70 @@ mod tests {
                 marker
             );
         }
+    }
+
+    /// Every action name the AI's heuristics look up is the canonical
+    /// name of an action some playable template actually carries.
+    ///
+    /// `ActorInstance::find_action` matches canonical names only — not
+    /// aliases, not substrings — so a name list entry that is off by a
+    /// word doesn't fail loudly, it silently never matches. That is
+    /// exactly what happened to `"enlarge / reduce"`, which sat in the
+    /// Extended Spell gate for as long as the gate existed while the
+    /// spell's canonical name was `"enlarge"`: the metamagic's whole
+    /// reason to fire was invisible to it, and every test still passed.
+    ///
+    /// The four Sorcerer gate lists were function-local consts until
+    /// this test needed them; lifting them to module scope is what makes
+    /// the sweep possible at all, and puts them beside
+    /// `MELEE_ADJACENT_PRIMES`, which was already there.
+    #[test]
+    fn every_ai_action_name_matches_a_real_action() {
+        use crate::actors::creatures::pc_template_families;
+        use std::collections::HashSet;
+
+        let known: HashSet<&str> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_family, templates)| templates)
+            .flat_map(|t| t.actions.iter().map(|a| a.name()))
+            .collect();
+
+        // Every module-level name list the heuristics consult. A new
+        // list belongs here; the cost of forgetting is a heuristic that
+        // quietly never fires.
+        let lists: [(&str, &[&str]); 7] = [
+            ("MELEE_ADJACENT_PRIMES", MELEE_ADJACENT_PRIMES),
+            ("SELF_TELEPORT_ESCAPES", SELF_TELEPORT_ESCAPES),
+            ("AREA_CONTROL_SPELLS", AREA_CONTROL_SPELLS),
+            ("HEIGHTENED_LOCKDOWN", HEIGHTENED_LOCKDOWN),
+            ("HEIGHTENED_BURST", HEIGHTENED_BURST),
+            ("EXTENDABLE", EXTENDABLE),
+            ("ELEMENTAL_SPELLS", ELEMENTAL_SPELLS),
+        ];
+        // Two entries name real spells that no playable template
+        // currently carries — a level-8 lockdown and a level-1 temp-HP
+        // buff. They are kept because a future template picking either
+        // one up should find the heuristic already waiting, and they are
+        // written as `name()` reads off the statics rather than as
+        // string literals, so a rename breaks this line instead of
+        // quietly re-orphaning the entry.
+        let waiting_on_a_template: HashSet<&str> = HashSet::from([
+            crate::actions::spells::DOMINATE_MONSTER.name(),
+            crate::actions::spells::FALSE_LIFE.name(),
+        ]);
+        let mut orphans: Vec<String> = Vec::new();
+        for (list_name, entries) in lists {
+            for name in entries {
+                if !known.contains(name) && !waiting_on_a_template.contains(name) {
+                    orphans.push(format!("{}: {:?}", list_name, name));
+                }
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "these AI heuristic entries match no action any playable \
+             template carries, so they can never fire:\n  {}",
+            orphans.join("\n  ")
+        );
     }
 }
