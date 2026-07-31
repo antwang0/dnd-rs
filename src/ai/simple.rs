@@ -141,6 +141,14 @@ impl Controller for SimpleAi {
         //        the melee rider and the doubled halo are both
         //        short-ranged, so a symbiote raised across the room
         //        spends the charge and buys only the temp HP.
+        //
+        //        The emergency case is already handled above it: the
+        //        symbiote declares `is_heal`, so a druid under half HP
+        //        picks it up from the self-heal rung with no distance
+        //        gate at all — which is right, because 36 temp HP is
+        //        worth the charge whatever else is happening. This rung
+        //        is the other half: the healthy druid who should wait
+        //        one more turn.
         if let Some(aei) = try_symbiotic_entity(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }

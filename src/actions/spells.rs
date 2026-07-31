@@ -367,6 +367,11 @@ fn spell_attack_outcome(
             String::new()
         }
     ));
+    // Attacker-scoped reductions (Ancestral Protectors) — before the
+    // reactive clamps, matching the weapon path.
+    let total_dmg = crate::engine::attack::attacker_scoped_damage_reduction(
+        encounter, caster_id, target_id, total_dmg,
+    );
     // Reactive damage clamps — Uncanny Dodge, Deflect Missiles, Parry,
     // Fighting Style: Interception. Shared with the weapon path in
     // `engine::attack` via the `REACTIVE_DAMAGE_CLAMPS` cohort walker,
@@ -377,11 +382,6 @@ fn spell_attack_outcome(
     // gates it on a ranged *weapon* attack — while Uncanny Dodge and
     // Interception, whose RAW wording covers any attack, now cover
     // spell attacks too.
-    // Attacker-scoped reductions (Ancestral Protectors) — before the
-    // reactive clamps, matching the weapon path.
-    let total_dmg = crate::engine::attack::attacker_scoped_damage_reduction(
-        encounter, caster_id, target_id, total_dmg,
-    );
     let total_dmg = crate::engine::attack::apply_reactive_damage_clamps(
         encounter,
         caster_id,
