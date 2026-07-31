@@ -1690,6 +1690,24 @@ pub enum Condition {
     /// declaration about the holder's next shot rather than a magical
     /// effect sitting on them.
     KenseisShot,
+    /// Speed pinned to 0 by an outside effect that isn't a grapple, a
+    /// restraint or a loss of consciousness. Installed today by the
+    /// Conquest Paladin's Aura of Conquest, on a Frightened creature
+    /// that starts its turn inside the aura.
+    ///
+    /// A condition rather than a direct drain on the movement budget,
+    /// because RAW's clause is "its speed is 0, and it can't benefit
+    /// from any bonus to its speed" — and the second half is the one
+    /// that decides whether the aura actually holds anyone. Emptying
+    /// the budget at turn-start would let the rooted creature Dash out
+    /// of the aura a moment later; riding `zeros_movement` means the
+    /// Dash hands them a budget that `remaining_movement` still reads
+    /// as zero, which is exactly what RAW describes.
+    ///
+    /// `UntilStartOfNextTurn`, re-checked and re-installed every turn
+    /// the aura still catches them, so walking free the moment the
+    /// paladin drops or the fear lifts needs no teardown of its own.
+    Rooted,
 }
 
 impl Condition {
@@ -1773,6 +1791,7 @@ impl Condition {
             Condition::Bladesinging => "bladesinging",
             Condition::FormOfDread => "wearing a form of dread",
             Condition::KenseisShot => "drawing a kensei shot",
+            Condition::Rooted => "rooted in place",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
             Condition::Confused => "confused",
@@ -2160,6 +2179,7 @@ impl Condition {
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
                 | Condition::EarthenGrasped
+                | Condition::Rooted
                 | Condition::WaterSphered
         )
     }

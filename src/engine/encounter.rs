@@ -6141,11 +6141,12 @@ impl EncounterInstance {
     /// clauses, at the start of the victim's turn:
     ///
     ///   - "its speed is 0, and it can't benefit from any bonus to its
-    ///     speed" — the engine grants the turn's movement budget in
-    ///     `reset_for_new_round`, so draining it here is exactly
-    ///     equivalent, and it covers the "can't benefit from a bonus"
-    ///     clause for free (a bonus applied to a budget of zero that is
-    ///     then zeroed is still zero).
+    ///     speed" — installed as the `Rooted` condition rather than by
+    ///     draining the movement budget, because the second half of
+    ///     that sentence is what makes the aura hold anyone. A drained
+    ///     budget is refilled by a Dash; a `zeros_movement` condition
+    ///     makes `remaining_movement` read zero however much budget the
+    ///     Dash hands over.
     ///   - "it takes psychic damage equal to half your paladin level if
     ///     it starts its turn there".
     ///
@@ -6166,7 +6167,13 @@ impl EncounterInstance {
         }
         let name = self.actor_name(actor_id);
         if let Some(a) = self.actors.get_mut(&actor_id) {
-            a.zero_movement();
+            // Re-installed on every turn the aura still catches them,
+            // so it lapses on its own the moment the paladin drops or
+            // the fear lifts — no teardown to forget.
+            a.add_condition(
+                Condition::Rooted,
+                crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+            );
         }
         self.log(format!(
             "  aura of conquest: {} is rooted in place by dread, and takes {} psychic.",
@@ -70412,6 +70419,60 @@ mod tests {
         assert!(
             !e.actors[&monk].has_condition(Condition::KenseisShot),
             "the prime ends with the turn it was spent on"
+        );
+    }
+
+    /// A rooted creature can't Dash its way out of the aura.
+    ///
+    /// This is the clause the first implementation got wrong. Draining
+    /// the movement budget at turn-start reads as "speed 0" right up
+    /// until the creature takes the Dash action, which hands the budget
+    /// straight back — and Dash is exactly what something frightened and
+    /// bleeding five a turn is going to reach for. RAW's second half,
+    /// "and it can't benefit from any bonus to its speed", is what
+    /// closes that, and a `zeros_movement` condition is what enforces
+    /// it: the budget can be refilled all day and
+    /// `remaining_movement` still reads zero.
+    #[test]
+    fn the_conquest_aura_survives_a_dash() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, GiveResource, Resource};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let _paladin = e
+            .instantiate_creature(&CONQUEST_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(10));
+        e.start_turn_for(ogre);
+        assert_eq!(e.actors[&ogre].remaining_movement(), 0.0);
+
+        // Hand back a full move, the way Dash does.
+        GiveResource {
+            actor_id: ogre,
+            resource: Resource::Movement(30.0),
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&ogre].remaining_movement(),
+            0.0,
+            "a rooted creature can't benefit from a speed bonus, Dash included"
+        );
+
+        // And it lets go on its own once the fear does.
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .remove_condition(Condition::Frightened);
+        e.start_turn_for(ogre);
+        assert!(
+            e.actors[&ogre].remaining_movement() > 0.0,
+            "the root is re-checked every  turn, so a creature that shakes the fear walks"
         );
     }
 }
