@@ -52780,6 +52780,90 @@ mod tests {
         );
     }
 
+    /// Ray of Enfeeblement's attack roll is a real spell attack roll:
+    /// it can be intercepted, and cover raises the AC it is measured
+    /// against.
+    ///
+    /// The spell rolls to hit and then installs a condition rather than
+    /// dealing damage, so the damage-rolling resolver couldn't serve it
+    /// and it open-coded its own roll — which quietly cost it cover,
+    /// Sanctuary, the reactive taxes, Bless, Multiattack Defense, the
+    /// interception cohort and the hit mark. It now shares the
+    /// attack-roll half with every other spell attack.
+    #[test]
+    fn ray_of_enfeeblement_rolls_a_real_spell_attack() {
+        use crate::actions::spells::RAY_OF_ENFEEBLEMENT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        // (1) Mirror Image can eat the ray. An intercepted swing lands
+        // on a decoy, so the Poisoned condition must not install.
+        let mut deflections = 0;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            {
+                let z = e.actors.get_mut(&zombie).unwrap();
+                z.add_condition(Condition::MirroredImages, ConditionTimer::Rounds(10));
+                z.set_mirror_images(3);
+            }
+            for eff in
+                RAY_OF_ENFEEBLEMENT.side_effects(&mut e, wizard, Some(&vec![zombie]), None, None)
+            {
+                eff.apply(&mut e);
+            }
+            if e.messages().iter().any(|m| m.contains("duplicate")) {
+                deflections += 1;
+                assert!(
+                    !e.actors[&zombie].has_condition(Condition::Poisoned),
+                    "seed {}: an intercepted ray should install nothing",
+                    seed
+                );
+            }
+        }
+        assert!(
+            deflections > 0,
+            "Mirror Image never intercepted the ray across 60 seeds"
+        );
+
+        // (2) Cover raises the AC the ray is measured against.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .expect("the interposed bystander should instantiate");
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let cover = e.cover_ac_bonus(wizard, zombie);
+        assert!(cover > 0, "test setup: the bystander should grant cover");
+        let bare_ac = e.actors[&zombie].armor_class() as i32;
+        for eff in RAY_OF_ENFEEBLEMENT.side_effects(&mut e, wizard, Some(&vec![zombie]), None, None)
+        {
+            eff.apply(&mut e);
+        }
+        let line = e
+            .messages()
+            .iter()
+            .find(|m| m.contains("ray of enfeeblement: 1d20("))
+            .expect("the ray should have logged a roll")
+            .clone();
+        assert!(
+            line.contains(&format!("vs AC {}", bare_ac + cover)),
+            "cover should raise the AC the ray is measured against \
+             (bare {}, cover +{}): {}",
+            bare_ac,
+            cover,
+            line
+        );
+    }
+
     /// The Rogue's shortsword is on the shared attack pipeline, so the
     /// rules that pipeline enforces reach it.
     ///

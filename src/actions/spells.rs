@@ -93,17 +93,42 @@ fn spell_attack_with_bonus(
 /// the dealt damage value (e.g. Vampiric Touch's half-as-heal rider)
 /// without re-rolling the damage dice and double-consuming the RNG.
 #[allow(clippy::too_many_arguments)]
-fn spell_attack_outcome(
+/// Outcome of a spell attack roll: whether it connected, and whether it
+/// was a critical hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpellAttackRoll {
+    /// `false` on a miss, on a natural 1, on a Sanctuary fizzle, and on
+    /// an intercepted swing — in every case the caller applies nothing.
+    pub hit: bool,
+    pub is_crit: bool,
+}
+
+/// Roll a spell attack against `target_id` and report whether it landed,
+/// applying every rule a spell attack is subject to along the way: cover
+/// and Multiattack Defense on the AC, Sanctuary, the advantage rider
+/// stack (and its clearing), the defender-side reactive taxes, Bless /
+/// Bane, the caster's attack buffs, Lucky, the target-scoped crit range,
+/// the natural-1 auto-miss, Seeking Spell, Bend Luck, the
+/// Paralyzed/Unconscious auto-crit clause, the interception cohort, and
+/// the hit-this-turn mark. Logs the breakdown.
+///
+/// Split out of `spell_attack_outcome` so that a spell attack whose
+/// effect *isn't* damage can still be a first-class spell attack. Ray of
+/// Enfeeblement is the case: it rolls to hit and then installs a
+/// condition, so the damage-rolling resolver was no use to it and it
+/// open-coded its own roll instead — which silently cost it cover,
+/// Sanctuary, Bless, the reactive taxes, Multiattack Defense, the
+/// interception cohort and the hit mark. A future "attack roll, then a
+/// rider" spell gets all of it by calling this.
+#[allow(clippy::too_many_arguments)]
+pub fn spell_attack_roll(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
     action_name: &str,
     attack_bonus: i32,
-    damage_dice: Dice,
-    damage_bonus: i32,
-    damage_type: DamageType,
     is_melee: bool,
-) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+) -> SpellAttackRoll {
     let target_ac = encounter
         .actors
         .get(&target_id)
@@ -125,7 +150,7 @@ fn spell_attack_outcome(
     // gated — attacker rolls a WIS save vs the ward's DC. On fail, the
     // spell silently fizzles against the warded target.
     if encounter.sanctuary_save_blocks(caster_id, target_id) {
-        return (Vec::new(), 0);
+        return SpellAttackRoll { hit: false, is_crit: false };
     }
     encounter.break_sanctuary_on_hostile(caster_id);
     // Spell attacks are attack rolls per 5e RAW, so the full rider stack
@@ -243,14 +268,14 @@ fn spell_attack_outcome(
         outcome,
     ));
     if !hit {
-        return (Vec::new(), 0);
+        return SpellAttackRoll { hit: false, is_crit: false };
     }
     // Post-hit interception (Mirror Image decoys, Illusory Self): spell
     // attack rolls trigger every row of the cohort too (RAW, uniformly:
     // "any attack roll against you"). Shared with weapon swings via the
     // engine's `attack_intercepted` helper.
     if encounter.attack_intercepted(target_id, caster_id, is_crit) {
-        return (Vec::new(), 0);
+        return SpellAttackRoll { hit: false, is_crit: false };
     }
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // record the connecting spell hit so subsequent spell / weapon
@@ -262,6 +287,33 @@ fn spell_attack_outcome(
     if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
         attacker.mark_hit_target_this_turn(target_id);
     }
+    SpellAttackRoll { hit: true, is_crit }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spell_attack_outcome(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+    let roll = spell_attack_roll(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        is_melee,
+    );
+    if !roll.hit {
+        return (Vec::new(), 0);
+    }
+    let is_crit = roll.is_crit;
     // Route the base damage roll through the shared caster-aware
     // chokepoint, the same one every save-based spell uses. Spell
     // *attacks* were the last damage lane in the file rolling outside
@@ -21689,38 +21741,25 @@ impl Action for RayOfEnfeeblement {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]);
-        // `attack_mode_with_riders` rather than the bare
-        // `compute_attack_mode`: this is one of the few spells that
-        // open-codes its own spell-attack roll instead of routing
-        // through `spell_attack_outcome`, and it inherited that
-        // helper's blind spot — the per-target Help grant lives outside
-        // `compute_attack_mode`, so the roll missed it and the clear
-        // below then consumed it.
-        let mode = encounter.attack_mode_with_riders(caster_id, target_id, false);
-        encounter.clear_attack_advantage_riders(caster_id, target_id);
-        // Route the d20 through `roll_d20_lucky` so a Halfling / Lucky-
-        // feat caster's nat-1 reroll fires here too. Crit threshold reads
-        // off the engine helper so a Champion-fighter spell attack keeps
-        // the lower 19-face crit window.
-        let raw = encounter.roll_d20_lucky(caster_id, mode) as i32;
-        let target_ac = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| a.armor_class() as i32)
-            .unwrap_or(10);
-        let total = raw + attack_mod;
-        let hit = raw >= encounter.crit_threshold_against(caster_id, target_id)
-            || (raw != 1 && total >= target_ac);
-        encounter.log(format!(
-            "  ray of enfeeblement: 1d20({}){:+} = {} vs AC {}{} — {}",
-            raw,
+        // Ray of Enfeeblement is a spell attack whose payload is a
+        // condition rather than damage, so the damage-rolling
+        // `spell_attack_outcome` is no use to it — but the attack roll
+        // itself is the same attack roll, and this spell used to
+        // open-code it. That cost it cover, Sanctuary, the defender-side
+        // reactive taxes, Bless and Bane, the caster's attack buffs,
+        // Multiattack Defense, the interception cohort and the
+        // hit-this-turn mark, none of which anyone chose to skip.
+        // `spell_attack_roll` is the attack-roll half on its own.
+        if !spell_attack_roll(
+            encounter,
+            caster_id,
+            target_id,
+            "ray of enfeeblement",
             attack_mod,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            if hit { "hit" } else { "miss" }
-        ));
-        if !hit {
+            false,
+        )
+        .hit
+        {
             return Vec::new();
         }
         let cond = Condition::Poisoned;
