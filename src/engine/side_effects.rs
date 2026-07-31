@@ -556,11 +556,7 @@ impl ApplicableSideEffect for DealDamage {
         // it. Mirror damage to the partner uses the post-resistance
         // amount (`scaled`), matching RAW: "you take the same amount of
         // damage" applies to whatever the bonded ally actually absorbs.
-        let warding_partner = if actor.has_condition(crate::conditions::Condition::WardingBonded) {
-            actor.warding_partner()
-        } else {
-            None
-        };
+        let warding_partner = actor.linked_by(Condition::WardingBonded);
         let ward_before = actor.arcane_ward();
         let (outcome, landed) = actor.take_typed_damage(raw_amount, self.damage_type);
         // Regenerator suppression: flag the actor if this damage type is
@@ -682,10 +678,10 @@ impl ApplicableSideEffect for DealDamage {
             && partner_id != self.actor_id
             && scaled > 0
         {
-            let partner_loops = ei.actors.get(&partner_id).is_some_and(|p| {
-                p.has_condition(crate::conditions::Condition::WardingBonded)
-                    && p.warding_partner() == Some(self.actor_id)
-            });
+            let partner_loops = ei
+                .actors
+                .get(&partner_id)
+                .is_some_and(|p| p.linked_by(Condition::WardingBonded) == Some(self.actor_id));
             if !partner_loops {
                 let partner_name = ei
                     .actors
@@ -1293,141 +1289,70 @@ impl ApplicableSideEffect for StabilizeActor {
     }
 }
 
-/// Record which actor Charmed the target. Paired with ApplyCondition
-/// (Charmed): the condition flag is read by `compute_attack_mode` for
-/// future debuffs, and the `charmed_by` link is read by
-/// `Action::validate_input` to block hostile actions against the
-/// charmer. Pass `charmer = None` to clear (e.g. on save success); the
-/// engine also clears it automatically when the Charmed condition is
-/// removed via `remove_condition`.
+/// The conditions that carry a back-link to whoever applied them, and
+/// therefore emit a `SetConditionLink` alongside their `ApplyCondition`.
+///
+/// * **Charmed** — the charmer, so `Action::validate_input` can block the
+///   victim from swinging back at them.
+/// * **Dueled** / **Goaded** — the marker, so attacks on *anyone else*
+///   take disadvantage.
+/// * **Distracted** — the marker, so every attacker *except* them picks
+///   up advantage.
+/// * **Sworn** / **EldritchStruck** — the marker, so *only* they collect
+///   (advantage on attacks, and disadvantage on the target's next save
+///   against their spell, respectively).
+/// * **WardingBonded** — the partner damage is mirrored onto.
+///
+/// One list, read by `condition_link_side_effect`. Every consumer of the
+/// link reads it back through `ActorInstance::linked_by`, which returns
+/// `None` unless the condition is still held, and `remove_condition`
+/// drops the entry when it lifts. So the whole lifecycle of a new linked
+/// condition is this one row: install, read, and teardown all follow
+/// from it.
+pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
+    crate::conditions::Condition::Charmed,
+    crate::conditions::Condition::Dueled,
+    crate::conditions::Condition::Goaded,
+    crate::conditions::Condition::Distracted,
+    crate::conditions::Condition::Sworn,
+    crate::conditions::Condition::EldritchStruck,
+    crate::conditions::Condition::WardingBonded,
+];
+
+/// Record who applied a back-linked condition to the target. Paired with
+/// the `ApplyCondition` that installs the flag itself — the flag says
+/// *what* happened, this says *who did it*, and consumers that care about
+/// the counterparty (rather than just the condition) read the pair back
+/// through `ActorInstance::linked_by`.
+///
+/// Pass `source = None` to clear the link explicitly; the engine also
+/// clears it automatically when the condition is removed via
+/// `remove_condition`, so the explicit clear is only needed when the link
+/// has to drop while the condition stays (nothing does that today).
+///
+/// This replaced seven structurally identical `Set*By` effects — one per
+/// linked condition, each with its own field, its own accessor pair and
+/// its own teardown arm. They differed only in which condition they
+/// belonged to, which is now the field.
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetCharmedBy {
+pub struct SetConditionLink {
     pub target_id: usize,
-    pub charmer: Option<usize>,
+    pub condition: crate::conditions::Condition,
+    pub source: Option<usize>,
 }
 
-impl ApplicableSideEffect for SetCharmedBy {
+impl ApplicableSideEffect for SetConditionLink {
     fn apply(&self, ei: &mut EncounterInstance) {
         if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_charmed_by(self.charmer);
+            actor.set_condition_link(self.condition, self.source);
         }
     }
 }
 
-/// Record which paladin has tagged the target with Compelled Duel.
-/// Pairs with ApplyCondition (Dueled): `compute_attack_mode` reads this
-/// to apply disadvantage on attacks against anyone *other* than the
-/// duelist. `set_dueled_by(None)` clears the link explicitly; the
-/// engine also clears it automatically when the Dueled condition is
-/// removed via `remove_condition`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetDueledBy {
-    pub target_id: usize,
-    pub duelist: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetDueledBy {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_dueled_by(self.duelist);
-        }
-    }
-}
-
-/// Record which fighter has tagged the target with Goading Attack.
-/// Pairs with ApplyCondition (Goaded): `compute_attack_mode` reads this
-/// to apply disadvantage on attacks against anyone *other* than the
-/// goader. `set_goaded_by(None)` clears the link explicitly; the
-/// engine also clears it automatically when the Goaded condition is
-/// removed via `remove_condition`. Mirrors `SetDueledBy` — same shape,
-/// distinct field on `ActorInstance`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetGoadedBy {
-    pub target_id: usize,
-    pub goader: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetGoadedBy {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_goaded_by(self.goader);
-        }
-    }
-}
-
-/// Record which fighter has tagged the target with Distracting Strike.
-/// Pairs with ApplyCondition (Distracted): `compute_attack_mode` reads
-/// this to grant advantage on attack rolls against the target by any
-/// attacker *other* than the distractor. `set_distracted_by(None)`
-/// clears the link explicitly; the engine also clears it automatically
-/// when the Distracted condition is removed via `remove_condition`.
-/// Mirrors `SetGoadedBy` in shape, distinct field on `ActorInstance`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetDistractedBy {
-    pub target_id: usize,
-    pub distracter: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetDistractedBy {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_distracted_by(self.distracter);
-        }
-    }
-}
-
-/// Record which paladin has sworn Vow of Enmity against the target (5e
-/// Vengeance Paladin Channel Divinity, lv3 subclass). Pairs with
-/// ApplyCondition (Sworn): `compute_attack_mode` reads this to grant
-/// advantage on the swearing paladin's attack rolls against this target
-/// (positive-polarity sibling of `SetDistractedBy` — only the swearer
-/// gets the buff, not other allies). `set_sworn_by(None)` clears the
-/// link explicitly; the engine also clears it automatically when the
-/// Sworn condition is removed via `remove_condition`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetSwornBy {
-    pub target_id: usize,
-    pub swearer: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetSwornBy {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_sworn_by(self.swearer);
-        }
-    }
-}
-
-/// Record which Eldritch Knight's weapon hit marked the target (5e
-/// Eldritch Knight Fighter **Eldritch Strike**, subclass lv10). Pairs
-/// with ApplyCondition (EldritchStruck): the `CASTER_SAVE_MODE_RIDERS`
-/// cohort in `roll_save_against_caster` reads this to bend the target's
-/// next save against *this* knight's spell to disadvantage. Same
-/// positive-polarity flag-plus-link shape as `SetSwornBy` — only the
-/// marker benefits — but on the save-roll axis rather than the
-/// attack-roll one. `set_eldritch_struck_by(None)` clears the link
-/// explicitly; the engine also clears it automatically when the
-/// EldritchStruck condition is removed via `remove_condition`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetEldritchStruckBy {
-    pub target_id: usize,
-    pub striker: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetEldritchStruckBy {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_eldritch_struck_by(self.striker);
-        }
-    }
-}
-
-/// Single source of truth for "which conditions carry a back-link to
-/// the actor that applied them, and what `Set*By` side-effect installs
-/// that link." Returns `Some(boxed_side_effect)` for the six flag-plus-
-/// link conditions (Dueled / Goaded / Distracted / Sworn /
-/// EldritchStruck / Charmed); returns `None` for conditions that stand
-/// alone with just `ApplyCondition`.
+/// Single source of truth for "which conditions carry a back-link to the
+/// actor that applied them." Returns the `SetConditionLink` that installs
+/// the link for the seven conditions in `LINKED_CONDITIONS`, and `None`
+/// for conditions that stand alone with just `ApplyCondition`.
 ///
 /// Used by:
 ///   - `engine::attack::attacker_link_side_effect` (weapon on-hit rider
@@ -1442,42 +1367,22 @@ impl ApplicableSideEffect for SetEldritchStruckBy {
 ///     without going through the rider chain (Compelled Duel installs
 ///     Dueled; Vow of Enmity installs Sworn).
 ///
-/// Adding a future linked condition lands as one match arm here —
-/// both the rider chain AND the direct-cast action pipeline pick up
-/// the new link install for free, with no duplicate dispatch tables.
+/// Adding a future linked condition lands as one row in
+/// `LINKED_CONDITIONS` — both the rider chain AND the direct-cast action
+/// pipeline pick up the new link install for free, with no duplicate
+/// dispatch tables.
 pub fn condition_link_side_effect(
     condition: crate::conditions::Condition,
     target_id: usize,
     caster_id: usize,
 ) -> Option<Box<dyn ApplicableSideEffect>> {
-    use crate::conditions::Condition;
-    match condition {
-        Condition::Dueled => Some(Box::new(SetDueledBy {
+    LINKED_CONDITIONS.contains(&condition).then(|| {
+        Box::new(SetConditionLink {
             target_id,
-            duelist: Some(caster_id),
-        })),
-        Condition::Goaded => Some(Box::new(SetGoadedBy {
-            target_id,
-            goader: Some(caster_id),
-        })),
-        Condition::Distracted => Some(Box::new(SetDistractedBy {
-            target_id,
-            distracter: Some(caster_id),
-        })),
-        Condition::Sworn => Some(Box::new(SetSwornBy {
-            target_id,
-            swearer: Some(caster_id),
-        })),
-        Condition::EldritchStruck => Some(Box::new(SetEldritchStruckBy {
-            target_id,
-            striker: Some(caster_id),
-        })),
-        Condition::Charmed => Some(Box::new(SetCharmedBy {
-            target_id,
-            charmer: Some(caster_id),
-        })),
-        _ => None,
-    }
+            condition,
+            source: Some(caster_id),
+        }) as Box<dyn ApplicableSideEffect>
+    })
 }
 
 /// Install a condition together with whatever back-link it carries: an
@@ -1491,7 +1396,7 @@ pub fn condition_link_side_effect(
 /// place that writes them separately is a place a future edit can drop
 /// one. Charm is the cautionary case — eight production sites across
 /// three modules each hand-built `ApplyCondition(Charmed)` +
-/// `SetCharmedBy`, and any ninth that forgot the link would have produced
+/// `SetConditionLink(Condition::Charmed)`, and any ninth that forgot the link would have produced
 /// a charmed creature that still happily attacks its charmer, with no
 /// error anywhere.
 ///
@@ -1512,26 +1417,6 @@ pub fn install_condition_with_link(
         out.push(link);
     }
     out
-}
-
-/// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
-/// with ApplyCondition (WardingBonded) on the same target: the condition
-/// flag carries the AC / save / resistance buff, while the `warding_partner`
-/// link tells the damage-reflect site which actor to mirror the hit onto.
-/// Pass `partner = None` to clear; the engine also clears it automatically
-/// when the WardingBonded condition is removed via `remove_condition`.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetWardingPartner {
-    pub target_id: usize,
-    pub partner: Option<usize>,
-}
-
-impl ApplicableSideEffect for SetWardingPartner {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_warding_partner(self.partner);
-        }
-    }
 }
 
 /// Grant `count` Mirror Image decoys to the target. Re-application

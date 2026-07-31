@@ -1004,7 +1004,7 @@ impl Controller for SimpleAi {
         // 5a''. Geas — level-5 enchantment, concentration-FREE. Charms
         //       the toughest enemy on a failed WIS save, locking them
         //       out of attacking the caster via the engine's existing
-        //       `charmed_by` link. Slots after Dominate Monster (lv8,
+        //       `Charmed` back-link. Slots after Dominate Monster (lv8,
         //       concentration, broader debuff) and before the AoE
         //       picker — the lv5 slot can compete with Cone of Cold /
         //       Hold Monster, so we want it to fire only when no
@@ -1316,7 +1316,7 @@ fn try_dominate_monster(
 }
 
 /// Geas — level-5 enchantment. Drops a long-duration `Charmed` rider on
-/// the toughest enemy via the existing `charmed_by` link, blocking them
+/// the toughest enemy via the existing `Charmed` back-link, blocking them
 /// from making hostile actions against the caster. Concentration-FREE
 /// RAW (the timer carries the install instead), so this skips the
 /// `is_concentrating()` short-circuit that the Hold Person / Dominate
@@ -6483,7 +6483,7 @@ mod tests {
             //   - Shadow Demon (CR 4 medium fiend) — psychic claws + radiant
             //     vulnerability — first vulnerability hit in the new pool.
             //   - Succubus (CR 4 medium fiend) — charm + draining-kiss combo
-            //     gated on the `charmed_by` link.
+            //     gated on the `Charmed` back-link.
             //   - Intellect Devourer (CR 2 tiny aberration) — INT-save lane
             //     with the damage-threshold stun rider.
             //   - Xorn (CR 5 medium elemental) — 3-claw + bite heavy multi.
@@ -6590,7 +6590,7 @@ mod tests {
             // re-enters `side_effects` for a second creature, including
             // the concentration spells whose merged `StartConcentration`
             // is the trickiest part of that block. Its Hypnotic Gaze
-            // also puts a `charmed_by` link on a hostile mid-fight,
+            // also puts a `Charmed` back-link on a hostile mid-fight,
             // which is the AI-side exercise of the charm restriction on
             // declared actions, opportunity attacks and Riposte alike.
             // The Illusion Wizard drives the interception cohort from

@@ -29,7 +29,7 @@ pub enum Condition {
     Incapacitated,
     /// 5e Charmed: "A charmed creature can't attack the charmer or
     /// target the charmer with harmful abilities or magic effects."
-    /// Enforced — the restriction rides on the `charmed_by` link the
+    /// Enforced — the restriction rides on the `Charmed` back-link the
     /// installing spell / monster attack sets alongside the condition,
     /// and is read through `EncounterInstance::charm_blocks_hostility`
     /// at all three lanes that can reach hostility: declared actions
@@ -42,7 +42,7 @@ pub enum Condition {
     /// RAW's second clause — the charmer's advantage on social ability
     /// checks — has no combat surface here and is not modeled.
     ///
-    /// The `charmed_by` link is cleared when the condition is removed,
+    /// The `Charmed` back-link is cleared when the condition is removed,
     /// so a charm that lapses mid-fight restores hostility on the same
     /// tick rather than leaving a stale immunity behind.
     Charmed,
@@ -325,7 +325,7 @@ pub enum Condition {
     /// against the spell to move further than 30ft from them. We model only
     /// the load-bearing half: the disadvantage on attacks against non-caster
     /// targets (read by `compute_attack_mode`). Tracked as a condition with
-    /// a `dueled_by` link so the engine knows who the duel is anchored on.
+    /// a `Dueled` back-link so the engine knows who the duel is anchored on.
     Dueled,
     /// Searing Smite primed (5e level-1 paladin evocation, bonus action).
     /// The paladin's weapon erupts in fire on the primed hit: +1d6 fire
@@ -442,7 +442,7 @@ pub enum Condition {
     /// Dominated (5e Dominate Person, level-5 enchantment, concentration).
     /// The target's will is overridden by the caster. We model the
     /// load-bearing half: the target is Charmed by the caster (so they
-    /// can't attack them, via the existing `charmed_by` block) AND any
+    /// can't attack them, via the existing `Charmed` back-link) AND any
     /// attack the target makes against anyone other than the caster's
     /// enemies is at disadvantage — we approximate by giving the holder
     /// blanket attack disadvantage (they hesitate, fight the compulsion).
@@ -755,7 +755,7 @@ pub enum Condition {
     /// gains +1 AC, +1 saving throws, and resistance to all damage. Any
     /// damage that lands on the bonded actor is mirrored onto their
     /// bonding partner (the caster) at the post-resistance amount; the
-    /// `warding_partner` link on `ActorInstance` carries the partner id so
+    /// `WardingBonded` back-link on `ActorInstance` carries the partner id so
     /// the reflect site can find the caster. Distinct from `DamageResistant`
     /// so dispel / drop-on-distance can target just this mark. RAW: 1-hour
     /// duration, no concentration; we install with a long Rounds(60) timer
@@ -932,8 +932,8 @@ pub enum Condition {
     /// Goaded (5e Battle Master Goading Attack rider). The target was
     /// goaded into focusing on the fighter who hit them: attack rolls
     /// against anyone *other* than the goading fighter are at disadvantage.
-    /// Engine reads the `goaded_by` link on the holder to identify the
-    /// fighter (mirrors how `Dueled` + `dueled_by` route through
+    /// Engine reads the `Goaded` back-link on the holder to identify the
+    /// fighter (mirrors how `Dueled` + `Dueled` back-link route through
     /// `compute_attack_mode`). Short timer
     /// (`UntilStartOfNextTurn`) — RAW: lasts until the end of the
     /// fighter's next turn.
@@ -1148,8 +1148,8 @@ pub enum Condition {
     /// Distracted (5e Battle Master Distracting Strike rider). The
     /// target's guard has been compromised: attack rolls against them by
     /// any attacker *other* than the fighter who tagged them have
-    /// advantage. Engine reads the `distracted_by` link on the holder to
-    /// identify the fighter (mirrors how `Goaded` + `goaded_by` route
+    /// advantage. Engine reads the `Distracted` back-link on the holder to
+    /// identify the fighter (mirrors how `Goaded` + `Goaded` back-link route
     /// through `compute_attack_mode`, but as a target-side rider rather
     /// than an attacker-side one). Short timer
     /// (`UntilStartOfNextTurn`) — RAW: lasts until the start of the
@@ -1160,10 +1160,10 @@ pub enum Condition {
     /// subclass level 10). The knight's blade has rattled the target's
     /// footing for the spell that follows it: the next saving throw the
     /// target makes against a spell cast *by the knight who hit them* is
-    /// rolled at disadvantage. Engine reads the `eldritch_struck_by`
+    /// rolled at disadvantage. Engine reads the `EldritchStruck` back-link
     /// link on the holder at the shared `CASTER_SAVE_MODE_RIDERS` cohort
     /// in `roll_save_against_caster` — the same flag-plus-link shape as
-    /// `Distracted` + `distracted_by` and `Sworn` + `sworn_by`, but on
+    /// `Distracted` + `Distracted` back-link and `Sworn` + `Sworn` back-link, but on
     /// the save-roll axis rather than the attack-roll one, and
     /// positive-polarity on the link like `Sworn` (a *match* is what
     /// fires the rider; a different caster's spell reads clean).
@@ -1246,8 +1246,8 @@ pub enum Condition {
     /// marked as the paladin's chosen quarry: the swearing paladin (and
     /// only the swearing paladin) gets advantage on attack rolls against
     /// this target for up to 10 rounds (1 minute RAW). Engine reads the
-    /// `sworn_by` link on the holder to identify the paladin (mirrors
-    /// the `Dueled` + `dueled_by` / `Distracted` + `distracted_by` flag-
+    /// `Sworn` back-link on the holder to identify the paladin (mirrors
+    /// the `Dueled` + `Dueled` back-link / `Distracted` + `Distracted` back-link flag-
     /// plus-link shape, but positive-polarity: a *match* on the link
     /// grants advantage rather than a *mismatch* imposing disadvantage).
     /// Distinct from Hunter's Mark in two ways:

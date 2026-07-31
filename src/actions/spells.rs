@@ -1095,7 +1095,7 @@ fn save_or_concentration_condition(
 
 /// Install the canonical "target is Charmed by the caster" pair: an
 /// `ApplyCondition(Charmed, timer)` on the target plus a
-/// `SetCharmedBy` that anchors the engine's "can't attack your charmer"
+/// `SetConditionLink(Condition::Charmed)` that anchors the engine's "can't attack your charmer"
 /// gate in `action_template::validate_input`. Shared by Charm Person,
 /// Charm Monster, and Geas.
 ///
@@ -1108,7 +1108,7 @@ fn save_or_concentration_condition(
 /// Timer varies per spell (Charm Person / Charm Monster: `Rounds(10)`
 /// ≈ 1 hour RAW capped to encounter-scale; Geas: `Rounds(100)` ≈ 10
 /// minutes capped from 30 days). Centralizing the install lane keeps
-/// the `charmed_by` link / `Charmed` flag in lockstep — if a future
+/// the `Charmed` back-link / `Charmed` flag in lockstep — if a future
 /// change adds e.g. a "charm aura" flag, it lands here once instead
 /// of three times.
 fn install_charmed_by(
@@ -4394,7 +4394,7 @@ impl Action for CharmPerson {
             return Vec::new();
         }
         // 1 hour RAW capped to encounter-scale via the shared install
-        // helper — keeps the Charmed flag + `charmed_by` link in
+        // helper — keeps the Charmed flag + `Charmed` back-link in
         // lockstep with Charm Monster / Geas.
         install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10))
     }
@@ -11128,7 +11128,7 @@ pub static GREATER_RESTORATION: LazyLock<GreaterRestoration> =
 /// challenges a target to a duel: the target makes a WIS save vs the
 /// caster's spell DC. Fail = target is `Dueled` (attacks against anyone
 /// other than the caster are at disadvantage — see `compute_attack_mode`).
-/// Pass = no effect. The duel is tracked via `dueled_by` so the engine
+/// Pass = no effect. The duel is tracked via `Dueled` back-link so the engine
 /// knows the anchor. Caster picks the toughest enemy in melee range so
 /// the paladin uses themselves as a tank.
 ///
@@ -11204,7 +11204,7 @@ impl Action for CompelledDuel {
                 timer: ConditionTimer::Rounds(10),
             }),
         ];
-        // Pull the SetDueledBy install from the central
+        // Pull the SetConditionLink(Dueled) install from the central
         // `condition_link_side_effect` dispatch — same source of truth
         // the weapon on-hit rider chain uses, so a single match arm
         // there serves both spell-cast and rider-trigger code paths.
@@ -13063,7 +13063,7 @@ pub static PLANT_GROWTH: LazyLock<PlantGrowth> = LazyLock::new(|| PlantGrowth {}
 /// DC. On fail, target is Charmed by the caster AND Dominated (disadvantage
 /// on all attacks — they hesitate, fight the compulsion) for 10 rounds.
 /// The `Charmed` half blocks the target from attacking the dominator (via
-/// `charmed_by`); the `Dominated` half folds into
+/// `Charmed` back-link); the `Dominated` half folds into
 /// `Condition::imposes_attacker_disadvantage`. Concentration-bound on the
 /// caster — drop concentration to free the target.
 pub struct DominatePerson {}
@@ -13122,7 +13122,7 @@ impl Action for DominatePerson {
         if save.passed() {
             return Vec::new();
         }
-        // Layer Dominated on top of the standard Charmed + `charmed_by`
+        // Layer Dominated on top of the standard Charmed + its back-link
         // install lane via the shared `install_dominated_by` helper.
         install_dominated_by(target_id, caster_id, "Dominate Person")
     }
@@ -13136,7 +13136,7 @@ pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| Dominate
 /// dominate ladder. Targets one **Beast** within 60 ft; the target makes
 /// a WIS save vs the caster's spell DC. On fail, the target is Charmed
 /// AND Dominated for 10 rounds (1 minute RAW). The `Charmed` half blocks
-/// the target from attacking the dominator (via `charmed_by`); the
+/// the target from attacking the dominator (via `Charmed` back-link); the
 /// `Dominated` half folds into `Condition::imposes_attacker_disadvantage`.
 /// Concentration-bound on the caster — drop concentration to free the
 /// target.
@@ -13227,7 +13227,7 @@ impl Action for DominateBeast {
         if save.passed() {
             return Vec::new();
         }
-        // Same Charmed + `charmed_by` + Dominated install lane as
+        // Same Charmed + its back-link + Dominated install lane as
         // Dominate Person / Dominate Monster via the shared helper.
         install_dominated_by(target_id, caster_id, "Dominate Beast")
     }
@@ -19043,7 +19043,7 @@ pub static WALL_OF_ICE: LazyLock<WallOfIce> = LazyLock::new(|| WallOfIce {});
 /// timer (~10 minutes of combat) — long enough to outlast any encounter
 /// but short enough not to bleed across long rests. The bond breaks
 /// when the timer expires or Dispel Magic strips the WardingBonded
-/// condition; the `warding_partner` link on the bonded actor is cleared
+/// condition; the `WardingBonded` back-link on the bonded actor is cleared
 /// automatically alongside the condition via `remove_condition`.
 ///
 /// Targeting is touch-range (1 tile) ally-only — `is_harmful = false`
@@ -19140,25 +19140,23 @@ impl Action for WardingBond {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetWardingPartner;
-
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         encounter.log(
             "  warding bond: caster and ally are linked — damage will be shared.".to_string(),
         );
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::WardingBonded,
-                timer: ConditionTimer::Rounds(60),
-            }),
-            Box::new(SetWardingPartner {
-                target_id,
-                partner: Some(caster_id),
-            }),
-        ]
+        // The bond is a flag-plus-link install like every charm and
+        // mark: `WardingBonded` says the ally is bonded, the link says
+        // to whom. Routed through the shared helper so the pair travels
+        // together — the damage-mirror site reads them back as a pair
+        // too, via `linked_by(WardingBonded)`.
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::WardingBonded,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(60),
+        )
     }
 }
 
@@ -20164,7 +20162,7 @@ pub static REGENERATE: LazyLock<Regenerate> = LazyLock::new(|| Regenerate {});
 /// Charm Monster — level-4 enchantment (bard / druid / sorcerer / warlock /
 /// wizard). Single-target WIS save vs the caster's CHA-based DC; on fail,
 /// the target is Charmed for 10 rounds (1 hour RAW) and gains a
-/// `charmed_by` link to the caster so they can't take hostile actions
+/// `Charmed` back-link to the caster so they can't take hostile actions
 /// against them (gated in `validate_input`). Mechanically identical to
 /// Charm Person but works against any creature type — RAW differs by
 /// pulling the "humanoid only" restriction. Slots cleanly at lv4 between
@@ -20238,7 +20236,7 @@ impl Action for CharmMonster {
             return Vec::new();
         }
         // 1 hour RAW capped to encounter-scale via the shared install
-        // helper — keeps the Charmed flag + `charmed_by` link in
+        // helper — keeps the Charmed flag + `Charmed` back-link in
         // lockstep with Charm Person / Geas.
         install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10))
     }
@@ -22405,7 +22403,7 @@ pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {}
 /// (including constructs, undead, elementals, etc.). Target within 60ft
 /// makes a WIS save vs the caster's spell DC. On fail, target is
 /// Charmed AND Dominated for 10 rounds. The `Charmed` half blocks the
-/// target from attacking the dominator (via `charmed_by`); the
+/// target from attacking the dominator (via `Charmed` back-link); the
 /// `Dominated` half imposes disadvantage on all attacks.
 /// Concentration-bound — dropping concentration frees the target.
 pub struct DominateMonster {}
@@ -22464,7 +22462,7 @@ impl Action for DominateMonster {
         if save.passed() {
             return Vec::new();
         }
-        // Layer Dominated on top of the standard Charmed + `charmed_by`
+        // Layer Dominated on top of the standard Charmed + its back-link
         // install lane via the shared `install_dominated_by` helper.
         install_dominated_by(target_id, caster_id, "Dominate Monster")
     }
@@ -24552,7 +24550,7 @@ impl Action for Geas {
         // encounter span without sitting truly permanent. RAW's 30-day
         // timer would be effectively permanent in any combat session.
         // Shares the install helper with Charm Person / Charm Monster
-        // so the `Charmed` flag + `charmed_by` link stay in lockstep.
+        // so the `Charmed` flag + `Charmed` back-link stay in lockstep.
         install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(100))
     }
 }
@@ -24782,13 +24780,13 @@ pub static WALL_OF_WATER: LazyLock<WallOfWater> = LazyLock::new(|| WallOfWater {
 /// the target is `Charmed` by the caster for the duration (and the
 /// engine's existing Charmed-on-actor gate blocks them from making hostile
 /// actions against the caster). Concentration anchors the cohort so
-/// dropping concentration strips every Charmed flag (and its `charmed_by`
+/// dropping concentration strips every Charmed flag (and its `Charmed` back-link
 /// link) at once via the standard concentration-cleanup path.
 ///
 /// RAW's "use a Bonus Action on subsequent turns to designate a direction"
 /// forced-movement clause is not modeled (the engine has no per-turn
 /// forced-movement lane outside the existing push helper) — the load-
-/// bearing combat clause is the Charmed install with `charmed_by`, which
+/// bearing combat clause is the Charmed install with `Charmed` back-link, which
 /// turns affected enemies into "won't attack the bard" while the spell
 /// holds. Slots between Charm Monster (lv4 single-target Charmed) and
 /// Mass Suggestion (lv6 multi-target enchantment) on the bard's crowd-
@@ -24871,7 +24869,7 @@ impl Action for Compulsion {
             }
             encounter.log("  compulsion: target is compelled.".to_string());
             // Mirror the Charm Person / Geas install lane — Charmed flag
-            // plus charmed_by link, so the "can't attack your charmer"
+            // plus Charmed back-link, so the "can't attack your charmer"
             // gate in `action_template::validate_input` fires correctly.
             effects.extend(install_condition_with_link(
                 Condition::Charmed,

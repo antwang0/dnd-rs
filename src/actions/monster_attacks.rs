@@ -241,10 +241,10 @@ pub fn save_or_condition_rider(
 /// charm-immune log fires before the save roll (matches the canonical
 /// short-circuit shared by Vampire Charming Gaze / Dryad Fey Charm).
 /// On a failed save, pushes both an `ApplyCondition(Charmed)` and a
-/// `SetCharmedBy(caster)` so the engine's "can't act hostile against
+/// `SetConditionLink(Charmed ← caster)` so the engine's "can't act hostile against
 /// your charmer" gate is wired up correctly.
 ///
-/// Centralizes the "immunity-check + save + Charmed install + SetCharmedBy"
+/// Centralizes the "immunity-check + save + Charmed install + SetConditionLink(Charmed)"
 /// loop shared by every single-target charm action — keeps the log
 /// shape uniform ("{rider}: target's mind is shielded" / "target resists"
 /// / "target is enthralled") and the charm-link bookkeeping in one place
@@ -3048,7 +3048,7 @@ pub static HARPY_TALONS: SimpleWeapon = SimpleWeapon::melee(
 /// that can hear the harpy makes a WIS save vs DC 11. On fail, target is
 /// Charmed by the harpy for 3 rounds. Charm-immune creatures (undead /
 /// constructs / etc.) shrug it off automatically — we let the
-/// add_condition guard handle that uniformly. We use SetCharmedBy so the
+/// add_condition guard handle that uniformly. We use SetConditionLink(Charmed) so the
 /// charmed creature can't make hostile actions against the harpy.
 pub struct LuringSong {}
 
@@ -4705,7 +4705,7 @@ pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
 
 /// Vampire Charming Gaze — Action. Target within 30ft makes a WIS save
 /// vs DC 17 (vampire's CHA-based spell DC). Fail = Charmed for 1 minute
-/// (10 rounds in our model), and the SetCharmedBy linkage points the
+/// (10 rounds in our model), and the SetConditionLink(Charmed) linkage points the
 /// target back at the vampire so they can't attack their charmer.
 /// Mirrors the structure of MummyDreadfulGlare but Charmed instead of
 /// Frightened, single-target (the vampire picks a juicy victim) instead
@@ -9122,7 +9122,7 @@ pub static DRYAD_CLUB: SimpleWeapon = SimpleWeapon::melee(
 /// WIS save vs DC 14; on fail the target is Charmed by the dryad until
 /// the dryad takes damage or the spell drops (10-round timer in our
 /// engine; RAW: 24 hours). Mirrors the Vampire Charm shape: rolls
-/// `SetCharmedBy` so the charmed target can't take hostile actions
+/// `SetConditionLink(Condition::Charmed)` so the charmed target can't take hostile actions
 /// against the dryad. Charm-immune creatures (constructs / undead /
 /// fey themselves per RAW) shrug it off via the standard add_condition
 /// gate.
@@ -9332,7 +9332,7 @@ pub static SUCCUBUS_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// the same amount until they finish a long rest (we route the max-HP
 /// drop through `AdjustMaxHp` so the cap drops alongside the damage; the
 /// reduction sticks for the duration of combat). RAW: only affects a
-/// Charmed target; we gate via the `charmed_by` link to the succubus, so
+/// Charmed target; we gate via the `Charmed` back-link to the succubus, so
 /// the kiss fizzles silently when the target isn't already charmed by
 /// the caster. No save — the kiss auto-lands once the target is locked
 /// in (the difficulty is getting them charmed in the first place).
@@ -9372,7 +9372,7 @@ impl Action for SuccubusDrainingKiss {
         let Some(target) = encounter.actors.get(&target_id) else {
             return false;
         };
-        target.has_condition(Condition::Charmed) && target.charmed_by() == Some(caster_id)
+        target.linked_by(Condition::Charmed) == Some(caster_id)
     }
     fn side_effects(
         &self,
@@ -9414,9 +9414,9 @@ pub static SUCCUBUS_DRAINING_KISS: LazyLock<SuccubusDrainingKiss> =
 /// Succubus Charm — single-target Action at 12-tile (30 ft) range, WIS
 /// save vs the succubus's CHA-based DC (caster.spell_save_dc(CHA)). On
 /// fail the target picks up `Charmed` (10 rounds) anchored on the
-/// succubus via `SetCharmedBy`. Mirrors the Dryad / Vampire charm shape
+/// succubus via `SetConditionLink(Condition::Charmed)`. Mirrors the Dryad / Vampire charm shape
 /// — the load-bearing setup half of the succubus kit, gating the
-/// `SUCCUBUS_DRAINING_KISS` follow-up via the `charmed_by` link.
+/// `SUCCUBUS_DRAINING_KISS` follow-up via the `Charmed` back-link.
 pub struct SuccubusCharm {}
 
 impl Action for SuccubusCharm {

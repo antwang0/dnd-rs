@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 /// Harpy — CR 1 monstrosity. Talons for melee, Luring Song for ranged
 /// control: a WIS save in a 30ft radius that Charms hearers for 3
 /// rounds. Charmed enemies can't make hostile actions against the
-/// harpy (via the standard SetCharmedBy link), so the song is a
+/// harpy (via the standard SetConditionLink(Charmed) link), so the song is a
 /// genuine threat even against full-strength parties — pulling one
 /// PC out of the kill-the-harpy plan for a turn is a real swing.
 pub static HARPY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {

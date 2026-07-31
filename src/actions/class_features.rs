@@ -2821,7 +2821,7 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 ///
 /// Ships as a row on the shared `ON_HIT_CONDITION_MARKS` cohort in
 /// `engine::attack`, stamping `Condition::Dueled` with `Rounds(2)` and
-/// the `dueled_by` back-link. That condition already exists — it's what
+/// the `Dueled` back-link. That condition already exists — it's what
 /// the Compelled Duel spell installs, and its "disadvantage on attacks
 /// that don't target the anchor" clause is Unwavering Mark's RAW clause
 /// verbatim. So the Cavalier's headline feature *is* a Compelled Duel
@@ -2901,7 +2901,7 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 ///
 /// Ships as a `TurnBurst` config, and it is the config that generalized
 /// that struct past Frightened. The resolver installs the condition
-/// through `install_condition_with_link`, so Charmed's `charmed_by`
+/// through `install_condition_with_link`, so Charmed's back-link
 /// back-link — the anchor for the "can't attack your charmer" gate —
 /// comes along without the burst code knowing which conditions carry one.
 ///
@@ -3450,7 +3450,7 @@ pub static SACRED_WEAPON: LazyLock<SacredWeapon> = LazyLock::new(|| SacredWeapon
 /// collapse to once per long rest so the gating stays uniform with the
 /// rest of the Channel Divinity envelope — Sacred Weapon / Turn Undead).
 /// The actual advantage rider fires in `compute_attack_mode` via the
-/// `matched_link_mode` helper reading the `Sworn` condition + `sworn_by`
+/// `matched_link_mode` helper reading the `Sworn` condition + `Sworn` back-link
 /// link on the target.
 pub const VOW_OF_ENMITY_TAG: &str = "paladin.vow_of_enmity";
 
@@ -3462,11 +3462,11 @@ pub const VOW_OF_ENMITY_TAG: &str = "paladin.vow_of_enmity";
 ///
 /// Engine wiring:
 ///   - Installs `Condition::Sworn` on the target with a 10-round timer.
-///   - Sets the target's `sworn_by` link to the paladin's id via
-///     `SetSwornBy` (mirrors Compelled Duel's Dueled + dueled_by /
-///     Goading Attack's Goaded + goaded_by chain — same flag-plus-link
+///   - Sets the target's `Sworn` back-link to the paladin's id via
+///     `SetConditionLink(Condition::Sworn)` (mirrors Compelled Duel's Dueled + its back-link /
+///     Goading Attack's Goaded + its back-link chain — same flag-plus-link
 ///     install shape, distinct field).
-///   - `compute_attack_mode` reads the (Sworn, sworn_by == attacker)
+///   - `compute_attack_mode` reads the (Sworn, Sworn back-link == attacker)
 ///     pair via `matched_link_mode` and combines advantage when the
 ///     paladin attacks the sworn target.
 ///
@@ -3547,10 +3547,10 @@ impl Action for VowOfEnmity {
         // nothing. Distinct from the shared `hostile_target_feature_ready`
         // helper's `skip_if_condition` gate — that one checks a single
         // condition without a caster-back-reference, while this one
-        // needs to verify `sworn_by()` points at the same caster (a
+        // needs to verify `linked_by(Condition::Sworn)` points at the same caster (a
         // different sworn-by-someone-else target should still allow
         // the vow to install, taking over the "sworn by" back-link).
-        !(target.has_condition(Condition::Sworn) && target.sworn_by() == Some(caster_id))
+        target.linked_by(Condition::Sworn) != Some(caster_id)
     }
     fn side_effects(
         &self,
@@ -3577,7 +3577,7 @@ impl Action for VowOfEnmity {
                 timer: ConditionTimer::Rounds(10),
             }),
         ];
-        // Pull the SetSwornBy install from the central
+        // Pull the SetConditionLink(Sworn) install from the central
         // `condition_link_side_effect` dispatch — same source of truth
         // the weapon on-hit rider chain and Compelled Duel use, so a
         // single match arm there serves every flag-plus-link install.
@@ -4377,7 +4377,7 @@ pub static STEP_OF_THE_WIND: LazyLock<StepOfTheWind> = LazyLock::new(|| StepOfTh
 /// Sits adjacent to Patient Defense (the other in-combat survival action
 /// on the monk's sheet). The "auto-clear both" simplification matches our
 /// Charmed/Frightened coverage — both are handled at the same chokepoints
-/// (compute_attack_mode for the disadvantage on attacks, charmed_by for
+/// (compute_attack_mode for the disadvantage on attacks, Charmed back-link for
 /// the can't-target-charmer gate), so stripping both at once stays
 /// consistent with how the conditions are read.
 pub struct StillnessOfMind {}
@@ -4593,7 +4593,7 @@ pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
 ///   for the three Turn / dread variants; Charmed for the Nature
 ///   Domain's Charm Animals and Plants. Routed through
 ///   `install_condition_with_link`, so a condition carrying a back-link
-///   (Charmed's `charmed_by`) gets it without this resolver knowing which
+///   (Charmed's back-link) gets it without this resolver knowing which
 ///   conditions do.
 /// - `label` — log prefix ("turn undead" / "turn the faithless").
 fn resolve_turn_burst(
@@ -4697,7 +4697,7 @@ fn resolve_turn_burst(
             continue;
         }
         // `install_condition_with_link` covers the back-link half for
-        // conditions that carry one — Charmed's `charmed_by` anchors the
+        // conditions that carry one — Charmed's back-link anchors the
         // "can't attack your charmer" gate, and Frightened has no link,
         // so the same call serves every variant.
         effects.extend(crate::engine::side_effects::install_condition_with_link(
@@ -5866,7 +5866,7 @@ pub static WAR_MAGIC_STRIKE: LazyLock<WarMagicStrike> = LazyLock::new(|| WarMagi
 ///
 /// Passive, no charge, no rest cadence — the tag is read at the
 /// weapon-hit chokepoint in `resolve_attack_outcome`, which stamps
-/// `Condition::EldritchStruck` plus the `eldritch_struck_by` back-link
+/// `Condition::EldritchStruck` plus the `EldritchStruck` back-link
 /// onto the target. The rider is cashed by the shared
 /// `CASTER_SAVE_MODE_RIDERS` cohort in `roll_save_against_caster`.
 ///
@@ -11035,7 +11035,7 @@ pub const SPLIT_ENCHANTMENT_TAG: &str = "wizard.split_enchantment";
 /// creature that also cannot attack the enchanter is out of the fight
 /// for a round without a slot being spent.
 ///
-/// Installs both `Charmed` (with the `charmed_by` link, so the
+/// Installs both `Charmed` (with the `Charmed` back-link, so the
 /// engine-wide "can't attack the charmer" restriction binds) and
 /// `Incapacitated`. The pairing is the point: `Charmed` alone is a
 /// targeting restriction, `Incapacitated` alone leaves the target free
@@ -11353,7 +11353,7 @@ pub static OVERCHANNEL: LazyLock<Overchannel> = LazyLock::new(|| Overchannel {})
 /// `Incapacitated` alone would leave the target free to walk over and
 /// beat on the enchanter's allies next round, and `Charmed` alone is
 /// only a targeting restriction. Installed together — with the
-/// `charmed_by` link, so the engine-wide "can't attack the charmer"
+/// `Charmed` back-link, so the engine-wide "can't attack the charmer"
 /// gate binds across declared actions, opportunity attacks and Riposte
 /// alike — the target is out of the fight generally and out of the
 /// enchanter's fight specifically.

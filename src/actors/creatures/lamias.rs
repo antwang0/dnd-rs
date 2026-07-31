@@ -23,7 +23,7 @@ use std::sync::LazyLock;
 /// - **lamia claws** (standalone) — STR-based 2d10+STR slashing
 ///   melee, reach 1.
 /// - **intoxicating touch** (standalone) — WIS DC 13 save or Charmed
-///   (10 rounds) + SetCharmedBy(lamia) so the cursed PC can't take
+///   (10 rounds) + SetConditionLink(Charmed ← lamia) so the cursed PC can't take
 ///   hostile actions against their cursed mistress.
 ///
 /// Defensive identity: AC 13 (natural armor — the lion-half's hide),

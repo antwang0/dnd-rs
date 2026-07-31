@@ -135,7 +135,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Compulsion — lv4 enchantment (bard-only RAW), concentration. Self-
     // centered 12-tile burst; each enemy in range makes a WIS save vs the
     // bard's CHA-based DC or is Charmed by the bard for the duration
-    // (their `charmed_by` link points at the bard, blocking the engine's
+    // (their `Charmed` back-link points at the bard, blocking the engine's
     // existing hostile-action gate). The bard's flagship lv4 crowd-control
     // option — slots between Charm Person (lv1) / Hypnotic Pattern (lv3,
     // here on wizard / warlock only) / Charm Monster (lv4, single-target)

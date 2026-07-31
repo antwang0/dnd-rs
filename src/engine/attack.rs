@@ -2630,7 +2630,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // fighter's STR-based maneuver DC; on fail, they're Goaded —
         // attack rolls against anyone *other* than the goading fighter
         // are at disadvantage. The follow-up handler also wires the
-        // `goaded_by` link via the auto-chained SetGoadedBy emission in
+        // `Goaded` back-link via the auto-chained SetConditionLink(Goaded) emission in
         // `push_follow_up_effect`. Mirrors Compelled Duel's mechanical
         // envelope, but is per-rest rather than concentration-bound.
         OnHitRider {
@@ -2685,7 +2685,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // the target. The Distracted condition itself carries the
         // load-bearing rider — `compute_attack_mode` grants advantage
         // to any attacker *other* than the fighter, gated via the
-        // `distracted_by` link set in the chained `SetDistractedBy`
+        // `Distracted` back-link set in the chained `SetConditionLink(Condition::Distracted)`
         // emission inside `push_follow_up_effect`. RAW duration is
         // "until the start of your next turn" — modeled with the
         // `UntilStartOfNextTurn` target-side tick-down envelope shared
@@ -2712,7 +2712,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
 ];
 
 /// Build the `SetXBy` side-effect that records the attacker for a
-/// linked condition (`Goaded`/`goaded_by`, `Distracted`/`distracted_by`
+/// linked condition (`Goaded`/`Goaded` back-link, `Distracted`/`Distracted` back-link
 /// etc.). Thin wrapper over `condition_link_side_effect` —
 /// the central dispatch lives in side_effects.rs and serves both the
 /// weapon on-hit rider chain (here) AND the direct-cast actions
@@ -2799,13 +2799,13 @@ fn push_follow_up_effect(
                 timer,
             }));
             // Some conditions carry a back-reference to the attacker
-            // (`goaded_by`, `distracted_by`) — chain the matching
+            // (`Goaded` back-link, `Distracted` back-link) — chain the matching
             // `SetXBy` side-effect alongside the apply so the link is
             // never stale relative to the condition flag. Single match
             // chokepoint so a new linked condition lands in one place
             // rather than growing another if-let here. Mirrors how
             // Compelled Duel's spell-site pairing emits ApplyCondition
-            // (Dueled) + SetDueledBy together — same shape, lifted
+            // (Dueled) + SetConditionLink(Dueled) together — same shape, lifted
             // behind the rider helper so the on-hit path doesn't
             // re-state the chain at every smite-follow-up site.
             if let Some(link) =

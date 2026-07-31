@@ -533,7 +533,7 @@ pub struct CasterSaveModeRider {
 ///   - **Eldritch Strike** (Eldritch Knight Fighter lv10): the caster
 ///     landed a weapon hit on this target, so the target's next save
 ///     against a spell *this* caster casts is at disadvantage. The
-///     back-link (`eldritch_struck_by`) is what makes the mark
+///     back-link is what makes the mark
 ///     caster-specific — a second spellcaster on the team gets no
 ///     benefit from the fighter's swing.
 ///   - **Magical Ambush** (Arcane Trickster Rogue lv9): the caster is
@@ -560,8 +560,7 @@ pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
     CasterSaveModeRider {
         applies: |e, caster_id, target_id| {
             e.actors.get(&target_id).is_some_and(|t| {
-                t.has_condition(Condition::EldritchStruck)
-                    && t.eldritch_struck_by() == Some(caster_id)
+                t.linked_by(Condition::EldritchStruck) == Some(caster_id)
             })
         },
         consume: |e, _caster_id, target_id| {
@@ -1321,26 +1320,31 @@ impl CastContext {
 /// AND the actor id its `link` field points at is set to someone OTHER
 /// than `counterparty`. Centralizes the "flag-plus-link locked onto the
 /// wrong opponent" pattern in `compute_attack_mode`:
-/// * Dueled + `dueled_by` ≠ target → attacker disadvantage,
-/// * Goaded + `goaded_by` ≠ target → attacker disadvantage,
-/// * Distracted + `distracted_by` ≠ attacker → target-side advantage to
+/// * Dueled + its back-link ≠ target → attacker disadvantage,
+/// * Goaded + its back-link ≠ target → attacker disadvantage,
+/// * Distracted + its back-link ≠ attacker → target-side advantage to
 ///   the *other* attackers (the tagger themselves gets no benefit).
 ///
 /// Returns the (possibly combined) mode so the call sites stay terse:
-/// `mode = focus_link_mode(mode, holder, counterparty, cond, link, m);`.
+/// `mode = focus_link_mode(mode, holder, counterparty, cond, m);`.
 /// Adding a future "flag plus link" rider (Sentinel pinning, a vow
 /// against a specific foe, etc.) becomes a one-liner instead of a
 /// re-inlined `has_condition + link.is_some_and(!=)` block.
+///
+/// The condition alone identifies the link — `linked_by` looks it up in
+/// the keyed table and already returns `None` unless the flag is held —
+/// so there is no accessor to pass in and no way for a call site to pair
+/// a condition with the wrong one.
 fn focus_link_mode(
     current: RollMode,
     holder: &ActorInstance,
     counterparty: usize,
     condition: Condition,
-    link: fn(&ActorInstance) -> Option<usize>,
     mode_on_mismatch: RollMode,
 ) -> RollMode {
-    if holder.has_condition(condition)
-        && link(holder).is_some_and(|linked| linked != counterparty)
+    if holder
+        .linked_by(condition)
+        .is_some_and(|linked| linked != counterparty)
     {
         current.combine(mode_on_mismatch)
     } else {
@@ -1352,13 +1356,13 @@ fn focus_link_mode(
 /// to `current` when `holder` carries `condition` AND the actor id its
 /// `link` field points at IS `counterparty`. Centralizes the "flag-plus-
 /// link locked onto THIS opponent" pattern in `compute_attack_mode`:
-/// * Sworn + `sworn_by` == attacker → target-side advantage for the
+/// * Sworn + its back-link == attacker → target-side advantage for the
 ///   swearing paladin only (Vengeance Paladin Vow of Enmity, lv3
 ///   subclass: the paladin who swore the vow gets advantage on attack
 ///   rolls against the sworn quarry; non-sworn allies get no benefit).
 ///
 /// Returns the (possibly combined) mode so the call sites stay terse:
-/// `mode = matched_link_mode(mode, holder, counterparty, cond, link, m);`.
+/// `mode = matched_link_mode(mode, holder, counterparty, cond, m);`.
 /// Adding a future "buff against this specific foe" rider (Favored Foe
 /// damage rider, Mark of Vendetta, etc.) becomes a one-liner instead of a
 /// re-inlined `has_condition + link == Some(counterparty)` block.
@@ -1367,12 +1371,9 @@ fn matched_link_mode(
     holder: &ActorInstance,
     counterparty: usize,
     condition: Condition,
-    link: fn(&ActorInstance) -> Option<usize>,
     mode_on_match: RollMode,
 ) -> RollMode {
-    if holder.has_condition(condition)
-        && link(holder) == Some(counterparty)
-    {
+    if holder.linked_by(condition) == Some(counterparty) {
         current.combine(mode_on_match)
     } else {
         current
@@ -2272,8 +2273,8 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Advantage);
             }
-            // 5e Compelled Duel (Dueled + dueled_by) and Battle Master
-            // Goading Attack (Goaded + goaded_by) share the "locked onto
+            // 5e Compelled Duel (Dueled + its back-link) and Battle Master
+            // Goading Attack (Goaded + its back-link) share the "locked onto
             // someone other than this target" pattern: a flag-plus-link
             // that fires disadvantage only when the wrong counterparty
             // is being hit. Centralized so both clauses (and any future
@@ -2285,7 +2286,6 @@ impl EncounterInstance {
                 attacker,
                 target_id,
                 Condition::Dueled,
-                ActorInstance::dueled_by,
                 RollMode::Disadvantage,
             );
             mode = focus_link_mode(
@@ -2293,7 +2293,6 @@ impl EncounterInstance {
                 attacker,
                 target_id,
                 Condition::Goaded,
-                ActorInstance::goaded_by,
                 RollMode::Disadvantage,
             );
         }
@@ -2375,7 +2374,6 @@ impl EncounterInstance {
                 target,
                 attacker_id,
                 Condition::Distracted,
-                ActorInstance::distracted_by,
                 RollMode::Advantage,
             );
             // 5e Vengeance Paladin Vow of Enmity (lv3 subclass Channel
@@ -2393,7 +2391,6 @@ impl EncounterInstance {
                 target,
                 attacker_id,
                 Condition::Sworn,
-                ActorInstance::sworn_by,
                 RollMode::Advantage,
             );
             // 5e Rogue **Elusive** (level 18 capstone): no attack roll
@@ -3813,7 +3810,7 @@ impl EncounterInstance {
                 // `Action::validate`, so the restriction has to be
                 // re-checked here or it would only bind the charmed
                 // creature on its own turn.
-                if a.has_condition(Condition::Charmed) && a.charmed_by() == Some(mover_id) {
+                if a.linked_by(Condition::Charmed) == Some(mover_id) {
                     return None;
                 }
                 // Shared "find the first melee weapon action" predicate —
@@ -4324,9 +4321,9 @@ impl EncounterInstance {
     /// `target_id`.
     ///
     /// Both halves are required — the `Charmed` condition *and* the
-    /// `charmed_by` link — so an actor who is charm-immune (and thus
+    /// `Charmed` back-link — so an actor who is charm-immune (and thus
     /// never received the condition) is unaffected even if a
-    /// `SetCharmedBy` ran in isolation, and a charm from a source the
+    /// `SetConditionLink(Condition::Charmed)` ran in isolation, and a charm from a source the
     /// engine didn't link doesn't silently forbid every attack.
     ///
     /// Centralized because the restriction has to hold on three lanes
@@ -4346,7 +4343,7 @@ impl EncounterInstance {
     ///     creature defend itself against its charmer perfectly well.
     pub fn charm_blocks_hostility(&self, actor_id: usize, target_id: usize) -> bool {
         self.actors.get(&actor_id).is_some_and(|a| {
-            a.has_condition(Condition::Charmed) && a.charmed_by() == Some(target_id)
+            a.linked_by(Condition::Charmed) == Some(target_id)
         })
     }
 
@@ -5100,7 +5097,7 @@ impl EncounterInstance {
             //     2d10+STR claws + a save-or-Charmed intoxicating touch
             //     curse compound multi. The single-target charm-lockout
             //     answer to the Sea Hag's psychic-damage glare at the
-            //     mid-CR tier, with the same `SetCharmedBy` charmer-link
+            //     mid-CR tier, with the same `SetConditionLink(Condition::Charmed)` charmer-link
             //     so the cursed PC can't take hostile actions back at the
             //     lamia.
             //   - Werebear (CR 5 large humanoid lycanthrope): apex of the
@@ -22197,7 +22194,7 @@ mod tests {
     fn charmed_target_cannot_attack_charmer() {
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::SetConditionLink;
         let mut e = ei_with_terrain(15, 15, &[]);
         let charmer = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -22205,9 +22202,10 @@ mod tests {
         let charmed = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 2), 1, 0)
             .unwrap();
-        SetCharmedBy {
+        SetConditionLink {
             target_id: charmed,
-            charmer: Some(charmer),
+            condition: Condition::Charmed,
+            source: Some(charmer),
         }
         .apply(&mut e);
         e.actors
@@ -22225,7 +22223,7 @@ mod tests {
     fn charmed_target_can_still_attack_others() {
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::SetConditionLink;
         let mut e = ei_with_terrain(15, 15, &[]);
         let charmer = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -22236,9 +22234,10 @@ mod tests {
         let bystander = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 2, 0)
             .unwrap();
-        SetCharmedBy {
+        SetConditionLink {
             target_id: charmed,
-            charmer: Some(charmer),
+            condition: Condition::Charmed,
+            source: Some(charmer),
         }
         .apply(&mut e);
         e.actors
@@ -22252,34 +22251,90 @@ mod tests {
         );
     }
 
+    /// Every linked condition installs its back-link, reads it back, and
+    /// tears it down when the flag lifts — swept across the whole
+    /// `LINKED_CONDITIONS` list rather than pinned one condition at a
+    /// time.
+    ///
+    /// The sweep is the point. These three properties used to be
+    /// per-condition: a field, an accessor pair, and an arm in
+    /// `remove_condition`'s teardown match, repeated seven times, with
+    /// nothing checking that the eighth would remember all three. Now
+    /// the list *is* the mechanism, so a new linked condition is covered
+    /// by this test the moment it joins the list — and a condition that
+    /// joins the list without the engine honoring it fails here.
     #[test]
-    fn removing_charmed_clears_charmed_by() {
-        // The auxiliary `charmed_by` link must clear together with the
-        // condition flag so a re-charm doesn't leave stale state.
+    fn every_linked_condition_installs_reads_and_tears_down_its_link() {
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::{LINKED_CONDITIONS, install_condition_with_link};
+        for &condition in LINKED_CONDITIONS {
+            let mut e = ei_with_terrain(10, 10, &[]);
+            let source = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+                .unwrap();
+            let holder = e
+                .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+                .unwrap();
+            // Install through the shared helper — the same path every
+            // charm, mark and bond in the engine takes.
+            for eff in install_condition_with_link(
+                condition,
+                holder,
+                source,
+                crate::conditions::ConditionTimer::Permanent,
+            ) {
+                eff.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&holder].linked_by(condition),
+                Some(source),
+                "{:?}: install should leave a link pointing at the source",
+                condition
+            );
+            e.actors.get_mut(&holder).unwrap().remove_condition(condition);
+            assert_eq!(
+                e.actors[&holder].linked_by(condition),
+                None,
+                "{:?}: the link must not outlive the condition",
+                condition
+            );
+        }
+    }
+
+    /// A link with no condition behind it reads as absent.
+    ///
+    /// `linked_by` folds the `has_condition` check in, which is what
+    /// lets consumers write `linked_by(Sworn) == Some(paladin)` as the
+    /// whole question instead of the two-part idiom they used to spell
+    /// out — and what stops a link written directly (rather than through
+    /// `install_condition_with_link`) from reading as live.
+    #[test]
+    fn a_link_without_its_condition_reads_as_absent() {
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
         let charmer = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(1, 1), 0, 0)
             .unwrap();
-        let charmed = e
+        let victim = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 1, 0)
             .unwrap();
-        SetCharmedBy {
-            target_id: charmed,
-            charmer: Some(charmer),
-        }
-        .apply(&mut e);
         e.actors
-            .get_mut(&charmed)
+            .get_mut(&victim)
+            .unwrap()
+            .set_condition_link(Condition::Charmed, Some(charmer));
+        assert_eq!(
+            e.actors[&victim].linked_by(Condition::Charmed),
+            None,
+            "a link with no Charmed flag behind it should not read as a live charm"
+        );
+        // …and the moment the flag lands, the same stored link reads.
+        e.actors
+            .get_mut(&victim)
             .unwrap()
             .add_condition(Condition::Charmed, crate::conditions::ConditionTimer::Permanent);
-        assert_eq!(e.actors[&charmed].charmed_by(), Some(charmer));
-        e.actors.get_mut(&charmed).unwrap().remove_condition(Condition::Charmed);
         assert_eq!(
-            e.actors[&charmed].charmed_by(),
-            None,
-            "charmed_by should clear with the Charmed condition"
+            e.actors[&victim].linked_by(Condition::Charmed),
+            Some(charmer)
         );
     }
 
@@ -23501,7 +23556,7 @@ mod tests {
     #[test]
     fn harpy_luring_song_charms_in_radius() {
         // Harpy sings; nearby enemies make WIS saves; failing enemies
-        // get Charmed + linked back to the harpy via SetCharmedBy.
+        // get Charmed + linked back to the harpy via SetConditionLink(Charmed).
         use crate::actions::monster_attacks::LURING_SONG;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::harpies::HARPY_TEMPLATE;
@@ -23534,7 +23589,7 @@ mod tests {
     fn lamia_intoxicating_touch_charms_with_charmer_link() {
         // The lamia's intoxicating touch resolves through the shared
         // `save_or_charmed_by_caster` helper — on a failed WIS save it
-        // should both install Charmed AND set the `charmed_by` link so
+        // should both install Charmed AND set the `Charmed` back-link so
         // the cursed PC can't take hostile actions back against the
         // lamia (gated by `Action::validate_input`).
         use crate::actions::monster_attacks::LAMIA_INTOXICATING_TOUCH;
@@ -23550,7 +23605,7 @@ mod tests {
             .unwrap();
         // Loop until a save fails — DC 13 vs fighter WIS will sometimes
         // pass, sometimes fail. We assert both the Charmed install AND
-        // the SetCharmedBy link (the load-bearing contract of the
+        // the SetConditionLink(Charmed) link (the load-bearing contract of the
         // shared `save_or_charmed_by_caster` helper).
         let mut linked = false;
         for _ in 0..50 {
@@ -23564,8 +23619,7 @@ mod tests {
             for eff in effects {
                 eff.apply(&mut e);
             }
-            if e.actors[&fighter].has_condition(Condition::Charmed)
-                && e.actors[&fighter].charmed_by() == Some(lamia)
+            if e.actors[&fighter].linked_by(Condition::Charmed) == Some(lamia)
             {
                 linked = true;
                 break;
@@ -23578,7 +23632,7 @@ mod tests {
         }
         assert!(
             linked,
-            "intoxicating touch should land Charmed + SetCharmedBy link in some trial"
+            "intoxicating touch should land Charmed + SetConditionLink(Charmed) link in some trial"
         );
     }
 
@@ -25714,7 +25768,7 @@ mod tests {
     }
 
     /// Suggestion: on a failed save the target is Charmed and cannot
-    /// attack its charmer (validated via charmed_by linkage).
+    /// attack its charmer (validated via Charmed back-link).
     #[test]
     fn suggestion_charms_target_on_fail() {
         use crate::actions::spells::SUGGESTION;
@@ -25774,7 +25828,7 @@ mod tests {
                     ef.apply(&mut e);
                 }
                 if e.actors[&goblin].has_condition(Condition::Charmed) {
-                    assert_eq!(e.actors[&goblin].charmed_by(), Some(caster));
+                    assert_eq!(e.actors[&goblin].linked_by(Condition::Charmed), Some(caster));
                     return;
                 }
             } else {
@@ -30544,7 +30598,7 @@ mod tests {
     }
 
     /// Compelled Duel: target fails a WIS save → Dueled, and the
-    /// `dueled_by` link points to the paladin so future attack-mode
+    /// `Dueled` back-link points to the paladin so future attack-mode
     /// computations can apply the off-target disadvantage.
     #[test]
     fn compelled_duel_locks_target_to_paladin() {
@@ -30571,9 +30625,9 @@ mod tests {
             }
             if e.actors[&g].has_condition(Condition::Dueled) {
                 assert_eq!(
-                    e.actors[&g].dueled_by(),
+                    e.actors[&g].linked_by(Condition::Dueled),
                     Some(pal),
-                    "dueled_by must link to the casting paladin"
+                    "Dueled back-link must link to the casting paladin"
                 );
                 hooked = true;
                 break;
@@ -30605,7 +30659,7 @@ mod tests {
             .get_mut(&g)
             .unwrap()
             .add_condition(Condition::Dueled, ConditionTimer::Rounds(5));
-        e.actors.get_mut(&g).unwrap().set_dueled_by(Some(pal));
+        e.actors.get_mut(&g).unwrap().set_condition_link(Condition::Dueled, Some(pal));
         let mode_vs_duelist = e.compute_attack_mode(g, pal, true);
         let mode_vs_other = e.compute_attack_mode(g, other, true);
         assert_eq!(mode_vs_duelist, RollMode::Normal);
@@ -30838,7 +30892,7 @@ mod tests {
     }
 
     /// Vampire charm gaze: failed WIS save Charms the target with the
-    /// `charmed_by` link pointing back at the vampire.
+    /// `Charmed` back-link pointing back at the vampire.
     #[test]
     fn vampire_charm_gaze_links_target() {
         use crate::actions::monster_attacks::VAMPIRE_CHARMING_GAZE;
@@ -30863,7 +30917,7 @@ mod tests {
                 ef.apply(&mut e);
             }
             if e.actors[&g].has_condition(Condition::Charmed) {
-                assert_eq!(e.actors[&g].charmed_by(), Some(v));
+                assert_eq!(e.actors[&g].linked_by(Condition::Charmed), Some(v));
                 charmed_any = true;
                 break;
             }
@@ -32633,7 +32687,7 @@ mod tests {
     }
 
     /// Dominate Person: on failed WIS save, applies Charmed + Dominated
-    /// and links charmed_by → caster.
+    /// and links Charmed back-link → caster.
     #[test]
     fn dominate_person_charms_and_dominates() {
         use crate::actions::spells::DOMINATE_PERSON;
@@ -32659,7 +32713,7 @@ mod tests {
             if e.actors[&g].has_condition(Condition::Dominated) {
                 dominated = true;
                 assert!(e.actors[&g].has_condition(Condition::Charmed));
-                assert_eq!(e.actors[&g].charmed_by(), Some(wiz));
+                assert_eq!(e.actors[&g].linked_by(Condition::Charmed), Some(wiz));
                 assert!(e.actors[&wiz].is_concentrating());
                 // Dominated joins the imposes_attacker_disadvantage cohort.
                 let mode = e.compute_attack_mode(g, wiz, true);
@@ -32718,7 +32772,7 @@ mod tests {
     }
 
     /// Dominate Beast: on a successful install (failed WIS save), applies
-    /// Charmed + Dominated and links charmed_by → caster, identically to
+    /// Charmed + Dominated and links Charmed back-link → caster, identically to
     /// Dominate Person. The lv4 slot cost is the only mechanical difference.
     #[test]
     fn dominate_beast_charms_and_dominates_a_beast() {
@@ -32745,7 +32799,7 @@ mod tests {
             if e.actors[&bear].has_condition(Condition::Dominated) {
                 dominated = true;
                 assert!(e.actors[&bear].has_condition(Condition::Charmed));
-                assert_eq!(e.actors[&bear].charmed_by(), Some(wiz));
+                assert_eq!(e.actors[&bear].linked_by(Condition::Charmed), Some(wiz));
                 assert!(e.actors[&wiz].is_concentrating());
                 let mode = e.compute_attack_mode(bear, wiz, true);
                 assert!(matches!(mode, RollMode::Disadvantage));
@@ -36389,7 +36443,7 @@ mod tests {
         assert!(!e.actors[&f].feature_available(GOADING_ATTACK_TAG));
     }
 
-    /// Goaded condition + goaded_by link force disadvantage on attacks
+    /// Goaded condition + Goaded back-link force disadvantage on attacks
     /// against anyone other than the goader. Verifies the
     /// `compute_attack_mode` clause and the link auto-clear when the
     /// condition is removed.
@@ -36412,7 +36466,7 @@ mod tests {
         {
             let g = e.actors.get_mut(&goblin).unwrap();
             g.add_condition(Condition::Goaded, ConditionTimer::UntilStartOfNextTurn);
-            g.set_goaded_by(Some(fighter));
+            g.set_condition_link(Condition::Goaded, Some(fighter));
         }
         // Attacking the goader (fighter): no disadvantage from the goad.
         let mode_vs_goader = e.compute_attack_mode(goblin, fighter, true);
@@ -36433,7 +36487,7 @@ mod tests {
             .get_mut(&goblin)
             .unwrap()
             .remove_condition(Condition::Goaded);
-        assert!(e.actors[&goblin].goaded_by().is_none());
+        assert!(e.actors[&goblin].linked_by(Condition::Goaded).is_none());
     }
 
     /// Distracting Strike primes DistractingAttacking on the fighter and
@@ -36457,10 +36511,10 @@ mod tests {
     }
 
     /// Distracting Strike primed + a melee swing that lands tags the
-    /// target Distracted and wires the `distracted_by` link onto the
+    /// target Distracted and wires the `Distracted` back-link onto the
     /// fighter. Exercises the full prime → hit → rider chain (rider
     /// table consume_on_trigger + push_follow_up_effect's chained
-    /// SetDistractedBy emission), not just the prime install. Probes
+    /// SetConditionLink(Distracted) emission), not just the prime install. Probes
     /// across RNG seeds because the swing has to actually hit at least
     /// once for the rider to fire.
     #[test]
@@ -36494,14 +36548,14 @@ mod tests {
                 ef.apply(&mut e);
             }
             // If the goblin survived the swing AND was tagged, the rider
-            // fired correctly. Check distracted_by link too.
+            // fired correctly. Check Distracted back-link too.
             if let Some(goblin) = e.actors.get(&g)
                 && goblin.has_condition(Condition::Distracted)
             {
                 assert_eq!(
-                    goblin.distracted_by(),
+                    goblin.linked_by(Condition::Distracted),
                     Some(f),
-                    "distracted_by link should point at the fighter"
+                    "Distracted back-link should point at the fighter"
                 );
                 // Prime should be consumed on the hit.
                 assert!(!e.actors[&f].has_condition(Condition::DistractingAttacking));
@@ -36515,7 +36569,7 @@ mod tests {
         );
     }
 
-    /// Distracted condition + distracted_by link grant advantage to
+    /// Distracted condition + Distracted back-link grant advantage to
     /// attackers *other* than the fighter who tagged the target.
     /// Symmetric inverse of the goaded test: same plumbing, flipped
     /// polarity (target-side advantage vs attacker-side disadvantage).
@@ -36538,7 +36592,7 @@ mod tests {
         {
             let g = e.actors.get_mut(&goblin).unwrap();
             g.add_condition(Condition::Distracted, ConditionTimer::UntilStartOfNextTurn);
-            g.set_distracted_by(Some(fighter));
+            g.set_condition_link(Condition::Distracted, Some(fighter));
         }
         // Fighter (the distractor) attacking the goblin: no advantage
         // from their own setup — RAW: "an attacker other than you."
@@ -36561,7 +36615,7 @@ mod tests {
             .get_mut(&goblin)
             .unwrap()
             .remove_condition(Condition::Distracted);
-        assert!(e.actors[&goblin].distracted_by().is_none());
+        assert!(e.actors[&goblin].linked_by(Condition::Distracted).is_none());
     }
 
     /// Bullette template: high-HP CR-5 monstrosity with bite + multi +
@@ -38907,7 +38961,7 @@ mod tests {
     /// Warding Bond — lv2 cleric/paladin abjuration. Verifies:
     /// - Slot cost is `Action + SpellSlot(2)`.
     /// - Bonded ally picks up the `WardingBonded` condition and the
-    ///   `warding_partner` link to the caster.
+    ///   `WardingBonded` back-link to the caster.
     /// - Bonded ally gains +1 AC and +1 saving throws (via the
     ///   `condition_ac_bonus` / `condition_save_bonus` cohorts).
     /// - Damage taken by the bonded ally is halved (resistance) AND
@@ -38947,9 +39001,9 @@ mod tests {
             "fighter should be marked WardingBonded after cast"
         );
         assert_eq!(
-            e.actors[&fighter].warding_partner(),
+            e.actors[&fighter].linked_by(Condition::WardingBonded),
             Some(cleric),
-            "fighter's warding_partner should point at the caster"
+            "fighter's WardingBonded back-link should point at the caster"
         );
         let ac_after = e.actors[&fighter].armor_class() as i32;
         let save_after = e.actors[&fighter].condition_save_bonus();
@@ -38987,8 +39041,8 @@ mod tests {
             .unwrap()
             .remove_condition(Condition::WardingBonded);
         assert!(
-            e.actors[&fighter].warding_partner().is_none(),
-            "removing WardingBonded should clear the warding_partner link"
+            e.actors[&fighter].linked_by(Condition::WardingBonded).is_none(),
+            "removing WardingBonded should clear the WardingBonded back-link"
         );
     }
 
@@ -39732,7 +39786,7 @@ mod tests {
 
     /// Charm Monster: lv4 enchantment, WIS save vs charm install. Verifies
     /// the lv4 slot cost shape and that the spell uses the standard
-    /// charm pipeline (Charmed condition + charmed_by link). We don't
+    /// charm pipeline (Charmed condition + Charmed back-link). We don't
     /// assert the save outcome — it's seed-dependent — but we do
     /// verify slot consumption and the action's flag shape.
     #[test]
@@ -46800,7 +46854,7 @@ mod tests {
 
     /// Geas: WIS-save Charmed-on-fail, no concentration (capped at
     /// Rounds(100) instead). Verifies (a) the failed-save target picks
-    /// up Charmed, (b) the `charmed_by` link points at the caster (so
+    /// up Charmed, (b) the `Charmed` back-link points at the caster (so
     /// the engine's "can't attack your charmer" gate fires), AND
     /// (c) the caster does *not* take concentration (Geas is concentration-
     /// free RAW — distinguishing it from Dominate Person / Flesh to
@@ -46822,8 +46876,7 @@ mod tests {
             for ef in GEAS.side_effects(&mut e, wiz, Some(&vec![gob]), None, None) {
                 ef.apply(&mut e);
             }
-            if e.actors[&gob].has_condition(Condition::Charmed)
-                && e.actors[&gob].charmed_by() == Some(wiz)
+            if e.actors[&gob].linked_by(Condition::Charmed) == Some(wiz)
                 && !e.actors[&wiz].is_concentrating()
             {
                 installed = true;
@@ -47014,10 +47067,10 @@ mod tests {
     /// Compulsion: self-centered 12-tile burst, WIS save or Charmed by
     /// caster for the duration (concentration-bound, no damage).
     /// Verifies (a) at least one failed-save enemy picks up Charmed,
-    /// (b) the `charmed_by` link points at the caster (so the engine's
+    /// (b) the `Charmed` back-link points at the caster (so the engine's
     /// "can't attack your charmer" gate fires), (c) the caster takes
     /// concentration, and (d) dropping concentration strips both the
-    /// Charmed flag and the `charmed_by` link.
+    /// Charmed flag and the `Charmed` back-link.
     #[test]
     fn compulsion_charms_failed_save_and_drops_on_concentration_break() {
         use crate::actions::spells::COMPULSION;
@@ -47039,7 +47092,7 @@ mod tests {
                 .actors
                 .get(&enemy)
                 .is_some_and(|a| {
-                    a.has_condition(Condition::Charmed) && a.charmed_by() == Some(bard)
+                    a.linked_by(Condition::Charmed) == Some(bard)
                 })
                 && e.actors[&bard].is_concentrating();
             if !installed {
@@ -47047,7 +47100,7 @@ mod tests {
             }
             e.drop_concentration(bard);
             let charmed_after = e.actors[&enemy].has_condition(Condition::Charmed);
-            let link_after = e.actors[&enemy].charmed_by();
+            let link_after = e.actors[&enemy].linked_by(Condition::Charmed);
             if !charmed_after && link_after.is_none() {
                 full_cycle = true;
                 break;
@@ -47055,7 +47108,7 @@ mod tests {
         }
         assert!(
             full_cycle,
-            "Compulsion should Charm a failed-save enemy (with charmed_by link) and drop both on concentration break"
+            "Compulsion should Charm a failed-save enemy (with Charmed back-link) and drop both on concentration break"
         );
     }
 
@@ -52745,7 +52798,7 @@ mod tests {
             .get_mut(&g)
             .unwrap()
             .add_condition(Condition::Sworn, ConditionTimer::Rounds(10));
-        e.actors.get_mut(&g).unwrap().set_sworn_by(Some(pal));
+        e.actors.get_mut(&g).unwrap().set_condition_link(Condition::Sworn, Some(pal));
         let mode_pal = e.compute_attack_mode(pal, g, true);
         let mode_ally = e.compute_attack_mode(ally, g, true);
         assert_eq!(mode_pal, RollMode::Advantage);
@@ -52756,9 +52809,9 @@ mod tests {
         );
     }
 
-    /// Vow of Enmity timer expiry must clear the `sworn_by` link via the
+    /// Vow of Enmity timer expiry must clear the `Sworn` back-link via the
     /// shared `remove_condition` cleanup hook — same pattern as
-    /// `dueled_by` / `goaded_by` / `distracted_by`. After the timer hits
+    /// `Dueled` back-link / `Goaded` back-link / `Distracted` back-link. After the timer hits
     /// zero, the condition lifts AND the link clears, so a subsequent
     /// attack rolls at Normal mode again.
     #[test]
@@ -52776,21 +52829,21 @@ mod tests {
             .get_mut(&g)
             .unwrap()
             .add_condition(Condition::Sworn, ConditionTimer::Rounds(2));
-        e.actors.get_mut(&g).unwrap().set_sworn_by(Some(pal));
-        assert_eq!(e.actors[&g].sworn_by(), Some(pal));
+        e.actors.get_mut(&g).unwrap().set_condition_link(Condition::Sworn, Some(pal));
+        assert_eq!(e.actors[&g].linked_by(Condition::Sworn), Some(pal));
         // Removing the condition explicitly mirrors the timer-expiry
         // route through `tick_condition_timers -> remove_condition`.
         e.actors.get_mut(&g).unwrap().remove_condition(Condition::Sworn);
         assert_eq!(
-            e.actors[&g].sworn_by(),
+            e.actors[&g].linked_by(Condition::Sworn),
             None,
-            "remove_condition(Sworn) must clear sworn_by link"
+            "remove_condition(Sworn) must clear Sworn back-link"
         );
     }
 
     /// Vow of Enmity action install path: the Vengeance Paladin spends
     /// the once-per-rest feature, the target picks up the `Sworn`
-    /// condition, and the `sworn_by` link points at the paladin. A
+    /// condition, and the `Sworn` back-link points at the paladin. A
     /// re-cast against the same target is rejected by the custom-
     /// validate gate so the charge isn't burned for nothing.
     #[test]
@@ -52817,7 +52870,7 @@ mod tests {
             ef.apply(&mut e);
         }
         assert!(e.actors[&g].has_condition(Condition::Sworn));
-        assert_eq!(e.actors[&g].sworn_by(), Some(pal));
+        assert_eq!(e.actors[&g].linked_by(Condition::Sworn), Some(pal));
         assert!(
             !e.actors[&pal].feature_available(VOW_OF_ENMITY_TAG),
             "feature charge should be spent"
@@ -53691,7 +53744,7 @@ mod tests {
         );
     }
 
-    /// Unwavering Mark stamps `Dueled` plus its `dueled_by` back-link on
+    /// Unwavering Mark stamps `Dueled` plus its `Dueled` back-link on
     /// every connecting melee swing, which is what makes the marked
     /// creature attack anyone else at disadvantage. Verifies the mark
     /// lands through the real attack chokepoint, not just the cohort row.
@@ -53742,7 +53795,7 @@ mod tests {
             "a connecting melee swing should stamp the mark"
         );
         assert_eq!(
-            e.actors[&ogre].dueled_by(),
+            e.actors[&ogre].linked_by(Condition::Dueled),
             Some(cav),
             "the mark must link back to the cavalier"
         );
@@ -54136,7 +54189,7 @@ mod tests {
                 }
                 if e.actors[&target].has_condition(Condition::EldritchStruck) {
                     assert_eq!(
-                        e.actors[&target].eldritch_struck_by(),
+                        e.actors[&target].linked_by(Condition::EldritchStruck),
                         Some(knight),
                         "the mark carries the striking knight's id"
                     );
@@ -54169,7 +54222,7 @@ mod tests {
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplicableSideEffect, SetEldritchStruckBy};
+        use crate::engine::side_effects::{ApplicableSideEffect, SetConditionLink};
         use crate::engine::types::AbilityScoreType;
 
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -54186,9 +54239,10 @@ mod tests {
             .get_mut(&target)
             .unwrap()
             .add_condition(Condition::EldritchStruck, ConditionTimer::Rounds(2));
-        SetEldritchStruckBy {
+        SetConditionLink {
             target_id: target,
-            striker: Some(knight),
+            condition: Condition::EldritchStruck,
+            source: Some(knight),
         }
         .apply(&mut e);
 
@@ -54207,7 +54261,7 @@ mod tests {
             "the marking knight's spell consumes the mark"
         );
         assert_eq!(
-            e.actors[&target].eldritch_struck_by(),
+            e.actors[&target].linked_by(Condition::EldritchStruck),
             None,
             "removing the condition clears the back-link"
         );
@@ -57836,7 +57890,7 @@ mod tests {
     }
 
     /// Charm Animals and Plants installs Charmed — not Frightened — and
-    /// installs it *with* the `charmed_by` back-link, which is what makes
+    /// installs it *with* the `Charmed` back-link, which is what makes
     /// the "can't attack your charmer" gate fire. Pins the `installed`
     /// column the config gained for this feature, plus the link the
     /// shared resolver now queues on its behalf. A humanoid in range is
@@ -57875,7 +57929,7 @@ mod tests {
             );
             if e.actors[&wolf].has_condition(Condition::Charmed) {
                 assert_eq!(
-                    e.actors[&wolf].charmed_by(),
+                    e.actors[&wolf].linked_by(Condition::Charmed),
                     Some(cleric),
                     "the charm must carry its back-link to the cleric"
                 );
@@ -67104,7 +67158,7 @@ mod tests {
     #[test]
     fn charmed_creature_does_not_opportunity_attack_its_charmer() {
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::SetConditionLink;
         // Observable is the reactor's *reaction slot*, not HP: the OA
         // could roll a miss and leave HP untouched for the wrong reason,
         // but the slot is spent the moment the dispatcher decides the
@@ -67118,9 +67172,10 @@ mod tests {
                 .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 5), 1, 0)
                 .unwrap();
             if charm_the_reactor {
-                SetCharmedBy {
+                SetConditionLink {
                     target_id: reactor,
-                    charmer: Some(charmer),
+                    condition: Condition::Charmed,
+                    source: Some(charmer),
                 }
                 .apply(&mut e);
                 e.actors
@@ -67157,7 +67212,7 @@ mod tests {
         use crate::actions::class_features::RIPOSTE_TAG;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::SetConditionLink;
         let charge_spent = |charm_the_fighter: bool| -> bool {
             let mut e = ei_with_terrain(15, 15, &[]);
             let fighter = e
@@ -67167,9 +67222,10 @@ mod tests {
                 .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 5), 1, 0)
                 .unwrap();
             if charm_the_fighter {
-                SetCharmedBy {
+                SetConditionLink {
                     target_id: fighter,
-                    charmer: Some(attacker),
+                    condition: Condition::Charmed,
+                    source: Some(attacker),
                 }
                 .apply(&mut e);
                 e.actors
@@ -67198,7 +67254,7 @@ mod tests {
     fn charm_gate_covers_every_target_in_the_list() {
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::SetCharmedBy;
+        use crate::engine::side_effects::SetConditionLink;
         let mut e = ei_with_terrain(15, 15, &[]);
         let charmer = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -67209,9 +67265,10 @@ mod tests {
         let bystander = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 2, 0)
             .unwrap();
-        SetCharmedBy {
+        SetConditionLink {
             target_id: charmed,
-            charmer: Some(charmer),
+            condition: Condition::Charmed,
+            source: Some(charmer),
         }
         .apply(&mut e);
         e.actors
@@ -67390,7 +67447,7 @@ mod tests {
     }
 
     /// Hypnotic Gaze installs the full RAW payload on a failed save:
-    /// Charmed *plus* the `charmed_by` link *plus* Incapacitated. The
+    /// Charmed *plus* the `Charmed` back-link *plus* Incapacitated. The
     /// link is what makes the two clauses one effect — a gazed creature
     /// can't attack the enchanter on its own turn, and (via the shared
     /// charm gate) can't opportunity-attack or riposte them either.
@@ -67427,7 +67484,7 @@ mod tests {
             if !e.actors[&victim].has_condition(Condition::Charmed) {
                 // Save made — nothing installs, including the link.
                 assert!(!e.actors[&victim].has_condition(Condition::Incapacitated));
-                assert_eq!(e.actors[&victim].charmed_by(), None);
+                assert_eq!(e.actors[&victim].linked_by(Condition::Charmed), None);
                 continue;
             }
             failures += 1;
@@ -67435,7 +67492,7 @@ mod tests {
                 e.actors[&victim].has_condition(Condition::Incapacitated),
                 "Charmed alone would leave the victim free to hit the enchanter's allies"
             );
-            assert_eq!(e.actors[&victim].charmed_by(), Some(enchanter));
+            assert_eq!(e.actors[&victim].linked_by(Condition::Charmed), Some(enchanter));
             assert!(e.charm_blocks_hostility(victim, enchanter));
             assert!(
                 !SCIMITAR.validate_input(&e, victim, Some(&vec![enchanter]), None, None),

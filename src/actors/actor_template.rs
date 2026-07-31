@@ -3410,70 +3410,43 @@ pub struct ActorInstance {
     /// caster. Cleared when concentration drops or the pool hits zero
     /// (which also strips the MirroredImages condition).
     mirror_images: u32,
-    /// Identity of the actor that has Charmed this actor (if any). 5e
-    /// Charmed: the target cannot make attacks against the charmer. We
-    /// store the id rather than just the condition flag so the
-    /// validation site knows who to block. Cleared when the Charmed
-    /// condition is removed.
-    charmed_by: Option<usize>,
+    /// Back-links for the conditions that need to remember *who* put them
+    /// there, keyed by the condition itself.
+    ///
+    /// Seven conditions carry one, and they all wanted the same thing —
+    /// Charmed needs the charmer so the victim can't swing back at them,
+    /// Dueled and Goaded need the marker so attacks on anyone else take
+    /// disadvantage, Distracted needs it to exclude the marker from the
+    /// advantage it hands everyone else, Sworn and EldritchStruck need it
+    /// so only the marker collects, and WardingBonded needs the partner
+    /// to mirror damage onto. Each used to be its own `Option<usize>`
+    /// field with its own pair of accessors and its own arm in
+    /// `remove_condition`'s teardown match.
+    ///
+    /// Keying the table by condition is what makes the teardown
+    /// structural: `remove_condition` drops `condition_links[&c]` for
+    /// whatever `c` it removed, so a link *cannot* outlive its condition
+    /// and a new linked condition can't forget to add itself to the
+    /// teardown — there is nothing left to forget. The read accessor
+    /// (`linked_by`) enforces the other direction by returning `None`
+    /// unless the condition is actually held, which turns the
+    /// `has_condition(X) && x_by() == Some(id)` idiom that every consumer
+    /// wrote by hand into a single comparison that can't be half-written.
+    ///
+    /// `LINKED_CONDITIONS` in `engine::side_effects` is the install-side
+    /// counterpart: the list of conditions whose install emits a
+    /// `SetConditionLink` alongside the `ApplyCondition`.
+    condition_links: HashMap<Condition, usize>,
     /// 5e Fighter Indomitable — one-shot "reroll the next failed save"
     /// marker. Set by the Indomitable action; consumed at the save
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
     /// long rest along with the feature pool.
     indomitable_pending: bool,
-    /// Identity of the paladin that has Compelled this actor to a duel.
-    /// Paired with the `Dueled` condition: attacks against anyone *other*
-    /// than this id are at disadvantage. Cleared when the Dueled
-    /// condition lifts.
-    dueled_by: Option<usize>,
-    /// Identity of the fighter that has goaded this actor (5e Battle
-    /// Master Goading Attack). Paired with the `Goaded` condition:
-    /// attacks against anyone *other* than this id are at disadvantage.
-    /// Cleared when the Goaded condition lifts. Mirrors `dueled_by` —
-    /// same mechanical envelope, distinct field so a creature can
-    /// simultaneously be dueled by a paladin and goaded by a fighter
-    /// without the two getting confused.
-    goaded_by: Option<usize>,
-    /// Identity of the fighter that has distracted this actor (5e Battle
-    /// Master Distracting Strike). Paired with the `Distracted`
-    /// condition: attack rolls against this actor by anyone *other* than
-    /// this id have advantage. Cleared when the Distracted condition
-    /// lifts. Mirrors `goaded_by` in shape but reversed in polarity —
-    /// Distracted is a target-side advantage rider rather than an
-    /// attacker-side disadvantage one.
-    distracted_by: Option<usize>,
-    /// Identity of the paladin that has sworn Vow of Enmity against this
-    /// actor (5e Vengeance Paladin Channel Divinity, lv3 subclass).
-    /// Paired with the `Sworn` condition: attack rolls against this actor
-    /// by this paladin (and only this paladin) get advantage. Same flag-
-    /// plus-link shape as `dueled_by` / `goaded_by` / `distracted_by`,
-    /// but positive-polarity: a *match* on the link grants the swearer
-    /// advantage, rather than a *mismatch* imposing disadvantage on
-    /// non-counterparties. Cleared when the Sworn condition lifts.
-    sworn_by: Option<usize>,
-    /// Identity of the Eldritch Knight whose weapon hit marked this actor
-    /// (5e Eldritch Knight Fighter **Eldritch Strike**, subclass lv10).
-    /// Paired with the `EldritchStruck` condition: the next saving throw
-    /// this actor makes against a spell cast by *this* knight is rolled
-    /// at disadvantage. Same flag-plus-link shape as `sworn_by` and the
-    /// same positive polarity — a *match* on the link fires the rider,
-    /// so a second caster on the knight's team gets no benefit from the
-    /// fighter's swing. Read at the shared `CASTER_SAVE_MODE_RIDERS`
-    /// cohort in `roll_save_against_caster`; cleared when the
-    /// `EldritchStruck` condition lifts.
-    eldritch_struck_by: Option<usize>,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
     legendary_resistance_remaining: u32,
     legendary_resistance_max: u32,
-    /// Identity of the caster who has bonded with this actor via Warding
-    /// Bond (5e level-2 abjuration). Paired with the `WardingBonded`
-    /// condition: when this actor takes damage, the same amount is
-    /// mirrored onto the partner via the damage-reflect site in
-    /// `DealDamage::apply`. Cleared when the WardingBonded condition is
-    /// removed (timer expiry / dispel / either party drops).
-    warding_partner: Option<usize>,
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves that deal half on pass,
     /// take 0 on pass and half on fail.
     has_evasion: bool,
@@ -3735,16 +3708,10 @@ impl ActorInstance {
             regen_suppressors: ct.regen_suppressors.clone(),
             regen_suppressed: false,
             mirror_images: 0,
-            charmed_by: None,
+            condition_links: HashMap::new(),
             indomitable_pending: false,
-            dueled_by: None,
-            goaded_by: None,
-            distracted_by: None,
-            sworn_by: None,
-            eldritch_struck_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
-            warding_partner: None,
             has_evasion: ct.has_evasion,
             has_uncanny_dodge: ct.has_uncanny_dodge,
             has_deflect_missiles: ct.has_deflect_missiles,
@@ -3855,90 +3822,45 @@ impl ActorInstance {
         true
     }
 
-    /// Who has this actor Charmed (if anyone). Used to gate attack-roll
-    /// validation: a Charmed actor can't attack their charmer.
-    pub fn charmed_by(&self) -> Option<usize> {
-        self.charmed_by
+    /// The actor that applied `c` to this actor, or `None` if `c` isn't
+    /// currently held or carries no back-link.
+    ///
+    /// This is the only read path onto `condition_links`, and the
+    /// `has_condition` guard is why. Every consumer of a back-link wants
+    /// "is this creature X-ed *by that actor*" — a bare link read would
+    /// answer "yes" for a stale id whose condition had already lifted,
+    /// which is a bug the caller has no way to see. Folding the flag
+    /// check in means `linked_by(Sworn) == Some(paladin)` is the whole
+    /// question, and the seven consumers that used to spell out
+    /// `has_condition(Sworn) && sworn_by() == Some(paladin)` can no
+    /// longer write half of it.
+    ///
+    /// The pairing also keeps the two halves honest in the other
+    /// direction: `remove_condition` drops the entry, so a link can
+    /// never outlive its condition even if a future caller forgets to
+    /// clear it explicitly.
+    pub fn linked_by(&self, c: Condition) -> Option<usize> {
+        if !self.has_condition(c) {
+            return None;
+        }
+        self.condition_links.get(&c).copied()
     }
 
-    pub fn set_charmed_by(&mut self, id: Option<usize>) {
-        self.charmed_by = id;
-    }
-
-    /// Identity of the paladin that has this actor locked in a Compelled
-    /// Duel (if any). Read by `compute_attack_mode` to apply the
-    /// "disadvantage on attacks vs anyone other than the duelist" rider.
-    pub fn dueled_by(&self) -> Option<usize> {
-        self.dueled_by
-    }
-
-    pub fn set_dueled_by(&mut self, id: Option<usize>) {
-        self.dueled_by = id;
-    }
-
-    /// Identity of the fighter that has goaded this actor (Goading
-    /// Attack maneuver). Read by `compute_attack_mode` to apply the
-    /// "disadvantage on attacks vs anyone other than the goader" rider.
-    pub fn goaded_by(&self) -> Option<usize> {
-        self.goaded_by
-    }
-
-    pub fn set_goaded_by(&mut self, id: Option<usize>) {
-        self.goaded_by = id;
-    }
-
-    /// Identity of the fighter that has distracted this actor
-    /// (Distracting Strike maneuver). Read by `compute_attack_mode` to
-    /// grant advantage to any attacker *other* than this fighter.
-    /// Symmetric to `goaded_by` but target-side advantage rather than
-    /// attacker-side disadvantage.
-    pub fn distracted_by(&self) -> Option<usize> {
-        self.distracted_by
-    }
-
-    pub fn set_distracted_by(&mut self, id: Option<usize>) {
-        self.distracted_by = id;
-    }
-
-    /// Identity of the paladin that has sworn Vow of Enmity on this
-    /// actor (Vengeance Paladin Channel Divinity). Read by
-    /// `compute_attack_mode` to grant advantage on the swearer's attack
-    /// rolls against this target. Positive-polarity sibling of
-    /// `distracted_by` (which grants advantage to *every other*
-    /// attacker) — Vow of Enmity only buffs the paladin who swore it.
-    pub fn sworn_by(&self) -> Option<usize> {
-        self.sworn_by
-    }
-
-    pub fn set_sworn_by(&mut self, id: Option<usize>) {
-        self.sworn_by = id;
-    }
-
-    /// Identity of the Eldritch Knight whose weapon hit marked this
-    /// actor (Eldritch Strike). Read by the `CASTER_SAVE_MODE_RIDERS`
-    /// cohort to bend the target's next save against *that* knight's
-    /// spell to disadvantage. Positive-polarity sibling of `sworn_by`
-    /// on the "only the marker benefits" lane, but on the save-roll
-    /// axis rather than the attack-roll one.
-    pub fn eldritch_struck_by(&self) -> Option<usize> {
-        self.eldritch_struck_by
-    }
-
-    pub fn set_eldritch_struck_by(&mut self, id: Option<usize>) {
-        self.eldritch_struck_by = id;
-    }
-
-    /// Caster id this actor is currently Warding-Bonded to (5e
-    /// `WardingBonded` condition). `None` when the bond is inactive.
-    /// Read by `DealDamage::apply` to mirror damage onto the partner.
-    pub fn warding_partner(&self) -> Option<usize> {
-        self.warding_partner
-    }
-
-    /// Set / clear the Warding Bond partner. Cleared automatically when
-    /// the `WardingBonded` condition is removed via `remove_condition`.
-    pub fn set_warding_partner(&mut self, id: Option<usize>) {
-        self.warding_partner = id;
+    /// Point `c`'s back-link at `source` (or clear it with `None`).
+    ///
+    /// Callers normally reach this through the `SetConditionLink` side
+    /// effect rather than directly, so that the link install travels
+    /// with the `ApplyCondition` that grants the flag — see
+    /// `engine::side_effects::install_condition_with_link`.
+    pub fn set_condition_link(&mut self, c: Condition, source: Option<usize>) {
+        match source {
+            Some(id) => {
+                self.condition_links.insert(c, id);
+            }
+            None => {
+                self.condition_links.remove(&c);
+            }
+        }
     }
 
     pub fn has_evasion(&self) -> bool {
@@ -5635,17 +5557,17 @@ impl ActorInstance {
         let removed = self.conditions.remove(&c).is_some();
         if removed {
             // Keep tightly-linked auxiliary state in sync with the
-            // primary condition flag.
-            match c {
-                Condition::Charmed => self.charmed_by = None,
-                Condition::MirroredImages => self.mirror_images = 0,
-                Condition::Dueled => self.dueled_by = None,
-                Condition::Goaded => self.goaded_by = None,
-                Condition::Distracted => self.distracted_by = None,
-                Condition::Sworn => self.sworn_by = None,
-                Condition::EldritchStruck => self.eldritch_struck_by = None,
-                Condition::WardingBonded => self.warding_partner = None,
-                _ => {}
+            // primary condition flag. The back-link is keyed by the
+            // condition, so dropping it needs no per-condition arm —
+            // the seven linked conditions (Charmed, Dueled, Goaded,
+            // Distracted, Sworn, EldritchStruck, WardingBonded) and any
+            // future eighth are torn down by this one line, and there
+            // is no longer a match to forget to extend. Mirror Image's
+            // decoy count is the one piece of auxiliary state that
+            // isn't an actor id, so it keeps its own arm.
+            self.condition_links.remove(&c);
+            if c == Condition::MirroredImages {
+                self.mirror_images = 0;
             }
         }
         removed
@@ -5669,7 +5591,7 @@ impl ActorInstance {
                 ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => {}
                 ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
                     // Route through remove_condition so auxiliary state
-                    // (charmed_by, mirror_images) clears too.
+                    // (Charmed back-link, mirror_images) clears too.
                     self.remove_condition(c);
                     expired.push(c);
                 }
