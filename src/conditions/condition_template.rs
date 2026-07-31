@@ -1652,6 +1652,25 @@ pub enum Condition {
     ///
     /// Ten-round timer (1 minute RAW). On `is_dispellable_buff`.
     Bladesinging,
+    /// **Form of Dread** (5e Undead Warlock, subclass level 1). The
+    /// warlock takes on the shape of the thing their patron is: they
+    /// gain temporary hit points, they cannot be Frightened, and once
+    /// on each of their turns a creature they hit must make a Wisdom
+    /// save or be Frightened of them.
+    ///
+    /// Three clauses, three lanes, and the arrangement is what makes it
+    /// coherent: the fear immunity (`CONDITION_DRIVEN_IMMUNITIES`) and
+    /// the fear rider (`ON_HIT_RIDERS`, with a once-per-turn key and a
+    /// save-gated follow-up) are the same coin. A warlock who is
+    /// handing out Frightened wants to be the one creature on the field
+    /// it cannot be handed back to.
+    ///
+    /// Ten-round timer (1 minute RAW) rather than a temp-HP-bound one:
+    /// RAW's Form of Dread grants temp HP but does *not* end when they
+    /// run out, unlike the Spores Druid's Symbiotic Entity.
+    ///
+    /// On `is_dispellable_buff`.
+    FormOfDread,
 }
 
 impl Condition {
@@ -1733,6 +1752,7 @@ impl Condition {
             Condition::SymbioticEntity => "bonded to a spore symbiote",
             Condition::AncestrallyHaunted => "haunted by ancestral spirits",
             Condition::Bladesinging => "bladesinging",
+            Condition::FormOfDread => "wearing a form of dread",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
             Condition::Confused => "confused",
@@ -1899,6 +1919,7 @@ impl Condition {
                 | Condition::SpiritShrouded
                 | Condition::SymbioticEntity
                 | Condition::Bladesinging
+                | Condition::FormOfDread
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Flying

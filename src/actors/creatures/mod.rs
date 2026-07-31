@@ -422,6 +422,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*warlocks::DJINNI_WARLOCK_TEMPLATE,
                     &*warlocks::EFREETI_WARLOCK_TEMPLATE,
                     &*warlocks::HEXBLADE_WARLOCK_TEMPLATE,
+                    &*warlocks::UNDEAD_WARLOCK_TEMPLATE,
                 ],
             ),
             (

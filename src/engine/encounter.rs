@@ -59595,18 +59595,20 @@ mod tests {
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
             ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG,
-            FOE_SLAYER_TAG, GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
-            PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, ONCE_PER_TURN_RIDER_TAGS,
+            PLANAR_WARRIOR_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
+            SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            11,
+            12,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
@@ -70172,6 +70174,145 @@ mod tests {
             crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, wizard, 20),
             10,
             "damage to anyone else is halved"
+        );
+    }
+
+    /// Form of Dread's fear fires once a turn and the form survives it —
+    /// the distinction that made `once_per_turn_tag` necessary.
+    ///
+    /// `consume_on_trigger`, the table's existing way for a rider to
+    /// stop firing, would have stripped the condition and taken the
+    /// temp HP and the Frightened immunity with it. This pins that the
+    /// rider goes quiet while the form does not.
+    #[test]
+    fn form_of_dread_frightens_once_a_turn_without_ending_the_form() {
+        use crate::actions::class_features::{FORM_OF_DREAD, FORM_OF_DREAD_TAG};
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+
+        let mut saw_a_second_swing = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let warlock = e
+                .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            for eff in FORM_OF_DREAD.side_effects(&mut e, warlock, None, None, None) {
+                eff.apply(&mut e);
+            }
+            assert!(e.actors[&warlock].has_condition(Condition::FormOfDread));
+            assert!(
+                e.actors[&warlock].temp_hp() > 9,
+                "1d10 + level 9 is at least 10 temp HP"
+            );
+
+            // Eldritch Blast rather than the dagger, deliberately: the
+            // rider's RAW trigger is "hit a creature with an attack",
+            // and a spell attack only reaches the rider table through
+            // the `RiderLane::AnyAttack` lane. A weapon swing would
+            // pass this test even if that lane were wired wrong.
+            let blade = e.actors[&warlock]
+                .actions
+                .iter()
+                .copied()
+                .find(|a| a.name() == "eldritch blast")
+                .expect("the warlock carries eldritch blast");
+            let targets = vec![ogre];
+            for swing in 0..2 {
+                let before_marked = e.actors[&warlock].once_per_turn_used(FORM_OF_DREAD_TAG);
+                for eff in blade.side_effects(&mut e, warlock, Some(&targets), None, None) {
+                    eff.apply(&mut e);
+                }
+                let after_marked = e.actors[&warlock].once_per_turn_used(FORM_OF_DREAD_TAG);
+                if swing == 1 && before_marked {
+                    assert!(
+                        after_marked,
+                        "seed {}: the ledger stays marked for the rest of the turn",
+                        seed
+                    );
+                    saw_a_second_swing = true;
+                }
+                assert!(
+                    e.actors[&warlock].has_condition(Condition::FormOfDread),
+                    "seed {}: the form outlives its own rider",
+                    seed
+                );
+            }
+        }
+        assert!(
+            saw_a_second_swing,
+            "the sweep should land a first blast and then try a second"
+        );
+    }
+
+    /// A warlock wearing the form cannot be Frightened, which is the
+    /// clause that makes the fear rider safe to lean on.
+    #[test]
+    fn the_dread_form_cannot_be_frightened_back() {
+        use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actor_immune_to_condition(warlock, Condition::Frightened),
+            "out of the form the warlock is as frightenable as anyone"
+        );
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .add_condition(Condition::FormOfDread, ConditionTimer::Rounds(10));
+        assert!(
+            e.actor_immune_to_condition(warlock, Condition::Frightened),
+            "in the form they are not"
+        );
+    }
+
+    /// A Smite prime stays out of the spell-attack chokepoint even
+    /// though the rider table is now walked from both.
+    ///
+    /// The lane split is the whole safety property of sharing the table:
+    /// Divine Smite's RAW is "the next time you hit a creature with a
+    /// melee weapon attack", so a paladin holding the prime who reaches
+    /// out with a melee *spell* attack must not cash it in. Before
+    /// `RiderLane` the guarantee was accidental — the spell path simply
+    /// never saw the table — and an accidental guarantee is one nobody
+    /// notices losing.
+    #[test]
+    fn a_smite_prime_survives_a_melee_spell_attack_unspent() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let paladin = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&paladin)
+            .unwrap()
+            .add_condition(Condition::Smiting, ConditionTimer::Rounds(2));
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        let added = crate::engine::attack::push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            paladin,
+            ogre,
+            crate::engine::attack::RiderSwing {
+                is_melee: true,
+                is_spell: true,
+                is_crit: false,
+                damage_so_far: 0,
+            },
+        );
+        assert_eq!(added, 0, "a melee spell attack adds no smite damage");
+        assert!(
+            e.actors[&paladin].has_condition(Condition::Smiting),
+            "and does not burn the prime"
         );
     }
 }

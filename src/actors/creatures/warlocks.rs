@@ -1096,3 +1096,53 @@ pub static HEXBLADE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Undead Warlock — Otherworldly Patron **The Undead** subclass build
+/// (VRGtR). One subclass feature, **Form of Dread** (lv1), and it is
+/// three clauses that all point the same way.
+///
+/// As a bonus action the warlock spends one minute wearing something
+/// closer to their patron's shape: `1d10 + 9` temporary hit points,
+/// immunity to Frightened, and — once on each of their turns — a
+/// creature they hit must make a Wisdom save against their spell DC or
+/// be Frightened of them until the end of the warlock's next turn.
+///
+/// The two fear clauses are the point. Every other Frightened source in
+/// the engine is a burst the caster fires and then lives with: Dreadful
+/// Aspect, Conquering Presence, Abjure Enemy, the dragon's Frightful
+/// Presence. Form of Dread turns fear into an attrition tool — every
+/// turn the warlock connects, someone else picks it up — and the
+/// immunity is what makes standing in the middle of that safe. The temp
+/// HP is the third leg: the form is about being the most frightening
+/// thing in the room for long enough that it matters.
+///
+/// Not a `subclass_warlock_template` user. That helper covers the
+/// tag-only patrons whose whole surface is a passive flag, and Form of
+/// Dread is an action plus a tag — the same reason the Fiend patron
+/// sits outside it.
+///
+/// RAW's later Undead features aren't shipped. **Grave Touched** (lv6 —
+/// swap a damage type for necrotic and add a die on a Form of Dread
+/// turn) needs a per-hit damage-type override the weapon path doesn't
+/// expose; **Necrotic Husk** (lv10 — necrotic immunity plus a
+/// death-burst) and **Spirit Projection** (lv14) are both well past this
+/// chassis.
+///
+/// Glyph 'W' — for the **W**ight the form resembles. Distinct from
+/// baseline warlock 'L', Fiend 'F', Undying 'U', Great Old One 'O',
+/// Archfey 'A', Celestial 'C', Marid 'M', Dao 'D', Djinni 'J', Efreeti
+/// 'Y' and Hexblade 'X'.
+pub static UNDEAD_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{FORM_OF_DREAD, FORM_OF_DREAD_TAG};
+    let mut actions = WARLOCK_TEMPLATE.actions.clone();
+    actions.push(&*FORM_OF_DREAD);
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(FORM_OF_DREAD_TAG);
+    CreatureTemplate {
+        name: "Undead Warlock",
+        glyph: 'W',
+        actions,
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

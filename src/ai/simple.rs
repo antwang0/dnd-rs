@@ -183,6 +183,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''. Form of Dread — the Undead Warlock's bonus-action
+        //       transformation. Same rung as Rage and Bladesong for the
+        //       same reason: a once-per-rest, bonus-action posture that
+        //       wants to be up before the swinging starts. Its fear
+        //       rider needs the warlock to be *landing hits*, so the
+        //       gate is the tighter melee-ish band rather than
+        //       Bladesong's approach-distance one.
+        if let Some(aei) =
+            try_self_action_when_enemy_within(encounter, actor_id, IMMINENT_CONTACT_GAP, "form of dread")
+        {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
         //      beside Rage because it is the same kind of decision: a
         //      once-per-rest, bonus-action, whole-fight defensive
@@ -1841,14 +1854,20 @@ fn try_pass_without_trace(
 /// Sweeping Attack's two-adjacent-enemies rung sits between it and
 /// this table in the ladder, and collapsing the two would silently
 /// reorder them.
-/// Footprint gap inside which the Spores Druid counts as engaged, and
-/// therefore inside which Symbiotic Entity buys its full value rather
-/// than just the temp HP. One tile wider than the halo's own 10 ft
-/// reach, so the symbiote goes up on the turn *before* the enemy closes
-/// into halo range rather than the turn after — the Action is spent
-/// either way, and spending it a turn early is the only way the shield
-/// is already up when the first swing lands.
-const SPORES_ENGAGEMENT_GAP: isize = 5;
+/// Footprint gap at which contact is imminent enough to be worth
+/// spending a once-per-rest posture that only pays off in or near
+/// melee. One tile wider than a 10 ft reach, so the buff goes up on the
+/// turn *before* the enemy closes rather than the turn after — the
+/// action is spent either way, and spending it a turn early is the only
+/// way the buff is live when the first swing lands.
+///
+/// Two users, for the same reason in different words. The Spores
+/// Druid's Symbiotic Entity buys a melee rider and a doubled 10 ft halo
+/// alongside its temp HP; raised across the room it buys only the temp
+/// HP. The Undead Warlock's Form of Dread buys a fear rider that needs
+/// the warlock to be landing hits; raised across the room it likewise
+/// collapses to temp HP alone.
+const IMMINENT_CONTACT_GAP: isize = 5;
 
 /// Footprint gap inside which the Bladesinger starts the song. Wider
 /// than a melee prime's trigger because none of the song's four clauses
@@ -2597,7 +2616,7 @@ fn try_transmuted_spell(
 /// rest. 36 temp HP plus a +1d6 necrotic melee rider and a doubled
 /// Halo of Spores die.
 ///
-/// Gate: a hostile within `SPORES_ENGAGEMENT_GAP`. Two of the feature's
+/// Gate: a hostile within `IMMINENT_CONTACT_GAP`. Two of the feature's
 /// three payoffs are short-ranged (the melee rider needs contact, the
 /// doubled halo needs 10 ft), so raising the symbiote while the nearest
 /// enemy is still crossing the room converts a once-per-rest charge and
@@ -2613,7 +2632,7 @@ fn try_symbiotic_entity(
     try_self_action_when_enemy_within(
         encounter,
         actor_id,
-        SPORES_ENGAGEMENT_GAP,
+        IMMINENT_CONTACT_GAP,
         "symbiotic entity",
     )
 }

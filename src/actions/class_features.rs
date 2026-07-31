@@ -212,6 +212,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
     INVOKE_DUPLICITY_TAG,
+    // 5e Undead Warlock **Form of Dread** — RAW grants proficiency-bonus
+    // uses per long rest; the single charge lands on the short-rest
+    // lane, matching the warlock's own Pact Magic refresh.
+    FORM_OF_DREAD_TAG,
     // 5e Bladesinging Wizard **Bladesong** — RAW: "you can use this
     // feature twice, and you regain all expended uses when you finish a
     // short or long rest." The engine's single charge lands on the same
@@ -2487,6 +2491,11 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // mechanism, different purpose — which is the argument for the
     // ledger being keyed by plain tag rather than by rider identity.
     ANCESTRAL_PROTECTORS_TAG,
+    // Also not a damage rider: Form of Dread uses the ledger to enforce
+    // RAW's "once on each of your turns" on its fear rider, which keeps
+    // the form itself alive across the trigger where
+    // `consume_on_trigger` would have ended it.
+    FORM_OF_DREAD_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -12202,3 +12211,116 @@ pub static BLADESONG: LazyLock<Bladesong> = LazyLock::new(|| Bladesong {});
 /// `ON_HIT_CONDITION_MARKS` marks the tag used on the turn's first
 /// connecting swing and reads it back on every swing after.
 pub const ANCESTRAL_PROTECTORS_TAG: &str = "barbarian.ancestral_protectors";
+
+/// Tag for the Undead Warlock's **Form of Dread** (subclass level 1).
+/// RAW grants uses equal to the proficiency bonus per long rest; the
+/// engine's single charge lands on the short-rest lane, which is where
+/// the warlock's own Pact Magic slots refresh and therefore the cadence
+/// the rest of the chassis is priced against.
+///
+/// Doubles as the once-per-turn ledger key for the fear rider — see the
+/// `FormOfDread` row on `ON_HIT_RIDERS`, whose `once_per_turn_tag`
+/// points here.
+pub const FORM_OF_DREAD_TAG: &str = "warlock.form_of_dread";
+
+/// Warlock level the Undead patron's Form of Dread scales its temporary
+/// hit points off. RAW is `1d10 + warlock level`; the warlock chassis in
+/// this engine is a level-9 build.
+const FORM_OF_DREAD_LEVEL: u32 = 9;
+
+/// Form of Dread — Undead Warlock bonus action (subclass level 1). The
+/// warlock briefly becomes the thing their patron is. For one minute:
+/// `1d10 + 9` temporary hit points, immunity to Frightened, and once on
+/// each of their turns a creature they hit must make a Wisdom save
+/// against their spell DC or be Frightened of them until the end of the
+/// warlock's next turn.
+///
+/// The two fear clauses are the feature. A warlock spreading Frightened
+/// around is a warlock other things want to frighten back, and the
+/// immunity is what makes the offensive half safe to lean on rather
+/// than a race. The temp HP is the third leg of the same idea: the form
+/// is about being the scariest thing in the room and surviving long
+/// enough for that to matter.
+///
+/// The fear rider needed the `once_per_turn_tag` lane on
+/// `ON_HIT_RIDERS`. The table's existing "stop firing" mechanism is
+/// `consume_on_trigger`, which strips the rider's condition — right for
+/// a Smite prime, wrong here, because the form has to survive its own
+/// fear going off and keep granting the immunity and the temp HP for
+/// the rest of the minute.
+pub struct FormOfDreadAction {}
+
+impl Action for FormOfDreadAction {
+    fn name(&self) -> &str {
+        "form of dread"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fod", "dread form", "transform"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temp HP rather than healing, but the AI's support pipeline is
+        // the lane for "this makes the holder harder to kill" — the
+        // same call Symbiotic Entity and Armor of Agathys make.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            FORM_OF_DREAD_TAG,
+            Condition::FormOfDread,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let temp = encounter.roll(&Dice::new(1, 10)) + FORM_OF_DREAD_LEVEL;
+        let mut effects = prime_self_condition(
+            encounter,
+            caster_id,
+            FORM_OF_DREAD_TAG,
+            Condition::FormOfDread,
+            // 10 rounds = 1 minute RAW.
+            ConditionTimer::Rounds(10),
+            "  form of dread: the warlock's shape curdles into something the dark recognizes.",
+        );
+        effects.push(Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount: temp,
+        }));
+        effects
+    }
+}
+
+pub static FORM_OF_DREAD: LazyLock<FormOfDreadAction> = LazyLock::new(|| FormOfDreadAction {});

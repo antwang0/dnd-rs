@@ -1449,6 +1449,13 @@ pub fn resolve_attack_outcome_with_rider(
             hm_total, p.damage_type
         ));
     }
+    // Attacker-scoped reductions (Ancestral Protectors) land before the
+    // reactive clamps so a blunted blow is what Uncanny Dodge then
+    // halves — the same order RAW resolves resistance and
+    // damage-reduction reactions in, and the order that keeps a
+    // doubly-protected ally from taking more than a singly-protected
+    // one.
+    damage = attacker_scoped_damage_reduction(encounter, p.caster_id, p.target_id, damage);
     // Target-side and ally-side reactive damage clamps — Uncanny Dodge
     // (Rogue lv5), Deflect Missiles (Monk lv3), Parry (Battle Master
     // maneuver), Fighting Style: Interception. All four are rows on the
@@ -1462,12 +1469,6 @@ pub fn resolve_attack_outcome_with_rider(
     // ranged swings that arrive here. The spell-attack chokepoint in
     // `spells::spell_attack_outcome` calls the same walker with
     // `is_spell: true`.
-    // Attacker-scoped reductions land before the reactive clamps so a
-    // blunted blow is what Uncanny Dodge then halves - the same order
-    // RAW resolves resistance and damage-reduction reactions in, and
-    // the order that keeps a doubly-protected ally from taking more
-    // than a singly-protected one.
-    damage = attacker_scoped_damage_reduction(encounter, p.caster_id, p.target_id, damage);
     damage = apply_reactive_damage_clamps(
         encounter,
         p.caster_id,
@@ -1493,70 +1494,19 @@ pub fn resolve_attack_outcome_with_rider(
             "hex",
         );
     }
-    // Caster-side per-hit damage riders. Generalized so any condition
-    // that grants "+Xdy damage of type T on hit" plugs in here without
-    // re-implementing the attack-roll-to-damage glue. Gates:
-    //   - `melee_only`: skip on ranged attacks (5e Smite spells / Divine
-    //     Smite RAW: melee weapon only).
-    //   - `consume_on_trigger`: strip the condition after the rider
-    //     lands (one-shot primes like Divine Smite / the four Smite
-    //     spells; persistent aura-style riders like Crusader's Mantle
-    //     and Crown of Stars leave their condition in place for the
-    //     full spell duration).
-    //   - `follow_up`: optional secondary clause that fires only on the
-    //     swing that *consumed* the rider — used by Blinding Smite (CON
-    //     save or Blinded) and Wrathful Smite (WIS save or Frightened).
-    for rider in ON_HIT_RIDERS.iter().copied() {
-        if rider.melee_only && !p.is_melee {
-            continue;
-        }
-        if rider.ranged_only && p.is_melee {
-            continue;
-        }
-        if !encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| a.has_condition(rider.condition))
-        {
-            continue;
-        }
-        // Roll the rider damage only if the rider actually has dice —
-        // primes whose entire effect is the follow-up (Stunning Strike:
-        // no damage, just a stun save) declare 0 dice so the damage
-        // line and the DealDamage push are skipped. Capture the rolled
-        // total so the follow-up's optional `hp_threshold` gate can
-        // predict the target's post-damage HP without re-rolling.
-        let rider_total = if rider.dice.count > 0 {
-            let total = roll_rider(encounter, rider.dice, is_crit);
-            encounter.log(format!(
-                "  {}: +{} {:?}",
-                rider.label, total, rider.damage_type
-            ));
-            effects.push(Box::new(DealDamage {
-                actor_id: p.target_id,
-                amount: total,
-                damage_type: rider.damage_type,
-            }));
-            total
-        } else {
-            0
-        };
-        if rider.consume_on_trigger
-            && let Some(caster) = encounter.actors.get_mut(&p.caster_id)
-        {
-            caster.remove_condition(rider.condition);
-        }
-        if let Some(follow) = rider.follow_up {
-            apply_smite_follow_up(
-                encounter,
-                &mut effects,
-                p.caster_id,
-                p.target_id,
-                follow,
-                rider_total + damage,
-            );
-        }
-    }
+    // Caster-side per-hit riders — see `push_on_hit_riders`.
+    damage = damage.saturating_add(push_on_hit_riders(
+        encounter,
+        &mut effects,
+        p.caster_id,
+        p.target_id,
+        RiderSwing {
+            is_melee: p.is_melee,
+            is_spell: false,
+            is_crit,
+            damage_so_far: damage,
+        },
+    ));
     // 5e Paladin Improved Divine Smite (level 11+) — passive feature.
     // Every melee weapon hit lays +1d8 radiant on the target, independent
     // of any Smite-prime burn. Lives outside the ON_HIT_RIDERS table
@@ -1716,6 +1666,100 @@ pub fn resolve_attack_outcome_with_rider(
     // see the whole hit.
     damage = damage.saturating_add(rider.apply(encounter, &p, mode, is_crit, &mut effects));
     (effects, damage)
+}
+
+/// The bits of a landed attack an on-hit rider needs to know about.
+/// Bundled rather than passed as four positional arguments because two
+/// of them are booleans and the call sites are in different modules.
+#[derive(Clone, Copy)]
+pub struct RiderSwing {
+    pub is_melee: bool,
+    /// True at the spell-attack chokepoint. Only `RiderLane::AnyAttack`
+    /// rows fire there.
+    pub is_spell: bool,
+    pub is_crit: bool,
+    /// Damage the swing has already dealt, for follow-ups whose
+    /// `hp_threshold` gate needs to predict the target's post-hit HP.
+    pub damage_so_far: u32,
+}
+
+/// Walk `ON_HIT_RIDERS` and queue everything a landed attack earns the
+/// attacker. Returns the extra damage added so the caller's
+/// `damage_dealt` figure stays honest.
+///
+/// Gates, in the order they read:
+///   - `lane`: which swings the row fires on, from melee-weapon-only
+///     (every Smite) through to any attack at all (Form of Dread).
+///     This is what lets the walk be shared by the weapon chokepoint
+///     and the spell one — before it existed, the table was only ever
+///     reachable from the former, so a rider whose RAW trigger was "hit
+///     a creature with an attack" was silently narrowed to weapons.
+///   - `once_per_turn_tag`: RAW's "once on each of your turns" riders
+///     mark the shared ledger and sit out the rest of the turn.
+///   - `dice.count == 0`: primes whose entire effect is the follow-up
+///     (Stunning Strike, Form of Dread) skip the damage roll and the
+///     `DealDamage` push entirely.
+///   - `consume_on_trigger`: one-shot primes strip their condition;
+///     persistent buffs keep theirs for the spell's full duration.
+///   - `follow_up`: the optional save-and-effect clause.
+pub fn push_on_hit_riders(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    caster_id: usize,
+    target_id: usize,
+    swing: RiderSwing,
+) -> u32 {
+    let mut added = 0u32;
+    for rider in ON_HIT_RIDERS.iter().copied() {
+        if !rider.lane.admits(swing.is_melee, swing.is_spell) {
+            continue;
+        }
+        if !encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.has_condition(rider.condition)
+                && rider
+                    .once_per_turn_tag
+                    .is_none_or(|tag| !a.once_per_turn_used(tag))
+        }) {
+            continue;
+        }
+        if let Some(tag) = rider.once_per_turn_tag
+            && let Some(caster) = encounter.actors.get_mut(&caster_id)
+        {
+            caster.mark_once_per_turn_used(tag);
+        }
+        let rider_total = if rider.dice.count > 0 {
+            let total = roll_rider(encounter, rider.dice, swing.is_crit);
+            encounter.log(format!(
+                "  {}: +{} {:?}",
+                rider.label, total, rider.damage_type
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: total,
+                damage_type: rider.damage_type,
+            }));
+            added = added.saturating_add(total);
+            total
+        } else {
+            0
+        };
+        if rider.consume_on_trigger
+            && let Some(caster) = encounter.actors.get_mut(&caster_id)
+        {
+            caster.remove_condition(rider.condition);
+        }
+        if let Some(follow) = rider.follow_up {
+            apply_smite_follow_up(
+                encounter,
+                effects,
+                caster_id,
+                target_id,
+                follow,
+                rider_total + swing.damage_so_far,
+            );
+        }
+    }
+    added
 }
 
 /// Queue every melee retaliation payload a landed melee attack earns the
@@ -2259,10 +2303,51 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     },
 ];
 
+/// Which attacks an `OnHitRider` fires on.
+///
+/// Replaces a `melee_only` / `ranged_only` bool pair that could encode
+/// the nonsense "melee-only *and* ranged-only" state, and — more to the
+/// point — had no way to say anything about spell attacks at all,
+/// because the rider table was only ever walked from the weapon
+/// chokepoint. Form of Dread is the first rider whose RAW trigger is
+/// "hit a creature with an attack" full stop, so the table is now walked
+/// from both chokepoints and each row has to declare what it meant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RiderLane {
+    /// Melee weapon attacks only. Every Paladin Smite: RAW is "the next
+    /// time you hit a creature with a melee weapon attack".
+    MeleeWeapon,
+    /// Ranged weapon attacks only. Lightning Arrow and Flame Arrows:
+    /// RAW is "the next attack you make with a ranged weapon".
+    RangedWeapon,
+    /// Any weapon attack, melee or ranged — Crusader's Mantle's "when
+    /// it hits with a weapon attack", and the engine-modeled Crown of
+    /// Stars / Bigby's Hand riders.
+    AnyWeapon,
+    /// Any attack at all, spell attacks included. Form of Dread.
+    AnyAttack,
+}
+
+impl RiderLane {
+    /// True if a swing described by `(is_melee, is_spell)` falls in this
+    /// lane. Mirrors `ClampLane::admits` on the reactive-clamp cohort —
+    /// same `(is_melee, is_spell)` pair, same one-variant-per-RAW-wording
+    /// discipline.
+    fn admits(self, is_melee: bool, is_spell: bool) -> bool {
+        match self {
+            RiderLane::AnyAttack => true,
+            RiderLane::AnyWeapon => !is_spell,
+            RiderLane::MeleeWeapon => is_melee && !is_spell,
+            RiderLane::RangedWeapon => !is_melee && !is_spell,
+        }
+    }
+}
+
 /// A "+Xdy damage on hit" rider sourced from one of the caster's active
-/// conditions. The rider table is consumed once per weapon hit by
-/// `resolve_attack_outcome` — any caster who holds `condition` adds the
-/// rolled `dice` of `damage_type` to that swing.
+/// conditions. The rider table is walked once per landed attack by
+/// `push_on_hit_riders` from both attack chokepoints — any caster who
+/// holds `condition` adds the rolled `dice` of `damage_type` to a swing
+/// their row's `lane` admits.
 #[derive(Clone, Copy)]
 pub struct OnHitRider {
     /// Caster-side flag the rider keys off (Smiting / Crusader's
@@ -2272,16 +2357,8 @@ pub struct OnHitRider {
     /// Log-friendly name ("divine smite", "searing smite", ...).
     pub label: &'static str,
     pub damage_type: DamageType,
-    /// True iff the rider only fires on melee swings (every Paladin
-    /// Smite, Divine Smite). Ranged carriers like Crown of Stars or
-    /// Crusader's Mantle leave this false so they tag arrow hits too.
-    pub melee_only: bool,
-    /// True iff the rider only fires on ranged swings (5e Lightning
-    /// Arrow RAW: "the next attack you make with a ranged weapon").
-    /// Symmetric to `melee_only` — both default to false so the rider
-    /// fires on either lane. Defaulting to false keeps every existing
-    /// rider entry unchanged.
-    pub ranged_only: bool,
+    /// Which swings the rider fires on. See `RiderLane`.
+    pub lane: RiderLane,
     /// True iff the condition is stripped from the caster the moment
     /// the rider lands (one-shot primes). Persistent buffs leave this
     /// false so they stay up until the spell ends.
@@ -2291,6 +2368,23 @@ pub struct OnHitRider {
     /// or Blinded) and Wrathful Smite (WIS save or Frightened). `None`
     /// for damage-only riders.
     pub follow_up: Option<SmiteFollowUp>,
+    /// Ledger key for riders RAW limits to "once on each of your
+    /// turns", or `None` for riders that fire on every connecting
+    /// swing.
+    ///
+    /// Distinct from `consume_on_trigger`, which is the *other* way a
+    /// rider can stop firing: a consumed rider strips its condition and
+    /// is gone until re-primed, where a once-per-turn rider keeps its
+    /// condition for the whole duration and simply sits out the rest of
+    /// the turn. Form of Dread is the case that needed the difference —
+    /// the form lasts a minute and the fear rider fires once a turn
+    /// inside it, so neither "consume it" nor "let it fire on every
+    /// swing" is right.
+    ///
+    /// Shares `ActorInstance`'s once-per-turn ledger with the damage
+    /// riders on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, cleared at
+    /// turn-start by `reset_for_new_round`.
+    pub once_per_turn_tag: Option<&'static str>,
 }
 
 /// Secondary save + effect rider tagged onto a Smite-spell hit. When
@@ -2364,20 +2458,20 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 4),
             label: "crusader's mantle",
             damage_type: DamageType::Radiant,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         OnHitRider {
             condition: Condition::CrownOfStars,
             dice: Dice::new(1, 8),
             label: "crown of stars",
             damage_type: DamageType::Radiant,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Bigby's Hand (level-5 concentration). Persistent +1d10 force
         // rider on every attack the caster lands — not melee-only since
@@ -2388,10 +2482,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 10),
             label: "bigby's hand",
             damage_type: DamageType::Force,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
         // rider on every melee swing the holder lands. Mirrors Crown of
@@ -2401,10 +2495,47 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "spirit shroud",
             damage_type: DamageType::Cold,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
+        },
+        // 5e Undead Warlock **Form of Dread** (subclass level 1),
+        // offensive clause: "once on each of your turns when you hit a
+        // creature with an attack, you can force it to make a Wisdom
+        // saving throw, and if it fails, it is frightened of you until
+        // the end of your next turn."
+        //
+        // Zero dice — the whole rider is the follow-up, the same shape
+        // Stunning Strike uses. Not `consume_on_trigger`: the form
+        // lasts a minute and only the fear is once-a-turn, which is the
+        // distinction `once_per_turn_tag` exists to draw.
+        OnHitRider {
+            condition: Condition::FormOfDread,
+            dice: Dice::new(0, 0),
+            label: "form of dread",
+            damage_type: DamageType::Psychic,
+            // RAW: "when you hit a creature with an attack" — no weapon
+            // clause, so an Eldritch Blast frightens exactly as well as
+            // a dagger. The lane that made the rider table worth
+            // walking from the spell chokepoint at all.
+            lane: RiderLane::AnyAttack,
+            consume_on_trigger: false,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Wisdom),
+                dc_ability: AbilityScoreType::Charisma,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Frightened,
+                    // "until the end of your next turn" on the
+                    // warlock's clock — the same two-round encoding
+                    // every other marker-clock window in the engine
+                    // uses.
+                    timer: ConditionTimer::Rounds(2),
+                },
+                label: "form of dread fear",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: Some(crate::actions::class_features::FORM_OF_DREAD_TAG),
         },
         // 5e Circle of Spores Druid **Symbiotic Entity** (subclass
         // level 2). Persistent +1d6 necrotic rider on every melee swing
@@ -2419,10 +2550,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "symbiotic entity",
             damage_type: DamageType::Necrotic,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Flame Arrows (XGE level-3 transmutation, concentration).
         // Persistent +1d6 fire rider on every ranged swing the holder
@@ -2436,10 +2567,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "flame arrows",
             damage_type: DamageType::Fire,
-            melee_only: false,
-            ranged_only: true,
+            lane: RiderLane::RangedWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Tasha's Otherworldly Guise (TCE level-6 concentration). The
         // celestial-form flavor adds +2d6 radiant per melee weapon hit
@@ -2454,10 +2585,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(2, 6),
             label: "otherworldly guise",
             damage_type: DamageType::Radiant,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Elemental Weapon (level-3 transmutation, concentration). The
         // weapon is sheathed in elemental energy: +1d4 fire per melee
@@ -2474,20 +2605,20 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 4),
             label: "elemental weapon",
             damage_type: DamageType::Fire,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         OnHitRider {
             condition: Condition::Smiting,
             dice: Dice::new(2, 8),
             label: "divine smite",
             damage_type: DamageType::Radiant,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Searing Smite — 1st-level paladin evocation, bonus action.
         // +1d6 fire on the primed hit, and the target catches fire
@@ -2500,8 +2631,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "searing smite",
             damage_type: DamageType::Fire,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // Auto-apply — RAW Searing Smite ignites the target on
@@ -2516,6 +2646,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "searing smite ignite",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Wrathful Smite — 1st-level. +1d6 psychic on the primed hit;
         // target makes WIS save or is Frightened of the paladin for
@@ -2525,8 +2656,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "wrathful smite",
             damage_type: DamageType::Psychic,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -2538,6 +2668,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "wrathful smite fear",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Branding Smite — 2nd-level. +2d6 radiant; target glows
         // (Outlined for 10 rounds), giving advantage to attackers and
@@ -2547,8 +2678,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(2, 6),
             label: "branding smite",
             damage_type: DamageType::Radiant,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // RAW Branding Smite is auto-apply on hit (no save).
@@ -2562,6 +2692,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "branding smite brand",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Blinding Smite — 3rd-level. +3d8 radiant; target makes CON
         // save or is Blinded for 10 rounds.
@@ -2570,8 +2701,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(3, 8),
             label: "blinding smite",
             damage_type: DamageType::Radiant,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
@@ -2583,6 +2713,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "blinding smite blind",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Monk Stunning Strike — bonus action prime; on the next
         // melee hit, the target makes a CON save vs the monk's
@@ -2594,8 +2725,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "stunning strike",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
@@ -2607,6 +2737,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "stunning strike stun",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Cleric Divine Strike (level 8 class feature, here exposed as
         // a Channel-Divinity-flavored bonus-action prime). +1d8 radiant
@@ -2618,10 +2749,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "divine strike",
             damage_type: DamageType::Radiant,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Trickery Domain Cleric Divine Strike (subclass level 8).
         // The poison-typed arm of the row above — RAW varies only the
@@ -2638,10 +2769,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "divine strike (poison)",
             damage_type: DamageType::Poison,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Way of the Four Elements Monk **Fangs of the Fire Snake**
         // elemental discipline. The biggest single die on this table
@@ -2658,10 +2789,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 10),
             label: "fangs of the fire snake",
             damage_type: DamageType::Fire,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Trip Attack maneuver. No bonus damage in our
         // model (RAW: +superiority die damage; we skip the die since the
@@ -2673,8 +2804,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "trip attack",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -2686,6 +2816,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "trip attack prone",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Staggering Smite — 4th-level paladin enchantment, bonus
         // action prime. +4d6 psychic on the primed hit; target makes a
@@ -2696,8 +2827,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(4, 6),
             label: "staggering smite",
             damage_type: DamageType::Psychic,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -2709,6 +2839,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "staggering smite stun",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Banishing Smite — 5th-level paladin abjuration, bonus
         // action prime. +5d10 force on the primed hit; if the target
@@ -2723,8 +2854,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(5, 10),
             label: "banishing smite",
             damage_type: DamageType::Force,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // No save — RAW: the banish is auto-apply if HP ≤ 50.
@@ -2740,6 +2870,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 // post-damage HP at the smite follow-up site.
                 hp_threshold: Some(50),
             }),
+            once_per_turn_tag: None,
         },
         // 5e Shillelagh — druid cantrip prime. The caster's club /
         // staff is wreathed in sylvan magic: the next melee weapon hit
@@ -2753,10 +2884,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "shillelagh",
             damage_type: DamageType::Force,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Thunderous Smite — 1st-level paladin evocation, bonus
         // action prime. +2d6 thunder on the primed hit; target makes a
@@ -2771,8 +2902,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(2, 6),
             label: "thunderous smite",
             damage_type: DamageType::Thunder,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -2784,6 +2914,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "thunderous smite prone",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Enlarge / Reduce (Enlarge half) — 2nd-level transmutation,
         // concentration. The holder rolls +1d4 bonus damage on every
@@ -2799,10 +2930,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 4),
             label: "enlarge",
             damage_type: DamageType::Bludgeoning,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Lightning Arrow — 3rd-level ranger evocation, bonus action,
         // concentration. Primes the ranger's next ranged weapon attack
@@ -2818,10 +2949,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(4, 8),
             label: "lightning arrow",
             damage_type: DamageType::Lightning,
-            melee_only: false,
-            ranged_only: true,
+            lane: RiderLane::RangedWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Ensnaring Strike — 1st-level ranger conjuration, bonus
         // action, concentration. Primes the ranger's next weapon
@@ -2843,8 +2974,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "ensnaring strike",
             damage_type: DamageType::Piercing,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -2856,6 +2986,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "ensnaring strike restrain",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Zephyr Strike — 1st-level ranger transmutation (XGtE),
         // bonus action, concentration. Primes the ranger's next weapon
@@ -2877,10 +3008,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 8),
             label: "zephyr strike",
             damage_type: DamageType::Force,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Holy Weapon — 5th-level paladin evocation, concentration.
         // The caster's weapon glows with radiant light: every weapon
@@ -2893,10 +3024,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(2, 8),
             label: "holy weapon",
             damage_type: DamageType::Radiant,
-            melee_only: false,
-            ranged_only: false,
+            lane: RiderLane::AnyWeapon,
             consume_on_trigger: false,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Absorb Elements — 1st-level abjuration, reaction. The caster
         // stores captured elemental energy and releases it on their next
@@ -2910,10 +3041,10 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "absorb elements",
             damage_type: DamageType::Force,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: None,
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Menacing Attack maneuver. Zero rider damage
         // (RAW: +1 superiority die; we collapse the die since the engine
@@ -2927,8 +3058,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "menacing attack",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -2940,6 +3070,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "menacing attack fear",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Disarming Attack maneuver. Zero rider damage
         // (same caveat as Menacing / Trip). On the consuming melee hit the
@@ -2952,8 +3083,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "disarming attack",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -2965,6 +3095,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "disarming attack disarm",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Pushing Attack maneuver. Zero rider damage
         // (same caveat as Menacing / Disarming). On the consuming melee
@@ -2979,8 +3110,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "pushing attack",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -2989,6 +3119,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "pushing attack shove",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Goading Attack maneuver. Zero rider damage
         // (same caveat as Menacing / Disarming / Pushing). On the
@@ -3004,8 +3135,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "goading attack",
             damage_type: DamageType::Bludgeoning,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -3017,6 +3147,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "goading attack goad",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Sweeping Attack maneuver. Zero rider damage on
         // the primary target (RAW: damage goes to the secondary creature,
@@ -3031,8 +3162,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(0, 1),
             label: "sweeping attack",
             damage_type: DamageType::Slashing,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: None,
@@ -3044,6 +3174,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "sweeping attack splash",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
         // 5e Battle Master Distracting Strike maneuver. +1d6 bonus damage
         // on the consuming melee hit (RAW: add the superiority die to
@@ -3061,8 +3192,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             dice: Dice::new(1, 6),
             label: "distracting strike",
             damage_type: DamageType::Slashing,
-            melee_only: true,
-            ranged_only: false,
+            lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: None,
@@ -3074,6 +3204,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "distracting strike distract",
                 hp_threshold: None,
             }),
+            once_per_turn_tag: None,
         },
 ];
 

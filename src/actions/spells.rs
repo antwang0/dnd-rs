@@ -396,6 +396,25 @@ fn spell_attack_outcome(
         amount: total_dmg,
         damage_type,
     })];
+    // Caster-side on-hit riders whose RAW trigger is "hit a creature
+    // with an attack" rather than "with a weapon attack". The shared
+    // table is walked here with `is_spell: true`, so only
+    // `RiderLane::AnyAttack` rows fire — the Smites and the weapon-
+    // scoped buffs stay out. Before the lane existed the table was
+    // reachable only from the weapon chokepoint, which silently
+    // narrowed every rider to weapons whether RAW said so or not.
+    let total_dmg = total_dmg.saturating_add(crate::engine::attack::push_on_hit_riders(
+        encounter,
+        &mut effects,
+        caster_id,
+        target_id,
+        crate::engine::attack::RiderSwing {
+            is_melee,
+            is_spell: true,
+            is_crit,
+            damage_so_far: total_dmg,
+        },
+    ));
     // 5e Hex rider on spell attacks. The Hex spell RAW says "you deal
     // extra 1d6 necrotic damage to the target whenever you hit it with
     // an attack" — both weapon and spell attacks trigger the rider.

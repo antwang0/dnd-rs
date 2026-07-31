@@ -18,9 +18,8 @@ use crate::actions::class_features::{
 
 /// Conditions whose RAW duration clause is bounded by the temporary hit
 /// points the same feature handed out — the "...or until you lose all
-/// these temporary hit points" wording shared by the Circle of Spores
-/// Druid's Symbiotic Entity and (in RAW, though not yet in this engine)
-/// the Undead Warlock's Form of Dread family.
+/// these temporary hit points" wording, of which the Circle of Spores
+/// Druid's Symbiotic Entity is the engine's example.
 ///
 /// Read by `drain_temp_hp`, the single chokepoint that decrements the
 /// pool. A feature whose buff should die with its shield adds one row
@@ -777,6 +776,15 @@ const CONDITION_DRIVEN_IMMUNITIES: &[ConditionDrivenConditionImmunity] = &[
     ConditionDrivenConditionImmunity {
         source: Condition::MindBlanked,
         suppressed: &[Condition::Charmed],
+    },
+    // 5e Undead Warlock **Form of Dread**: "you are immune to the
+    // frightened condition" while transformed. The tidiest half of the
+    // feature and the one that makes its offensive half safe to lean
+    // on — a warlock spreading Frightened around cannot have it turned
+    // back on them for as long as the form holds.
+    ConditionDrivenConditionImmunity {
+        source: Condition::FormOfDread,
+        suppressed: &[Condition::Frightened],
     },
     // 5e Petrified: immune to poison / disease — the Poisoned-condition
     // half. Damage-type half lives on `TYPED_IMMUNITY_CONDITIONS`.
