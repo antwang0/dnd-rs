@@ -2594,7 +2594,15 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
         label: "homing strikes",
         tag: crate::actions::class_features::HOMING_STRIKES_TAG,
         dice: Dice::new(1, 8),
-        eligible: |p| p.action_name.contains("blade"),
+        // Matched against the two blades by name off their own statics
+        // rather than by a substring: "blade" also appears in Booming
+        // Blade, Green Flame Blade and Shadow Blade, none of which RAW
+        // lets this rescue, and a rename should break the comparison
+        // rather than silently widen it.
+        eligible: |p| {
+            p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE.name
+                || p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE_FLOURISH.name
+        },
     },
 ];
 

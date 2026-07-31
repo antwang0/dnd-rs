@@ -71531,7 +71531,10 @@ mod tests {
         );
     }
 
-    /// The charge is for blades. A rogue's shortsword misses on its own.
+    /// The charge is for the Soulknife's own blades. A rogue's
+    /// shortsword misses on its own, and so would a Booming Blade — the
+    /// gate matches the two psychic blades by name off their statics
+    /// rather than by looking for "blade" in the string.
     #[test]
     fn homing_strikes_does_not_fire_for_a_shortsword() {
         use crate::actions::class_attacks::ROGUE_SHORTSWORD;
