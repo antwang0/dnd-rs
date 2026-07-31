@@ -18,21 +18,52 @@ use crate::{
     },
 };
 
-/// Rogue's Shortsword + Sneak Attack rider. Finesse weapon: uses DEX for
-/// attack and damage. Damage 1d6 + DEX. On hit, if the rogue has
-/// advantage on the attack roll OR an ally of the rogue is footprint-
-/// adjacent to the target (5e: an enemy of the target within 5ft other
-/// than the rogue), deals an extra 1d6 sneak-attack damage. Once per
-/// turn (the rogue can take more attacks but only one gets the rider).
-pub struct RogueShortsword {}
+/// A rogue's weapon: an ordinary attack through the shared pipeline,
+/// carrying the Sneak Attack rider.
+///
+/// Config-driven for the same reason `ManeuverPrime` and `PrimeStrike`
+/// are — the rogue's swings differ in name, die, damage type, range and
+/// what they cost, and in nothing else. A rogue weapon that did *not*
+/// carry Sneak Attack would not be a rogue weapon; the rider is the
+/// class, and everything on this struct is the flavour around it.
+///
+/// Three literals today: the baseline shortsword, and the Soulknife's
+/// two psychic blades.
+pub struct RogueWeapon {
+    /// Display name — action list entry, prompt parser's canonical name,
+    /// and the attack log's subject.
+    pub name: &'static str,
+    /// Alias set for the prompt parser.
+    pub aliases: &'static [&'static str],
+    /// Damage die. The rogue's own die is the small half of their
+    /// damage; the sneak dice are the other, larger half.
+    pub dice: Dice,
+    /// Damage type of both the swing and its sneak rider — the rider
+    /// reads `p.damage_type`, so a psychic blade's sneak damage is
+    /// psychic too, which is RAW and also the point of the weapon.
+    pub damage_type: DamageType,
+    /// Maximum footprint gap. `MELEE_REACH` for a melee weapon; the
+    /// thrown blade's 60 ft is 24 tiles on the 2.5 ft grid.
+    pub reach: isize,
+    /// Whether this counts as a melee swing — read by the rider lanes,
+    /// the opportunity-attack predicate and the reach-extension gates.
+    pub is_melee: bool,
+    /// What the swing costs. `Action` for a primary weapon;
+    /// `BonusAction` for the Soulknife's second blade.
+    pub cost_resource: Resource,
+    /// Extra gate beyond the shared reach / LOS / affordability checks.
+    /// `None` for an ordinary weapon; the second psychic blade uses it
+    /// to enforce RAW's "immediately after you take the Attack action".
+    pub extra_gate: Option<fn(&EncounterInstance, usize) -> bool>,
+}
 
-impl Action for RogueShortsword {
+impl Action for RogueWeapon {
     fn name(&self) -> &str {
-        "shortsword"
+        self.name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["ss", "stab"]
+        self.aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -40,7 +71,39 @@ impl Action for RogueShortsword {
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        // A thrown blade needs to see where it is going; a melee swing
+        // is already in contact.
+        !self.is_melee
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![self.cost_resource]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        self.extra_gate.is_none_or(|gate| gate(encounter, caster_id))
     }
 
     fn side_effects(
@@ -60,18 +123,20 @@ impl Action for RogueShortsword {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
+        // Every rogue weapon is finesse or thrown-finesse, so DEX drives
+        // both halves of the swing.
         let dex_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
         resolve_attack_with_rider(
             encounter,
             AttackParams {
                 caster_id,
                 target_id,
-                action_name: self.name(),
+                action_name: self.name,
                 attack_bonus: dex_mod,
-                damage_dice: Dice::new(1, 6),
+                damage_dice: self.dice,
                 damage_bonus: dex_mod,
-                damage_type: DamageType::Piercing,
-                is_melee: true,
+                damage_type: self.damage_type,
+                is_melee: self.is_melee,
                 long_range: None,
                 is_spell: false,
             },
@@ -176,7 +241,66 @@ impl crate::engine::attack::ActionOnHitRider for SneakAttack {
     }
 }
 
-pub static ROGUE_SHORTSWORD: LazyLock<RogueShortsword> = LazyLock::new(|| RogueShortsword {});
+/// The baseline rogue's shortsword — finesse, 1d6 piercing, melee.
+pub static ROGUE_SHORTSWORD: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapon {
+    name: "shortsword",
+    aliases: &["ss", "stab"],
+    dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    cost_resource: Resource::Action,
+    extra_gate: None,
+});
+
+/// Psychic Blades — Soulknife Rogue (subclass level 3). A blade of
+/// psionic energy manifested in the hand and thrown up to 60 ft, 1d6
+/// psychic, finesse.
+///
+/// The range is what makes the subclass. Every other rogue on the roster
+/// has to be in contact to land Sneak Attack — the baseline shortsword,
+/// the Assassin's, the Swashbuckler's — and Sneak Attack is where a
+/// rogue's damage actually lives. The Soulknife throws it across the
+/// room, and the blade is psychic, which almost nothing in the bestiary
+/// resists.
+pub static PSYCHIC_BLADE: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapon {
+    name: "psychic blade",
+    aliases: &["pb", "blade"],
+    dice: Dice::new(1, 6),
+    damage_type: DamageType::Psychic,
+    // RAW's 60 ft thrown range on the engine's 2.5 ft grid.
+    reach: 24,
+    is_melee: false,
+    cost_resource: Resource::Action,
+    extra_gate: None,
+});
+
+/// The Soulknife's second blade — RAW: "immediately after you take the
+/// Attack action, you can manifest a second psychic blade… as a bonus
+/// action", for a smaller die.
+///
+/// The gate is not decoration. `extra_gate` reads the rogue's remaining
+/// Action, so the blade only becomes legal once the Attack action has
+/// been spent — which is RAW, and which also keeps the AI's attack
+/// picker honest: the picker scores candidate swings by reach and
+/// damage-type matchup, not by what they cost, so a legal-at-turn-start
+/// 1d4 bonus-action blade would have been chosen over the 1d6 one about
+/// half the time.
+pub static PSYCHIC_BLADE_FLOURISH: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapon {
+    name: "second blade",
+    aliases: &["sb", "flourish"],
+    dice: Dice::new(1, 4),
+    damage_type: DamageType::Psychic,
+    reach: 24,
+    is_melee: false,
+    cost_resource: Resource::BonusAction,
+    extra_gate: Some(|encounter, caster_id| {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.action_slots() == 0)
+    }),
+});
 
 /// 5e Sneak Attack dice scaling: ceil(level / 2) d6.
 /// Level 1 = 1d6, level 3 = 2d6, level 5 = 3d6, etc.

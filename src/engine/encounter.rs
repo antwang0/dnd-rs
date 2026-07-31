@@ -71408,4 +71408,152 @@ mod tests {
             "a Large one can"
         );
     }
+
+    /// The Soulknife's whole reason to exist: Sneak Attack landing from
+    /// 60 ft. Every other rogue weapon in the engine is melee, so the
+    /// rider has only ever fired in contact.
+    #[test]
+    fn a_psychic_blade_carries_sneak_attack_across_the_room() {
+        use crate::actions::class_attacks::PSYCHIC_BLADE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
+
+        let mut saw_sneak = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+            let rogue = e
+                .instantiate_creature(&SOULKNIFE_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 2), 1, 0)
+                .unwrap();
+            // Far outside any melee envelope, well inside the blade's.
+            assert!(e.footprint_distance(rogue, goblin).unwrap() > 8);
+            // The sneak clause needs advantage or a friend in contact;
+            // hand the rogue the former so the test is about range.
+            if let Some(a) = e.get_actor(rogue) {
+                a.add_condition(Condition::Hidden, ConditionTimer::Rounds(2));
+            }
+            let targets = vec![goblin];
+            for eff in PSYCHIC_BLADE.side_effects(&mut e, rogue, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages().join("\n").contains("sneak attack") {
+                saw_sneak = true;
+                break;
+            }
+        }
+        assert!(
+            saw_sneak,
+            "a thrown psychic blade should carry the rogue's sneak dice"
+        );
+    }
+
+    /// The second blade is legal only once the Attack action is spent,
+    /// which is RAW and is also what keeps the AI's attack picker from
+    /// opening with the smaller die — the picker scores swings by reach
+    /// and matchup, never by cost.
+    #[test]
+    fn the_second_blade_waits_for_the_attack_action() {
+        use crate::actions::class_attacks::PSYCHIC_BLADE_FLOURISH;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let rogue = e
+            .instantiate_creature(&SOULKNIFE_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let targets = vec![goblin];
+        assert!(
+            !PSYCHIC_BLADE_FLOURISH.validate_input(&e, rogue, Some(&targets), None, None),
+            "with the Attack action still in hand, there is no second blade"
+        );
+        e.get_actor(rogue).unwrap().consume_resource(Resource::Action);
+        assert!(
+            PSYCHIC_BLADE_FLOURISH.validate_input(&e, rogue, Some(&targets), None, None),
+            "spending the action is what manifests it"
+        );
+    }
+
+    /// Homing Strikes spends its charge on a miss, adds a die, and can
+    /// turn that miss into a hit — and it stays out of the way of a
+    /// swing that already connected.
+    #[test]
+    fn homing_strikes_rescues_a_missed_blade_once_per_rest() {
+        use crate::actions::class_attacks::PSYCHIC_BLADE;
+        use crate::actions::class_features::HOMING_STRIKES_TAG;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
+
+        let mut saw_boost = false;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+            let rogue = e
+                .instantiate_creature(&SOULKNIFE_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+                .unwrap();
+            assert!(e.actors[&rogue].feature_available(HOMING_STRIKES_TAG));
+            let targets = vec![ogre];
+            for eff in PSYCHIC_BLADE.side_effects(&mut e, rogue, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages().join("\n").contains("homing strikes") {
+                saw_boost = true;
+                assert!(
+                    !e.actors[&rogue].feature_available(HOMING_STRIKES_TAG),
+                    "the rescue spends the charge"
+                );
+                // A second miss finds nothing left to spend.
+                for eff in PSYCHIC_BLADE.side_effects(&mut e, rogue, Some(&targets), None, None) {
+                    eff.apply(&mut e);
+                }
+                let fired = e
+                    .messages()
+                    .iter()
+                    .filter(|m| m.contains("homing strikes"))
+                    .count();
+                assert_eq!(fired, 1, "one charge, one rescue");
+                break;
+            }
+        }
+        assert!(
+            saw_boost,
+            "some seed in 60 should miss an ogre and spend the charge"
+        );
+    }
+
+    /// The charge is for blades. A rogue's shortsword misses on its own.
+    #[test]
+    fn homing_strikes_does_not_fire_for_a_shortsword() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actions::class_features::HOMING_STRIKES_TAG;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
+
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let rogue = e
+                .instantiate_creature(&SOULKNIFE_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let targets = vec![ogre];
+            for eff in ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&targets), None, None) {
+                eff.apply(&mut e);
+            }
+            assert!(
+                !e.messages().join("\n").contains("homing strikes"),
+                "seed {}: the charge is a psychic-blade feature",
+                seed
+            );
+            assert!(e.actors[&rogue].feature_available(HOMING_STRIKES_TAG));
+        }
+    }
 }

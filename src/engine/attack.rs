@@ -1306,6 +1306,17 @@ pub fn resolve_attack_outcome_with_rider(
             hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
         }
     }
+    // Per-rest "add a die to a swing that missed" sources — the
+    // attack-roll twin of the `FailedSaveRerollSource` cohort. Runs
+    // after the Seeking Spell reroll so a caster holding both spends the
+    // free reroll before the charge.
+    if !hit && !is_nat_one {
+        let boost = fire_missed_attack_boost(encounter, &p);
+        if boost > 0 {
+            attack_total += boost;
+            hit = attack_total >= target_ac;
+        }
+    }
     // 5e Wild Magic Sorcerer **Bend Luck** (lv6 reaction): the target may
     // burn 2 SP + their reaction to subtract a 1d4 from the attacker's
     // total. Only worth firing when the swing would otherwise hit AND
@@ -2546,6 +2557,73 @@ pub enum FollowUpEffect {
         dice: Dice,
         damage_type: DamageType,
     },
+}
+
+/// A per-rest source that can rescue a swing which just missed, by
+/// adding a rolled die to the attack total. The attack-roll twin of
+/// `FailedSaveRerollSource`, and it takes the same shape for the same
+/// reason: the interesting part of each feature is *when it is allowed
+/// to fire*, so that lives in a closure and everything else is data.
+///
+/// The die is added rather than rerolled because that is what RAW does
+/// on this lane — a reroll throws away information the attacker already
+/// paid for, an addition tells them exactly how close they were.
+struct MissedAttackBoost {
+    /// Log tag, e.g. "homing strikes".
+    label: &'static str,
+    /// Per-rest charge that funds it.
+    tag: &'static str,
+    /// Die added to the attack total on a spend.
+    dice: Dice,
+    /// Which swings are eligible. RAW usually names a specific weapon,
+    /// and the swing's `action_name` is the only handle the pipeline has
+    /// on which weapon it is — the alternative would be threading a
+    /// weapon identity through `AttackParams` for one feature.
+    eligible: fn(&AttackParams) -> bool,
+}
+
+/// Every "spend a charge to rescue a miss" source, in spend order.
+const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
+    // 5e Soulknife Rogue **Homing Strikes** (Soul Blades, subclass level
+    // 9): "if you miss a target with an attack roll using a psychic
+    // blade, you can roll one Psionic Energy die and add the number
+    // rolled to the attack roll." One charge per rest here, where RAW
+    // sizes the pool by proficiency bonus — the same collapse every
+    // other multi-use charge in the engine takes.
+    MissedAttackBoost {
+        label: "homing strikes",
+        tag: crate::actions::class_features::HOMING_STRIKES_TAG,
+        dice: Dice::new(1, 8),
+        eligible: |p| p.action_name.contains("blade"),
+    },
+];
+
+/// Walk `MISSED_ATTACK_BOOSTS` and spend the first source the attacker
+/// holds a charge for and whose swing qualifies. Returns the rolled
+/// bonus, or 0 if nothing fired.
+///
+/// Called only on a miss that wasn't a natural 1 — a nat 1 misses no
+/// matter what the total says, so spending a charge on it would burn the
+/// charge for nothing.
+fn fire_missed_attack_boost(encounter: &mut EncounterInstance, p: &AttackParams) -> i32 {
+    let Some(source) = MISSED_ATTACK_BOOSTS.iter().find(|source| {
+        (source.eligible)(p)
+            && encounter
+                .actors
+                .get(&p.caster_id)
+                .is_some_and(|a| a.feature_available(source.tag))
+    }) else {
+        return 0;
+    };
+    let rolled = encounter.roll(&source.dice) as i32;
+    if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
+        attacker.spend_feature(source.tag);
+    }
+    encounter.log(format!(
+        "  {}: +{}({}) to the missed roll",
+        source.label, source.dice, rolled
+    ));
+    rolled
 }
 
 /// Caster-side per-swing damage *penalties*, the negative image of

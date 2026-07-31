@@ -401,3 +401,74 @@ pub static ARCANE_TRICKSTER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
         ..ROGUE_TEMPLATE.clone()
     }
 });
+
+/// Soulknife Rogue — Roguish Archetype **Soulknife** subclass build
+/// (TCoE). The sixth rogue in the engine, and the first one that can
+/// land a Sneak Attack from across the room.
+///
+/// Three subclass features ship:
+///
+///   - **Psychic Blades** (lv3) — a blade of psionic force manifested in
+///     the hand and thrown up to 60 ft. 1d6 psychic, finesse, and it
+///     carries the Sneak Attack rider like any other rogue weapon.
+///   - **Second blade** (lv3) — immediately after the Attack action, a
+///     bonus action manifests another for 1d4.
+///   - **Homing Strikes** (Soul Blades, lv9) — once per rest, a blade
+///     that missed gets a 1d8 added to the roll.
+///
+/// The range is the whole build. A rogue's damage is Sneak Attack, not
+/// their weapon die, and every other rogue on the roster has to be
+/// standing next to something to collect it — which is a bad place for a
+/// d8-hit-die character in leather to be. The Soulknife collects it from
+/// 60 ft away, so Uncanny Dodge and Evasion stop being the things that
+/// keep them alive and start being insurance they rarely need.
+///
+/// The damage type does the rest. Psychic is the least-resisted type in
+/// the bestiary — the undead shrug off poison and necrotic, constructs
+/// shrug off most of the physical types, and almost nothing on the
+/// roster resists a thought. A Soulknife's 4d6 sneak lands in full
+/// against creatures that a shortsword would barely scratch.
+///
+/// What it gives up is real. Sneak Attack still needs advantage or an
+/// ally in contact with the target, and a rogue standing 60 ft back has
+/// neither by default — so the Soulknife spends the fight hunting for
+/// the shot rather than taking it automatically, which the melee rogues
+/// get for free by standing next to the fighter.
+///
+/// Homing Strikes is the answer to the other half of that problem. A
+/// rogue who has waited for the one turn their Sneak Attack is live and
+/// then rolls a 9 has wasted the whole setup; one charge per rest buys
+/// that turn back. It is a per-rest "add a die to a swing that missed",
+/// which is the attack-roll twin of the failed-save rerolls Indomitable
+/// and Fanatical Focus already ride.
+///
+/// Left out: **Psi-Bolstered Knack** and **Psychic Whispers** (lv3) are
+/// an ability-check boost and a telepathy grant, neither of which combat
+/// asks for; **Psychic Teleportation** (lv13) needs a self-teleport
+/// scaled by a die roll, which the fixed-distance teleport lane doesn't
+/// express; **Rend Mind** (lv17) sits above this chassis's level.
+///
+/// Glyph 'M' — for Soul**M**ind, since 'S' is the Scout's. Distinct from
+/// baseline Rogue 'R', Assassin 'A', Scout 'S', Swashbuckler 'K' and
+/// Arcane Trickster 'T'.
+pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_attacks::{PSYCHIC_BLADE, PSYCHIC_BLADE_FLOURISH};
+    use crate::actions::class_features::HOMING_STRIKES_TAG;
+    // The shortsword stays on the sheet. RAW doesn't take it away, and
+    // an enemy that closes to contact should not find the Soulknife
+    // holding nothing — the blades work at any range, but the AI's
+    // attack picker prefers the longer reach, so leaving the sword in
+    // costs nothing and covers the case where a blade is the wrong tool.
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&*PSYCHIC_BLADE);
+    actions.push(&*PSYCHIC_BLADE_FLOURISH);
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.insert(HOMING_STRIKES_TAG);
+    CreatureTemplate {
+        name: "Soulknife Rogue",
+        glyph: 'M',
+        actions,
+        features,
+        ..ROGUE_TEMPLATE.clone()
+    }
+});

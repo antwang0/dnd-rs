@@ -252,6 +252,9 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Order Domain Cleric Channel Divinity — Order's Demand. Same
     // short-rest cadence as the rest of the cleric CD family.
     ORDERS_DEMAND_TAG,
+    // 5e Soulknife Rogue **Homing Strikes**. RAW recovers Psionic Energy
+    // dice on a short rest, which is the cadence this registry carries.
+    HOMING_STRIKES_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -12717,6 +12720,18 @@ pub static DIVINE_STRIKE_PSYCHIC: LazyLock<PrimeStrike> = LazyLock::new(|| Prime
     prime: Condition::DivineStrikingPsychic,
     log_line: "  divine strike (psychic): cleric's next melee hit will land as a verdict.",
 });
+
+/// Per-rest charge for the Soulknife Rogue's **Homing Strikes** (Soul
+/// Blades, subclass level 9): a psychic blade that missed gets a 1d8
+/// added to the roll, which is often enough to turn it into a hit.
+///
+/// No action of its own — the charge is spent automatically at the
+/// attack-roll site by the `MISSED_ATTACK_BOOSTS` cohort, the same way
+/// Indomitable's is spent by the failed-save cohort. RAW sizes the
+/// Psionic Energy pool by proficiency bonus; the engine's feature set
+/// holds one charge per tag, refreshed on a short rest, which is where
+/// every other multi-use charge here has landed.
+pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 
 #[cfg(test)]
 mod tests {

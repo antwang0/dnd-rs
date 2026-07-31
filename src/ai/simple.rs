@@ -9486,13 +9486,14 @@ mod tests {
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
+        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 10] = [
+        let cases: [(&CreatureTemplate, &str); 12] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9507,6 +9508,8 @@ mod tests {
             // automatically off any levelled cast, so the AI has nothing
             // to choose — the engine-side test is where it belongs.
             (&ORDER_CLERIC_TEMPLATE, "divine strike (psychic)"),
+            (&SOULKNIFE_ROGUE_TEMPLATE, "psychic blade"),
+            (&SOULKNIFE_ROGUE_TEMPLATE, "second blade"),
         ];
 
         for (template, marker) in cases {
