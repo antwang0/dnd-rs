@@ -51,6 +51,7 @@ impl Action for RogueShortsword {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attack::{AttackParams, resolve_attack_with_rider};
         use crate::engine::types::AbilityScoreType;
 
         let Some(target_id) = first_target_id(target_ids) else {
@@ -60,108 +61,118 @@ impl Action for RogueShortsword {
             return Vec::new();
         };
         let dex_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
-        let attack_bonus = dex_mod;
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
+        resolve_attack_with_rider(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.name(),
+                attack_bonus: dex_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: dex_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+                long_range: None,
+                is_spell: false,
+            },
+            &SneakAttack,
+        )
+    }
+}
 
-        // Resolve the attack roll up-front so the sneak-attack rider
-        // can branch on the same d20 result. weapon_attack would re-
-        // roll inside; instead we use the engine's mode-with-riders
-        // helper and roll inline so we keep the mode visible.
-        let mode = encounter.attack_mode_with_riders(caster_id, target_id, true);
-        let raw_attack = encounter.roll_d20_lucky(caster_id, mode) as i32;
-        let nat_crit = raw_attack >= encounter.crit_threshold(caster_id);
-        let total = raw_attack + attack_bonus;
-        let hit = nat_crit || total >= target_ac;
-        // 5e Paralyzed / Unconscious: any melee hit within 5ft is a crit.
-        // Promote *after* deciding hit so a miss stays a miss.
-        let is_crit =
-            nat_crit || (hit && encounter.target_grants_melee_auto_crit(caster_id, target_id, true));
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  shortsword: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw_attack,
-            attack_bonus,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            outcome
-        ));
-        if !hit {
-            return Vec::new();
+/// The Sneak Attack half of the rogue's swing, as an `ActionOnHitRider`
+/// on the shared attack pipeline.
+///
+/// This used to be an open-coded attack roll — the shortsword rolled its
+/// own d20 so the sneak clause could branch on the same result, and in
+/// doing so it opted out of every rule the shared resolver applies. On
+/// the baseline Rogue's primary attack, and every rogue subclass's, that
+/// meant:
+///
+///   - a natural 1 did not automatically miss;
+///   - cover gave the target no AC;
+///   - Bless and Bane did nothing to the roll, and neither did any
+///     caster-side attack buff (Sacred Weapon, `+1 Weapon`, Magic
+///     Weapon);
+///   - the one-shot advantage riders — Help, Hidden, an ally's grant,
+///     Invisibility, Bardic Inspiration — were read but never *cleared*,
+///     so a Helped rogue kept the grant for the rest of the encounter;
+///   - Mirror Image, Illusory Self and Armor of Hexes could not
+///     intercept the swing;
+///   - Uncanny Dodge, Parry, Deflect Missiles and Interception could not
+///     clamp its damage;
+///   - Protection, Warding Flare and Entropic Ward never fired;
+///   - Sanctuary did not protect the target;
+///   - Multiattack Defense never applied its AC penalty, and the swing
+///     never recorded itself as a hit for the next one;
+///   - Hunter's Mark, Hex, and the Hexblade's Curse damage bonus and
+///     expanded crit range all skipped it;
+///   - and no smite prime could ride it, which matters for the
+///     Arcane Trickster.
+///
+/// None of that was a decision. It is what an open-coded roll costs, and
+/// the cost is invisible at the call site — which is why the fix is to
+/// remove the open-coded roll rather than to re-add the twenty missing
+/// clauses to it.
+///
+/// What genuinely needed the special treatment is only this: the die
+/// count scales with rogue level, Cunning Strike can trade dice away for
+/// a rider effect, and eligibility depends on the attack's roll mode and
+/// on who is standing next to the target. That is exactly what an
+/// `ActionOnHitRider` carries, and nothing else here does.
+struct SneakAttack;
+
+impl crate::engine::attack::ActionOnHitRider for SneakAttack {
+    fn apply(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &crate::engine::attack::AttackParams,
+        mode: crate::engine::dice::RollMode,
+        is_crit: bool,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        if !sneak_attack_eligible(encounter, p.caster_id, p.target_id, mode) {
+            return 0;
         }
+        let level = encounter
+            .actors
+            .get(&p.caster_id)
+            .map(|a| a.level())
+            .unwrap_or(1);
+        let total_sneak_dice = sneak_attack_dice_for_level(level);
+        // 5e 2024 Cunning Strike: deduct dice from the sneak pool for
+        // a tactical effect. Walks the active prime table, picks the
+        // first match, returns the deduction + a queued side-effect
+        // builder. The cost can't drain the whole pool: if the
+        // declared deduction would zero the sneak dice, the prime is
+        // refused (RAW: "you can't reduce the number of dice rolled to
+        // less than 1").
+        let (sneak_dice, mut cunning_effects) =
+            consume_cunning_strike(encounter, p.caster_id, p.target_id, total_sneak_dice);
 
-        // Damage: 1d6 + DEX, doubled on crit (dice only).
-        let raw_dmg = encounter.roll(&Dice::new(1, 6)) as i32;
-        let crit_extra = if is_crit {
-            encounter.roll(&Dice::new(1, 6)) as i32
+        let sneak_raw = encounter.roll(&Dice::new(sneak_dice, 6));
+        let sneak_extra = if is_crit {
+            encounter.roll(&Dice::new(sneak_dice, 6))
         } else {
             0
         };
-        let mut damage = (raw_dmg + crit_extra + dex_mod).max(0) as u32;
-
-        // Sneak attack rider.
-        let sneak_eligible = sneak_attack_eligible(encounter, caster_id, target_id, mode);
-        let mut side_effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        if sneak_eligible {
-            let level = encounter
-                .actors
-                .get(&caster_id)
-                .map(|a| a.level())
-                .unwrap_or(1);
-            let total_sneak_dice = sneak_attack_dice_for_level(level);
-            // 5e 2024 Cunning Strike: deduct dice from the sneak pool for
-            // a tactical effect. Walks the active prime table, picks the
-            // first match, returns the deduction + a queued side-effect
-            // builder. The cost can't drain the whole pool: if the
-            // declared deduction would zero the sneak dice, the prime is
-            // refused (RAW: "you can't reduce the number of dice rolled to
-            // less than 1"). Side-effects from the consumed prime are
-            // appended to the swing's vec below.
-            let (sneak_dice, mut cunning_effects) =
-                consume_cunning_strike(encounter, caster_id, target_id, total_sneak_dice);
-            side_effects.append(&mut cunning_effects);
-
-            let sneak_raw = encounter.roll(&Dice::new(sneak_dice, 6));
-            let sneak_extra = if is_crit {
-                encounter.roll(&Dice::new(sneak_dice, 6))
-            } else {
-                0
-            };
-            let sneak_total = sneak_raw + sneak_extra;
-            damage = damage.saturating_add(sneak_total);
-            encounter.log(format!(
-                "  sneak attack: {}d6({}) = {} extra piercing",
-                sneak_dice, sneak_raw, sneak_total
-            ));
-            if let Some(rogue) = encounter.actors.get_mut(&caster_id) {
-                rogue.mark_sneak_attack_used();
-            }
-        }
-
+        let sneak_total = sneak_raw + sneak_extra;
         encounter.log(format!(
-            "  shortsword: total {} piercing damage{}",
-            damage,
-            if is_crit { " (crit)" } else { "" }
+            "  sneak attack: {}d6({}) = {} extra {:?}",
+            sneak_dice, sneak_raw, sneak_total, p.damage_type
         ));
-
-        // Primary damage lands first so any condition follow-ups (e.g.
-        // the Daze rider's MindWhipped) read the post-damage state.
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Piercing,
-        })];
-        effects.append(&mut side_effects);
-        effects
+        effects.push(Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: sneak_total,
+            damage_type: p.damage_type,
+        }));
+        // Cunning Strike's own payloads land after the damage so a
+        // condition follow-up reads the post-damage state.
+        effects.append(&mut cunning_effects);
+        if let Some(rogue) = encounter.actors.get_mut(&p.caster_id) {
+            rogue.mark_sneak_attack_used();
+        }
+        sneak_total
     }
 }
 

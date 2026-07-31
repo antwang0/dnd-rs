@@ -1,6 +1,6 @@
 use crate::actors::actor_template::ActorInstance;
 use crate::conditions::{Condition, ConditionTimer};
-use crate::engine::dice::Dice;
+use crate::engine::dice::{Dice, RollMode};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
     ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
@@ -53,6 +53,63 @@ pub struct AttackParams<'a> {
     /// flag also gates any future "this is a spell" sites that the
     /// engine grows (e.g. counterspell triggers, anti-magic field).
     pub is_spell: bool,
+}
+
+/// An extra clause a specific action layers onto its own swing, run at
+/// the end of `resolve_attack_outcome` once the shared pipeline has
+/// finished with the hit.
+///
+/// The three cohort tables above it — `ON_HIT_RIDERS`,
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, `ON_HIT_CONDITION_MARKS` — cover
+/// riders that belong to the *attacker* and fire on any swing they make.
+/// This covers the other kind: a rider that belongs to one action and
+/// needs context those rows can't carry. Sneak Attack is the case that
+/// motivated it — its die count scales with level and is negotiable
+/// (Cunning Strike trades dice for effects), its eligibility depends on
+/// the attack's `RollMode` and on who is standing next to the target,
+/// and it emits side effects of its own. None of that fits a
+/// `{tag, dice, target_gate}` row.
+///
+/// Riders return the extra damage they added so the caller's
+/// `damage_dealt` figure stays honest, and push their own side effects
+/// onto the swing's vec.
+///
+/// The alternative was for such an action to open-code the whole attack
+/// roll, and the reason not to is what the Rogue's shortsword
+/// demonstrated for as long as it did: an open-coded roll silently opts
+/// out of cover, Bless and Bane, the caster's attack buffs, the
+/// one-shot advantage riders (and their clearing), Multiattack Defense,
+/// the reactive attack taxes, Sanctuary, the interception cohort, the
+/// hit-this-turn mark, the reactive damage clamps, Hunter's Mark, Hex,
+/// and every smite prime. Every one of those is a rule the action's
+/// author never decided to skip.
+pub trait ActionOnHitRider {
+    /// Called on a landed swing, after the shared pipeline's own riders.
+    /// `mode` is the roll mode the d20 was actually rolled at.
+    fn apply(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &AttackParams,
+        mode: RollMode,
+        is_crit: bool,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32;
+}
+
+/// The rider every attack that doesn't have one uses. Adds nothing.
+struct NoRider;
+
+impl ActionOnHitRider for NoRider {
+    fn apply(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _p: &AttackParams,
+        _mode: RollMode,
+        _is_crit: bool,
+        _effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        0
+    }
 }
 
 /// Caster-side flat melee-only damage bumps read at
@@ -794,6 +851,17 @@ pub fn resolve_attack(
     resolve_attack_outcome(encounter, p).0
 }
 
+/// `resolve_attack` with one action-specific extra clause layered on —
+/// see `OnHitRider`. Use this instead of open-coding an attack roll when
+/// an action needs a rider the shared cohort tables can't express.
+pub fn resolve_attack_with_rider(
+    encounter: &mut EncounterInstance,
+    p: AttackParams,
+    rider: &dyn ActionOnHitRider,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    resolve_attack_outcome_with_rider(encounter, p, rider).0
+}
+
 /// Result of an attack roll. `damage_dealt` is the post-crit, pre-target-
 /// resistance damage value that will hit the queue — `0` on a miss or when
 /// a Mirror Image absorbed the swing. Use this variant when the caller
@@ -803,6 +871,19 @@ pub fn resolve_attack(
 pub fn resolve_attack_outcome(
     encounter: &mut EncounterInstance,
     p: AttackParams,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+    resolve_attack_outcome_with_rider(encounter, p, &NoRider)
+}
+
+/// `resolve_attack_outcome` with an action-specific `ActionOnHitRider`
+/// layered
+/// on. The two public entry points above are this function with the
+/// no-op rider; every rule in the pipeline is shared between them, which
+/// is the point.
+pub fn resolve_attack_outcome_with_rider(
+    encounter: &mut EncounterInstance,
+    p: AttackParams,
+    rider: &dyn ActionOnHitRider,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
     let Some(target_ac) = encounter
         .actors
@@ -1465,6 +1546,11 @@ pub fn resolve_attack_outcome(
     if p.is_melee {
         push_melee_reflect_riders(encounter, &mut effects, p.caster_id, p.target_id);
     }
+    // The action's own extra clause, last so it reads the finished
+    // swing. Its damage folds into the returned figure so callers that
+    // chain off `damage_dealt` (a half-damage self-heal, a max-HP drain)
+    // see the whole hit.
+    damage = damage.saturating_add(rider.apply(encounter, &p, mode, is_crit, &mut effects));
     (effects, damage)
 }
 

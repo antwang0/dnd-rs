@@ -52780,6 +52780,122 @@ mod tests {
         );
     }
 
+    /// The Rogue's shortsword is on the shared attack pipeline, so the
+    /// rules that pipeline enforces reach it.
+    ///
+    /// It used to roll its own d20 so the Sneak Attack clause could
+    /// branch on the same result, and that opted the swing out of every
+    /// shared rule at once. Rather than assert twenty things, this picks
+    /// three that could only pass if the swing is genuinely going through
+    /// the resolver, and are independent of each other: a natural 1
+    /// misses, an interception can eat the hit, and the target's cover
+    /// raises the AC the swing is measured against.
+    #[test]
+    fn the_rogue_shortsword_obeys_the_shared_attack_pipeline() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        // (1) One-shot advantage riders are *consumed*. The old
+        // open-coded roll read the Helped grant through
+        // `attack_mode_with_riders` and never called
+        // `clear_attack_advantage_riders`, so a Helped rogue kept the
+        // grant — and its advantage, and with it automatic Sneak Attack
+        // eligibility — for the rest of the encounter.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(rogue, zombie, true),
+            RollMode::Advantage,
+            "test setup: a Helped rogue should swing at advantage"
+        );
+        for eff in ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&vec![zombie]), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&rogue].has_condition(Condition::Helped),
+            "the swing should have burned the Helped grant"
+        );
+
+        // (2) Interception can eat the swing. Mirror Image decoys are
+        // the cheapest row of `attack_intercepted`, and an open-coded
+        // roll never consulted the cohort at all.
+        let mut deflections = 0;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            {
+                let z = e.actors.get_mut(&zombie).unwrap();
+                z.add_condition(Condition::MirroredImages, ConditionTimer::Rounds(10));
+                z.set_mirror_images(3);
+            }
+            for eff in ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&vec![zombie]), None, None)
+            {
+                eff.apply(&mut e);
+            }
+            if e.messages().iter().any(|m| m.contains("duplicate")) {
+                deflections += 1;
+            }
+        }
+        assert!(
+            deflections > 0,
+            "Mirror Image never intercepted the shortsword across 60 seeds"
+        );
+
+        // (3) Cover raises the AC the swing is measured against. Cover
+        // in this engine comes from an interposed creature, so a
+        // bystander on the line gives the zombie half cover; the logged
+        // "vs AC N" has to move by exactly that much. Resolved at range
+        // rather than in reach because RAW's adjacent attackers ignore
+        // cover, and the resolver honours that.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .expect("the interposed bystander should instantiate");
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let cover = e.cover_ac_bonus(rogue, zombie);
+        assert!(
+            cover > 0,
+            "test setup: the interposed creature should grant cover"
+        );
+        let bare_ac = e.actors[&zombie].armor_class() as i32;
+        for eff in ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&vec![zombie]), None, None) {
+            eff.apply(&mut e);
+        }
+        let line = e
+            .messages()
+            .iter()
+            .find(|m| m.contains("shortsword: 1d20("))
+            .expect("the swing should have logged a roll")
+            .clone();
+        assert!(
+            line.contains(&format!("vs AC {}", bare_ac + cover)),
+            "cover should raise the AC the shortsword is measured against \
+             (bare {}, cover +{}): {}",
+            bare_ac,
+            cover,
+            line
+        );
+    }
+
     /// A natural 1 misses on **both** attack resolvers, even when the
     /// modifiers would otherwise carry it past the target's AC.
     ///
