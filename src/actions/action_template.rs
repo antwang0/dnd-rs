@@ -213,11 +213,30 @@ pub fn resolve_burst_save_condition(
     condition: crate::conditions::Condition,
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
+    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
+}
+
+/// The save-or-condition half of every condition burst: roll `save_ability`
+/// vs `dc` for each id in `target_ids`, in the order given, and queue an
+/// `ApplyCondition` for each one that fails.
+///
+/// Sibling to `resolve_burst_targets` on the damage lane, and split out
+/// for the same reason: the two condition bursts above differ only in
+/// how they pick their targets, and a loop written twice is a rule that
+/// can be fixed in one place and stay broken in the other.
+fn install_condition_on_failed_saves(
+    encounter: &mut EncounterInstance,
+    target_ids: &[usize],
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::side_effects::ApplyCondition;
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    for tid in encounter.enemy_burst_targets(caster_id, center, radius) {
-        let save = encounter.roll_save(tid, save_ability, dc);
-        if save.passed() {
+    for &tid in target_ids {
+        if encounter.roll_save(tid, save_ability, dc).passed() {
             continue;
         }
         effects.push(Box::new(ApplyCondition {
@@ -256,31 +275,23 @@ pub fn resolve_los_glare_condition(
     timer: crate::conditions::ConditionTimer,
     skip_immune_to_damage: Option<DamageType>,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    use crate::engine::side_effects::ApplyCondition;
     let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
         return Vec::new();
     };
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    for tid in encounter.enemy_burst_targets(caster_id, caster_loc, radius) {
-        if let Some(dt) = skip_immune_to_damage
-            && encounter.actors.get(&tid).is_some_and(|a| a.is_immune_to(dt))
-        {
-            continue;
-        }
-        if !encounter.actor_has_line_of_sight(caster_id, tid) {
-            continue;
-        }
-        let save = encounter.roll_save(tid, save_ability, dc);
-        if save.passed() {
-            continue;
-        }
-        effects.push(Box::new(ApplyCondition {
-            actor_id: tid,
-            condition,
-            timer,
-        }));
-    }
-    effects
+    // Both filters run before any save is rolled, so a target the glare
+    // can't reach never touches the dice — which keeps the roll sequence
+    // (and therefore the seeded log) free of phantom saves for creatures
+    // that were never in the glare's path.
+    let target_ids: Vec<usize> = encounter
+        .enemy_burst_targets(caster_id, caster_loc, radius)
+        .into_iter()
+        .filter(|&tid| {
+            let immune = skip_immune_to_damage
+                .is_some_and(|dt| encounter.actors.get(&tid).is_some_and(|a| a.is_immune_to(dt)));
+            !immune && encounter.actor_has_line_of_sight(caster_id, tid)
+        })
+        .collect();
+    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
 }
 
 /// Sweep targets in a `radius` burst centered on `point` and return their

@@ -1069,7 +1069,16 @@ pub struct StackElement {
     pub id: usize,
 }
 
-#[derive(Eq, PartialEq)]
+/// One entry in the initiative queue, as the UI sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InitiativeSlot {
+    pub actor_id: usize,
+    /// True when this is a bonus slot rather than the one the actor
+    /// rolled for — see `InitiativeElement::is_extra`. The UI marks these
+    /// so a name appearing twice in the panel is legible.
+    pub is_extra: bool,
+}
+
 struct InitiativeElement {
     pub actor_id: usize,
     pub initiative: i32,
@@ -1093,11 +1102,28 @@ struct InitiativeElement {
     /// `clear_extra_turns`, and nothing else in the queue may be swept
     /// with them.
     ///
-    /// Deliberately absent from `Ord`. Sort position is a question about
-    /// *when* a slot acts, and an extra slot's answer to that is already
-    /// fully encoded in the lowered `initiative` it was inserted with.
+    /// Deliberately absent from `Ord` — and therefore from `Eq`, which
+    /// is defined in terms of it below. Sort position is a question
+    /// about *when* a slot acts, and an extra slot's answer to that is
+    /// already fully encoded in the lowered `initiative` it was inserted
+    /// with.
     pub is_extra: bool,
 }
+
+/// Equality is defined as "sorts to the same place," which is what `Ord`
+/// requires of it: `a == b` must hold exactly when `a.cmp(b)` is
+/// `Equal`. A derive would have compared `is_extra` too and broken that
+/// the moment a slot carried the flag, since `cmp` deliberately ignores
+/// it. Nothing in the queue compares elements for equality today — the
+/// insert walk is the only consumer of the ordering — so this exists to
+/// keep the trait contract honest rather than to serve a caller.
+impl PartialEq for InitiativeElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for InitiativeElement {}
 
 impl Ord for InitiativeElement {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -1296,6 +1322,11 @@ impl OutcomeTracker {
 /// validation) needs deep access to actor state — narrowing it would
 /// require a much larger accessor surface.
 pub struct EncounterInstance {
+    /// The seed both RNGs were built from — the one passed in, or the
+    /// one `empty` drew when none was. Read-only after construction and
+    /// surfaced by `seed()`; see `empty` for why an unseeded encounter
+    /// still has one.
+    seed: u64,
     initialized: bool,
     pub width: usize,
     pub height: usize,
@@ -5018,12 +5049,25 @@ impl EncounterInstance {
         Ok(ei)
     }
 
+    /// Build the bare encounter shell: terrain generated, no actors, no
+    /// initiative.
+    ///
+    /// `seed` of `None` means "pick one," not "run unseeded." Drawing a
+    /// seed from process entropy and then using it exactly the way an
+    /// explicit one is used costs a single `u64` and buys the property
+    /// that *every* encounter is reproducible — `seed()` reports it, the
+    /// UI prints it, and a fight worth replaying (or a bug worth
+    /// reporting) can be re-entered by passing the number back on the
+    /// command line. Before this, an unseeded run took its dice from a
+    /// thread-local RNG whose starting state was gone the moment it was
+    /// used, so the one encounter anybody actually wanted to reproduce —
+    /// the one they just played — was the one that couldn't be.
     fn empty(terrain_params: &TerrainGenParams, seed: Option<u64>) -> EncounterInstance {
-        let (roller, mut rng) = match seed {
-            Some(s) => (FastRandRoller::with_seed(s), Rng::with_seed(s)),
-            None => (FastRandRoller::default(), Rng::new()),
-        };
+        let seed = seed.unwrap_or_else(|| fastrand::u64(..));
+        let roller = FastRandRoller::with_seed(seed);
+        let mut rng = Rng::with_seed(seed);
         EncounterInstance {
+            seed,
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
@@ -6456,6 +6500,13 @@ impl EncounterInstance {
     /// effects can key off the absolute round number.
     pub fn round(&self) -> u32 {
         self.round
+    }
+
+    /// The seed this encounter's dice and terrain came from. Passing it
+    /// back as the binary's seed argument reproduces the encounter
+    /// exactly, whether or not the original run named one.
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     /// Clear any Help grant on `actor_id`. No-op if the actor is missing
@@ -9085,16 +9136,28 @@ impl EncounterInstance {
         Ok(actor_id)
     }
 
-    /// Actor ids in turn order, starting from the current actor. Empty
-    /// when no actors are queued. Used by the UI's initiative panel.
-    pub fn initiative_actor_ids(&self) -> Vec<usize> {
+    /// The initiative queue in turn order, starting at the active slot.
+    /// Empty when nobody is queued. Drives the UI's initiative panel.
+    ///
+    /// Slots rather than bare ids because an actor can hold more than one
+    /// (the Thief Rogue's Thief's Reflexes gives them two in round 1),
+    /// and a panel that listed the same name twice with nothing to
+    /// distinguish the rows would read as a rendering bug rather than as
+    /// the feature it is.
+    pub fn initiative_slots(&self) -> Vec<InitiativeSlot> {
         let len = self.initiative_tracker.initiatives.len();
         if len == 0 {
             return Vec::new();
         }
         let curr = self.initiative_tracker.curr_index;
         (0..len)
-            .map(|i| self.initiative_tracker.initiatives[(curr + i) % len].actor_id)
+            .map(|i| {
+                let elem = &self.initiative_tracker.initiatives[(curr + i) % len];
+                InitiativeSlot {
+                    actor_id: elem.actor_id,
+                    is_extra: elem.is_extra,
+                }
+            })
             .collect()
     }
 
@@ -55971,6 +56034,67 @@ mod tests {
         );
     }
 
+    /// Every encounter reports a seed, and replaying that seed
+    /// reproduces it — including the encounters nobody named a seed for.
+    ///
+    /// That second half is the point. An unseeded run used to take its
+    /// dice from a thread-local RNG whose starting state was discarded
+    /// on first use, so the one encounter anyone wants to reproduce, the
+    /// one they just played, was exactly the one that couldn't be.
+    ///
+    /// Sameness is checked against the generated actor roster and the
+    /// terrain rather than against the seed field alone: the field
+    /// matching proves only that a number was stored, where the roster
+    /// proves the number was the one both RNGs were actually built from.
+    #[test]
+    fn an_unseeded_encounter_still_reports_a_seed_that_replays_it() {
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 4,
+            branch_prob: 0.5,
+        };
+        let ap = ActorGenParams {
+            cr_target: 2.0,
+            n_teams: 2,
+            pc_template: None,
+            start_team: 0,
+        };
+
+        let fingerprint = |e: &EncounterInstance| {
+            let mut roster: Vec<(usize, String, u32, isize, isize)> = e
+                .actors
+                .iter()
+                .map(|(id, a)| {
+                    let loc = a.location();
+                    (*id, a.name().to_string(), a.max_hitpoints(), loc.x, loc.y)
+                })
+                .collect();
+            roster.sort();
+            let walls: Vec<bool> = e
+                .terrain
+                .iter()
+                .map(|t| t.terrain_type == TerrainType::Wall)
+                .collect();
+            (roster, walls)
+        };
+
+        let unseeded = EncounterInstance::from_params(&tp, &ap, None).unwrap();
+        let replay =
+            EncounterInstance::from_params(&tp, &ap, Some(unseeded.seed())).unwrap();
+        assert_eq!(
+            fingerprint(&unseeded),
+            fingerprint(&replay),
+            "seed {} did not reproduce the encounter it came from",
+            unseeded.seed()
+        );
+
+        // And an explicitly seeded encounter reports back what it was
+        // given, rather than a fresh draw that happens to be stored.
+        let explicit = EncounterInstance::from_params(&tp, &ap, Some(99)).unwrap();
+        assert_eq!(explicit.seed(), 99);
+    }
+
     /// 5e Sun Soul Monk **Searing Sunburst** zeroes on a successful save
     /// rather than halving.
     ///
@@ -56070,7 +56194,7 @@ mod tests {
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
             .unwrap();
 
-        let round_one = e.initiative_actor_ids();
+        let round_one: Vec<usize> = e.initiative_slots().iter().map(|s| s.actor_id).collect();
         assert_eq!(
             round_one.iter().filter(|&&id| id == thief).count(),
             2,
@@ -56100,7 +56224,7 @@ mod tests {
         }
         assert_eq!(e.round(), 2, "one full pass is one round");
 
-        let round_two = e.initiative_actor_ids();
+        let round_two: Vec<usize> = e.initiative_slots().iter().map(|s| s.actor_id).collect();
         assert_eq!(
             round_two.iter().filter(|&&id| id == thief).count(),
             1,
@@ -56129,18 +56253,19 @@ mod tests {
         e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
             .unwrap();
         assert_eq!(
-            e.initiative_actor_ids()
+            e.initiative_slots()
                 .iter()
-                .filter(|&&id| id == thief)
+                .filter(|s| s.actor_id == thief)
                 .count(),
             2
         );
 
         e.remove_actor(thief);
+        let left: Vec<usize> = e.initiative_slots().iter().map(|s| s.actor_id).collect();
         assert!(
-            !e.initiative_actor_ids().contains(&thief),
+            !left.contains(&thief),
             "no slot survives the actor: {:?}",
-            e.initiative_actor_ids()
+            left
         );
     }
 
@@ -56535,7 +56660,7 @@ mod tests {
         let leader = e.peek_prompt().map(|p| p.actor_id()).expect("a prompt");
         e.pop_prompt();
         // The actor next in line hasn't had a turn yet.
-        let next = e.initiative_actor_ids()[1];
+        let next = e.initiative_slots()[1].actor_id;
         assert_ne!(next, leader);
         assert!(!e.actors[&next].has_taken_turn_in_combat());
 

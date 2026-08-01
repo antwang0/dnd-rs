@@ -275,14 +275,16 @@ pub fn render_sideinfo(
     // Initiative queue: show all actors in turn order, starting from the
     // current actor; highlight + blink-glyph the active one.
     let mut initiative_lines: Vec<Line<'static>> = Vec::new();
-    for (slot, actor_id) in encounter.initiative_actor_ids().into_iter().enumerate() {
+    for (position, slot) in encounter.initiative_slots().into_iter().enumerate() {
+        let actor_id = slot.actor_id;
         // The list is rotated to start at the active slot, so "current"
         // is a question about position, not about identity. It has to
         // be: an actor can hold more than one slot in the queue (a Thief
         // Rogue's Thief's Reflexes gives them two in round 1), and
         // matching on the id alone would draw the marker on both — the
         // one acting now and the one still waiting ten points down.
-        let is_current = slot == 0 && prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
+        let is_current =
+            position == 0 && prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
         if let Some(actor) = encounter.actors.get(&actor_id) {
             let (s, c, bg) = get_colored_span(actor.glyph(), actor.team());
             let prefix = if is_current { "> " } else { "  " };
@@ -303,10 +305,27 @@ pub fn render_sideinfo(
                 Span::raw(" "),
             ];
             spans.extend(hp_bar_spans(actor.hitpoints(), actor.max_hitpoints(), 8));
+            // A bonus slot (Thief's Reflexes) puts the same name in the
+            // list twice. Say which row is the spare, or the panel reads
+            // as a rendering fault rather than as the feature.
+            if slot.is_extra {
+                spans.push(Span::styled(
+                    " +turn".to_string(),
+                    Style::default().fg(Color::LightMagenta),
+                ));
+            }
             initiative_lines.push(Line::from(spans));
         }
     }
-    let init_title = format!("Initiative — Round {}", encounter.round());
+    // The seed rides the panel title because it is the one number a
+    // player wants *after* the fight rather than during it — to replay a
+    // good encounter, or to hand over with a bug report. Every encounter
+    // has one now, including the ones started without a seed argument.
+    let init_title = format!(
+        "Initiative — Round {} — seed {}",
+        encounter.round(),
+        encounter.seed()
+    );
     frame.render_widget(
         Paragraph::new(initiative_lines)
             .block(Block::default().borders(Borders::ALL).title(init_title)),

@@ -34,6 +34,16 @@ struct Cli {
     pc_template: &'static CreatureTemplate,
 }
 
+/// What `Cli::parse` decided the arguments meant.
+enum Invocation {
+    /// Start a game with this configuration.
+    Play(Cli),
+    /// The player asked what the arguments are. Print `text` and exit 0
+    /// — a help request is a thing the program was asked to do and did,
+    /// not a mistake, so it doesn't belong on stderr behind an exit 2.
+    Help(String),
+}
+
 impl Cli {
     /// Resolve `args` (the raw argv tail, without the program name).
     ///
@@ -46,10 +56,17 @@ impl Cli {
     /// Returns `Err` with a listing rather than falling back silently:
     /// a typo'd class name that quietly started a Fighter game is worse
     /// than a refusal, because the player finds out several turns in.
-    fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Self, String> {
+    fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, String> {
         let mut seed = None;
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
+            // Checked before the number parse and before the name
+            // collection, so `--help` doesn't end up joined into a class
+            // name and answered with "unknown class \"--help\"" — which
+            // is what happened before, on stderr, behind exit code 2.
+            if matches!(arg.as_str(), "-h" | "--help" | "help") {
+                return Ok(Invocation::Help(Self::help_message()));
+            }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
                 _ => name_parts.push(arg),
@@ -61,7 +78,32 @@ impl Cli {
             let wanted = name_parts.join(" ");
             Self::find_template(&wanted).ok_or_else(|| Self::unknown_class_message(&wanted))?
         };
-        Ok(Self { seed, pc_template })
+        Ok(Invocation::Play(Self { seed, pc_template }))
+    }
+
+    /// Usage plus the full class listing. Shares
+    /// `class_listing` with the unknown-class error so the two can't
+    /// disagree about what is playable.
+    fn help_message() -> String {
+        let mut msg = String::from("usage: dnd-rs [seed] [class name]\n\n");
+        msg.push_str("Both arguments are optional and order-independent: the first\n");
+        msg.push_str("argument that parses as a number is the seed, everything else\n");
+        msg.push_str("is the class name. With no seed, one is drawn and printed in\n");
+        msg.push_str("the initiative panel so the encounter can be replayed.\n\n");
+        msg.push_str("Classes:\n");
+        msg.push_str(&Self::class_listing());
+        msg
+    }
+
+    /// Every playable template, one line per class family. The shared
+    /// half of the help text and the unknown-class error.
+    fn class_listing() -> String {
+        let mut out = String::new();
+        for (family, templates) in pc_template_families() {
+            let names: Vec<&str> = templates.iter().map(|t| t.name).collect();
+            out.push_str(&format!("  {}: {}\n", family, names.join(", ")));
+        }
+        out
     }
 
     /// Case-insensitive exact match on a template's display name.
@@ -82,20 +124,17 @@ impl Cli {
     /// for, then every option grouped by family so the reader can scan
     /// for the one they meant.
     fn unknown_class_message(wanted: &str) -> String {
-        let mut msg = format!("unknown class {:?}. Available:\n", wanted);
-        for (family, templates) in pc_template_families() {
-            msg.push_str(&format!("  {}: ", family));
-            let names: Vec<&str> = templates.iter().map(|t| t.name).collect();
-            msg.push_str(&names.join(", "));
-            msg.push('\n');
-        }
-        msg
+        format!("unknown class {:?}. Available:\n{}", wanted, Self::class_listing())
     }
 }
 
 fn main() -> io::Result<()> {
     let cli = match Cli::parse(std::env::args().skip(1)) {
-        Ok(cli) => cli,
+        Ok(Invocation::Play(cli)) => cli,
+        Ok(Invocation::Help(text)) => {
+            print!("{}", text);
+            return Ok(());
+        }
         Err(msg) => {
             // Printed before the alternate screen is entered, so the
             // listing survives on the terminal instead of being wiped
@@ -156,10 +195,15 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, Invocation};
 
+    /// Parse and unwrap to a playable configuration. Every test below
+    /// but the help ones expects `Play`, so the unwrap is the assertion.
     fn parse(args: &[&str]) -> Result<Cli, String> {
-        Cli::parse(args.iter().map(|s| s.to_string()))
+        match Cli::parse(args.iter().map(|s| s.to_string()))? {
+            Invocation::Play(cli) => Ok(cli),
+            Invocation::Help(_) => panic!("{:?} is not a help request", args),
+        }
     }
 
     /// No arguments keeps the historical behaviour exactly: a Fighter
@@ -214,6 +258,40 @@ mod tests {
         assert!(err.contains("Tricky Cleric"), "{}", err);
         assert!(err.contains("Trickery Cleric"), "{}", err);
         assert!(err.contains("wizard:"), "{}", err);
+    }
+
+    /// A help flag is answered with help, on stdout, at exit 0.
+    ///
+    /// It used to fall through to the class matcher: `--help` collected
+    /// into `name_parts`, missed every template, and came back as
+    /// `unknown class "--help"` on stderr behind exit code 2. The
+    /// listing was right there in the error, which is why it went
+    /// unnoticed — the output was useful and the framing was wrong.
+    #[test]
+    fn a_help_flag_is_answered_with_help_and_not_with_an_error() {
+        for flag in ["-h", "--help", "help"] {
+            let text = match Cli::parse([flag.to_string()]) {
+                Ok(Invocation::Help(t)) => t,
+                Ok(Invocation::Play(cli)) => {
+                    panic!("{} started a {} game", flag, cli.pc_template.name)
+                }
+                Err(e) => panic!("{} was refused: {}", flag, e),
+            };
+            assert!(text.contains("usage:"), "{}: {}", flag, text);
+            assert!(text.contains("Trickery Cleric"), "{}: {}", flag, text);
+        }
+    }
+
+    /// Help wins over the rest of the line rather than being shadowed by
+    /// it — asking for help while also naming a class is still asking
+    /// for help, and a valid class name would otherwise have started a
+    /// game the player didn't ask to play.
+    #[test]
+    fn help_wins_over_the_arguments_beside_it() {
+        assert!(matches!(
+            Cli::parse(["7".to_string(), "--help".to_string(), "Champion".to_string()]),
+            Ok(Invocation::Help(_))
+        ));
     }
 
     /// Every template in the registry is reachable by typing its own
