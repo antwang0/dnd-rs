@@ -4677,21 +4677,28 @@ impl EncounterInstance {
             return None;
         }
         let target_team = self.actors.get(&target_id)?.team();
-        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
-        ids.sort_unstable();
-        let guardian = ids.into_iter().find(|&id| {
-            if id == target_id {
-                return false;
-            }
-            let Some(a) = self.actors.get(&id) else {
-                return false;
-            };
-            a.team() == target_team
-                && a.is_combat_active()
-                && a.has_passive_feature(DIVINE_ALLEGIANCE_TAG)
-                && a.has_reaction()
-                && self.footprint_distance(id, target_id).is_some_and(|d| d <= 1)
-        })?;
+        // One pass keeping the lowest qualifying id, rather than
+        // collect-sort-find. Every damage instance in the game runs this
+        // lookup, almost none of them find anybody, and the sort was an
+        // allocation per hit to order a list that is thrown away. The
+        // minimum is the same answer the sorted walk gave, so the
+        // determinism a seeded run depends on is unchanged.
+        //
+        // The cheap gates go first so a table with no Crown Paladin in
+        // it never reaches the distance computation.
+        let guardian = self
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                **id != target_id
+                    && a.team() == target_team
+                    && a.has_passive_feature(DIVINE_ALLEGIANCE_TAG)
+                    && a.is_combat_active()
+                    && a.has_reaction()
+            })
+            .map(|(id, _)| *id)
+            .filter(|&id| self.footprint_distance(id, target_id).is_some_and(|d| d <= 1))
+            .min()?;
         self.actors
             .get_mut(&guardian)?
             .consume_resource(crate::engine::side_effects::Resource::Reaction);

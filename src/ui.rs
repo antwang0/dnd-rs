@@ -581,3 +581,115 @@ pub fn render_sideinfo(
         area_split[2],
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::THIEF_ROGUE_TEMPLATE;
+    use crate::engine::actor_gen::ActorGenParams;
+    use crate::engine::terrain_gen::TerrainGenParams;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render `render_sideinfo` into an off-screen buffer and return the
+    /// panel as plain text, one line per row.
+    ///
+    /// The two panels this module draws had no coverage at all, which is
+    /// how a duplicated initiative row and a missing seed both went
+    /// unnoticed as *presentation* problems rather than as engine ones.
+    /// A `TestBackend` render is the cheapest thing that can tell the
+    /// difference.
+    fn rendered_panel(encounter: &EncounterInstance) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("test backend");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_sideinfo(encounter, f, area, 0);
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
+    fn encounter_with(actors: &[(&'static crate::actors::actor_template::CreatureTemplate, usize)])
+    -> EncounterInstance {
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(4)).unwrap();
+        // Spawned at generator-chosen floor tiles rather than fixed
+        // coordinates: this module's tests are about what the panel
+        // prints, and where anybody is standing doesn't reach it.
+        for (i, (template, team)) in actors.iter().enumerate() {
+            let loc = e.get_random_spawn(template.size).expect("a floor tile");
+            e.instantiate_creature(template, loc, *team, i)
+                .expect("instantiate");
+        }
+        e
+    }
+
+    /// The seed is on screen. Every encounter has one now, and it is
+    /// only useful if the player can read it back off the panel after a
+    /// fight worth replaying.
+    #[test]
+    fn the_initiative_panel_shows_the_seed() {
+        let e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("seed 4"),
+            "the seed should be readable off the panel:\n{}",
+            panel
+        );
+    }
+
+    /// A Thief's bonus slot is labelled, so the same name appearing
+    /// twice in round 1 reads as the feature rather than as a rendering
+    /// fault — and the label is gone once the extra turn retires.
+    #[test]
+    fn the_initiative_panel_labels_a_bonus_turn() {
+        let mut e = encounter_with(&[(&THIEF_ROGUE_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let panel = rendered_panel(&e);
+        assert_eq!(
+            panel.matches("Thief Rogue").count(),
+            2,
+            "the Thief holds two slots in round 1:\n{}",
+            panel
+        );
+        assert_eq!(
+            panel.matches("+turn").count(),
+            1,
+            "exactly one of them is marked as the spare:\n{}",
+            panel
+        );
+
+        // Walk out of round 1; the spare slot and its label go together.
+        for _ in 0..e.initiative_slots().len() {
+            e.skip_turn();
+        }
+        let panel = rendered_panel(&e);
+        assert_eq!(
+            panel.matches("Thief Rogue").count(),
+            1,
+            "one slot after round 1:\n{}",
+            panel
+        );
+        assert!(!panel.contains("+turn"), "and no label left:\n{}", panel);
+    }
+}
