@@ -5052,6 +5052,36 @@ fn try_greater_restoration(
     best.map(|(_, aei)| aei)
 }
 
+/// Cast something helpful on the ally who most needs it — the rung the
+/// pipeline reaches when somebody on the team is dying or bloodied.
+///
+/// The candidate set is deliberately wider than the name: every
+/// non-harmful single-target action on the sheet, not only the ones that
+/// restore hit points. That is not tidiness — it is the only lane a
+/// caster's ally-target buffs have. Barkskin, Death Ward, Freedom of
+/// Movement, Haste, Greater Invisibility, Stoneskin, Magic Weapon,
+/// Protection from Energy and a dozen more reach the board through here
+/// and nowhere else; narrowing the filter to `is_heal()` would delete
+/// all of them from every AI-driven caster in one line.
+///
+/// What the filter must not do is let them *outrank* an actual heal, and
+/// until the ordering key below grew its third element it did exactly
+/// that. Candidates for one ally all share a priority and an HP, so the
+/// old two-element key never separated them, and the winner was simply
+/// whichever action sat earliest on the template's list. A cleric whose
+/// sheet happened to put Guidance above Cure Wounds answered a dying
+/// ally by handing them a d4.
+///
+/// The key is `(priority, hp, not-a-heal)`, lowest wins:
+///   - **priority** — 0 for a dying ally, 1 for a bloodied one. Nothing
+///     else is a candidate.
+///   - **hp** — among equally urgent allies, the one closest to death.
+///   - **not-a-heal** — among actions for the same ally, `is_heal()`
+///     first. This is the fix; the two elements above are unchanged.
+///
+/// Help is excluded by name. It is helpful and single-target and would
+/// otherwise sort alongside the buffs, but an attack-advantage rider is
+/// the one thing a creature bleeding out has no use for.
 fn try_support_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -5059,12 +5089,7 @@ fn try_support_heal(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a
-    // target. Exclude Help: it's helpful but doesn't heal — it grants
-    // an attack-advantage rider that's pointless when an ally is
-    // bleeding out and wants HP back.
-    let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
+    let support_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
         .filter(|a| {
@@ -5074,16 +5099,14 @@ fn try_support_heal(
         })
         .copied()
         .collect();
-    if heal_actions.is_empty() {
+    if support_actions.is_empty() {
         return None;
     }
 
     // Sort actor ids for deterministic tiebreak.
     let ids = encounter.sorted_actor_ids();
 
-    // (priority, hp, aei): lower priority value = more urgent.
-    // 0 = dying, 1 = wounded combat-active.
-    let mut best: Option<(u8, u32, ActionExecutionInfo)> = None;
+    let mut best: Option<((u8, u32, bool), ActionExecutionInfo)> = None;
     for ally_id in ids {
         if ally_id == actor_id {
             continue;
@@ -5105,26 +5128,20 @@ fn try_support_heal(
             continue; // healthy or stable — skip
         };
 
-        for &heal in &heal_actions {
+        for &support in &support_actions {
             let aei =
-                ActionExecutionInfo::new(heal, actor_id, Some(vec![ally_id]), None, None);
+                ActionExecutionInfo::new(support, actor_id, Some(vec![ally_id]), None, None);
             if !aei.validate(encounter) {
                 continue;
             }
-            let hp = ally.hitpoints();
-            let pick = match &best {
-                None => true,
-                Some((best_pri, best_hp, _)) => {
-                    priority < *best_pri || (priority == *best_pri && hp < *best_hp)
-                }
-            };
-            if pick {
-                best = Some((priority, hp, aei));
+            let key = (priority, ally.hitpoints(), !support.is_heal());
+            if best.as_ref().is_none_or(|(best_key, _)| key < *best_key) {
+                best = Some((key, aei));
             }
         }
     }
 
-    best.map(|(_, _, aei)| aei)
+    best.map(|(_, aei)| aei)
 }
 
 /// Try to fire a Burst-schema action centered on a tile that hits as many
@@ -5801,6 +5818,85 @@ mod tests {
     use crate::engine::side_effects::Resource;
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::DamageType;
+
+    /// A bloodied ally gets hit points, not a d4.
+    ///
+    /// The support rung's candidate set is every non-harmful
+    /// single-target action on the sheet, because that is the only lane
+    /// a caster's ally buffs have. The bug this pins is what happens
+    /// when several of them are legal for the same ally: they all share
+    /// a priority and an HP, so before the ordering key grew its
+    /// `is_heal` element the winner was whichever action sat earliest on
+    /// the template's list, and roughly half the roster's casters
+    /// answered a bleeding ally with Guidance, Longstrider or Spider
+    /// Climb.
+    ///
+    /// Swept over the whole registry rather than pinned on one template,
+    /// because the failure was never about a particular sheet — it was
+    /// about the order of one, and any template's order can change.
+    #[test]
+    fn the_support_rung_prefers_a_heal_over_a_buff() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::pc_template_families;
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut swept = 0usize;
+        for (_family, templates) in pc_template_families() {
+            for template in templates {
+                let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+                let caster = e
+                    .instantiate_creature(template, Coordinate::new(3, 8), 0, 0)
+                    .unwrap();
+                let ally = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+                    .unwrap();
+                // Somebody hostile has to be standing or the encounter
+                // is over before the rung is asked anything.
+                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 8), 1, 0)
+                    .unwrap();
+                let max = e.actors[&ally].max_hitpoints();
+                e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+
+                let Some(aei) = try_support_heal(&e, caster) else {
+                    continue;
+                };
+                if aei.action().is_heal() {
+                    swept += 1;
+                    continue;
+                }
+                // A non-heal is only the right answer when no heal on
+                // the sheet was legal for this ally.
+                let heal_available = e.actors[&caster].actions.iter().any(|a| {
+                    a.is_heal()
+                        && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                        && ActionExecutionInfo::new(*a, caster, Some(vec![ally]), None, None)
+                            .validate(&e)
+                });
+                assert!(
+                    !heal_available,
+                    "{} answered a bloodied ally with '{}' while a heal was legal",
+                    template.name,
+                    aei.action().name()
+                );
+                swept += 1;
+            }
+        }
+        assert!(
+            swept > 0,
+            "the sweep should have found at least one template that responds"
+        );
+    }
 
     /// Every name in the self-buff cohorts belongs to an action some
     /// registered PC template actually carries.
