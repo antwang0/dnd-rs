@@ -55971,6 +55971,82 @@ mod tests {
         );
     }
 
+    /// 5e Sun Soul Monk **Searing Sunburst** zeroes on a successful save
+    /// rather than halving.
+    ///
+    /// The distinction is invisible on any single roll — a failed save
+    /// looks the same under either policy — so the test sweeps seeds and
+    /// checks the *shape* of the outcomes: every hit is either the full
+    /// shared roll or nothing at all, and both show up. A regression to
+    /// `HalfOnSave` fails on the first seed where the save lands, which
+    /// across twenty-four seeds is not a coin flip.
+    ///
+    /// The rolled total is read back off the burst's own log line, which
+    /// is the only place the shared roll is published — and pinning it
+    /// this way means the log stays honest too.
+    #[test]
+    fn searing_sunburst_deals_nothing_on_a_successful_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::SEARING_SUNBURST;
+        use crate::actors::creatures::monks::SUN_SOUL_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut zeroed = 0;
+        let mut fully_hit = 0;
+        for seed in 0..24u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let monk = e
+                .instantiate_creature(&SUN_SOUL_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // An ogre rather than a goblin: 2d6 can exceed a goblin's
+            // whole HP bar, and a target that drops to 0 reports a
+            // smaller delta than it actually took, which would read as
+            // a third outcome the policy doesn't have.
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let before = e.actors[&ogre].hitpoints();
+            let log_len = e.messages().len();
+
+            let action: &dyn Action = &*SEARING_SUNBURST;
+            let center = vec![Coordinate::new(10, 10)];
+            for eff in action.side_effects(&mut e, monk, None, Some(&center), None) {
+                eff.apply(&mut e);
+            }
+
+            // "  searing sunburst: 2d6(N) radiant, ..." — N is the
+            // shared roll every target in the burst is measured against.
+            let rolled: u32 = e.messages()[log_len..]
+                .iter()
+                .find_map(|m| {
+                    let tail = m.split("2d6(").nth(1)?;
+                    tail.split(')').next()?.parse().ok()
+                })
+                .expect("the burst logs its shared roll");
+            assert!(rolled >= 2, "2d6 cannot roll below 2");
+
+            let taken = before - e.actors[&ogre].hitpoints();
+            assert!(
+                taken == 0 || taken == rolled,
+                "seed {}: took {} against a shared roll of {} — \
+                 save-for-nothing admits only those two",
+                seed,
+                taken,
+                rolled
+            );
+            if taken == 0 {
+                zeroed += 1;
+            } else {
+                fully_hit += 1;
+            }
+        }
+        assert!(
+            zeroed > 0,
+            "no seed in 24 passed the save — the fixture isn't exercising the policy"
+        );
+        assert!(fully_hit > 0, "no seed in 24 failed the save");
+    }
+
     /// 5e Thief Rogue **Thief's Reflexes**: two turns in round 1, one
     /// per round after that.
     ///

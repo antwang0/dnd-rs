@@ -363,6 +363,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*monks::SHADOW_MONK_TEMPLATE,
                     &*monks::FOUR_ELEMENTS_MONK_TEMPLATE,
                     &*monks::KENSEI_MONK_TEMPLATE,
+                    &*monks::SUN_SOUL_MONK_TEMPLATE,
                 ],
             ),
             (

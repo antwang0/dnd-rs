@@ -5053,6 +5053,32 @@ pub static MONK_UNARMED_STRIKE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
+/// Radiant Sun Bolt — Way of the Sun Soul Monk (subclass level 3). A
+/// ranged attack made with the monk's own body: DEX to hit, the martial
+/// arts die for damage, radiant, out to 30 ft.
+///
+/// A `SimpleWeapon` and not a bespoke impl because that is all it is —
+/// RAW's whole text is "you can make the attack as if you were making an
+/// unarmed strike, except at range." Everything the subclass is worth
+/// falls out of it costing an Action like any other attack: Extra Attack
+/// fires it twice, and Flurry of Blows hands over an extra Action, which
+/// is RAW's "spend 1 ki as a bonus action to make two more bolts" by a
+/// different route and on the chassis's existing button.
+///
+/// `normal_range == reach`, so there is no disadvantage band. RAW gives
+/// the bolt a flat 30 ft with no long range at all, which is exactly
+/// what a range band that starts where the weapon stops means.
+pub static RADIANT_SUN_BOLT: SimpleWeapon = SimpleWeapon::ranged(
+    "radiant sun bolt",
+    &["sunbolt", "rsb"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Radiant,
+    // 30 ft on the 2.5 ft grid, as both the max and the normal range.
+    12,
+    12,
+);
+
 /// Tarrasque Bite — STR-based 4d12+10 piercing, 10ft reach. The
 /// signature one-shot of the apex 5e creature. Hit modifier scales off
 /// the tarrasque's massive STR (30 → +10 + prof 9 = +19 RAW; we let

@@ -12,6 +12,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
+        saves::SaveDamagePolicy,
         side_effects::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, GiveResource, Heal,
             Resource,
@@ -41,6 +42,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     BREATH_WEAPON_TAG,
+    // 5e Sun Soul Monk **Searing Sunburst**. RAW spends ki, which
+    // recovers on a short rest — the same cadence the charge lane
+    // carries.
+    SEARING_SUNBURST_TAG,
     // 5e War Domain Cleric features — both refresh on a short rest.
     // WAR_PRIEST is the once-per-rest bonus-action extra swing; GUIDED
     // STRIKE is the Channel Divinity +10 accuracy prime.
@@ -8408,6 +8413,7 @@ impl Action for RadianceOfTheDawn {
             dc,
             damage,
             DamageType::Radiant,
+            SaveDamagePolicy::HalfOnSave,
         )
     }
 }
@@ -12753,6 +12759,128 @@ pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 /// state — the rogue never loses access to a potion they could
 /// otherwise have drunk, and gains the turns where the Action was
 /// wanted for a blade.
+/// Per-rest charge for the Sun Soul Monk's **Searing Sunburst**
+/// (subclass level 11): a 20-ft-radius sphere of light thrown up to 150
+/// ft; every creature caught in it makes a CON save or takes 2d6
+/// radiant.
+///
+/// RAW prices it in ki — 2 points, plus up to 3 more for an extra 2d6
+/// each — and the engine has no ki pool, so it lands on the short-rest
+/// charge lane where every other "once a fight, and you choose the
+/// fight" feature already sits. The scaling clause goes with the pool it
+/// scaled: a single charge has nothing to spend extra of.
+///
+/// **Save-for-nothing, not save-for-half**, which is the mechanically
+/// interesting half of the feature and the reason it reads so
+/// differently from the Light Cleric's Radiance of the Dawn despite
+/// being the same shape. RAW is explicit ("takes no damage on a
+/// successful save"), and it makes the burst swingy in a way a
+/// save-for-half burst never is: against a room of low-CON creatures it
+/// is close to a Fireball, and against a saving-throw-proficient one it
+/// can do nothing at all.
+pub const SEARING_SUNBURST_TAG: &str = "monk.searing_sunburst";
+
+/// Searing Sunburst — Sun Soul Monk action. A radius-4 burst thrown up
+/// to 60 tiles, CON save vs the monk's WIS-based DC, 2d6 radiant, and
+/// nothing at all on a success. Once per short rest.
+///
+/// Same geometry as Fireball (RAW: both are 20-ft spheres at 150 ft),
+/// deliberately — it is the only ranged area damage a monk on this
+/// roster has, and pinning it to the shape the engine's other bursts
+/// already use means the AI's area-attack lane picks it up without a
+/// special case.
+///
+/// Targets enemies only rather than friend-or-foe. RAW catches everyone
+/// in the sphere, and the divergence is the same one Radiance of the
+/// Dawn takes: a self-throwing burst with no Careful Spell or Sculpt
+/// Spells behind it would make the AI's area lane a liability to its own
+/// team, and there is no monk-side feature to spare the allies with.
+pub struct SearingSunburst {}
+
+impl Action for SearingSunburst {
+    fn name(&self) -> &str {
+        "searing sunburst"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sunburst", "ssb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20-ft sphere. Matches Fireball's radius on the engine's
+        // area-of-effect scale.
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles, the same throw Fireball gets.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, SEARING_SUNBURST_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(center) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Spend the charge up-front so a mid-resolution actor lookup
+        // can't double-fire — same ordering as Radiance of the Dawn.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(SEARING_SUNBURST_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        // One shared roll for the whole burst, per 5e area damage.
+        let damage = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  searing sunburst: 2d6({}) radiant, DC {} CON save for none.",
+            damage, dc
+        ));
+        resolve_enemy_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            4,
+            AbilityScoreType::Constitution,
+            dc,
+            damage,
+            DamageType::Radiant,
+            SaveDamagePolicy::NoneOnSave,
+        )
+    }
+}
+
+pub static SEARING_SUNBURST: LazyLock<SearingSunburst> = LazyLock::new(|| SearingSunburst {});
+
 pub const FAST_HANDS_TAG: &str = "rogue.fast_hands";
 
 /// Passive tag for the Thief Rogue's **Thief's Reflexes** (subclass

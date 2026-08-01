@@ -493,26 +493,32 @@ impl BurstTargets {
 // with the item-side `SingleSaveDamageItem` factor and the AoE-burst
 // helper in `actions::action_template`. Imported at the top of the file.
 
-/// Core shared-save burst resolver. Rolls a *shared* damage value once,
-/// logs the breakdown, then walks the target set picking the right
-/// save behavior. Returns `(damage_effects, per_target_save_results)`
-/// — the saves vector is `(target_id, passed)` for every actor that
-/// took the save so callers can attach per-target failure riders
-/// (Tidal Wave's Prone, Mental Prison's Restrained, Earth Tremor's
-/// Prone, etc.) without re-walking the burst.
+/// Roll one shared damage value for a burst, log it, and hand the target
+/// set to the engine's single per-target save loop.
 ///
-/// Logging shape (identical to the legacy hand-rolled bursts):
-/// - One "  {name}: {dice}({roll}) shared {damage_type}" line.
-/// - Each target's save line is emitted by `roll_save` directly.
+/// Returns `(damage_effects, per_target_save_results)` — the saves
+/// vector is `(target_id, passed)` for every actor that took the save so
+/// callers can attach per-target failure riders (Tidal Wave's Prone,
+/// Mental Prison's Restrained, Earth Tremor's Prone) without re-walking
+/// the burst.
 ///
-/// Centralizes the loop body that ~15 burst spells used to reimplement.
-/// The thin `enemy_burst_save_for_half` / `neutral_burst_save_for_half`
-/// / `neutral_burst_save_only` wrappers above pre-pick the two enum
-/// dimensions so call sites stay one-liner-readable. The
-/// concentration-anchored variant (Wall of Light / Black Tentacles /
-/// Caustic Brew) routes through `concentration_burst_with_rider`
-/// instead, which collapses the burst+rider+anchor recipe to a single
-/// helper call.
+/// The loop itself is `action_template::resolve_burst_targets`, which is
+/// also what the class-feature and item bursts resolve through. What
+/// stays here is the two things that are genuinely spell-side: the
+/// caster-aware damage roll (so the Sorcerer's Empowered Spell and the
+/// Evocation Wizard's Empowered Evocation apply to burst spells) and the
+/// one "  {name}: {dice}({roll}) shared {damage_type}" line above the
+/// per-target save lines that `roll_save` emits.
+///
+/// This function used to carry its own copy of the loop, and the copy is
+/// how the Heightened Spell and Empowered Spell bugs in the comments
+/// above got to exist in the first place: a rule added to one loop and
+/// not the other is invisible at both call sites. The wrappers
+/// (`enemy_burst_save_for_half` / `neutral_burst_save_for_half` /
+/// `neutral_burst_save_only`) pre-pick the two enum dimensions so call
+/// sites stay one-liner-readable. The concentration-anchored variant
+/// (Wall of Light / Black Tentacles / Caustic Brew) routes through
+/// `concentration_burst_with_rider` instead.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn burst_save_damage(
     encounter: &mut EncounterInstance,
@@ -530,62 +536,32 @@ fn burst_save_damage(
     // Caster-aware damage roll: routes through the shared chokepoint so
     // the Sorcerer's Empowered Spell metamagic (reroll low dice) and the
     // Evocation Wizard's Empowered Evocation (+INT mod) both apply to
-    // burst spells. Previously this site called `roll` directly, which
-    // meant both features silently bypassed every spell that resolves
-    // its blast through this helper.
+    // burst spells.
     let raw = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
     encounter.log(format!(
         "  {}: {}({}) shared {:?}",
         action_name, dice, raw, damage_type
     ));
     // Pre-compute the shielded ally set (Sorcerer Careful Spell,
-    // Evocation Wizard Sculpt Spells) so we can skip protected ids in
-    // the per-target loop below. Only meaningful for Neutral bursts
-    // (Enemy bursts already exclude allies); the helper returns empty
-    // when neither feature is in play.
+    // Evocation Wizard Sculpt Spells). Only meaningful for Neutral
+    // bursts — Enemy bursts already exclude allies at the target-list
+    // step, so there is nobody left for it to spare.
     let shielded = match targets {
         BurstTargets::Enemy => std::collections::HashSet::new(),
         BurstTargets::Neutral => encounter.auto_pass_shielded_allies(caster_id, point, radius),
     };
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    let mut saves: Vec<(usize, bool)> = Vec::new();
-    for tid in targets.ids(encounter, caster_id, point, radius) {
-        if shielded.contains(&tid) {
-            // Protected allies auto-pass with 0 damage; record the save
-            // so callers that key per-target riders off the saves vec
-            // (Tidal Wave Prone, Earth Tremor Prone, etc.) see the ally
-            // as "passed" and skip their rider too. RAW for both
-            // shielding features is "automatically succeed on their
-            // saving throws", so the recorded pass is the rule, not an
-            // approximation.
-            saves.push((tid, true));
-            continue;
-        }
-        // Route through the caster-aware save helper so the 5e Sorcerer
-        // Heightened Spell metamagic forces disadvantage on the first
-        // save in the burst (RAW). Subsequent targets fall through to
-        // the normal save path — the helper consumes the prime on its
-        // first call. Previously this site used `roll_save` directly,
-        // which meant Heightened Spell silently bypassed ~15 burst
-        // spells that route through `burst_save_damage`.
-        let save = encounter.roll_save_against_caster(tid, save_ability, dc, caster_id);
-        let passed = save.passed();
-        // Post-save damage (Potent Cantrip on the caster side, Evasion
-        // on the target side, plus `outcome`) resolves at the shared
-        // engine chokepoint — see `resolve_post_save_damage`.
-        let dmg = encounter
-            .resolve_post_save_damage(caster_id, tid, save_ability, outcome, raw, passed);
-        saves.push((tid, passed));
-        if dmg == 0 {
-            continue;
-        }
-        effects.push(Box::new(DealDamage {
-            actor_id: tid,
-            amount: dmg,
-            damage_type,
-        }));
-    }
-    (effects, saves)
+    let target_ids = targets.ids(encounter, caster_id, point, radius);
+    crate::actions::action_template::resolve_burst_targets(
+        encounter,
+        caster_id,
+        &target_ids,
+        save_ability,
+        dc,
+        raw,
+        damage_type,
+        outcome,
+        &shielded,
+    )
 }
 
 /// Resolve an enemy-only AoE burst where each victim makes a save for

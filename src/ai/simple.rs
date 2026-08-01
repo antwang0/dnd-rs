@@ -9485,7 +9485,7 @@ mod tests {
         use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
-        use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
+        use crate::actors::creatures::monks::{KENSEI_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE};
         use crate::actors::creatures::rogues::{SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
@@ -9493,7 +9493,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 13] = [
+        let cases: [(&CreatureTemplate, &str); 14] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9516,6 +9516,11 @@ mod tests {
             // fires at `initialize` with nothing for a controller to
             // decide, so it belongs to the engine-side tests.
             (&THIEF_ROGUE_TEMPLATE, "potion of healing"),
+            // Not Searing Sunburst: `best_burst_placement` refuses any
+            // placement catching fewer than two enemies, and this
+            // fixture is one PC against one ogre. Its engine-side test
+            // is where the save-for-nothing behaviour is pinned.
+            (&SUN_SOUL_MONK_TEMPLATE, "radiant sun bolt"),
         ];
 
         for (template, marker) in cases {

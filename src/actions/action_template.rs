@@ -8,25 +8,39 @@ use crate::engine::{
     types::{AbilityScoreType, Coordinate, DamageType},
 };
 
-/// Per-target save-and-scale loop shared by every "roll a save for half"
-/// burst helper in this file. Walks `target_ids` in the given order,
-/// rolls a caster-aware save (so Sorcerer Heightened Spell fires on the
-/// first target per RAW), applies Rogue / Monk / Ranger Evasion on DEX
-/// saves, and emits a `DealDamage` side-effect for every non-zero hit.
-/// Ids in `shielded` (Sorcerer Careful Spell / Evocation Wizard Sculpt
-/// Spells — see `auto_pass_shielded_allies`) auto-pass with 0 damage and
-/// skip the roll entirely.
+/// **The** per-target save-and-damage loop. Every burst in the engine
+/// resolves through this function — the two neutral / enemy wrappers
+/// below it, and `spells::burst_save_damage`, which layers a shared
+/// caster-aware damage roll and a log line on top of it.
 ///
-/// Extracted so `resolve_burst_save_damage` (neutral) and
-/// `resolve_enemy_burst_save_damage` (enemy-only) share the loop body
-/// verbatim — the only per-variant difference is the target-id source
-/// (neutral vs enemy) and whether the ally-shield sweep can spare
-/// anyone.
-/// Every save/damage rule change lands in one place. Sibling to
-/// `burst_save_damage` in `spells.rs`, which layers a shared damage
-/// roll + logging on top of the same per-target semantics.
-#[allow(clippy::too_many_arguments)]
-fn resolve_burst_targets(
+/// Walks `target_ids` in the given order, rolls a caster-aware save (so
+/// Sorcerer Heightened Spell forces disadvantage on the *first* save in
+/// the burst per RAW), applies the caster-side and target-side damage
+/// modifiers at the shared chokepoint (Potent Cantrip, Rogue / Monk /
+/// Ranger Evasion), and emits a `DealDamage` side-effect for every
+/// non-zero hit. Ids in `shielded` (Sorcerer Careful Spell / Evocation
+/// Wizard Sculpt Spells — see `auto_pass_shielded_allies`) auto-pass
+/// with 0 damage and skip the roll entirely.
+///
+/// Returns the effects *and* `(target_id, passed)` for every actor that
+/// took the save, in resolution order. The saves vector is what lets a
+/// caller hang a per-target failure rider — Tidal Wave's Prone, Mental
+/// Prison's Restrained — off the burst without re-walking it and
+/// re-deriving who failed. Shielded allies are recorded as having
+/// passed, because RAW for both shielding features is "automatically
+/// succeed on their saving throws"; a rider that skips them is
+/// therefore right rather than approximate.
+///
+/// This used to exist twice. `spells.rs` carried a near-identical copy
+/// with the policy and the saves vector, and this one hardcoded
+/// `HalfOnSave` and threw the saves away — so the two drifted on which
+/// rules they applied and in what order, and a fix to one silently
+/// missed roughly half the bursts in the game. There is one loop now,
+/// and the differences that were real (where the target list comes
+/// from, whether the damage is rolled here or handed in) live in the
+/// thin wrappers around it.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn resolve_burst_targets(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_ids: &[usize],
@@ -34,11 +48,14 @@ fn resolve_burst_targets(
     dc: i32,
     damage: u32,
     damage_type: DamageType,
+    policy: SaveDamagePolicy,
     shielded: &HashSet<usize>,
-) -> Vec<Box<dyn ApplicableSideEffect>> {
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut saves: Vec<(usize, bool)> = Vec::new();
     for &target_id in target_ids {
         if shielded.contains(&target_id) {
+            saves.push((target_id, true));
             continue;
         }
         // Route through the caster-aware save helper so the 5e Sorcerer
@@ -47,16 +64,18 @@ fn resolve_burst_targets(
         // fall through to the normal save path — `roll_save_against_caster`
         // consumes the prime on its first call.
         let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
+        let passed = save.passed();
+        saves.push((target_id, passed));
         // Post-save damage (Potent Cantrip on the caster side, Evasion
-        // on the target side, plus the base policy) resolves at the
-        // shared engine chokepoint — see `resolve_post_save_damage`.
+        // on the target side, plus `policy`) resolves at the shared
+        // engine chokepoint — see `resolve_post_save_damage`.
         let dmg = encounter.resolve_post_save_damage(
             caster_id,
             target_id,
             save_ability,
-            SaveDamagePolicy::HalfOnSave,
+            policy,
             damage,
-            save.passed(),
+            passed,
         );
         if dmg == 0 {
             continue;
@@ -67,7 +86,7 @@ fn resolve_burst_targets(
             damage_type,
         }));
     }
-    effects
+    (effects, saves)
 }
 
 /// Resolve a damage-burst AoE: every combat-active actor whose footprint is
@@ -109,22 +128,31 @@ pub fn resolve_burst_save_damage(
         dc,
         damage,
         damage_type,
+        SaveDamagePolicy::HalfOnSave,
         &shielded,
     )
+    .0
 }
 
 /// Enemy-only sibling of `resolve_burst_save_damage`. Every combat-active
-/// enemy inside `radius` of `center` makes a save vs `dc` for half of a
-/// pre-rolled `damage`. Same shape as the neutral variant — the
-/// ally-shield sweep is a no-op here since both features on it only
-/// protect allies (enemy bursts already exclude them). Same Evasion
-/// handling for DEX saves.
+/// enemy inside `radius` of `center` makes a save vs `dc` against a
+/// pre-rolled `damage`, resolved under `policy`. Same shape as the
+/// neutral variant — the ally-shield sweep is a no-op here since both
+/// features on it only protect allies (enemy bursts already exclude
+/// them). Same Evasion handling for DEX saves.
 ///
 /// Used by class features whose RAW target set is "hostile creatures
-/// within the burst" (Radiance of the Dawn) — distinct from friend-or-foe
-/// bursts (Sacred Burst / Burning Hands / Fireball) that route through
-/// the neutral variant. Both variants share the per-target loop via
-/// `resolve_burst_targets` so save-half rule changes land once.
+/// within the burst" — Radiance of the Dawn, which is save-for-half, and
+/// the Sun Soul Monk's Searing Sunburst, which is save-for-nothing —
+/// distinct from friend-or-foe bursts (Sacred Burst / Burning Hands /
+/// Fireball) that route through the neutral variant.
+///
+/// This is the variant that carries the `policy` parameter, and the
+/// neutral one doesn't, because the enemy lane is where both policies
+/// have shown up. Threading it through the neutral wrapper too would put
+/// an explicit `SaveDamagePolicy::HalfOnSave` on twenty-six call sites
+/// in service of none of them; the day a neutral burst zeroes on a save,
+/// it is the same one-parameter change made here.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_enemy_burst_save_damage(
     encounter: &mut EncounterInstance,
@@ -135,6 +163,7 @@ pub fn resolve_enemy_burst_save_damage(
     dc: i32,
     damage: u32,
     damage_type: DamageType,
+    policy: SaveDamagePolicy,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     // Enemy bursts skip allies at the target-list step, so the
     // ally-shield sweep has nothing left to spare — pass an empty set
@@ -149,8 +178,10 @@ pub fn resolve_enemy_burst_save_damage(
         dc,
         damage,
         damage_type,
+        policy,
         &shielded,
     )
+    .0
 }
 
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.

@@ -498,3 +498,104 @@ pub static KENSEI_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// **Sun Shield** — Way of the Sun Soul Monk (subclass level 17). RAW:
+/// the monk is wreathed in light, and "whenever a creature within 5 feet
+/// of you hits you with a melee attack, you can use your reaction to
+/// deal radiant damage to the creature… equal to 5 + your Wisdom
+/// modifier."
+///
+/// Rides the engine's natural-melee-reflect lane — the same one the
+/// Salamander's Heated Body and the Black Pudding's Corrosive Form sit
+/// on — which is a passive: it fires on every melee hit, with no
+/// reaction spent and nothing to switch on.
+///
+/// Both divergences from RAW pull in the same direction and are
+/// deliberate. The reaction cost goes because a monk's reaction is
+/// already the most contested one on the roster (Deflect Missiles and
+/// Slow Fall both want it), and a reflect that competes with Deflect
+/// Missiles would fire about as often as never. The bonus-action
+/// activation goes because the lane has no notion of an off state, and
+/// an always-on shield is closer to the feature's intent than a shield
+/// nobody remembers to turn on.
+///
+/// A flat 7 is 5 + the monk chassis's WIS 14, computed once here rather
+/// than read at the hit site, because `MeleeReflect` is plain const data
+/// with no access to its holder. Every level-scaled number on the class
+/// templates is pinned the same way and for the same reason.
+static SUN_SHIELD: crate::engine::attack::MeleeReflect = crate::engine::attack::MeleeReflect {
+    damage: crate::engine::attack::ReflectDamage::Flat(7),
+    damage_type: crate::engine::types::DamageType::Radiant,
+    label: "sun shield",
+};
+
+/// Sun Soul Monk — Monastic Tradition **Way of the Sun Soul** (XGtE),
+/// and the answer to a gap the roster has had since the monk arrived:
+/// every monk here has been a melee creature with a d8 hit die and no
+/// armour, which is a bad combination to be standing in contact for.
+///
+/// The Kensei got out of contact by picking up a longbow. The Sun Soul
+/// does it without a weapon at all, and that difference is the subclass:
+///
+///   - **Radiant Sun Bolt** (lv3): a ranged attack made with the body —
+///     DEX to hit, the martial-arts die, radiant, 30 ft. It costs an
+///     Action like any other attack, so Extra Attack throws it twice and
+///     Flurry of Blows throws a third. RAW spends 1 ki as a bonus action
+///     for the extra bolts; the chassis already has a bonus-action
+///     button that hands over an extra Action, so the ki clause lands on
+///     the button that was already there rather than on a second one
+///     beside it.
+///
+///   - **Searing Sunburst** (lv11): Fireball's geometry, a sixth of its
+///     damage, and no damage at all on a successful save. Once per short
+///     rest. It is the only ranged area damage any monk on the roster
+///     has.
+///
+///   - **Sun Shield** (lv17): 7 radiant back at anything that lands a
+///     melee hit — see the `SUN_SHIELD` declaration above for why it is
+///     passive here rather than a reaction.
+///
+///   - **Searing Arc Strike** (lv6) is Burning Hands, cast for ki. It
+///     ships as Burning Hands on a two-slot level-1 table, which is the
+///     Four Elements Monk's model for the same problem: RAW prices its
+///     disciplines in ki, and a slot table read by tier *is* a ki pool.
+///     The divergence is the action cost — RAW makes the arc a bonus
+///     action after the Attack action, and the spell is priced as a
+///     spell.
+///
+/// The radiant typing is what the kit trades for its range. It is the
+/// most polarised damage type in the bestiary: the undead and the
+/// fiends, which shrug off most of what a monk can throw, take it in
+/// full and several take it doubled — and the celestials on the roster
+/// are outright immune. A Sun Soul in a crypt is the best monk here; a
+/// Sun Soul against a deva is throwing nothing at all, and has to walk
+/// back into contact and punch.
+///
+/// Glyph 'U' — for s**U**n, since 'S' is not free and 'M', 'O', 'W',
+/// 'E' and 'K' are the other monks'.
+pub static SUN_SOUL_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{SEARING_SUNBURST, SEARING_SUNBURST_TAG};
+    use crate::actions::monster_attacks::RADIANT_SUN_BOLT;
+    // The unarmed strike stays on the sheet. The bolt is the longer
+    // reach and the AI's attack picker prefers it, but radiant is the
+    // one damage type on the roster that some creatures are immune to —
+    // and a monk who can only throw light has nothing at all to do
+    // against a deva.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&RADIANT_SUN_BOLT);
+    actions.push(&*SEARING_SUNBURST);
+    actions.push(&*BURNING_HANDS);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(SEARING_SUNBURST_TAG);
+    CreatureTemplate {
+        name: "Sun Soul Monk",
+        glyph: 'U',
+        // Searing Arc Strike's ki, in the only casting currency the
+        // engine has — the same trick the Four Elements Monk's table is.
+        spell_slots_by_level: vec![2],
+        actions,
+        features,
+        natural_melee_reflect: Some(SUN_SHIELD),
+        ..MONK_TEMPLATE.clone()
+    }
+});
