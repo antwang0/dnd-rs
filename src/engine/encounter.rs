@@ -73934,8 +73934,9 @@ mod tests {
         }
     }
 
-    /// Every `pub static` action in the action modules is referenced by
-    /// something outside them — a template, an item, or the AI.
+    /// Every action and every class-feature tag declared in the action
+    /// modules is referenced by something outside them — a template, an
+    /// item, or the engine.
     ///
     /// The engine has shipped fully-written, fully-correct actions that
     /// no player could ever pick, more than once. Warding Wind was a
@@ -74000,14 +74001,23 @@ mod tests {
                 .unwrap_or_else(|e| panic!("reading {}: {}", rel, e));
             for line in text.lines() {
                 let line = line.trim_start();
-                let Some(rest) = line.strip_prefix("pub static ") else {
-                    continue;
-                };
-                let Some(name) = rest.split(':').next() else {
-                    continue;
-                };
-                let name = name.trim();
-                if !name.is_empty() && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+                // `pub static` covers the actions themselves; `pub
+                // const … _TAG` covers the class-feature tags, which
+                // rot the same way and did — Aura of Hate's tag
+                // outlived its own implementation by the whole span of
+                // its migration to a template flag, carrying thirty
+                // lines of documentation for a constant nothing read.
+                let name = line
+                    .strip_prefix("pub static ")
+                    .or_else(|| line.strip_prefix("pub const "))
+                    .and_then(|rest| rest.split(':').next())
+                    .map(str::trim)
+                    .unwrap_or("");
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                {
                     declared.insert(name.to_string(), rel);
                 }
             }

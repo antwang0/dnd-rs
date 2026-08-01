@@ -8849,42 +8849,6 @@ pub const WARDING_FLARE_TAG: &str = "cleric.warding_flare";
 /// once-per-short-rest passive fires first.
 pub const FANATICAL_FOCUS_TAG: &str = "paladin.fanatical_focus";
 
-/// 5e Oathbreaker Paladin (DMG) level-7 subclass feature — **Aura of
-/// Hate**. Passive template flag: the paladin and any fiends / undead
-/// within 10 ft gain a bonus to melee weapon damage rolls equal to the
-/// paladin's Charisma modifier (minimum +1). We collapse the RAW aura
-/// shape to a self-only bonus at the caster-side melee bumps table in
-/// `engine::attack::resolve_attack_outcome` — the paladin themselves
-/// picks up the +CHA mod on every melee swing while the flag is set.
-///
-/// The "any fiends and undead within 10 ft" clause is dropped in the
-/// current model since we don't tag allied fiends / undead as an
-/// aura-eligible cohort at the template level. Adding a broader
-/// "adjacent-fiend-or-undead ally gets +CHA mod melee damage" scan
-/// would need a fresh footprint-Chebyshev pass at the attack site,
-/// which is an aura-shape mismatch with the other paladin auras (Aura
-/// of Protection, Aura of Courage, Aura of Devotion) that read the
-/// EMITTER's flag on the ally-side rather than the ATTACKER's own
-/// flag on the caster-side. Self-only keeps the read local and the
-/// bump-table plumbing uniform.
-///
-/// Reads through the existing melee bumps table next to Rage (+2),
-/// Dueling (+2), Two-Weapon Fighting (+STR mod) — one new tuple, no
-/// re-shape of the attack-outcome shape. Minimum +1 clause folds in
-/// via `max(1)` on the CHA modifier lookup, matching RAW.
-///
-/// Distinguished from Vow of Enmity (Vengeance paladin, once-per-
-/// long-rest Advantage prime): Aura of Hate is passive, always-on
-/// (once the flag ships on the Oathbreaker template), and a damage
-/// bump rather than an attack-mode bump. Distinguished from
-/// Improved Divine Smite (+1d8 radiant on every melee hit, no gate):
-/// Aura of Hate is a flat mod rather than a die, and its damage rides
-/// as part of the base weapon damage roll rather than a separate
-/// `push_die_rider` payload — so a resistance-halving on the weapon
-/// type also halves the Aura of Hate bonus, mirroring how Rage /
-/// Dueling / Two-Weapon Fighting fold into the base swing.
-pub const AURA_OF_HATE_TAG: &str = "paladin.aura_of_hate";
-
 /// 5e Berserker Barbarian level-10 subclass feature — **Intimidating
 /// Presence**. Class-feature tag; refreshed on a short rest via
 /// `SHORT_REST_FEATURES`. RAW: as an action, choose a creature within

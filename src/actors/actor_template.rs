@@ -2717,11 +2717,26 @@ pub struct CreatureTemplate {
     /// undead half of the aura is dropped since we don't tag those as
     /// an aura-eligible cohort at the template level.
     ///
+    /// Dropping the ally half is an aura-shape decision rather than an
+    /// omission: the other paladin auras (Protection, Courage,
+    /// Devotion) read the EMITTER's flag from the ally's side, and a
+    /// fiend-or-undead cohort would need a fresh footprint-Chebyshev
+    /// pass at the attack site to match. Self-only keeps the read local
+    /// and the bump-table plumbing uniform.
+    ///
     /// Read in the shared `MELEE_CASTER_BUMPS` table alongside Rage
     /// (+2), Dueling (+2), and Two-Weapon Fighting (+STR mod). Ships
     /// on `OATHBREAKER_PALADIN_TEMPLATE` — no default-on template
-    /// otherwise carries it. See `class_features::AURA_OF_HATE_TAG`
-    /// for the full RAW envelope.
+    /// otherwise carries it. The minimum +1 folds in via `max(1)` on
+    /// the CHA lookup, matching RAW.
+    ///
+    /// Distinct from Vow of Enmity (Vengeance paladin), which is a
+    /// once-per-rest advantage prime rather than a passive damage
+    /// bump; and from Improved Divine Smite, which is a die rather
+    /// than a flat mod and rides as a separate rider payload. Aura of
+    /// Hate folds into the base weapon damage roll, so a resistance on
+    /// the weapon's damage type halves the bonus too — the same way
+    /// Rage, Dueling and Two-Weapon Fighting behave.
     pub has_aura_of_hate: bool,
     /// 5e Conquest Paladin (XGtE) level-7 subclass feature — **Aura of
     /// Conquest**. Passive template flag with two clauses, both scoped
