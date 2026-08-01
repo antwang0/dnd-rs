@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, action_or_bonus_only, bonus_action_only, first_ally_target_id,
+        Action, TargetingSchema, action_only, bonus_action_only, first_ally_target_id,
         first_target_id, first_target_location,
     },
     conditions::{Condition, ConditionTimer},
@@ -15,6 +15,56 @@ use crate::{
         types::{AbilityScoreType, Coordinate, DamageType},
     },
 };
+
+/// Action-economy price for reaching into your own pack, with the Thief
+/// Rogue's **Fast Hands** folded in.
+///
+/// `always_bonus_action` is the item's own declared price — a handful of
+/// items (the Pearls of Power) are bonus actions for everybody, and pass
+/// `true`. Everything else is an Action by default and becomes a bonus
+/// action in one hand only: a Thief's.
+///
+/// The Fast Hands half is resolved *dynamically*, against the holder's
+/// remaining bonus action, and that is deliberate. RAW's offer is "you
+/// may spend your Cunning Action bonus action on this instead" — an
+/// alternative, not a replacement. The engine's `cost()` returns a list
+/// of resources that must all be paid and has no way to spell "either
+/// of these," so a static swap to `bonus_action_only` would *take away*
+/// the Action price and leave a Thief who had already dashed unable to
+/// drink at all. Pricing against what the holder actually has left picks
+/// the same branch RAW's player would: the bonus action while it is
+/// there, the Action once it isn't.
+///
+/// **Scope, and where it parts company with RAW.** This covers the
+/// support-consumable lane — potions, pearls, worn trinkets, and the
+/// healing / buffing scrolls that share their config structs — because
+/// that lane is the one whose `cost()` routes here. The offensive item
+/// lane (Scroll of Fireball, Wand of Lightning Bolts, and the rest of
+/// the `action_only()` cohort) is untouched, so Fast Hands can never
+/// turn a bonus action into a Fireball.
+///
+/// RAW would draw the line one notch differently: reading *any* scroll
+/// is casting a spell, not using an object, so a Scroll of Cure Wounds
+/// should be excluded here and isn't. Following RAW exactly would mean
+/// teaching the engine which items are objects and which are spells in a
+/// tube — and the item model has no such axis. `SelfConditionItem` is
+/// the literal same struct behind `DRINK_POTION_OF_BLUR` and
+/// `READ_BLINK_SCROLL`; separating them would mean a second taxonomy of
+/// "what an item is," competing with the one the cost lane already
+/// carries, invented for the benefit of a single feature. The lane split
+/// the engine does have — support versus offense — is the one that
+/// matters for balance, and it is the one enforced.
+pub fn item_use_cost(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    always_bonus_action: bool,
+) -> Vec<Resource> {
+    if always_bonus_action || encounter.handles_items_as_a_bonus_action(caster_id) {
+        bonus_action_only()
+    } else {
+        action_only()
+    }
+}
 
 /// Config struct for "burst damage with a save for half" consumable
 /// items — the shared shape behind Scroll of Fireball / Cone of Cold /
@@ -191,13 +241,13 @@ impl Action for SelfHealItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -301,13 +351,13 @@ impl Action for SelfConditionItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -1015,13 +1065,13 @@ impl Action for SingleTargetHealItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -1478,13 +1528,13 @@ impl Action for MultiTargetHealItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -2340,13 +2390,13 @@ impl Action for SingleTargetBuffItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -4365,13 +4415,13 @@ impl Action for MultiTargetBuffItem {
 
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_or_bonus_only(self.bonus_action)
+        item_use_cost(e, c, self.bonus_action)
     }
 
     fn custom_validate_input(

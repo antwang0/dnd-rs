@@ -275,8 +275,14 @@ pub fn render_sideinfo(
     // Initiative queue: show all actors in turn order, starting from the
     // current actor; highlight + blink-glyph the active one.
     let mut initiative_lines: Vec<Line<'static>> = Vec::new();
-    for actor_id in encounter.initiative_actor_ids() {
-        let is_current = prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
+    for (slot, actor_id) in encounter.initiative_actor_ids().into_iter().enumerate() {
+        // The list is rotated to start at the active slot, so "current"
+        // is a question about position, not about identity. It has to
+        // be: an actor can hold more than one slot in the queue (a Thief
+        // Rogue's Thief's Reflexes gives them two in round 1), and
+        // matching on the id alone would draw the marker on both — the
+        // one acting now and the one still waiting ten points down.
+        let is_current = slot == 0 && prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
         if let Some(actor) = encounter.actors.get(&actor_id) {
             let (s, c, bg) = get_colored_span(actor.glyph(), actor.team());
             let prefix = if is_current { "> " } else { "  " };

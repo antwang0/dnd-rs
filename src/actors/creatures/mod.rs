@@ -400,6 +400,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*rogues::SCOUT_ROGUE_TEMPLATE,
                     &*rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE,
                     &*rogues::SOULKNIFE_ROGUE_TEMPLATE,
+                    &*rogues::THIEF_ROGUE_TEMPLATE,
                 ],
             ),
             (

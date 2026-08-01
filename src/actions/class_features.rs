@@ -12733,6 +12733,44 @@ pub static DIVINE_STRIKE_PSYCHIC: LazyLock<PrimeStrike> = LazyLock::new(|| Prime
 /// every other multi-use charge here has landed.
 pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 
+/// Passive tag for the Thief Rogue's **Fast Hands** (subclass level 3):
+/// "you can use the bonus action granted by your Cunning Action to …
+/// use an object."
+///
+/// Read at `EncounterInstance::uses_objects_as_a_bonus_action`, which
+/// every item action's `cost()` consults through
+/// `item_actions::item_use_cost`. There is no action of its own and no
+/// charge — the whole feature is a change of price on a lane that
+/// already exists, which is why it ships as a tag rather than as an
+/// entry in the action list.
+///
+/// The engine's cost model asks for a list of resources that must *all*
+/// be paid, and has no way to express "an Action or a bonus action,
+/// whichever you have." Fast Hands is therefore resolved dynamically at
+/// `cost()` time: it prices the item at a bonus action when the holder
+/// still has one free, and leaves the Action price alone when they
+/// don't. That is strictly the better half of RAW's offer in every
+/// state — the rogue never loses access to a potion they could
+/// otherwise have drunk, and gains the turns where the Action was
+/// wanted for a blade.
+pub const FAST_HANDS_TAG: &str = "rogue.fast_hands";
+
+/// Passive tag for the Thief Rogue's **Thief's Reflexes** (subclass
+/// level 17): two turns during the first round of combat, the second at
+/// initiative minus 10.
+///
+/// Read once, at `EncounterInstance::initialize`, which hands the holder
+/// a second slot in the initiative queue — see `grant_extra_turn_slot`
+/// for why the feature is modelled as a real queue entry and not as a
+/// bundle of spare resources bolted onto the first turn.
+///
+/// This is the one rogue feature whose value is almost entirely front-
+/// loaded, and it is the natural capstone for the subclass that spends
+/// its bonus action on objects rather than on blades: the Thief's first
+/// round is two Sneak Attacks, two Cunning Actions and two potions'
+/// worth of action economy, against a table that has had one turn each.
+pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
+
 #[cfg(test)]
 mod tests {
     use super::*;

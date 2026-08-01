@@ -472,3 +472,93 @@ pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ..ROGUE_TEMPLATE.clone()
     }
 });
+
+/// Thief Rogue — the PHB's original rogue subclass, and the one whose
+/// whole identity is action economy rather than damage. Two features,
+/// both of which spend turns rather than dice.
+///
+/// **Fast Hands** (lv3) lets the rogue's Cunning Action bonus action be
+/// spent on handling an object. Every other rogue on the roster who
+/// wants a potion pays their Action for it — which is the entire turn,
+/// because a rogue's Action *is* their Sneak Attack. The Thief drinks
+/// and stabs in the same six seconds. The template ships with a belt of
+/// three potions so the feature is live from round one instead of
+/// waiting on a loot drop; nothing else on the roster carries starting
+/// gear, and nothing else on the roster has a feature that is inert
+/// without it.
+///
+/// **Thief's Reflexes** (lv17) is a whole extra turn in round 1, taken
+/// ten points down the initiative order. It is modelled as a real second
+/// slot in the queue — see `EncounterInstance::grant_extra_turn_slot` —
+/// so the Thief opens the fight with two Actions, two bonus actions, two
+/// movement budgets and, decisively, two Sneak Attacks, while the table
+/// has had one turn each.
+///
+/// The two compose into the roster's sharpest alpha strike, and it is
+/// the *combination* that gets there rather than either half. Round one
+/// is: shortsword and Sneak Attack, potion of speed off the bonus
+/// action, then ten initiative points later a second Sneak Attack with
+/// the Hasted extra Action behind it. No other template can spend a
+/// consumable and still swing on the same turn, and none of them get to
+/// do it twice before the enemy's second turn.
+///
+/// What the Thief gives up is everything the other subclasses put on the
+/// dice. The Assassin has advantage on the same opening, the Soulknife
+/// throws its damage 60 ft, the Swashbuckler collects Sneak Attack
+/// without needing anyone's help. The Thief's answer to all three is
+/// that it simply takes more turns than they do, and then runs out of
+/// potions.
+///
+/// Left out: **Second-Story Work** (lv3, climbing costs no extra
+/// movement, longer running jumps) and **Supreme Sneak** (lv9,
+/// advantage on a Stealth check after moving at half speed) both key off
+/// systems the engine doesn't have — vertical movement and contested
+/// Stealth checks; Hide here installs a condition rather than rolling.
+/// **Use Magic Device** (lv13) lifts class and attunement restrictions
+/// on magic items, and the engine has never had any: every item on the
+/// loot table is usable by every actor already.
+///
+/// Glyph 'F' — for the fast hands. 'T' is the Arcane Trickster's, 'S'
+/// the Scout's, 'A' the Assassin's, 'K' the Swashbuckler's and 'M' the
+/// Soulknife's.
+pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{FAST_HANDS_TAG, THIEFS_REFLEXES_TAG};
+    use crate::actions::item_actions::{
+        DRINK_HEALING_POTION, DRINK_POTION_OF_BLUR, DRINK_POTION_OF_INVISIBILITY,
+    };
+    use crate::items::item_template::{POTION_OF_BLUR, POTION_OF_HEALING, POTION_OF_INVISIBILITY};
+    // Carrying an item is what puts it in the inventory; the matching
+    // action still has to be on the sheet for the rogue (or the AI) to
+    // reach for it, and each one's `custom_validate_input` re-checks the
+    // inventory, so a spent potion drops off the list on its own.
+    //
+    // All three cost an Action for everybody else — deliberately. A
+    // belt of things that were already bonus actions (greater healing,
+    // speed, heroism) would have shown the Thief nothing their own
+    // subclass feature bought them.
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&DRINK_HEALING_POTION);
+    actions.push(&DRINK_POTION_OF_INVISIBILITY);
+    actions.push(&DRINK_POTION_OF_BLUR);
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.insert(FAST_HANDS_TAG);
+    features.insert(THIEFS_REFLEXES_TAG);
+    CreatureTemplate {
+        name: "Thief Rogue",
+        glyph: 'F',
+        actions,
+        features,
+        // One heal, one opener, one defence — the three things a rogue
+        // wants a spare hand for, so whichever the fight calls for is
+        // already on the belt. Invisibility is the pick that most
+        // rewards the feature: it hands the rogue advantage, which is
+        // one of Sneak Attack's two triggers, on the same turn they
+        // still get to swing.
+        items: vec![
+            &POTION_OF_HEALING,
+            &POTION_OF_INVISIBILITY,
+            &POTION_OF_BLUR,
+        ],
+        ..ROGUE_TEMPLATE.clone()
+    }
+});

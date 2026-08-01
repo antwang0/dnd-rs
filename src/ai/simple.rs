@@ -9486,14 +9486,14 @@ mod tests {
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::KENSEI_MONK_TEMPLATE;
-        use crate::actors::creatures::rogues::SOULKNIFE_ROGUE_TEMPLATE;
+        use crate::actors::creatures::rogues::{SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 12] = [
+        let cases: [(&CreatureTemplate, &str); 13] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9510,6 +9510,12 @@ mod tests {
             (&ORDER_CLERIC_TEMPLATE, "divine strike (psychic)"),
             (&SOULKNIFE_ROGUE_TEMPLATE, "psychic blade"),
             (&SOULKNIFE_ROGUE_TEMPLATE, "second blade"),
+            // Fast Hands has no action of its own — what it changes is
+            // the price of one — so the marker is the belt being
+            // reached for at all. Thief's Reflexes isn't listed: it
+            // fires at `initialize` with nothing for a controller to
+            // decide, so it belongs to the engine-side tests.
+            (&THIEF_ROGUE_TEMPLATE, "potion of healing"),
         ];
 
         for (template, marker) in cases {

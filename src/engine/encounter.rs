@@ -513,6 +513,13 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
 /// the field would silently collapse the aura to 0.
 const AURA_OF_CONQUEST_PSYCHIC: u32 = 5;
 
+/// How far below their rolled initiative a Thief's Reflexes extra turn
+/// sits. RAW is a flat 10, and the flatness is the point — it is a fixed
+/// distance down a d20-scale order, so on a typical table the extra turn
+/// lands after roughly half the room rather than immediately behind the
+/// Thief's own.
+const THIEFS_REFLEXES_INITIATIVE_PENALTY: i32 = 10;
+
 /// Which side of the emitter's team an aura projects onto. Every
 /// paladin aura but one helps the emitter's allies; Oath of Conquest's
 /// hurts their enemies. Read by `EncounterInstance::aura_emitters`,
@@ -1072,6 +1079,24 @@ struct InitiativeElement {
     /// fall back to actor_id ascending so the queue is stable across
     /// seeded runs.
     pub dex_mod: i32,
+    /// True for a *second* slot handed to an actor who already owns one
+    /// — the Thief Rogue's Thief's Reflexes, which grants a whole extra
+    /// turn during the first round of combat at initiative minus 10.
+    ///
+    /// The queue is keyed by position, not by actor, so a duplicate id
+    /// is a legal thing to hold: `current_player` returns the id twice
+    /// per round, `advance_initiative` clears the turn-started latch on
+    /// the way through, and the second visit therefore opens a real
+    /// turn with a real `start_turn_for` — fresh action, fresh bonus
+    /// action, fresh once-per-turn riders. What the flag exists for is
+    /// the teardown: extra slots are swept at the end of round 1 by
+    /// `clear_extra_turns`, and nothing else in the queue may be swept
+    /// with them.
+    ///
+    /// Deliberately absent from `Ord`. Sort position is a question about
+    /// *when* a slot acts, and an extra slot's answer to that is already
+    /// fully encoded in the lowered `initiative` it was inserted with.
+    pub is_extra: bool,
 }
 
 impl Ord for InitiativeElement {
@@ -1129,17 +1154,43 @@ impl InitiativeTracker {
         // same multi-key (initiative DESC, dex DESC, id ASC) used for
         // initial sort. Insert at the first position whose existing element
         // sorts *after* the new one, preserving order.
-        let new_elem = InitiativeElement {
+        self.insert_slot(InitiativeElement {
             actor_id,
             initiative,
             dex_mod,
-        };
+            is_extra: false,
+        });
+    }
+
+    /// Hand `actor_id` a *second* slot at `initiative`, on top of the one
+    /// they already hold — the queue shape behind Thief's Reflexes.
+    ///
+    /// Split from `add_actor` rather than folded into it with a flag
+    /// because the two say different things: `add_actor` is "somebody new
+    /// joined the fight," and this is "somebody already in the fight acts
+    /// twice." Only the latter is swept by `clear_extra_turns`.
+    pub fn add_extra_turn(&mut self, actor_id: usize, initiative: i32, dex_mod: i32) {
+        self.insert_slot(InitiativeElement {
+            actor_id,
+            initiative,
+            dex_mod,
+            is_extra: true,
+        });
+    }
+
+    /// Place `elem` at its sorted position, keeping `curr_index` pointed
+    /// at whoever it pointed at before.
+    fn insert_slot(&mut self, elem: InitiativeElement) {
+        // Insert at the first position whose existing element sorts
+        // *after* the new one, so the queue stays in the canonical
+        // (initiative DESC, dex DESC, id ASC) order `initialize_actors`
+        // established.
         let idx = self
             .initiatives
             .iter()
-            .position(|ie| new_elem.cmp(ie) == Ordering::Less)
+            .position(|ie| elem.cmp(ie) == Ordering::Less)
             .unwrap_or(self.initiatives.len());
-        self.initiatives.insert(idx, new_elem);
+        self.initiatives.insert(idx, elem);
         // If we inserted at or before the active slot, the active actor
         // shifted down by one; bump curr_index to keep pointing at them.
         if idx <= self.curr_index && !self.initiatives.is_empty() {
@@ -1147,23 +1198,58 @@ impl InitiativeTracker {
         }
     }
 
+    /// Drop **every** slot `actor_id` owns. Called when an actor leaves
+    /// the fight for any reason (death, despawn), so it has to sweep all
+    /// of them: a Thief who dies on their first turn of round 1 still
+    /// holds an extra slot ten points down the queue, and leaving it
+    /// behind would hand a corpse a turn.
     pub fn remove_actor(&mut self, actor_id: usize) {
-        let Some(idx) = self.initiatives.iter().position(|ie| ie.actor_id == actor_id) else {
-            return;
-        };
-        self.initiatives.remove(idx);
+        // Snapshot before the retain so the closure isn't borrowing
+        // `self` while `self.initiatives` is mutably borrowed.
+        let curr = self.curr_index;
+        let mut removed_before_curr = 0usize;
+        let mut idx = 0usize;
+        self.initiatives.retain(|ie| {
+            let keep = ie.actor_id != actor_id;
+            if !keep && idx < curr {
+                removed_before_curr += 1;
+            }
+            idx += 1;
+            keep
+        });
         if self.initiatives.is_empty() {
             self.curr_index = 0;
             return;
         }
-        // Removing at or before curr shifts the active slot up by one; if we
-        // removed the active slot itself, the next actor naturally takes its
-        // place at the same index.
-        if idx < self.curr_index {
-            self.curr_index -= 1;
-        } else if self.curr_index >= self.initiatives.len() {
+        // Removals ahead of the active slot shift it up by that many; a
+        // removal *of* the active slot doesn't move the index at all, so
+        // the next actor naturally slides into place there.
+        self.curr_index = curr - removed_before_curr;
+        if self.curr_index >= self.initiatives.len() {
             self.curr_index = 0;
         }
+    }
+
+    /// Drop every extra slot in the queue and report whose they were, in
+    /// queue order. Called once, at the end of round 1, to retire the
+    /// Thief's Reflexes turns.
+    ///
+    /// Safe to call from the wrap point and nowhere else: `advance`
+    /// reports a wrap exactly when `curr_index` has landed back on 0, and
+    /// an extra slot can never *be* index 0 — it sorts strictly below the
+    /// slot its own owner rolled, so at least that one precedes it. So
+    /// the surviving element at index 0 is the same one before and after.
+    pub fn clear_extra_turns(&mut self) -> Vec<usize> {
+        let cleared: Vec<usize> = self
+            .initiatives
+            .iter()
+            .filter(|ie| ie.is_extra)
+            .map(|ie| ie.actor_id)
+            .collect();
+        if !cleared.is_empty() {
+            self.initiatives.retain(|ie| !ie.is_extra);
+        }
+        cleared
     }
 
     pub fn initialize_actors(&mut self, actors: &HashMap<usize, ActorInstance>) {
@@ -1172,6 +1258,7 @@ impl InitiativeTracker {
                 actor_id: *id,
                 initiative: actor.initiative().expect("Expected initiative"),
                 dex_mod: actor.initiative_mod(),
+                is_extra: false,
             });
         }
         self.initiatives.sort();
@@ -1465,6 +1552,24 @@ impl EncounterInstance {
             .get(&id)
             .map(|a| a.name().to_string())
             .unwrap_or_default()
+    }
+
+    /// True when `actor_id` should be billed a bonus action, rather than
+    /// an Action, for reaching into their pack right now — the Thief
+    /// Rogue's **Fast Hands**.
+    ///
+    /// Both halves of the condition matter. The tag says the rogue is
+    /// allowed to make the trade; the remaining-bonus-action check says
+    /// there is still something to trade with. Read only from
+    /// `item_actions::item_use_cost`, which documents the lane this
+    /// covers and why the price is resolved per call instead of baked
+    /// into the item.
+    pub fn handles_items_as_a_bonus_action(&self, actor_id: usize) -> bool {
+        use crate::actions::class_features::FAST_HANDS_TAG;
+        self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_passive_feature(FAST_HANDS_TAG)
+                && a.can_consume_resource(crate::engine::side_effects::Resource::BonusAction)
+        })
     }
 
     /// True iff the actor with `id` exists AND is effectively immune to
@@ -6309,6 +6414,16 @@ impl EncounterInstance {
         let wrapped = self.initiative_tracker.advance();
         if wrapped {
             self.round = self.round.saturating_add(1);
+            // Thief's Reflexes is scoped to round 1, so its extra slots
+            // retire the moment the queue wraps out of it. Swept before
+            // `round_end` rather than after because `round_end` ends in
+            // `cleanup_dead_actors`, which walks the queue removing
+            // corpses — there is no reason to make it walk past slots
+            // that are already spent.
+            for id in self.initiative_tracker.clear_extra_turns() {
+                let name = self.actor_name(id);
+                self.log(format!("{}'s reflexes settle back to one turn a round.", name));
+            }
             self.round_end();
         }
     }
@@ -8951,6 +9066,16 @@ impl EncounterInstance {
                 actor.initiative().unwrap(),
                 actor.initiative_mod(),
             );
+            // A Thief who joins the fight while round 1 is still running
+            // gets their extra slot on the same terms as one who was
+            // there at the bell — RAW scopes Thief's Reflexes to "the
+            // first round of any combat," not to being present for the
+            // initiative roll. `grant_extra_turn_slot` is what enforces
+            // the round gate, so a round-3 summon quietly gets nothing.
+            if actor.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG) {
+                let (init, dex) = (actor.initiative().unwrap(), actor.initiative_mod());
+                self.grant_extra_turn_slot(actor_id, actor.name().to_string(), init, dex);
+            }
         }
 
         self.actors.insert(actor_id, actor);
@@ -9331,8 +9456,56 @@ impl EncounterInstance {
             }
         }
         self.initiative_tracker.initialize_actors(&self.actors);
+        // Extra slots are inserted after the base queue is sorted, in
+        // actor-id order, so a table with two Thieves in it lays out the
+        // same way on every run of the same seed.
+        for id in self.sorted_actor_ids() {
+            let Some(actor) = self.actors.get(&id) else {
+                continue;
+            };
+            if !actor.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG) {
+                continue;
+            }
+            let (name, init, dex) = (
+                actor.name().to_string(),
+                actor.initiative().expect("Expected initiative"),
+                actor.initiative_mod(),
+            );
+            self.grant_extra_turn_slot(id, name, init, dex);
+        }
         self.initialized = true;
         Ok(())
+    }
+
+    /// 5e Thief Rogue **Thief's Reflexes** (subclass level 17): "you can
+    /// take two turns during the first round of any combat. You take your
+    /// first turn at your normal initiative and your second turn at your
+    /// initiative minus 10."
+    ///
+    /// Both halves of that sentence are load-bearing and the engine keeps
+    /// them literally. The extra turn is a genuine second slot in the
+    /// queue, not a bolt-on grant of a spare Action: it opens through
+    /// `start_turn_for` like any other turn, so the Thief gets a fresh
+    /// Action, bonus action, reaction, movement budget and — the part
+    /// that actually decides fights — a fresh once-per-turn Sneak Attack.
+    /// And it sits ten points *down* the order rather than immediately
+    /// after the first, so the enemies in between act in the gap. A Thief
+    /// who opens on a caster and wants to finish the job has to survive
+    /// that caster's turn to do it.
+    ///
+    /// Gated on round 1 here rather than at the call sites so the "first
+    /// round of any combat" clause has exactly one home. A Thief summoned
+    /// into round 3 asks for a slot and quietly gets none.
+    fn grant_extra_turn_slot(&mut self, actor_id: usize, name: String, initiative: i32, dex: i32) {
+        if self.round != 1 {
+            return;
+        }
+        let extra = initiative - THIEFS_REFLEXES_INITIATIVE_PENALTY;
+        self.initiative_tracker.add_extra_turn(actor_id, extra, dex);
+        self.log(format!(
+            "{} moves twice this round — a second turn waits at initiative {}.",
+            name, extra
+        ));
     }
 
     pub fn enqueue_event(&mut self, se: StackElementEntry) {
@@ -55795,6 +55968,154 @@ mod tests {
         assert!(
             !e.actors[&other].has_taken_turn_in_combat(),
             "an actor whose slot hasn't come up is untouched"
+        );
+    }
+
+    /// 5e Thief Rogue **Thief's Reflexes**: two turns in round 1, one
+    /// per round after that.
+    ///
+    /// Driven by walking the whole queue twice and counting how often
+    /// each id comes up. Round 1 should name the Thief twice and the
+    /// goblin once; round 2 should name each of them once. Counting is
+    /// the assertion rather than checking a flag because the feature's
+    /// whole claim is about *how many turns happen* — a version that
+    /// handed out a spare Action instead would pass a flag check and
+    /// fail this one.
+    #[test]
+    fn thiefs_reflexes_grants_a_second_turn_only_in_round_one() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::THIEF_ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let thief = e
+            .instantiate_creature(&THIEF_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+            .unwrap();
+
+        let round_one = e.initiative_actor_ids();
+        assert_eq!(
+            round_one.iter().filter(|&&id| id == thief).count(),
+            2,
+            "the Thief holds two slots in round 1: {:?}",
+            round_one
+        );
+        assert_eq!(
+            round_one.iter().filter(|&&id| id == goblin).count(),
+            1,
+            "nobody else gains a slot"
+        );
+        // The extra slot sits below the Thief's own rather than beside
+        // it — that gap is what the enemies act in.
+        let first = round_one.iter().position(|&id| id == thief).unwrap();
+        let second = round_one.iter().rposition(|&id| id == thief).unwrap();
+        assert!(
+            second > first + 1 || round_one.len() == 2,
+            "the second slot should not sit immediately behind the first: {:?}",
+            round_one
+        );
+
+        // Walk out of round 1. `skip_turn` advances one slot at a time,
+        // so the queue length is exactly the number of steps to a wrap.
+        assert_eq!(e.round(), 1);
+        for _ in 0..round_one.len() {
+            e.skip_turn();
+        }
+        assert_eq!(e.round(), 2, "one full pass is one round");
+
+        let round_two = e.initiative_actor_ids();
+        assert_eq!(
+            round_two.iter().filter(|&&id| id == thief).count(),
+            1,
+            "the extra slot retires with round 1: {:?}",
+            round_two
+        );
+        assert_eq!(round_two.len(), 2, "and nothing else changed shape");
+    }
+
+    /// A Thief who dies during round 1 takes their extra slot with them.
+    ///
+    /// The queue is keyed by position and the Thief owns two of them, so
+    /// a removal that stopped at the first match would leave a corpse
+    /// holding a turn — `start_turn_for` would find no actor, and the
+    /// slot would sit in the order forever. `remove_actor` sweeps every
+    /// slot an actor owns, which is what this pins.
+    #[test]
+    fn a_dead_thief_keeps_neither_of_their_slots() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::THIEF_ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let thief = e
+            .instantiate_creature(&THIEF_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.initiative_actor_ids()
+                .iter()
+                .filter(|&&id| id == thief)
+                .count(),
+            2
+        );
+
+        e.remove_actor(thief);
+        assert!(
+            !e.initiative_actor_ids().contains(&thief),
+            "no slot survives the actor: {:?}",
+            e.initiative_actor_ids()
+        );
+    }
+
+    /// 5e Thief Rogue **Fast Hands**: a potion costs the Thief their
+    /// bonus action while they still have one, and their Action once
+    /// they don't.
+    ///
+    /// The fallback half is the interesting one. `cost()` hands back a
+    /// list of resources that must *all* be paid, so a static swap to
+    /// "bonus action" would have silently taken the Action price away —
+    /// a Thief who had already spent their bonus action on Cunning Dash
+    /// would find the potion unusable, which is strictly worse than the
+    /// baseline rogue and the opposite of what the feature says.
+    #[test]
+    fn fast_hands_prices_a_potion_against_what_the_thief_has_left() {
+        use crate::actions::item_actions::DRINK_HEALING_POTION;
+        use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let thief = e
+            .instantiate_creature(&THIEF_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+
+        let price = |e: &EncounterInstance, id: usize| {
+            DRINK_HEALING_POTION.cost(e, id, None, None, None)
+        };
+        assert_eq!(
+            price(&e, thief),
+            vec![Resource::BonusAction],
+            "Fast Hands moves the potion onto the bonus action"
+        );
+        assert_eq!(
+            price(&e, plain),
+            vec![Resource::Action],
+            "and leaves every other rogue paying an Action"
+        );
+
+        // Spend the bonus action; the price falls back rather than
+        // becoming unpayable.
+        e.actors
+            .get_mut(&thief)
+            .unwrap()
+            .consume_resource(Resource::BonusAction);
+        assert_eq!(
+            price(&e, thief),
+            vec![Resource::Action],
+            "with no bonus action left, the Action price comes back"
         );
     }
 
