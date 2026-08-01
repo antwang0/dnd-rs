@@ -1939,6 +1939,15 @@ impl Action for FrightfulHowl {
     fn name(&self) -> &str {
         "howl"
     }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. Without this the AI's focus-fire lane
+        // scores it as an attack and picks it over one — a medusa
+        // re-gazed an already-petrified succubus four hundred and
+        // seventy times running rather than finishing it, and the fight
+        // could not end.
+        false
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["hwl"]
     }
@@ -5907,6 +5916,15 @@ pub struct MedusaPetrifyingGaze {}
 impl Action for MedusaPetrifyingGaze {
     fn name(&self) -> &str {
         "petrifying gaze"
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. Without this the AI's focus-fire lane
+        // scores it as an attack and picks it over one — a medusa
+        // re-gazed an already-petrified succubus four hundred and
+        // seventy times running rather than finishing it, and the fight
+        // could not end.
+        false
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["gaze", "medusa-gaze"]

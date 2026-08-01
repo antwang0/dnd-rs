@@ -1595,6 +1595,13 @@ impl Action for HoldPerson {
         "hold person"
     }
 
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["hp", "hold"]
     }
@@ -1715,6 +1722,10 @@ impl Action for FireBolt {
 
     fn aliases(&self) -> Vec<&str> {
         vec!["fb", "bolt"]
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -1921,6 +1932,10 @@ impl Action for BurningHands {
         vec!["bh", "hands"]
     }
 
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::Burst { radius: 2 }
     }
@@ -2011,6 +2026,10 @@ impl Action for MagicMissile {
 
     fn aliases(&self) -> Vec<&str> {
         vec!["mm", "missile"]
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -2152,6 +2171,13 @@ pub struct CauseFear {}
 impl Action for CauseFear {
     fn name(&self) -> &str {
         "cause fear"
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["cf", "fear"]
@@ -2439,6 +2465,13 @@ pub struct Blindness {}
 impl Action for Blindness {
     fn name(&self) -> &str {
         "blindness"
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["blind"]
@@ -5669,6 +5702,13 @@ impl Action for HoldMonster {
     }
     fn name(&self) -> &str {
         "hold monster"
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["hm-spell", "holdm"]
@@ -10207,6 +10247,13 @@ impl Action for Polymorph {
     fn name(&self) -> &str {
         "polymorph"
     }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["poly", "morph"]
     }
@@ -14543,6 +14590,13 @@ pub struct MassPolymorph {}
 impl Action for MassPolymorph {
     fn name(&self) -> &str {
         "mass polymorph"
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Control, not damage. The AI's focus-fire lane scores by who
+        // drops soonest, so an action that claims damage and deals none
+        // gets picked over the attack that would have.
+        false
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["mpoly", "mass morph"]

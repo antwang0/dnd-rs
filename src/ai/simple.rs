@@ -1196,6 +1196,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7b. Pinned and unable to swing back — spend the Action
+        //     breaking the hold instead of on movement that cannot
+        //     happen. See `try_escape_grapple`; this sits below every
+        //     attack lane on purpose, so a grappled brawler who can
+        //     still reach something hits it rather than wriggling.
+        if let Some(aei) = try_escape_grapple(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -4516,8 +4525,18 @@ fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
     // Rally (12-tile reach) or Commander's Strike (24-tile reach). Pre-
     // restriction this lane caught the support actions and steered every
     // Fighter into kite-mode the moment they had Rally on their sheet.
+    //
+    // `deals_damage` carries that same argument one step further, and it
+    // has to: a hostile action at range that deals no damage is no more
+    // a reason to back away than a friendly one is. A vampire's Charming
+    // Gaze is harmful, single-target and reaches 30 ft, so the vampire
+    // read as a ranged attacker and kited — from a frost giant that
+    // outranges it two to one, every turn, while the rocks came in and
+    // its own regeneration undid them. Its actual offense was a melee
+    // multiattack it never once used.
     actor.actions.iter().any(|a| {
         a.is_harmful()
+            && a.deals_damage()
             && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
             && a.reach_tiles().is_some_and(|r| r > MELEE_REACH)
     })
@@ -5779,6 +5798,23 @@ fn try_dash_to_close(
     if !actor.can_consume_resource(crate::engine::side_effects::Resource::Action) {
         return None;
     }
+    // A Dash hands over a second movement budget, and `remaining_movement`
+    // reports zero regardless of how much budget is sitting there while a
+    // `zeros_movement` condition is up — Grappled, Restrained, Rooted,
+    // Adhered. So Dashing out of one of those is not a gamble that
+    // sometimes pays; it is an Action that provably cannot buy a single
+    // tile.
+    //
+    // This is not a tuning nicety. It was the last rung a held creature
+    // could reach: with nothing in range and no movement to spend, the
+    // fallback chain ended here and the actor Dashed on every turn
+    // forever. A generated encounter found it — a vampire held by an
+    // otyugh's tentacles Dashed a hundred and seventy-four times in a
+    // row while its regeneration undid the otyugh's chip damage, and the
+    // fight could not end.
+    if actor.conditions().keys().any(|c| c.zeros_movement()) {
+        return None;
+    }
     let my_team = actor.team();
     let has_enemy = encounter
         .actors
@@ -5788,6 +5824,62 @@ fn try_dash_to_close(
         return None;
     }
     try_self_action(encounter, actor_id, "dash")
+}
+
+/// Break a hold that has left the actor unable to do anything else.
+///
+/// This closes a loop the engine could genuinely not get out of. Every
+/// grappling condition zeroes movement, and the AI's fallback chain ends
+/// in "close on the nearest enemy, and Dash if they're too far" — so a
+/// creature held by something with longer reach than its own arms had no
+/// reachable target, no usable movement, and an Action it spent on Dash
+/// every single turn, forever. An otyugh (10-ft tentacle grapple) against
+/// any 5-ft melee creature is the reachable case, and it produced fights
+/// that never ended: the vampire dashed 174 times in a row while the
+/// otyugh chewed on it and its regeneration undid the damage.
+///
+/// Three gates, and the middle one is what keeps this from firing on a
+/// grapple that doesn't matter:
+///   - The actor is held by something `GRAPPLE_ESCAPE` can answer —
+///     its own validator owns that list, so this doesn't restate it.
+///   - **Nothing hostile is within the actor's own attack reach.** A
+///     grappled creature standing next to its grappler is exactly where
+///     it wants to be; the hold costs it a step it wasn't taking. It is
+///     only worth an Action when the hold is the reason the actor can't
+///     fight.
+///   - There is another living enemy at all, so a creature held by the
+///     last thing standing doesn't wriggle at nobody.
+fn try_escape_grapple(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    // Longest reach the actor could swing with. `None` for a creature
+    // with no attacks at all, which then has nothing to lose by
+    // escaping — treat it as reach 0.
+    let best_reach = actor
+        .actions
+        .iter()
+        .filter(|a| a.is_harmful() && a.deals_damage())
+        .filter_map(|a| a.reach_tiles())
+        .max()
+        .unwrap_or(0);
+    let mut any_enemy = false;
+    for (id, t) in encounter.actors.iter() {
+        if *id == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        any_enemy = true;
+        if actor.footprint_gap_to(t) <= best_reach {
+            // Something is in range; swinging beats wriggling.
+            return None;
+        }
+    }
+    if !any_enemy {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "escape")
 }
 
 /// Last-resort: prefer Dodge (defensive posture if we still have an Action

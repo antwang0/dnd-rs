@@ -20,6 +20,15 @@ impl Action for Move {
         "move"
     }
 
+    fn is_harmful(&self) -> bool {
+        // Nobody is on the receiving end of this. `is_harmful` defaults
+        // to true because most actions are attacks, and these four had
+        // never said otherwise — which put them in every "walk the
+        // actor's harmful actions" scan in the AI, to be rejected a
+        // predicate later.
+        false
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["mv"]
     }
@@ -127,6 +136,15 @@ impl Action for Skip {
         "skip"
     }
 
+    fn is_harmful(&self) -> bool {
+        // Nobody is on the receiving end of this. `is_harmful` defaults
+        // to true because most actions are attacks, and these four had
+        // never said otherwise — which put them in every "walk the
+        // actor's harmful actions" scan in the AI, to be rejected a
+        // predicate later.
+        false
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["s"]
     }
@@ -167,6 +185,15 @@ impl Action for Dash {
         "dash"
     }
 
+    fn is_harmful(&self) -> bool {
+        // Nobody is on the receiving end of this. `is_harmful` defaults
+        // to true because most actions are attacks, and these four had
+        // never said otherwise — which put them in every "walk the
+        // actor's harmful actions" scan in the AI, to be rejected a
+        // predicate later.
+        false
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["dsh"]
     }
@@ -203,6 +230,15 @@ pub struct StandUp {}
 impl Action for StandUp {
     fn name(&self) -> &str {
         "stand"
+    }
+
+    fn is_harmful(&self) -> bool {
+        // Nobody is on the receiving end of this. `is_harmful` defaults
+        // to true because most actions are attacks, and these four had
+        // never said otherwise — which put them in every "walk the
+        // actor's harmful actions" scan in the AI, to be rejected a
+        // predicate later.
+        false
     }
 
     fn aliases(&self) -> Vec<&str> {
