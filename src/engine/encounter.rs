@@ -29588,6 +29588,160 @@ mod tests {
         );
     }
 
+    /// Wails from the Grave (Phantom Rogue lv3): the echo reaches a
+    /// second enemy measured from the *victim*, not from the rogue, and
+    /// it picks the one closest to dying. Both halves are pinned here
+    /// with the wounded goblin standing next to the healthy one but
+    /// twenty tiles from the rogue — the pick has to be the wounded one,
+    /// which no attacker-anchored rule would produce.
+    #[test]
+    fn wails_from_the_grave_reaches_the_victims_neighbour() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::PHANTOM_ROGUE_TEMPLATE;
+        let mut saw_wail = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(30, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&PHANTOM_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Sneak Attack needs advantage or an ally in contact with
+            // the victim; the fighter supplies the second.
+            e.instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+            // Both bystanders are far from the rogue and close to the
+            // victim; the wounded one is *further* from the rogue, so a
+            // nearest-to-the-attacker rule would pick the other.
+            let healthy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 2), 1, 0)
+                .unwrap();
+            let wounded = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+                .unwrap();
+            // Goblin hit points are rolled per instance, so "wounded"
+            // has to be made true rather than assumed: drop it to 1 and
+            // top the other one up.
+            let full = e.actors[&wounded].hitpoints();
+            e.actors.get_mut(&wounded).unwrap().take_damage(full - 1);
+            let max = e.actors[&healthy].max_hitpoints();
+            e.actors.get_mut(&healthy).unwrap().heal(max);
+            let healthy_hp = e.actors[&healthy].hitpoints();
+            let wounded_hp = e.actors[&wounded].hitpoints();
+            let log_before = e.messages().len();
+            let tv = vec![victim];
+            let effects = ROGUE_SHORTSWORD.side_effects(&mut e, r, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|s| s.contains("wails from the grave"))
+            {
+                saw_wail = true;
+                assert!(
+                    e.actors[&wounded].hitpoints() < wounded_hp,
+                    "the echo should land on the enemy closest to dying"
+                );
+                assert_eq!(
+                    e.actors[&healthy].hitpoints(),
+                    healthy_hp,
+                    "and on exactly one of them"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_wail,
+            "expected a wail on at least one connecting sneak attack"
+        );
+    }
+
+    /// The echo stops at 30 ft from the victim. A bystander outside that
+    /// envelope is untouched however loudly the rogue's dice landed.
+    #[test]
+    fn wails_from_the_grave_stops_at_thirty_feet_from_the_victim() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::PHANTOM_ROGUE_TEMPLATE;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(40, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&PHANTOM_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Well past the 12-tile (30 ft) reach measured from the
+            // victim. Medium creatures occupy a 2x2 block on this grid,
+            // so the gap between origins at x=3 and x=25 is 20 tiles.
+            let distant = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 2), 1, 0)
+                .unwrap();
+            e.instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+            let distant_hp = e.actors[&distant].hitpoints();
+            let tv = vec![victim];
+            let effects = ROGUE_SHORTSWORD.side_effects(&mut e, r, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&distant].hitpoints(),
+                distant_hp,
+                "a bystander past 30 ft of the victim should never be wailed at"
+            );
+        }
+    }
+
+    /// The wail is Phantom-only. Locks the template composition against
+    /// a drift that would give every rogue on the roster a free splash.
+    #[test]
+    fn wails_from_the_grave_is_phantom_only() {
+        use crate::actions::class_features::WAILS_FROM_THE_GRAVE_TAG;
+        use crate::actors::creatures::rogues::{
+            ASSASSIN_ROGUE_TEMPLATE, PHANTOM_ROGUE_TEMPLATE, ROGUE_TEMPLATE,
+            SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE,
+        };
+        assert!(
+            PHANTOM_ROGUE_TEMPLATE
+                .features
+                .contains(WAILS_FROM_THE_GRAVE_TAG)
+        );
+        for t in [
+            &*ROGUE_TEMPLATE,
+            &*ASSASSIN_ROGUE_TEMPLATE,
+            &*SOULKNIFE_ROGUE_TEMPLATE,
+            &*THIEF_ROGUE_TEMPLATE,
+        ] {
+            assert!(
+                !t.features.contains(WAILS_FROM_THE_GRAVE_TAG),
+                "{} should not carry Wails from the Grave",
+                t.name
+            );
+        }
+    }
+
     /// Hand of Harm (Way of Mercy Monk lv3 + Physician's Touch lv6) is
     /// the first row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS` that installs
     /// a condition as well as rolling a die, so this pins both halves:

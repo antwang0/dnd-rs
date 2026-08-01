@@ -9664,7 +9664,9 @@ mod tests {
         use crate::actors::creatures::monks::{
             KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
         };
-        use crate::actors::creatures::rogues::{SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
+        use crate::actors::creatures::rogues::{
+            PHANTOM_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE,
+        };
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::{
             CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE,
@@ -9674,7 +9676,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 17] = [
+        let cases: [(&CreatureTemplate, &str); 18] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9716,6 +9718,11 @@ mod tests {
             // is one PC against one ogre. Hand of Harm needs nothing but
             // a swing, which the monk chassis does every turn.
             (&MERCY_MONK_TEMPLATE, "hand of harm"),
+            // The wail needs a second enemy to reach, and this fixture
+            // has one ogre — so the marker is the Sneak Attack the
+            // feature hangs off, and the wail itself is pinned
+            // engine-side where a second body can be put on the board.
+            (&PHANTOM_ROGUE_TEMPLATE, "sneak attack"),
         ];
 
         for (template, marker) in cases {

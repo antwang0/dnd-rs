@@ -234,11 +234,112 @@ impl crate::engine::attack::ActionOnHitRider for SneakAttack {
         // Cunning Strike's own payloads land after the damage so a
         // condition follow-up reads the post-damage state.
         effects.append(&mut cunning_effects);
+        // 5e Phantom Rogue **Wails from the Grave** — RAW's trigger is
+        // "immediately after you deal Sneak Attack damage", which is
+        // here and nowhere else, so the feature lives on this rider
+        // rather than on a chokepoint of its own.
+        push_wails_from_the_grave(encounter, effects, p.caster_id, p.target_id, sneak_total);
         if let Some(rogue) = encounter.actors.get_mut(&p.caster_id) {
             rogue.mark_sneak_attack_used();
         }
         sneak_total
     }
+}
+
+/// 5e Phantom Rogue **Wails from the Grave** (subclass level 3): right
+/// after Sneak Attack damage lands, a second creature the rogue can see
+/// within 30 ft of the first takes half that damage again as necrotic.
+///
+/// The lane is genuinely new. Sweeping Attack splashes to a creature
+/// *adjacent to the target*; every other secondary-damage rider in the
+/// engine is either an area centred on a point or a rider on the swing
+/// itself. This one reaches across the room from the victim, not from
+/// the attacker, and the rogue's own position has nothing to do with
+/// which creature is eligible — only with whether they can see it.
+///
+/// **Target choice: the lowest-HP eligible enemy**, ties broken by the
+/// lower id. RAW hands the rogue the choice, and the choice a rogue
+/// makes is the one that finishes something: half a sneak pool is 3–5
+/// damage at this chassis, which is a rounding error against a healthy
+/// ogre and a kill against a bloodied kobold. Deterministic under a
+/// fixed seed like every other picker in the engine.
+///
+/// **Uncapped, where RAW allows proficiency-bonus uses per long rest.**
+/// The engine's per-tag charge lane is one use deep, which would make
+/// the feature fire once per fight against RAW's three-ish — further
+/// from RAW in the other direction. The real limiter is above it
+/// anyway: Sneak Attack is once per turn, so this is once per turn too.
+///
+/// Necrotic regardless of the weapon's type (RAW), which also keeps the
+/// wail distinct in the log from the swing that caused it.
+fn push_wails_from_the_grave(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    rogue_id: usize,
+    primary_id: usize,
+    sneak_total: u32,
+) {
+    use crate::actions::class_features::WAILS_FROM_THE_GRAVE_TAG;
+    let carries = encounter
+        .actors
+        .get(&rogue_id)
+        .is_some_and(|a| a.has_passive_feature(WAILS_FROM_THE_GRAVE_TAG));
+    if !carries {
+        return;
+    }
+    // Half the Sneak Attack damage, rounded down. A one-die pool that
+    // rolled a 1 wails for nothing, which is RAW and is also why the
+    // zero case exits before the log line — a "wails from the grave: 0
+    // necrotic" entry would be noise on every low roll.
+    let wail = sneak_total / 2;
+    if wail == 0 {
+        return;
+    }
+    let Some(team) = encounter.actors.get(&rogue_id).map(|a| a.team()) else {
+        return;
+    };
+    // 30 ft RAW = 12 tiles, measured from the *primary target*.
+    const WAIL_RANGE: isize = 12;
+    let mut best: Option<(u32, usize)> = None;
+    for id in encounter.sorted_actor_ids() {
+        if id == primary_id || id == rogue_id {
+            continue;
+        }
+        let Some(candidate) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if candidate.team() == team || !candidate.is_combat_active() {
+            continue;
+        }
+        if encounter
+            .footprint_distance(primary_id, id)
+            .is_none_or(|d| d > WAIL_RANGE)
+        {
+            continue;
+        }
+        // RAW: "a creature of your choice that you can see". The sight
+        // check is the rogue's, not the victim's.
+        if !encounter.actor_has_line_of_sight(rogue_id, id) {
+            continue;
+        }
+        let hp = candidate.hitpoints();
+        if best.is_none_or(|(best_hp, _)| hp < best_hp) {
+            best = Some((hp, id));
+        }
+    }
+    let Some((_, second_id)) = best else {
+        return;
+    };
+    let name = encounter.actor_name(second_id);
+    encounter.log(format!(
+        "  wails from the grave: {} takes {} necrotic from the echo.",
+        name, wail
+    ));
+    effects.push(Box::new(DealDamage {
+        actor_id: second_id,
+        amount: wail,
+        damage_type: DamageType::Necrotic,
+    }));
 }
 
 /// The baseline rogue's shortsword — finesse, 1d6 piercing, melee.

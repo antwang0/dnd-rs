@@ -2506,6 +2506,17 @@ pub const RELENTLESS_RAGE_TAG: &str = "barbarian.relentless_rage";
 /// helper reads the caster's level to size the die pool.
 pub const SNEAK_ATTACK_TAG: &str = "rogue.sneak_attack";
 
+/// 5e Phantom Rogue **Wails from the Grave** (subclass level 3) feature
+/// tag. Passive, read via `has_passive_feature` at the Sneak Attack
+/// rider in `class_attacks` — see `push_wails_from_the_grave` for the
+/// target-choice and uncapped-uses rationale.
+///
+/// Not on `ONCE_PER_TURN_RIDER_TAGS`, deliberately: the wail's trigger
+/// is Sneak Attack landing, and Sneak Attack already holds a
+/// once-per-turn mark of its own. A second ledger entry keyed to the
+/// same event would be a second lock on the same door.
+pub const WAILS_FROM_THE_GRAVE_TAG: &str = "rogue.wails_from_the_grave";
+
 /// Ordered cohort of feature tags whose "once-per-turn used" ledger
 /// lives on `ActorInstance::once_per_turn_marks`. Adding a future
 /// once-per-turn attack rider (a new Battle Master maneuver's

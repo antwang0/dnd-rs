@@ -562,3 +562,55 @@ pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..ROGUE_TEMPLATE.clone()
     }
 });
+
+/// Phantom Rogue — subclass build (TCE). Every other rogue on the roster
+/// answers the same question — how do I get my Sneak Attack onto the
+/// right creature? The Assassin gets advantage on the opener, the
+/// Soulknife throws it 60 ft, the Swashbuckler collects it without help,
+/// the Thief takes an extra turn to land it twice. The Phantom asks a
+/// different question: once the dice have landed, who else does the
+/// damage reach?
+///
+/// **Wails from the Grave** (lv3) is the answer. Immediately after the
+/// sneak dice resolve, a second creature the rogue can see within 30 ft
+/// *of the victim* takes half that damage again as necrotic. It is the
+/// engine's first secondary-damage rider anchored on the target rather
+/// than on the attacker or on a point — Sweeping Attack splashes to
+/// whoever is standing next to the victim, and everything else is either
+/// a burst or a rider on the swing. Here the rogue's own position
+/// decides nothing except whether they can see the second creature.
+///
+/// What that buys is a rogue whose damage does not fall off in a crowd.
+/// A Sneak Attack is a single-target spike by construction; this one
+/// spills roughly a third of the rogue's total round damage onto a
+/// second body, chosen for the kill rather than for convenience —
+/// `push_wails_from_the_grave` takes the lowest-HP eligible enemy,
+/// because half a sneak pool is a rounding error against a healthy ogre
+/// and a finishing blow against a bloodied kobold.
+///
+/// It also makes the Phantom the only rogue on the roster who cares
+/// where the *enemies* are standing relative to each other. Every other
+/// build's geometry problem is "can I reach the target"; this one's is
+/// "is the target standing near something I want dead".
+///
+/// Left out: **Whispers of the Dead** (lv3) grants a skill proficiency
+/// of the rogue's choice after each rest, and the engine rolls no skill
+/// checks. **Tokens of the Departed** (lv9) harvests a soul trinket
+/// from a creature that dies nearby and spends it for advantage on a
+/// save, an extra Wails use, or a question put to a corpse — the first
+/// needs a per-encounter inventory of tokens the engine has no lane
+/// for, and the third has no combat surface. **Ghost Walk** (lv13,
+/// incorporeal movement through creatures and objects) needs vertical
+/// and pass-through movement, neither of which exists here. **Death's
+/// Friend** (lv17) removes the Wails target restriction entirely.
+///
+/// Glyph 'H' — free on the rogue family, where 'R', 'A', 'S', 'K', 'T',
+/// 'M' and 'F' are taken.
+pub static PHANTOM_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::WAILS_FROM_THE_GRAVE_TAG;
+    // Tag-only: the wail has no action of its own — it rides whatever
+    // swing carried the Sneak Attack — so there is nothing to push onto
+    // the action list and nothing for a controller to choose. Same
+    // shape as `LONG_DEATH_MONK_TEMPLATE`'s Touch of Death.
+    ROGUE_TEMPLATE.with_subclass_tag("Phantom Rogue", 'H', WAILS_FROM_THE_GRAVE_TAG)
+});
