@@ -1650,6 +1650,21 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         engage_gap: 60,
         allies_within: None,
     },
+    // Level-2 bard / druid / sorcerer / wizard: a ring of roaring wind
+    // that makes ranged attacks into and out of it roll at
+    // disadvantage. Modelled through the same `Untracked` lane as Pass
+    // Without Trace directly above, which makes the two mechanically
+    // identical here and is why this sits *below* it rather than above:
+    // the druid carries both, and putting the newcomer first would
+    // change which spell an existing template opens with to no effect
+    // anyone could observe. Below it, the row is what the wizard and
+    // the sorcerer — who have no Pass Without Trace — reach for.
+    SelfBuffPick {
+        name: "warding wind",
+        condition: Condition::Untracked,
+        engage_gap: 20,
+        allies_within: None,
+    },
 ];
 
 /// Walk a self-buff cohort in order and return the first row that

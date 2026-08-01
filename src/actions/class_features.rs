@@ -751,12 +751,6 @@ impl Action for ActionSurge {
 
 pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {});
 
-/// Tag for Cunning Action — at-will class feature, not consumable, so
-/// it never appears in `features_remaining`. Kept as a const for
-/// symmetry with the once-per-rest tags above and so creature templates
-/// can declare it explicitly.
-pub const CUNNING_ACTION_TAG: &str = "rogue.cunning_action";
-
 /// 5e Rogue Assassin **Assassinate** (level 3 subclass) feature tag.
 /// Passive once-only rider: the assassin rolls with advantage on any
 /// attack against a creature that hasn't taken a turn yet in this
@@ -4520,11 +4514,6 @@ impl Action for StunningStrike {
 }
 
 pub static STUNNING_STRIKE: LazyLock<StunningStrike> = LazyLock::new(|| StunningStrike {});
-
-/// Class-feature tag for the Monk's Patient Defense — bonus-action
-/// Dodge. At-will (RAW: 1 ki point per use; we drop the ki pool to keep
-/// the bonus-action mobility tools uniform with Cunning Action).
-pub const PATIENT_DEFENSE_TAG: &str = "monk.patient_defense";
 
 /// Patient Defense — Monk bonus action. Take the Dodge action as a
 /// bonus action: attacks vs the monk have disadvantage and DEX saves

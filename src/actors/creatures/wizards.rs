@@ -205,6 +205,16 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Sphere (single-target DEX-save inert envelope concentration —
     // rounds out the wizard's prison kit alongside Forcecage / Maze).
     actions.push(&*crate::actions::spells::WIND_WALL);
+    // Warding Wind (lv2 evocation, concentration) — a 10 ft ring of
+    // roaring wind that makes ranged attacks into and out of it roll at
+    // disadvantage, modelled through the `Untracked` lane Pass Without
+    // Trace already rides. It was written, tested by nothing, and
+    // carried by no template on the roster: a complete `impl Action`
+    // that no player could pick and no encounter could roll. RAW gives
+    // it to the bard, druid, sorcerer and wizard; the three full-caster
+    // chassis that already carry Wind Wall get it here, where it sits as
+    // the cheap always-available sibling to Wind Wall's lv3.
+    actions.push(&*crate::actions::spells::WARDING_WIND);
     actions.push(&*crate::actions::spells::EVARDS_BLACK_TENTACLES);
     actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
     // Maximilian's Earthen Grasp (lv2) — single-target restraint with

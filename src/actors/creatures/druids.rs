@@ -89,6 +89,16 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // on incoming arrows / bolts — fits the wandering-naturalist
     // archetype that the druid kit centers on.
     actions.push(&*crate::actions::spells::WIND_WALL);
+    // Warding Wind (lv2 evocation, concentration) — a 10 ft ring of
+    // roaring wind that makes ranged attacks into and out of it roll at
+    // disadvantage, modelled through the `Untracked` lane Pass Without
+    // Trace already rides. It was written, tested by nothing, and
+    // carried by no template on the roster: a complete `impl Action`
+    // that no player could pick and no encounter could roll. RAW gives
+    // it to the bard, druid, sorcerer and wizard; the three full-caster
+    // chassis that already carry Wind Wall get it here, where it sits as
+    // the cheap always-available sibling to Wind Wall's lv3.
+    actions.push(&*crate::actions::spells::WARDING_WIND);
     // Shillelagh — cantrip prime that primes the druid's next melee
     // weapon hit with +1d8 force damage. Pairs with the scimitar /
     // thorn-whip lane for a bonus-action prime + action melee swing
