@@ -790,3 +790,71 @@ pub static CONQUEST_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..PALADIN_TEMPLATE.clone()
     }
 });
+
+/// Crown Paladin — **Oath of the Crown** (SCAG), and the roster's first
+/// pure bodyguard. Every other paladin here is a striker with a defensive
+/// aura attached; this one is a defensive aura with a sword attached.
+///
+///   - **Divine Allegiance** (lv7) is the headline, and it is a lane the
+///     engine did not have. When anything adjacent takes damage, the
+///     paladin can spend their reaction to take it instead — not reduce
+///     it, not copy it, *take* it. It hangs off `DealDamage` rather than
+///     off an attack, so unlike Interception or Warding Maneuver it also
+///     catches a failed save against a fireball, a poison drip at
+///     round end, or a death burst. See
+///     `EncounterInstance::claim_divine_allegiance`.
+///
+///   - **Champion Challenge** (lv3, Channel Divinity): everything hostile
+///     within 30 ft rolls WIS or is held where it stands until its next
+///     turn. RAW is a 30-ft leash rather than a hold; the engine has no
+///     leash and does have `Rooted`, so this trades RAW's minute-long
+///     radius for one round of a harder lock.
+///
+///   - **Turn the Tide** (lv3, Channel Divinity): every ally within
+///     30 ft at or below half HP regains `1d6 + CHA`. Small, flat, and
+///     only reaches the badly hurt — which is what keeps it from
+///     outclassing Lay on Hands rather than duplicating it.
+///
+/// The three compose into a shape no other paladin has. Champion
+/// Challenge pins the enemy line where it is, Divine Allegiance means
+/// the ally it was about to reach takes nothing when it swings anyway,
+/// and Turn the Tide puts back what the paladin absorbed doing it. The
+/// cost is entirely paid in the paladin's own hit points: Divine
+/// Allegiance is free, unlimited, and lands every point of it on a
+/// d10-hit-die body in plate. A Crown Paladin who guards well spends the
+/// fight at half HP, which is exactly where Turn the Tide reaches — and
+/// they cannot heal themselves with it and still be standing where their
+/// allies need them.
+///
+/// Left out: **Unyielding Spirit** (lv15) is advantage on saves against
+/// paralysis and stunning, which needs a per-condition save-mode filter
+/// the blanket save-mode lanes don't express; **Exalted Champion**
+/// (lv20) sits above this chassis's level.
+///
+/// Glyph 'W' — for cro**W**n. Distinct from baseline paladin 'P',
+/// Devotion 'D', Ancients 'A', Vengeance 'V', Oathbreaker 'O', Glory
+/// 'Y', Watchers 'H' and Conquest 'Q'.
+pub static CROWN_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        CHAMPION_CHALLENGE, CHAMPION_CHALLENGE_TAG, DIVINE_ALLEGIANCE_TAG, TURN_THE_TIDE,
+        TURN_THE_TIDE_TAG,
+    };
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*CHAMPION_CHALLENGE);
+    actions.push(&*TURN_THE_TIDE);
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(CHAMPION_CHALLENGE_TAG);
+    features.insert(TURN_THE_TIDE_TAG);
+    // Divine Allegiance is a tag rather than a template flag because the
+    // engine reads it through `has_passive_feature` at the damage
+    // chokepoint, not through an `&ActorInstance` accessor the way the
+    // always-on auras are read.
+    features.insert(DIVINE_ALLEGIANCE_TAG);
+    CreatureTemplate {
+        name: "Crown Paladin",
+        glyph: 'W',
+        actions,
+        features,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});

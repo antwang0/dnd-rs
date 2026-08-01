@@ -1322,6 +1322,13 @@ impl OutcomeTracker {
 /// validation) needs deep access to actor state — narrowing it would
 /// require a much larger accessor surface.
 pub struct EncounterInstance {
+    /// Non-zero while a damage instance is being carried by somebody
+    /// other than the creature it was aimed at — see
+    /// `claim_divine_allegiance`. Damage that has already been taken for
+    /// somebody cannot be taken for them again, which is what stops two
+    /// Crown Paladins standing beside each other from passing a blow
+    /// back and forth.
+    redirect_depth: u32,
     /// The seed both RNGs were built from — the one passed in, or the
     /// one `empty` drew when none was. Read-only after construction and
     /// surfaced by `seed()`; see `empty` for why an unseeded encounter
@@ -4623,6 +4630,86 @@ impl EncounterInstance {
         )
     }
 
+    /// 5e Oath of the Crown Paladin **Divine Allegiance** (subclass
+    /// level 7): "when a creature within 5 feet of you takes damage, you
+    /// can use your reaction to magically substitute your own health for
+    /// that of the target creature… This damage can't be reduced in any
+    /// way."
+    ///
+    /// Finds the paladin who will carry `target_id`'s damage, spends
+    /// their reaction, and hands back their id — or `None` when nobody
+    /// steps in. Called from `DealDamage::apply` before anything else
+    /// touches the number, because the whole point is that the blow
+    /// never reaches the creature it was aimed at.
+    ///
+    /// This is a different lane from every other defensive feature in
+    /// the engine, and the difference is worth stating. Uncanny Dodge,
+    /// Parry, Interception and Warding Maneuver all *clamp* — the damage
+    /// stays where it landed and gets smaller. Mirror Image and Illusory
+    /// Self *intercept* — the attack is retroactively un-hit. Warding
+    /// Bond *mirrors* — the partner takes a copy, and the original still
+    /// lands. Divine Allegiance moves it: the target takes nothing at
+    /// all, and the whole amount arrives somewhere else.
+    ///
+    /// Because it hangs off `DealDamage` rather than off an attack
+    /// chokepoint, it catches everything the clamp cohort cannot — a
+    /// failed save against a fireball, a poison drip at round end, a
+    /// death burst. That breadth is RAW ("takes damage", with no
+    /// qualifier) and it is most of what the feature is worth.
+    ///
+    /// Three gates, all of them RAW, plus one that isn't:
+    ///   - The paladin holds the feature, is combat-active, is within
+    ///     5 ft, and has a reaction left.
+    ///   - The paladin is on the target's team and is not the target.
+    ///     A paladin does not take a blow for an enemy, and cannot take
+    ///     one for themselves.
+    ///   - Zero damage buys nothing, so it doesn't cost a reaction.
+    ///   - **Not RAW:** damage already being carried for somebody can't
+    ///     be handed on again. Nothing in the text forbids the chain,
+    ///     but two adjacent Crown Paladins would otherwise volley a
+    ///     single blow between them until both reactions were gone,
+    ///     which is not what either of them meant to do.
+    ///
+    /// Ties break on the lowest actor id so a seeded run reproduces.
+    pub fn claim_divine_allegiance(&mut self, target_id: usize, amount: u32) -> Option<usize> {
+        use crate::actions::class_features::DIVINE_ALLEGIANCE_TAG;
+        if amount == 0 || self.redirect_depth > 0 {
+            return None;
+        }
+        let target_team = self.actors.get(&target_id)?.team();
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        let guardian = ids.into_iter().find(|&id| {
+            if id == target_id {
+                return false;
+            }
+            let Some(a) = self.actors.get(&id) else {
+                return false;
+            };
+            a.team() == target_team
+                && a.is_combat_active()
+                && a.has_passive_feature(DIVINE_ALLEGIANCE_TAG)
+                && a.has_reaction()
+                && self.footprint_distance(id, target_id).is_some_and(|d| d <= 1)
+        })?;
+        self.actors
+            .get_mut(&guardian)?
+            .consume_resource(crate::engine::side_effects::Resource::Reaction);
+        Some(guardian)
+    }
+
+    /// Run `body` with the damage-redirect guard raised, so a blow being
+    /// carried for someone can't be handed on a second time. Paired
+    /// enter/exit rather than a bare flag for the reason
+    /// `enter_multiattack` is: the guard has to come back down on every
+    /// path out.
+    pub fn within_damage_redirect<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.redirect_depth += 1;
+        let out = body(self);
+        self.redirect_depth -= 1;
+        out
+    }
+
     /// Shared eligibility scan for the "nearby ally with a reaction and a
     /// per-feature flag" cohort — Fighting Style Protection, Fighting
     /// Style Interception, and Psi Warrior Protective Field all need the
@@ -5068,6 +5155,7 @@ impl EncounterInstance {
         let mut rng = Rng::with_seed(seed);
         EncounterInstance {
             seed,
+            redirect_depth: 0,
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
@@ -56063,6 +56151,176 @@ mod tests {
         assert!(
             !e.actors[&other].has_taken_turn_in_combat(),
             "an actor whose slot hasn't come up is untouched"
+        );
+    }
+
+    /// 5e Oath of the Crown Paladin **Divine Allegiance**: the damage
+    /// lands on the paladin and not at all on the ally it was aimed at.
+    ///
+    /// Driven through `DealDamage` rather than through an attack,
+    /// because that is the point of the lane. Interception and Warding
+    /// Maneuver hang off the attack chokepoints and cannot see a failed
+    /// save, a round-end drip or a death burst; this hangs off the
+    /// damage itself and catches all of them.
+    #[test]
+    fn divine_allegiance_moves_the_damage_onto_the_paladin() {
+        use crate::actors::creatures::paladins::CROWN_PALADIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let paladin = e
+            .instantiate_creature(&CROWN_PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let ally_before = e.actors[&ally].hitpoints();
+        let paladin_before = e.actors[&paladin].hitpoints();
+
+        DealDamage {
+            actor_id: ally,
+            amount: 9,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_before,
+            "the blow never reaches the creature it was aimed at"
+        );
+        assert_eq!(
+            paladin_before - e.actors[&paladin].hitpoints(),
+            9,
+            "and arrives whole on the paladin"
+        );
+        assert!(
+            !e.actors[&paladin].has_reaction(),
+            "carrying it costs the reaction"
+        );
+
+        // Reaction spent: the next blow lands where it was aimed.
+        DealDamage {
+            actor_id: ally,
+            amount: 4,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            ally_before - e.actors[&ally].hitpoints(),
+            4,
+            "with no reaction left the paladin cannot step in again"
+        );
+    }
+
+    /// Two Crown Paladins standing beside each other don't volley the
+    /// same blow between them.
+    ///
+    /// Nothing in RAW forbids the chain — each paladin is separately
+    /// entitled to take damage a neighbour is taking — but the result is
+    /// a single hit bouncing until both reactions are gone, which is not
+    /// what either of them meant. `within_damage_redirect` refuses to
+    /// hand on damage that is already being carried, so exactly one
+    /// paladin pays and exactly one reaction is spent.
+    #[test]
+    fn a_carried_blow_is_not_handed_on_again() {
+        use crate::actors::creatures::paladins::CROWN_PALADIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let first = e
+            .instantiate_creature(&CROWN_PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let second = e
+            .instantiate_creature(&CROWN_PALADIN_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let before: Vec<u32> = [first, second, ally]
+            .iter()
+            .map(|id| e.actors[id].hitpoints())
+            .collect();
+
+        DealDamage {
+            actor_id: ally,
+            amount: 7,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+
+        let after: Vec<u32> = [first, second, ally]
+            .iter()
+            .map(|id| e.actors[id].hitpoints())
+            .collect();
+        let losses: Vec<u32> = before.iter().zip(&after).map(|(b, a)| b - a).collect();
+        assert_eq!(
+            losses.iter().sum::<u32>(),
+            7,
+            "the blow is paid once, not once per paladin: {:?}",
+            losses
+        );
+        assert_eq!(
+            losses.iter().filter(|l| **l > 0).count(),
+            1,
+            "exactly one creature pays it: {:?}",
+            losses
+        );
+        let reactions_spent = [first, second]
+            .iter()
+            .filter(|id| !e.actors[id].has_reaction())
+            .count();
+        assert_eq!(reactions_spent, 1, "and exactly one reaction is spent");
+    }
+
+    /// A paladin doesn't step in front of an enemy, and doesn't burn a
+    /// reaction on damage that was going to be zero anyway.
+    #[test]
+    fn divine_allegiance_only_covers_allies_and_only_for_real_damage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::CROWN_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let paladin = e
+            .instantiate_creature(&CROWN_PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let enemy_before = e.actors[&enemy].hitpoints();
+
+        DealDamage {
+            actor_id: enemy,
+            amount: 3,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            enemy_before - e.actors[&enemy].hitpoints(),
+            3,
+            "an enemy carries their own damage"
+        );
+        assert!(
+            e.actors[&paladin].has_reaction(),
+            "and the paladin's reaction is untouched"
+        );
+
+        // A zero-damage instance is not worth a reaction.
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 0, 1)
+            .unwrap();
+        DealDamage {
+            actor_id: ally,
+            amount: 0,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&paladin].has_reaction(),
+            "nothing to take means nothing to spend"
         );
     }
 

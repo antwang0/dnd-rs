@@ -2,7 +2,8 @@ use std::sync::LazyLock;
 
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE, DREADFUL_ASPECT,
+    ARCANE_ABJURATION, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE,
+    DREADFUL_ASPECT,
     ORDERS_DEMAND, TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
 };
@@ -4068,6 +4069,19 @@ const TURN_BURST_PICKS: &[TurnBurstPick] = &[
     // two.
     TurnBurstPick {
         config: &CONQUERING_PRESENCE,
+        min_targets: 1,
+    },
+    // Champion Challenge takes Conquering Presence's bar rather than
+    // Dreadful Aspect's, for the same reason and a different mechanic:
+    // one held enemy is already worth the charge, because Rooted stops
+    // that enemy reaching the ally behind the paladin at all. It sits
+    // ahead of the two Frighten rows on the walk because the Crown
+    // Paladin holds no other row — the order between them is only ever
+    // read by a hypothetical multiclass — and behind the filtered rows
+    // for the same reason they lead: a type-gated turn that finds
+    // nobody should fall through to something unfiltered.
+    TurnBurstPick {
+        config: &CHAMPION_CHALLENGE,
         min_targets: 1,
     },
     // Order's Demand is the other unfiltered variant, and it takes
@@ -9488,12 +9502,14 @@ mod tests {
         use crate::actors::creatures::monks::{KENSEI_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE};
         use crate::actors::creatures::rogues::{SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
-        use crate::actors::creatures::paladins::CONQUEST_PALADIN_TEMPLATE;
+        use crate::actors::creatures::paladins::{
+            CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE,
+        };
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 14] = [
+        let cases: [(&CreatureTemplate, &str); 15] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9521,6 +9537,11 @@ mod tests {
             // fixture is one PC against one ogre. Its engine-side test
             // is where the save-for-nothing behaviour is pinned.
             (&SUN_SOUL_MONK_TEMPLATE, "radiant sun bolt"),
+            // Not Turn the Tide or Divine Allegiance: both need an ally,
+            // and this fixture is one PC against one ogre. Divine
+            // Allegiance also has no action to choose — the engine
+            // spends the reaction — so it belongs to the engine tests.
+            (&CROWN_PALADIN_TEMPLATE, "champion challenge"),
         ];
 
         for (template, marker) in cases {

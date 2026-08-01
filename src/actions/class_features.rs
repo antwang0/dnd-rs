@@ -46,6 +46,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // recovers on a short rest — the same cadence the charge lane
     // carries.
     SEARING_SUNBURST_TAG,
+    // 5e Oath of the Crown Paladin Channel Divinity — Champion Challenge
+    // and Turn the Tide. Same short-rest cadence as every other Channel
+    // Divinity on the roster.
+    CHAMPION_CHALLENGE_TAG,
+    TURN_THE_TIDE_TAG,
     // 5e War Domain Cleric features — both refresh on a short rest.
     // WAR_PRIEST is the once-per-rest bonus-action extra swing; GUIDED
     // STRIKE is the Channel Divinity +10 accuracy prime.
@@ -4669,6 +4674,7 @@ pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
 ///   (Charmed's back-link) gets it without this resolver knowing which
 ///   conditions do.
 /// - `label` — log prefix ("turn undead" / "turn the faithless").
+#[allow(clippy::too_many_arguments)]
 fn resolve_turn_burst(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -4676,6 +4682,7 @@ fn resolve_turn_burst(
     spellcasting_ability: AbilityScoreType,
     is_affected: fn(crate::engine::types::CreatureType) -> bool,
     installed: Condition,
+    timer: ConditionTimer,
     label: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
@@ -4777,7 +4784,7 @@ fn resolve_turn_burst(
             installed,
             id,
             caster_id,
-            ConditionTimer::Rounds(10),
+            timer,
         ));
     }
     effects
@@ -4860,6 +4867,12 @@ pub struct TurnBurst {
     /// Domain's Charm Animals and Plants installs Charmed. Any back-link
     /// the condition carries is queued by the resolver.
     pub installed: Condition,
+    /// How long the install lasts. `Rounds(10)` is the 1-minute duration
+    /// every Turn / dread variant carries in RAW and was hardcoded in
+    /// the resolver until a row wanted otherwise: the Crown Paladin's
+    /// Champion Challenge installs `Rooted`, and a hold that severe has
+    /// to be measured in a round rather than in a minute.
+    pub timer: ConditionTimer,
 }
 
 impl Action for TurnBurst {
@@ -4903,6 +4916,7 @@ impl Action for TurnBurst {
             self.dc_ability,
             self.type_filter,
             self.installed,
+            self.timer,
             self.name,
         )
     }
@@ -4921,6 +4935,8 @@ pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     dc_ability: AbilityScoreType::Wisdom,
     type_filter: |ct| ct.is_undead(),
     installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
@@ -4947,6 +4963,8 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
         )
     },
     installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Arcane Abjuration — Arcana Domain Cleric Channel Divinity (lv2,
@@ -4982,6 +5000,8 @@ pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
         )
     },
     installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Charm Animals and Plants — Nature Domain Cleric Channel Divinity
@@ -5014,6 +5034,8 @@ pub static CHARM_ANIMALS_AND_PLANTS: LazyLock<TurnBurst> = LazyLock::new(|| Turn
         matches!(ct, CreatureType::Beast | CreatureType::Plant)
     },
     installed: Condition::Charmed,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Dreadful Aspect — Oathbreaker Paladin Channel Divinity (lv3), action.
@@ -5032,6 +5054,8 @@ pub static DREADFUL_ASPECT: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     // `resolve_turn_burst` handle the "hostile and standing" half.
     type_filter: |_| true,
     installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
@@ -12169,6 +12193,8 @@ pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst
     dc_ability: AbilityScoreType::Charisma,
     type_filter: |_| true,
     installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Tag for the Bladesinging Wizard's **Bladesong** (subclass level 2).
@@ -12704,6 +12730,8 @@ pub static ORDERS_DEMAND: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     dc_ability: AbilityScoreType::Wisdom,
     type_filter: |_| true,
     installed: Condition::Charmed,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
 });
 
 /// Class-feature tag for the Order Domain Cleric's **Divine Strike
@@ -12880,6 +12908,186 @@ impl Action for SearingSunburst {
 }
 
 pub static SEARING_SUNBURST: LazyLock<SearingSunburst> = LazyLock::new(|| SearingSunburst {});
+
+/// Passive tag for the Oath of the Crown Paladin's **Divine Allegiance**
+/// (subclass level 7): when a creature within 5 ft takes damage, the
+/// paladin may spend their reaction to take it instead.
+///
+/// No action of its own and no charge — the whole feature is a reaction
+/// the engine spends on the paladin's behalf, at the damage chokepoint.
+/// Read at `EncounterInstance::claim_divine_allegiance`, which is called
+/// from the top of `DealDamage::apply`; see that method for why this is
+/// its own lane rather than a row on `REACTIVE_DAMAGE_CLAMPS`, and for
+/// the one RAW clause it doesn't honour.
+pub const DIVINE_ALLEGIANCE_TAG: &str = "paladin.divine_allegiance";
+
+/// Per-rest charge for the Oath of the Crown Paladin's Channel Divinity
+/// **Champion Challenge** (subclass level 3): each creature of the
+/// paladin's choice within 30 ft makes a WIS save or "can't willingly
+/// move more than 30 feet away from you."
+///
+/// The engine has no leash — a distance cap measured from a moving
+/// anchor, re-checked per tile of movement, is a movement-validation
+/// lane that nothing else needs. What it has is `Rooted`, and the
+/// Conquest Paladin's Aura of Conquest already reads RAW's "speed 0" as
+/// exactly that. Champion Challenge lands on the same condition for one
+/// round, which is a harder lock over a much shorter window: RAW's leash
+/// lets the target fight anyone inside a 30-ft circle for a minute, and
+/// this pins them where they stand until their next turn.
+///
+/// That trade is what makes the two Channel Divinity options on this
+/// oath read differently. Champion Challenge stops a line from
+/// collapsing onto the party's back rank for exactly one round; Turn the
+/// Tide puts the back rank back on its feet.
+pub const CHAMPION_CHALLENGE_TAG: &str = "paladin.champion_challenge";
+
+/// Champion Challenge — Oath of the Crown Paladin Channel Divinity.
+/// Self-centred 30-ft (12-tile) hostile burst; WIS save vs the paladin's
+/// CHA-anchored DC or `Rooted` until the start of the target's next
+/// turn. Once per short rest.
+///
+/// A `TurnBurst` literal rather than an impl of its own, which is what
+/// the `timer` field on that struct exists for: the row differs from
+/// Conquering Presence in the condition it installs and in how long it
+/// lasts, and in nothing else. Being a `TurnBurst` is also what makes
+/// the AI reach for it — `TURN_BURST_PICKS` is keyed on the config
+/// struct, so a bespoke impl would have been invisible to every
+/// controller in the engine.
+pub static CHAMPION_CHALLENGE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "champion challenge",
+    aliases: &["challenge", "cd-challenge"],
+    tag: CHAMPION_CHALLENGE_TAG,
+    dc_ability: AbilityScoreType::Charisma,
+    // Anything hostile, like the other two unfiltered oaths.
+    type_filter: |_| true,
+    installed: Condition::Rooted,
+    // One round, not the minute every other row takes — see the field's
+    // doc and the tag's for why a hold trades duration for severity.
+    timer: ConditionTimer::UntilStartOfNextTurn,
+});
+
+/// Per-rest charge for the Oath of the Crown Paladin's Channel Divinity
+/// **Turn the Tide** (subclass level 3): each creature of the paladin's
+/// choice within 30 ft that is at or below half its hit points regains
+/// `1d6 + CHA` HP.
+///
+/// The half-HP gate is RAW here, and it is also what keeps this from
+/// being a strictly better Lay on Hands. Lay on Hands is a large pool
+/// spent on one creature at any wound level; this is a small flat heal
+/// that only reaches the badly hurt, and reaches all of them at once.
+pub const TURN_THE_TIDE_TAG: &str = "paladin.turn_the_tide";
+
+/// Turn the Tide — Oath of the Crown Paladin Channel Divinity. Heals
+/// every ally within 30 ft who is at or below half HP for `1d6 + CHA`.
+/// Once per short rest.
+pub struct TurnTheTide {}
+
+impl Action for TurnTheTide {
+    fn name(&self) -> &str {
+        "turn the tide"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tide", "cd-tide"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, TURN_THE_TIDE_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(TURN_THE_TIDE_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let cha = caster.ability_modifier(AbilityScoreType::Charisma);
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        // Ids collected and sorted before any rolling so the per-target
+        // heal rolls land in a deterministic order under a fixed seed.
+        let mut wounded: Vec<usize> = encounter
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                if a.team() != caster_team || !a.is_combat_active() {
+                    return false;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    caster_loc,
+                    caster_size,
+                );
+                // RAW: "at or below half its hit point maximum".
+                dist <= 12 && a.hitpoints() * 2 <= a.max_hitpoints()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        wounded.sort_unstable();
+        if wounded.is_empty() {
+            encounter.log("  turn the tide: nobody in range is hurt enough to answer.".to_string());
+            return Vec::new();
+        }
+        // RAW rolls the die per creature rather than sharing one, unlike
+        // the AoE damage bursts — the healing is "each creature regains
+        // hit points equal to 1d6 + your Charisma modifier".
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in wounded {
+            let raw = encounter.roll(&Dice::new(1, 6)) as i32;
+            let amount = (raw + cha).max(1) as u32;
+            let name = encounter.actor_name(id);
+            encounter.log(format!(
+                "  turn the tide: {} rallies — 1d6({}){:+} = {} HP",
+                name, raw, cha, amount
+            ));
+            effects.push(Box::new(Heal {
+                actor_id: id,
+                amount,
+            }));
+        }
+        effects
+    }
+}
+
+pub static TURN_THE_TIDE: LazyLock<TurnTheTide> = LazyLock::new(|| TurnTheTide {});
 
 pub const FAST_HANDS_TAG: &str = "rogue.fast_hands";
 

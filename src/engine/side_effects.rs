@@ -478,6 +478,40 @@ impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
         use crate::engine::types::DamageModifier;
 
+        // 5e Oath of the Crown Paladin **Divine Allegiance**: an
+        // adjacent paladin may spend their reaction to take this damage
+        // in the target's place. Resolved before anything else touches
+        // the number — the target's own auras, resistances and temp HP
+        // never come into it, because the blow does not reach them.
+        //
+        // The redirected instance is a fresh `DealDamage` at the
+        // paladin, so it runs the full pipeline on their side: their
+        // temp HP absorbs it, their concentration save fires, and it can
+        // drop them. RAW's "can't be reduced in any way" is the one
+        // clause not honoured — the paladin's own resistances still
+        // apply — because the alternative is a second damage path that
+        // duplicates everything below this line in order to skip four of
+        // it. Paladin chassis on this roster carry no damage
+        // resistances, so the divergence is currently unobservable.
+        //
+        // `within_damage_redirect` is what keeps two adjacent paladins
+        // from volleying the same blow between them.
+        if let Some(guardian) = ei.claim_divine_allegiance(self.actor_id, self.amount) {
+            let (target_name, guardian_name) =
+                (ei.actor_name(self.actor_id), ei.actor_name(guardian));
+            ei.log(format!(
+                "[reaction] divine allegiance: {} takes the {} {:?} meant for {}.",
+                guardian_name, self.amount, self.damage_type, target_name
+            ));
+            let redirected = DealDamage {
+                actor_id: guardian,
+                amount: self.amount,
+                damage_type: self.damage_type,
+            };
+            ei.within_damage_redirect(|e| redirected.apply(e));
+            return;
+        }
+
         // Snapshot the actor's name and self-reduction state before any
         // encounter-wide lookups — the aura check below re-borrows `ei`
         // immutably and can't coexist with a live `&mut actor`.

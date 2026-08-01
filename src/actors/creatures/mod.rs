@@ -388,6 +388,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*paladins::GLORY_PALADIN_TEMPLATE,
                     &*paladins::WATCHERS_PALADIN_TEMPLATE,
                     &*paladins::CONQUEST_PALADIN_TEMPLATE,
+                    &*paladins::CROWN_PALADIN_TEMPLATE,
                 ],
             ),
             (
