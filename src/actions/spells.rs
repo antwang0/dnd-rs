@@ -1465,23 +1465,9 @@ impl Action for HealSpell {
         let lvl = crate::engine::action_overrides::cast_level(overrides, self.spell_slot_lvl);
         let extra_dice = lvl - self.spell_slot_lvl;
         let dice = Dice::new(self.heal_dice.count + extra_dice, self.heal_dice.faces);
-        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
-        // rolled dice for the max face-value when the target is at 0 HP.
-        // Snapshot before the (mutable) roll so both immutable borrows
-        // (`caster` from `.get(&caster_id)`, target from `.get(&target_id)`)
-        // are dropped before `encounter.roll(&dice)` takes `&mut self`.
-        let use_max = encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|target| {
-                crate::actions::class_features::should_use_max_heal_dice(caster, target)
-            });
-        let raw = if use_max {
-            dice.max_roll() as i32
-        } else {
-            encounter.roll(&dice) as i32
-        };
-        let amount = (raw + ability_mod).max(1) as u32;
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &[target_id], &dice);
+        let amount = (raw as i32 + ability_mod).max(1) as u32;
         encounter.log(format!(
             "  {}: {}({}){}{:+} = {} HP",
             self.display_name,
@@ -4169,27 +4155,11 @@ impl Action for MassHealingWord {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
-        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
-        // shared 1d4 roll for its max face-value (4) if the caster
-        // holds the tag AND any picked target is at 0 HP. The RAW
-        // clause is per-die not per-target; on a shared-roll mass
-        // heal the coherent read is "if any die is being applied to
-        // a 0-HP target, that die maxes — and since all dice are
-        // shared, all dice max". A downed-ally-included Mass Healing
-        // Word burst floors the whole burst at max; a fully-healthy
-        // burst rolls normally. Snapshot before the (mutable) roll.
         let dice = Dice::new(1, 4);
-        let use_max = caster
-            .has_passive_feature(crate::actions::class_features::CIRCLE_OF_MORTALITY_TAG)
-            && candidates
-                .iter()
-                .any(|(_, id)| encounter.actors.get(id).is_some_and(|a| a.hitpoints() == 0));
-        let raw = if use_max {
-            dice.max_roll() as i32
-        } else {
-            encounter.roll(&dice) as i32
-        };
-        let amount = (raw + wis_mod).max(1) as u32;
+        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
+        let amount = (raw as i32 + wis_mod).max(1) as u32;
         encounter.log(format!(
             "  mass healing word: {}({}){}{:+} = {} HP each",
             dice,
@@ -4198,7 +4168,6 @@ impl Action for MassHealingWord {
             wis_mod,
             amount
         ));
-        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
         // Fixed level-3 slot in this engine (no upcasting exposed).
         crate::actions::class_features::slot_heal_effects(encounter, caster_id, &targets, amount, 3)
     }
@@ -6412,25 +6381,11 @@ impl Action for MassCureWounds {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
-        // 5e Grave Domain Cleric **Circle of Mortality** — swap the
-        // shared 3d8 roll for its max face-value (24) if the caster
-        // holds the tag AND any picked target is at 0 HP. Same
-        // shared-roll-max coalescing shape the sibling Mass Healing
-        // Word site uses — see that call site for the per-die
-        // interpretation on a shared-dice mass heal. Snapshot before
-        // the (mutable) roll so the burst-selection borrow drops.
         let dice = Dice::new(3, 8);
-        let use_max = caster
-            .has_passive_feature(crate::actions::class_features::CIRCLE_OF_MORTALITY_TAG)
-            && candidates
-                .iter()
-                .any(|(hp, _)| *hp == 0);
-        let raw = if use_max {
-            dice.max_roll() as i32
-        } else {
-            encounter.roll(&dice) as i32
-        };
-        let amount = (raw + wis_mod).max(1) as u32;
+        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
+        let amount = (raw as i32 + wis_mod).max(1) as u32;
         encounter.log(format!(
             "  mass cure wounds: {}({}){}{:+} = {} HP each",
             dice,
@@ -6439,7 +6394,6 @@ impl Action for MassCureWounds {
             wis_mod,
             amount
         ));
-        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
         crate::actions::class_features::slot_heal_effects(encounter, caster_id, &targets, amount, 5)
     }
 }
@@ -8872,14 +8826,22 @@ impl Action for PrayerOfHealing {
         // matches every other ally-burst spell.
         const RADIUS: isize = 6;
         const MAX_TARGETS: usize = 6;
-        let raw = encounter.roll(&Dice::new(2, 8)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
-        encounter.log(format!(
-            "  prayer of healing: 2d8({}){:+} = {} HP each",
-            raw, wis_mod, amount
-        ));
-        let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, RADIUS);
+        // Targets first, then the dice: Circle of Mortality's gate is
+        // "is any of them at 0 HP", so the roll cannot happen until the
+        // burst knows who it caught.
+        let mut targets = encounter.ally_heal_burst_targets(caster_id, caster_loc, RADIUS);
         targets.truncate(MAX_TARGETS);
+        let dice = Dice::new(2, 8);
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
+        let amount = (raw as i32 + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  prayer of healing: 2d8({}){}{:+} = {} HP each",
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            wis_mod,
+            amount
+        ));
         crate::actions::class_features::slot_heal_effects(
             encounter, caster_id, &targets, amount, 2,
         )
@@ -9855,12 +9817,16 @@ impl Action for HealingSpirit {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let raw = encounter.roll(&Dice::new(1, 6));
+        let targets = encounter.ally_heal_burst_targets(caster_id, point, 1);
+        let dice = Dice::new(1, 6);
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
         encounter.log(format!(
-            "  healing spirit: 1d6({}) = {} HP to each ally in area",
-            raw, raw
+            "  healing spirit: 1d6({}){} = {} HP to each ally in area",
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            raw
         ));
-        let targets = encounter.ally_burst_targets(caster_id, point, 1);
         let mut effects = crate::actions::class_features::slot_heal_effects(
             encounter, caster_id, &targets, raw, 2,
         );
@@ -9931,12 +9897,16 @@ impl Action for AuraOfVitality {
         else {
             return Vec::new();
         };
-        let raw = encounter.roll(&Dice::new(2, 6));
+        let targets = encounter.ally_heal_burst_targets(caster_id, caster_loc, 6);
+        let dice = Dice::new(2, 6);
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
         encounter.log(format!(
-            "  aura of vitality: 2d6({}) = {} HP to allies in aura",
-            raw, raw
+            "  aura of vitality: 2d6({}){} = {} HP to allies in aura",
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            raw
         ));
-        let targets = encounter.ally_burst_targets(caster_id, caster_loc, 6);
         let mut effects = crate::actions::class_features::slot_heal_effects(
             encounter, caster_id, &targets, raw, 3,
         );
@@ -20308,9 +20278,16 @@ impl Action for Regenerate {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let raw = encounter.roll(&Dice::new(4, 8));
+        let dice = Dice::new(4, 8);
+        let (raw, use_max) =
+            crate::actions::class_features::roll_heal_dice(encounter, caster_id, &[target_id], &dice);
         let total = raw + 15;
-        encounter.log(format!("  regenerate: 4d8+15({}) = {} HP", raw, total));
+        encounter.log(format!(
+            "  regenerate: 4d8+15({}){} = {} HP",
+            raw,
+            crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
+            total
+        ));
         crate::actions::class_features::slot_heal_effects(
             encounter,
             caster_id,

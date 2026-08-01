@@ -10289,6 +10289,49 @@ pub fn should_use_max_heal_dice(
     caster.has_passive_feature(CIRCLE_OF_MORTALITY_TAG) && target.hitpoints() == 0
 }
 
+/// **The** heal-dice roll. The roll-side twin of `slot_heal_effects`:
+/// that one owns everything that happens to a heal *after* the dice,
+/// and this one owns the dice themselves.
+///
+/// Returns `(raw, maxed)` — the total to feed the spell's own log line
+/// and whether Circle of Mortality substituted the max face for every
+/// die. `maxed` goes straight to `circle_of_mortality_log_suffix`.
+///
+/// The RAW clause is per-die, not per-target: "whenever you would
+/// normally roll one or more dice to restore hit points… instead use
+/// the highest number possible for each die." On a shared-roll mass
+/// heal the coherent read is that if any die is being applied to a
+/// 0-HP creature then that die maxes, and since all the dice are
+/// shared, all of them do. That is why the gate takes the whole target
+/// list and asks `any` — a burst that catches a downed ally floors the
+/// entire burst, and a burst of healthy allies rolls normally.
+///
+/// It exists for the same reason its twin does. The substitution was
+/// written out by hand at three sites and missing from three more that
+/// roll dice and sit on the same cleric chassis — Prayer of Healing,
+/// Healing Spirit and Aura of Vitality — so a Grave Cleric's signature
+/// "drag them back from the edge with certainty" did nothing at all on
+/// half the spells it should have.
+pub fn roll_heal_dice(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    targets: &[usize],
+    dice: &Dice,
+) -> (u32, bool) {
+    let maxed = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|c| c.has_passive_feature(CIRCLE_OF_MORTALITY_TAG))
+        && targets
+            .iter()
+            .any(|id| encounter.actors.get(id).is_some_and(|a| a.hitpoints() == 0));
+    if maxed {
+        (dice.max_roll(), true)
+    } else {
+        (encounter.roll(dice), false)
+    }
+}
+
 /// Companion to `should_use_max_heal_dice`: format the log-line suffix
 /// callers splice into their existing heal-log format string right
 /// before the ` = <amount> HP` tail. Returns `""` when the gate didn't

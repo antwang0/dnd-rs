@@ -4574,6 +4574,61 @@ impl EncounterInstance {
         })
     }
 
+    /// `ally_burst_targets` for a burst that *heals*: the same team and
+    /// footprint filters, plus the allies who are down.
+    ///
+    /// The shared burst helper keeps only `is_combat_active()` actors,
+    /// which is right for a buff — Bless on an unconscious ally does
+    /// nothing — and exactly wrong for a heal, because the unconscious
+    /// ally is the one the heal is for. A cleric standing over a dying
+    /// friend casting Prayer of Healing used to top up everyone else in
+    /// the room and step over the body.
+    ///
+    /// Mass Cure Wounds and Mass Healing Word already got this right,
+    /// by hand, in their own candidate walks — `!is_combat_active() &&
+    /// !is_dying()` is the filter both of them spell out. The three
+    /// burst heals that reached for the shared helper instead inherited
+    /// a rule written for buffs. This is that filter, named, so the
+    /// next burst heal picks it up by asking for the heal variant
+    /// rather than by remembering.
+    ///
+    /// Stable-at-0 allies count too: `Heal` lifts them back to
+    /// consciousness through the same `HealOutcome::Revived` path, so
+    /// the gate is "at 0 HP but not gone" rather than "actively rolling
+    /// death saves".
+    pub fn ally_heal_burst_targets(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let mut ids: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() && !a.is_stable() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist <= radius { Some(*id) } else { None }
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Sorted ids of every combat-active actor inside the burst —
     /// friend or foe, *except* the caster themselves. Friend-or-foe-
     /// agnostic spells (Web, Sleet Storm, Plant Growth, Spike Stones)
@@ -73598,7 +73653,7 @@ mod tests {
     #[test]
     fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
         use crate::actions::action_template::TargetingSchema;
-        use crate::actors::creatures::clerics::LIFE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::clerics::{GRAVE_CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE};
         use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -73616,6 +73671,23 @@ mod tests {
             "heal",
             "regenerate",
             "goodberry",
+        ];
+
+        /// The subset of `AMPLIFIED` that rolls dice, and so must also
+        /// reach the roll-side chokepoint `roll_heal_dice` for the
+        /// Grave Cleric's Circle of Mortality. Heal restores a flat 70
+        /// and Goodberry a flat 10 — there is no die for the
+        /// substitution to touch, which is the only reason they sit
+        /// out.
+        const MAXIMISED: &[&str] = &[
+            "cure wounds",
+            "healing word",
+            "mass cure wounds",
+            "mass healing word",
+            "prayer of healing",
+            "healing spirit",
+            "aura of vitality",
+            "regenerate",
         ];
 
         /// Slot-cast actions that report `is_heal` but are not
@@ -73758,6 +73830,104 @@ mod tests {
                 exercised.contains(&name),
                 "no healer chassis in this test carries \"{}\", so its routing is unproven",
                 name
+            );
+        }
+
+        // --- roll side: every dice-rolling heal reaches roll_heal_dice ---
+        //
+        // Same shape, one chokepoint earlier. The gate is a target at 0
+        // HP rather than a caster feature, so the fixture drops the
+        // ally to nothing and reads the substitution off the log.
+        // Goodberry is on the druid list and flat, so this pass runs on
+        // the Grave Cleric alone.
+        for &name in MAXIMISED {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            let caster = e
+                .instantiate_creature(&GRAVE_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let action = e.actors[&caster]
+                .find_action(name)
+                .unwrap_or_else(|| panic!("the Grave Cleric should carry \"{}\"", name));
+            let ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                .unwrap();
+            let max = e.actors[&ally].max_hitpoints();
+            e.actors.get_mut(&ally).unwrap().take_damage(max);
+            let loc = e.actors[&ally].location();
+            let (targets, locations) = match action.targeting_schema() {
+                TargetingSchema::SingleActor => (Some(vec![ally]), None),
+                TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
+                    (None, Some(vec![loc]))
+                }
+                TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+            };
+            e.pop_prompt();
+            let aei = ActionExecutionInfo::new(action, caster, targets, locations, None);
+            assert!(
+                aei.validate(&e),
+                "the fixture should let a Grave Cleric cast \"{}\"",
+                name
+            );
+            let before = e.messages().len();
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.messages()[before..]
+                    .join("\n")
+                    .contains("(circle of mortality)"),
+                "\"{}\" never reached roll_heal_dice — a Grave Cleric healing a \
+                 downed ally rolled its dice normally",
+                name
+            );
+        }
+    }
+
+    /// A burst heal reaches the ally who is down.
+    ///
+    /// The three burst heals reached for `ally_burst_targets`, whose
+    /// `is_combat_active()` filter is written for buffs and drops
+    /// anyone at 0 HP. So a cleric standing over a dying friend could
+    /// cast Prayer of Healing, top up every conscious ally in the room,
+    /// and step over the body — which is the one thing a burst heal is
+    /// for. Mass Cure Wounds and Mass Healing Word never had the bug;
+    /// they hand-rolled the right filter.
+    #[test]
+    fn a_burst_heal_picks_up_the_ally_who_is_down() {
+        use crate::actions::spells::{AURA_OF_VITALITY, HEALING_SPIRIT, PRAYER_OF_HEALING};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actions::action_template::TargetingSchema;
+
+        for spell in [
+            &*PRAYER_OF_HEALING as &(dyn Action + Send + Sync),
+            &*AURA_OF_VITALITY,
+            &*HEALING_SPIRIT,
+        ] {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let downed = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                .unwrap();
+            let max = e.actors[&downed].max_hitpoints();
+            e.actors.get_mut(&downed).unwrap().take_damage(max);
+            assert_eq!(e.actors[&downed].hitpoints(), 0, "the fixture should be down");
+
+            let loc = e.actors[&downed].location();
+            let locations = match spell.targeting_schema() {
+                TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => Some(vec![loc]),
+                _ => None,
+            };
+            e.pop_prompt();
+            let aei = ActionExecutionInfo::new(spell, cleric, None, locations, None);
+            assert!(aei.validate(&e), "{} should validate", spell.name());
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&downed].hitpoints() > 0,
+                "{} should have lifted the downed ally",
+                spell.name()
             );
         }
     }
