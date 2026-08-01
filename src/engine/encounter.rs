@@ -481,6 +481,35 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     Condition::Shadowstepping,
 ];
 
+/// Conditions consumed at the saving-throw site the moment their holder
+/// rolls one — the save-roll sibling of `CONSUMED_ON_ATTACK`.
+///
+/// This existed as a hand-written `let inspired_used = ...` capture and
+/// a matching `remove_condition(Inspired)` twenty lines further down,
+/// which was fine while `Inspired` was the only one-shot rider a save
+/// could spend. The Eloquence Bard's Unsettling Words is the second,
+/// and it sits on exactly the same three pieces — a flat magnitude on
+/// `CONDITION_SAVE_BONUSES`, a short timer, and a single save's worth
+/// of life — so the capture and the clear are a cohort walk now rather
+/// than two more inline branches.
+///
+/// Both entries are read into the save total by `condition_save_bonus`
+/// *before* this cohort clears them, so the roll being paid for still
+/// gets the number; the clear only stops the next roll from collecting
+/// it again. A new condition whose whole effect is a single-shot save
+/// delta lands as one row here.
+const CONSUMED_ON_SAVE: &[Condition] = &[
+    // 5e Bardic Inspiration (+3): RAW spends the die on one "ability
+    // check, attack roll, or saving throw", so the save site has to
+    // burn it for the same reason `CONSUMED_ON_ATTACK` does — without
+    // both, one die pays for a save *and* the swing that follows it.
+    Condition::Inspired,
+    // 5e College of Eloquence Bard **Unsettling Words** (−4): the
+    // inverse die, spent by the creature it was aimed at rather than
+    // by its holder's ally.
+    Condition::Unsettled,
+];
+
 /// One row in the `CASTER_SAVE_MODE_RIDERS` cohort — a single
 /// caster-attributed rider that bends the mode of a saving throw the
 /// *target* is about to roll against the *caster's* spell.
@@ -3327,15 +3356,24 @@ impl EncounterInstance {
         // bookkeeping (Bless's AdjustSaveBuff) and read-only flag
         // bonuses don't double-count.
         let cond_save_bonus = actor.condition_save_bonus();
-        // 5e Bardic Inspiration / Guidance / similar: the Inspired die is
-        // a single-use bonus on "ability check, attack roll, OR saving
-        // throw." We add the bonus on this save and consume the
-        // condition immediately so it can't double-fire on a follow-up
-        // attack or save. Without this clear the actor would benefit
-        // twice — once at save time, once at attack time (where
-        // `clear_attack_advantage_riders` consumes it again). Captured
-        // here so each save site needs no extra bookkeeping.
-        let inspired_used = actor.has_condition(Condition::Inspired);
+        // One-shot save riders (Bardic Inspiration's +3, Unsettling
+        // Words' −4). Their magnitudes are already folded into
+        // `cond_save_bonus` above; what's captured here is which of
+        // them this roll is spending, so the clear below the log line
+        // can burn exactly those. Without the clear the same die pays
+        // for a save *and* the swing that follows it — the attack path
+        // has the mirror-image cohort in `CONSUMED_ON_ATTACK`.
+        let spent_riders: Vec<Condition> = CONSUMED_ON_SAVE
+            .iter()
+            .copied()
+            .filter(|&c| actor.has_condition(c))
+            .collect();
+        // 5e College of Eloquence Bard **Unfailing Inspiration**: an
+        // Inspired die granted by that bard survives a roll it failed
+        // to rescue. Read before the clear because the answer depends
+        // on a back-link that the clear drops; acted on after it, so
+        // the ordinary case pays no attention to it at all.
+        let unfailing = self.unfailing_inspiration_granter(actor_id);
         // 5e: actors proficient in this save add their proficiency bonus.
         // Previously this lane was dead code — the per-template
         // `proficient_saves` set existed but was never read at roll time,
@@ -3377,15 +3415,31 @@ impl EncounterInstance {
             mode.log_suffix(),
             if outcome.passed() { "pass" } else { "fail" }
         ));
-        // 5e Bardic Inspiration: consume the Inspired die now that we've
-        // applied its +3 to the save total. RAW limits the inspiration
-        // die to one roll (attack / save / check) — clearing here
-        // prevents a follow-up attack from double-dipping the same die.
-        // Done after the log so the breakdown still credits the bonus.
-        if inspired_used
+        // Burn the one-shot riders this roll spent. Done after the log
+        // so the breakdown still credits their contribution.
+        if !spent_riders.is_empty()
             && let Some(a) = self.actors.get_mut(&actor_id)
         {
-            a.remove_condition(Condition::Inspired);
+            for c in &spent_riders {
+                a.remove_condition(*c);
+            }
+        }
+        // 5e Unfailing Inspiration: "if the roll fails, the creature can
+        // keep the die." Hand it straight back — the clear above ran
+        // unconditionally so the log still reads as a spend, which is
+        // what happened.
+        //
+        // Judged against the save as first rolled, before the add-die
+        // and reroll cohorts below get their shot at it. A d20 the
+        // inspiration die failed to rescue is a failed roll at the
+        // moment RAW asks the question; that a later charge drags the
+        // same save over the line doesn't retroactively make the die
+        // the thing that saved it.
+        if !outcome.passed()
+            && spent_riders.contains(&Condition::Inspired)
+            && let Some(granter) = unfailing
+        {
+            self.refund_unfailing_inspiration(actor_id, granter);
         }
         // 5e "add die(s) to the failing save total" cohort — Fiend
         // Warlock Dark One's Own Luck (lv6, +1d10) and Divine Soul
@@ -6748,6 +6802,70 @@ impl EncounterInstance {
         {
             self.drop_concentration(caster_id);
         }
+    }
+
+    /// The bard whose **Unfailing Inspiration** would let `actor_id`
+    /// keep the Bardic Inspiration die they are about to spend, or
+    /// `None` — because they hold no die, because nobody is on record
+    /// as having granted it, or because whoever did is an ordinary
+    /// bard.
+    ///
+    /// Read *before* the roll's one-shot riders clear, because the
+    /// answer lives on `Inspired`'s back-link and `remove_condition`
+    /// drops the link with the flag. Every caller therefore looks like
+    /// "capture, clear, roll, refund on failure", which is also the
+    /// order RAW describes: the die is spent, the roll is made, and
+    /// only then does the bard's feature decide whether it comes back.
+    ///
+    /// `linked_by` already returns `None` for a condition the actor
+    /// isn't holding, so a lone `Some` here means all three of "holds a
+    /// die", "knows who gave it" and "they have the feature".
+    pub fn unfailing_inspiration_granter(&self, actor_id: usize) -> Option<usize> {
+        let granter = self
+            .actors
+            .get(&actor_id)?
+            .linked_by(Condition::Inspired)?;
+        self.actors
+            .get(&granter)
+            .is_some_and(|b| {
+                b.has_passive_feature(
+                    crate::actions::class_features::UNFAILING_INSPIRATION_TAG,
+                )
+            })
+            .then_some(granter)
+    }
+
+    /// Hand a spent Bardic Inspiration die back after the roll it paid
+    /// for failed anyway (5e College of Eloquence, **Unfailing
+    /// Inspiration**).
+    ///
+    /// Re-installs the flag *and* the back-link, so the returned die is
+    /// the same die: it can be spent again, fail again, and come back
+    /// again. That is RAW — the feature has no per-encounter cap and no
+    /// clause that stops it repeating — and it is the whole reason the
+    /// Eloquence bard's die is worth more than anyone else's.
+    ///
+    /// The refresh deliberately restates the ten-round timer rather
+    /// than preserving whatever was left of it. RAW's die lives for an
+    /// hour; ten rounds is the engine's stand-in for "the rest of this
+    /// fight", and a die that came back with two rounds on the clock
+    /// would be a worse version of a feature whose point is that it
+    /// doesn't run out.
+    pub fn refund_unfailing_inspiration(&mut self, actor_id: usize, granter: usize) {
+        let Some(actor) = self.actors.get_mut(&actor_id) else {
+            return;
+        };
+        actor.add_condition(
+            Condition::Inspired,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        actor.set_condition_link(Condition::Inspired, Some(granter));
+        let name = self.actor_name(actor_id);
+        let bard = self.actor_name(granter);
+        self.log(format!(
+            "  unfailing inspiration: {} keeps {}'s die.",
+            name, bard
+        ));
     }
 
     /// 5e Tasha's Sorcerer Seeking Spell metamagic — if the caster has the
@@ -32516,6 +32634,224 @@ mod tests {
             !e.actors[&f].has_condition(Condition::Inspired),
             "inspired die should be consumed by the next attack"
         );
+    }
+
+    /// Unsettling Words is the inverse of the inspiration die on every
+    /// axis the engine cares about: it subtracts where Inspired adds,
+    /// and it rides the same `CONSUMED_ON_SAVE` cohort, so one save
+    /// spends it and the next one is clean.
+    #[test]
+    fn unsettling_words_bends_one_save_and_only_one() {
+        use crate::actions::class_features::{UNSETTLING_WORDS, UNSETTLING_WORDS_TAG};
+        use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&ELOQUENCE_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(e.actors[&b].feature_available(UNSETTLING_WORDS_TAG));
+        let tv = vec![g];
+        let effects = UNSETTLING_WORDS.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&b].feature_available(UNSETTLING_WORDS_TAG));
+        assert!(e.actors[&g].has_condition(Condition::Unsettled));
+        assert_eq!(
+            e.actors[&g].condition_save_bonus(),
+            -4,
+            "the quip should be worth a d8's average against the next save"
+        );
+        // Any save at all spends it — the target doesn't get to choose
+        // which one, which is the whole reason the timer can be two
+        // rounds long without over-granting.
+        let _ = e.roll_save(g, AbilityScoreType::Wisdom, 5);
+        assert!(
+            !e.actors[&g].has_condition(Condition::Unsettled),
+            "the first save should burn the penalty"
+        );
+        assert_eq!(e.actors[&g].condition_save_bonus(), 0);
+    }
+
+    /// The action refuses a target who is still carrying the last quip.
+    /// The charge is one deep, and re-applying would swap a die for an
+    /// identical die.
+    #[test]
+    fn unsettling_words_will_not_stack_on_itself() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::UNSETTLING_WORDS;
+        use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&ELOQUENCE_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let tv = vec![g];
+        assert!(UNSETTLING_WORDS.validate_input(&e, b, Some(&tv), None, None));
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Unsettled, ConditionTimer::Rounds(2));
+        assert!(
+            !UNSETTLING_WORDS.validate_input(&e, b, Some(&tv), None, None),
+            "an already-unsettled target should not be worth the charge"
+        );
+    }
+
+    /// Unfailing Inspiration: a die granted by an Eloquence bard is
+    /// handed back when the save it paid for failed anyway, and the
+    /// back-link comes back with it so the *next* failure refunds too.
+    #[test]
+    fn an_eloquence_bards_die_survives_a_save_it_could_not_rescue() {
+        use crate::actions::class_features::BARDIC_INSPIRATION;
+        use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&ELOQUENCE_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let tv = vec![f];
+        let effects = BARDIC_INSPIRATION.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&f].linked_by(Condition::Inspired),
+            Some(b),
+            "the die should remember whose it is"
+        );
+        // DC 99 is unreachable — the fighter's Indomitable reroll can
+        // fire and still fail, which is the case the refund is for.
+        let _ = e.roll_save(f, AbilityScoreType::Wisdom, 99);
+        assert!(
+            e.actors[&f].has_condition(Condition::Inspired),
+            "a die that failed to rescue the roll should come back"
+        );
+        assert_eq!(
+            e.actors[&f].linked_by(Condition::Inspired),
+            Some(b),
+            "and it should still be the same bard's die, so it refunds again"
+        );
+        // Second failure, same outcome — RAW puts no cap on this.
+        let _ = e.roll_save(f, AbilityScoreType::Wisdom, 99);
+        assert!(e.actors[&f].has_condition(Condition::Inspired));
+        // A save it actually carries spends it for good.
+        let _ = e.roll_save(f, AbilityScoreType::Wisdom, 2);
+        assert!(
+            !e.actors[&f].has_condition(Condition::Inspired),
+            "a die that made the roll succeed is spent"
+        );
+    }
+
+    /// The refund is a property of the bard who granted the die, not of
+    /// the creature holding it. An ordinary bard's die is gone whether
+    /// or not the save landed.
+    #[test]
+    fn an_ordinary_bards_die_is_spent_either_way() {
+        use crate::actions::class_features::BARDIC_INSPIRATION;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let tv = vec![f];
+        let effects = BARDIC_INSPIRATION.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // The link is installed for every bard — it is the *feature* on
+        // the other end that decides, and this one doesn't have it.
+        assert_eq!(e.actors[&f].linked_by(Condition::Inspired), Some(b));
+        assert_eq!(e.unfailing_inspiration_granter(f), None);
+        let _ = e.roll_save(f, AbilityScoreType::Wisdom, 99);
+        assert!(
+            !e.actors[&f].has_condition(Condition::Inspired),
+            "an ordinary inspiration die does not come back"
+        );
+    }
+
+    /// The same refund on the attack lane. The riders are cleared
+    /// *before* the d20 lands, so this pins the capture-across-the-clear
+    /// ordering in `resolve_attack_outcome` — get it wrong and the
+    /// granter is unreadable by the time the miss is known.
+    #[test]
+    fn an_eloquence_bards_die_survives_a_swing_that_missed() {
+        use crate::actions::class_features::BARDIC_INSPIRATION;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let b = e
+            .instantiate_creature(&ELOQUENCE_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // AC 25 and 676 HP: misses are the common case and the target
+        // survives every swing the loop throws, so both branches below
+        // get exercised without the fixture ending mid-test.
+        let t = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let tv = vec![f];
+        let target = vec![t];
+        // The spend-on-a-hit half is already pinned by
+        // `inspired_consumes_on_attack`; what is new here is the refund,
+        // so that is what the loop hunts for.
+        let mut saw_miss = false;
+        for _ in 0..60 {
+            if !e.actors[&f].has_condition(Condition::Inspired) {
+                let effects = BARDIC_INSPIRATION.side_effects(&mut e, b, Some(&tv), None, None);
+                for ef in effects {
+                    ef.apply(&mut e);
+                }
+                e.actors.get_mut(&b).unwrap().long_rest();
+            }
+            let before = e.messages().len();
+            let effects = GREATSWORD.side_effects(&mut e, f, Some(&target), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let log = e.messages()[before..].join("\n");
+            // The fighter has Extra Attack, so one call can produce two
+            // swings — and a chain that misses and then connects has
+            // legitimately refunded the die on the first and spent it
+            // again on the second. Only the unambiguous chains say
+            // anything about the refund, so the mixed ones are skipped.
+            let missed = log.contains("\u{2014} miss");
+            let landed = log.contains("\u{2014} hit") || log.contains("CRIT");
+            if missed && !landed {
+                saw_miss = true;
+                assert!(
+                    e.actors[&f].has_condition(Condition::Inspired),
+                    "a die spent on a swing that missed should come back"
+                );
+            } else if landed && !missed {
+                assert!(
+                    !e.actors[&f].has_condition(Condition::Inspired),
+                    "a die that bought a hit is spent"
+                );
+            }
+        }
+        assert!(saw_miss, "the fixture should produce at least one miss");
     }
 
     /// Arcane Recovery restores spent low-tier slots and consumes the

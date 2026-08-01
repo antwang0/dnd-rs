@@ -1268,6 +1268,16 @@ pub fn resolve_attack_outcome_with_rider(
     // into `mode` by `compute_attack_mode` above; the flat bonuses
     // were just read into `cond_attack_bonus` immediately above. Both
     // are safe to clear here without losing this swing's modifiers.
+    //
+    // 5e Unfailing Inspiration is read here rather than at the miss
+    // branch below for the same reason: the clear drops `Inspired`'s
+    // back-link along with the flag, and the link is where the answer
+    // lives.
+    let unfailing = encounter.unfailing_inspiration_granter(p.caster_id);
+    let was_inspired = encounter
+        .actors
+        .get(&p.caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Inspired));
     encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
     // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
     // helper folds the reroll into the same seedable RNG so determinism
@@ -1367,6 +1377,13 @@ pub fn resolve_attack_outcome_with_rider(
         outcome,
     ));
     if !hit {
+        // 5e College of Eloquence Bard **Unfailing Inspiration**: the
+        // die the swing just spent comes back, because the swing
+        // missed. Fires before Riposte so the refund lands whether or
+        // not the counter-attack does.
+        if was_inspired && let Some(granter) = unfailing {
+            encounter.refund_unfailing_inspiration(p.caster_id, granter);
+        }
         // 5e Fighter Battle Master **Riposte** maneuver: on a melee
         // miss against a fighter with the passive `has_riposte` flag and
         // an unspent `RIPOSTE_TAG` charge, spend the reaction + charge

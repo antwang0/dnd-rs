@@ -1787,6 +1787,19 @@ const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
         source: Condition::WardingBonded,
         bonus: 1,
     },
+    // 5e College of Eloquence Bard **Unsettling Words** (`Unsettled`,
+    // −4 saves): the first row on this cohort to carry a negative
+    // magnitude, and the reason the field was declared signed. RAW
+    // subtracts a Bardic Inspiration die from the target's next save;
+    // −4 is the d8 average floored, the same collapse Precision
+    // Attack's +4 already makes on the sibling attack cohort. Spent by
+    // `CONSUMED_ON_SAVE` on the first save the holder rolls, so the
+    // penalty is one save deep rather than a standing debuff for the
+    // life of the timer.
+    ConditionSaveBonus {
+        source: Condition::Unsettled,
+        bonus: -4,
+    },
 ];
 
 /// One row in the `CONDITION_ATTACK_BONUSES` cohort — a single condition

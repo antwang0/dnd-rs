@@ -1763,6 +1763,25 @@ pub enum Condition {
     /// the aura still catches them, so walking free the moment the
     /// paladin drops or the fear lifts needs no teardown of its own.
     Rooted,
+    /// 5e College of Eloquence Bard **Unsettling Words** — the bard
+    /// picks a creature apart with a barbed remark, and the creature
+    /// subtracts a Bardic Inspiration die from its next saving throw.
+    ///
+    /// The mirror image of `Inspired`, and deliberately built out of
+    /// the same three pieces: a flat magnitude on the shared
+    /// `CONDITION_SAVE_BONUSES` cohort (−4, the d8 average floored,
+    /// matching the +4 Precision Attack already collapses a d8 to), a
+    /// short timer, and a row on `CONSUMED_ON_SAVE` so the penalty
+    /// spends itself on the first save the holder rolls rather than
+    /// riding every save until the timer runs out.
+    ///
+    /// `Rounds(2)` rather than `UntilStartOfNextTurn`: RAW's window is
+    /// "before the end of your next turn", and a target who saves
+    /// against nothing in the intervening round should still be
+    /// carrying the quip when the bard's Hold Person lands on their
+    /// own turn. The consume-on-save row is what stops the longer
+    /// timer from over-granting.
+    Unsettled,
 }
 
 impl Condition {
@@ -1847,6 +1866,7 @@ impl Condition {
             Condition::FormOfDread => "wearing a form of dread",
             Condition::KenseisShot => "drawing a kensei shot",
             Condition::Rooted => "rooted in place",
+            Condition::Unsettled => "unsettled",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
             Condition::Confused => "confused",

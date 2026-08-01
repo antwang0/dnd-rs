@@ -187,7 +187,14 @@ pub fn spell_attack_roll(
     // help grant, Invisibility concentration, Inspired). Same hook as
     // weapon attacks — kept identical so a Helped wizard firing Fire
     // Bolt consumes their help-grant exactly like a Helped fighter
-    // swinging a longsword.
+    // swinging a longsword. Unfailing Inspiration is captured across
+    // the same clear for the same reason as on the weapon path — the
+    // back-link it reads goes away with the flag.
+    let unfailing = encounter.unfailing_inspiration_granter(caster_id);
+    let was_inspired = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Inspired));
     encounter.clear_attack_advantage_riders(caster_id, target_id);
     // 5e Lucky: reroll a nat-1 if the caster has the trait. Mirrors the
     // identical hook on the weapon-attack path.
@@ -268,6 +275,10 @@ pub fn spell_attack_roll(
         outcome,
     ));
     if !hit {
+        // 5e Unfailing Inspiration — same refund as the weapon path.
+        if was_inspired && let Some(granter) = unfailing {
+            encounter.refund_unfailing_inspiration(caster_id, granter);
+        }
         return SpellAttackRoll { hit: false, is_crit: false };
     }
     // Post-hit interception (Mirror Image decoys, Illusory Self): spell

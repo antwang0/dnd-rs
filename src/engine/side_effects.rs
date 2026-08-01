@@ -1373,6 +1373,11 @@ impl ApplicableSideEffect for StabilizeActor {
 ///   so both of the mark's clauses ("disadvantage on attacks against
 ///   anyone but them" and "damage dealt to anyone but them is halved")
 ///   can be scoped to the one creature the spirits care about.
+/// * **Inspired** — the bard who granted the die, so the College of
+///   Eloquence's Unfailing Inspiration can ask "was this *my* die?"
+///   when the roll it paid for fails. The first entry here whose link
+///   points at an ally rather than an adversary; nothing about the
+///   machinery cared, which is the argument for it being one list.
 /// * **HexbladeCursed** — the hexblade, so their damage bonus, their
 ///   expanded crit range, and their heal-on-kill all key off the one
 ///   creature they cursed rather than off the condition being present at
@@ -1394,6 +1399,7 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::WardingBonded,
     crate::conditions::Condition::HexbladeCursed,
     crate::conditions::Condition::AncestrallyHaunted,
+    crate::conditions::Condition::Inspired,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

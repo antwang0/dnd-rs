@@ -545,6 +545,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g'''b. Eloquence Bard Unsettling Words — the same bonus
+        //         action on the other axis. Sits directly below Cutting
+        //         Words because no template carries both, so the order
+        //         between them decides nothing; it sits above the burst
+        //         and attack rungs because the whole point is to land
+        //         the −4 *before* the save-or-suck spell that collects
+        //         on it, and every rung below this one would spend the
+        //         turn instead.
+        if let Some(aei) = try_unsettling_words(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g2. Pit Fiend Fear Aura — boss-level "frighten everyone
         //      in the room" burst. Fire when 2+ enemies sit inside
         //      the 20ft radius (single-target a normal swing is
@@ -3080,6 +3092,64 @@ fn try_cutting_words(
         }
         if best.as_ref().is_none_or(|(best_d, _)| min_ally_gap < *best_d) {
             best = Some((min_ally_gap, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Unsettling Words — Eloquence Bard bonus action. Picks the *toughest*
+/// live enemy in range, which is the opposite of what almost every other
+/// picker in this file does and is the right answer here for two
+/// reasons.
+///
+/// The first is that the −4 is only ever collected by a saving throw,
+/// and the bard's own sheet is where those saves come from: Hold Person,
+/// Compulsion, Suggestion, Charm Person and Dissonant Whispers are all
+/// save-or-suck, and all five are worth casting on the enemy the party
+/// least wants taking turns. Focus-firing the debuff onto whoever is
+/// already nearly dead would spend the bard's one charge on a creature
+/// the fighter is about to kill anyway.
+///
+/// The second is that the debuff spends itself on the *first* save its
+/// holder rolls, wanted or not. Against a wounded straggler, the die is
+/// as likely to be burned by an incidental Fireball as by anything the
+/// bard chose; against the biggest thing in the room, more of the saves
+/// on offer are ones worth bending.
+///
+/// "Toughest" is current HP rather than max, so a boss that has already
+/// been ground down below the reinforcements stops being the pick — the
+/// heuristic tracks who is still standing, not who started largest.
+/// Ties break on the lower actor id, keeping the choice deterministic
+/// under a fixed seed like every other picker here.
+fn try_unsettling_words(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("unsettling words")?;
+    let my_team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        // The action's own gate already refuses a target still holding
+        // the condition; checking here as well keeps the loop from
+        // building an `ActionExecutionInfo` per already-unsettled enemy
+        // on the way to being told no.
+        if t.has_condition(Condition::Unsettled) {
+            continue;
+        }
+        let hp = t.hitpoints();
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
         }
     }
     best.map(|(_, aei)| aei)
@@ -9598,10 +9668,11 @@ mod tests {
             CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE,
         };
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+        use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 15] = [
+        let cases: [(&CreatureTemplate, &str); 16] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9634,6 +9705,11 @@ mod tests {
             // Allegiance also has no action to choose — the engine
             // spends the reaction — so it belongs to the engine tests.
             (&CROWN_PALADIN_TEMPLATE, "champion challenge"),
+            // Not Unfailing Inspiration: the bard would have to inspire
+            // an ally and then watch that ally fail a roll, and this
+            // fixture is one PC against one ogre. Its refund is pinned
+            // engine-side.
+            (&ELOQUENCE_BARD_TEMPLATE, "unsettling words"),
         ];
 
         for (template, marker) in cases {

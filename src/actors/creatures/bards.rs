@@ -20,10 +20,9 @@ use std::sync::LazyLock;
 /// name + glyph, (b) the combat-style template flags (`has_extra_attack`,
 /// `has_dueling_style`), (c) any extra actions on top of the inherited
 /// baseline action list (Additional Magical Secrets picks or similar
-/// per-subclass action layers), and (d) an optional subclass passive-
-/// feature tag inserted into the baseline features set (a subclass-only
-/// passive read via `has_passive_feature(tag)` — e.g. Psychic Blades
-/// once-per-turn weapon-hit rider on the Whispers chassis).
+/// per-subclass action layers), and (d) any subclass feature tags
+/// inserted into the baseline features set — per-rest charges read via
+/// `feature_available` and passives read via `has_passive_feature`.
 ///
 /// Users:
 ///   - **College of Valor** (`VALOR_BARD_TEMPLATE`) — flips
@@ -39,6 +38,10 @@ use std::sync::LazyLock;
 ///     neither combat flag; layers `PSYCHIC_BLADES_TAG` (passive once-
 ///     per-turn +1d6 Psychic weapon-hit rider on the shared
 ///     `ONCE_PER_TURN_RIDER_TAGS` cohort). Skirmisher-bard lane.
+///   - **College of Eloquence** (`ELOQUENCE_BARD_TEMPLATE`) — flips
+///     neither combat flag; adds the Unsettling Words action and layers
+///     two tags, its charge and the passive Unfailing Inspiration.
+///     Debuff-bard lane.
 ///
 /// Collapses the four near-identical `CreatureTemplate {..BARD_TEMPLATE.clone()}`
 /// struct literals into a single call per `LazyLock`. Matches the way
@@ -46,15 +49,21 @@ use std::sync::LazyLock;
 /// barbarian family on the barbarian chassis and `subclass_warlock_template`
 /// collapses the tag-only Otherworldly Patron family on the warlock
 /// chassis — same shape, different chassis. Adding a new bard subclass
-/// with the same envelope (a future College of Glamour, Eloquence, or
-/// Spirits variant, etc.) lands as a one-line entry.
+/// with the same envelope (a future College of Glamour or Spirits
+/// variant, etc.) lands as a one-line entry.
+///
+/// `subclass_tags` is a slice rather than the `Option<&str>` it started
+/// as: the Eloquence bard carries two (a per-rest charge and a passive),
+/// and a second optional parameter would have been the third way to say
+/// the same thing. `&[]` reads as "no subclass tag" at least as clearly
+/// as `None` did.
 fn subclass_bard_template(
     name: &'static str,
     glyph: char,
     has_extra_attack: bool,
     has_dueling_style: bool,
     extra_actions: &[&'static (dyn Action + Send + Sync)],
-    subclass_tag: Option<&'static str>,
+    subclass_tags: &[&'static str],
 ) -> CreatureTemplate {
     // Extra actions layer on top of the baseline action list rather
     // than replacing it — every bard subclass ships a strict superset
@@ -66,14 +75,13 @@ fn subclass_bard_template(
     for &a in extra_actions {
         actions.push(a);
     }
-    // Subclass passive tag — inserted into a fresh clone of the baseline
+    // Subclass tags — inserted into a fresh clone of the baseline
     // features set so the baseline bard's Bardic Inspiration / Cutting
-    // Words / Font of Inspiration tags still ride through. `if let`
-    // collapses the "no-tag" case to a no-op — matches the shape
-    // `with_subclass_tag` uses on the standalone helper (see
-    // `CreatureTemplate::with_subclass_tag`).
+    // Words / Font of Inspiration tags still ride through. An empty
+    // slice collapses to a no-op, which is what the three subclasses
+    // that sit purely on flag flips and action picks pass.
     let mut features = BARD_TEMPLATE.features.clone();
-    if let Some(tag) = subclass_tag {
+    for &tag in subclass_tags {
         features.insert(tag);
     }
     CreatureTemplate {
@@ -263,7 +271,7 @@ pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the "class-scoped subclass builder" lane: `subclass_barbarian_template`
     // (Totem / Storm Herald / Berserker / Zealot family) and
     // `subclass_warlock_template` (tag-only Otherworldly Patron family).
-    subclass_bard_template("Valor Bard", 'V', true, false, &[], None)
+    subclass_bard_template("Valor Bard", 'V', true, false, &[], &[])
 });
 
 /// College of Swords Bard — subclass build (XGtE). Identical envelope to
@@ -331,7 +339,7 @@ pub static SWORDS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the same "flip two boolean flags on the clone" shape
     // `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its Rakish Audacity +
     // Fancy Footwork pair.
-    subclass_bard_template("Swords Bard", 'W', true, true, &[], None)
+    subclass_bard_template("Swords Bard", 'W', true, true, &[], &[])
 });
 
 /// College of Lore Bard — subclass build (PHB). Identical envelope to
@@ -420,7 +428,7 @@ pub static LORE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // that Lore layers actions on rather than combat template flags —
     // no Extra Attack, no Dueling — Lore is a caster subclass, not a
     // melee-lane subclass.
-    subclass_bard_template("Lore Bard", 'L', false, false, &[&*COUNTERSPELL, &*FIREBALL], None)
+    subclass_bard_template("Lore Bard", 'L', false, false, &[&*COUNTERSPELL, &*FIREBALL], &[])
 });
 
 /// College of Whispers Bard — subclass build (XGtE). Identical envelope
@@ -514,5 +522,72 @@ pub static WHISPERS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // routed through the bard-chassis-scoped builder so Whispers picks
     // up every baseline bard field (spell slots, actions, features,
     // stats, saves) through the `..BARD_TEMPLATE.clone()` tail.
-    subclass_bard_template("Whispers Bard", 'P', false, false, &[], Some(PSYCHIC_BLADES_TAG))
+    subclass_bard_template("Whispers Bard", 'P', false, false, &[], &[PSYCHIC_BLADES_TAG])
+});
+
+/// College of Eloquence Bard — subclass build (XGtE). Identical
+/// envelope to the baseline `BARD_TEMPLATE` with the subclass's two
+/// mechanical halves layered on, and the only bard on the roster whose
+/// subclass points at the enemy's saving throw rather than at the
+/// bard's own weapon.
+///
+/// **Unsettling Words** (lv3) is the inverse of Bardic Inspiration and
+/// is built out of exactly the same parts — the `Unsettled` condition
+/// is a −4 on `CONDITION_SAVE_BONUSES` where `Inspired` is a +3, and
+/// both spend themselves on the first save their holder rolls via
+/// `CONSUMED_ON_SAVE`. What makes it worth more than that symmetry
+/// suggests is what the rest of the bard's sheet does with it. Every
+/// bard on the roster carries Hold Person, Suggestion, Compulsion,
+/// Dissonant Whispers and Charm Person; all five are save-or-suck, and
+/// this is the only template that can shave four points off the save
+/// that decides one. A −4 against a CHA-anchored DC in the mid-teens is
+/// roughly a fifth of the roll.
+///
+/// **Unfailing Inspiration** (lv6) is what happens to the die on the
+/// way back. An ordinary bard's inspiration is one roll deep whether or
+/// not it lands; this bard's die is spent, watched, and returned if it
+/// failed to rescue the roll — so the same die can be paid out again on
+/// the next save, and the next, until it actually decides something.
+/// That is RAW, uncapped, and the reason the subclass is worth a slot
+/// on a roster that already has four bards: the Valor and Swords bards
+/// bought a second swing, the Lore bard bought Fireball, and this one
+/// bought a resource that does not deplete on failure.
+///
+/// The pair also composes in the one direction subclass features
+/// usually don't. Unsettling Words makes an enemy's save worse;
+/// Unfailing Inspiration makes an ally's save keep trying. Both spend
+/// through `CONSUMED_ON_SAVE`, which means a single round can see the
+/// bard's die come back off a failed ally save and the enemy's die burn
+/// off a save the bard's own spell forced — two rows of one table
+/// firing in opposite directions.
+///
+/// Left out: **Silver Tongue** (lv3, a floor of 10 on Persuasion and
+/// Deception checks) has no combat surface — the engine rolls no social
+/// checks, so the feature would be a tag nothing reads. **Infectious
+/// Inspiration** (lv14, a reaction that hands a second creature a free
+/// die when the first one's die *succeeds*) needs a reactive ally-
+/// target picker at the save site, which is a different lane from the
+/// three the roster has today; it is the natural next addition here.
+///
+/// Glyph 'Q' — the one letter no bard, and nothing else on the roster,
+/// has taken. Baseline bard is 'B', Valor 'V', Swords 'W', Lore 'L',
+/// Whispers 'P'.
+pub static ELOQUENCE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        UNFAILING_INSPIRATION_TAG, UNSETTLING_WORDS, UNSETTLING_WORDS_TAG,
+    };
+    // First user of the helper's multi-tag axis, and the reason it is a
+    // slice: the charge and the passive are two different lanes on the
+    // same subclass — `UNSETTLING_WORDS_TAG` is spent and refreshed
+    // through `SHORT_REST_FEATURES`, `UNFAILING_INSPIRATION_TAG` is
+    // never spent at all and is read off this bard by whoever is
+    // holding one of their dice.
+    subclass_bard_template(
+        "Eloquence Bard",
+        'Q',
+        false,
+        false,
+        &[&*UNSETTLING_WORDS],
+        &[UNSETTLING_WORDS_TAG, UNFAILING_INSPIRATION_TAG],
+    )
 });

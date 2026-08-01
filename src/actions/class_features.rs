@@ -41,6 +41,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     NATURAL_RECOVERY_TAG,
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
+    // 5e College of Eloquence Bard lv3 — Unsettling Words. RAW spends a
+    // Bardic Inspiration use, and the bard's inspiration pool itself
+    // refreshes on a short rest from level 5 (Font of Inspiration), so
+    // the charge belongs on the same cadence as its sibling quip on the
+    // Lore chassis directly above.
+    UNSETTLING_WORDS_TAG,
     BREATH_WEAPON_TAG,
     // 5e Sun Soul Monk **Searing Sunburst**. RAW spends ki, which
     // recovers on a short rest — the same cadence the charge lane
@@ -4608,11 +4614,18 @@ impl Action for BardicInspiration {
             actor.spend_feature(BARDIC_INSPIRATION_TAG);
         }
         encounter.log("  bardic inspiration: ally rallies, gaining a die.".to_string());
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Inspired,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        // The die carries a back-link to the bard who granted it, so
+        // the College of Eloquence's Unfailing Inspiration can tell its
+        // own dice from anyone else's. Routed through the shared
+        // installer rather than a hand-written pair — `Inspired` is a
+        // row in `LINKED_CONDITIONS` and the helper is what keeps the
+        // flag and the link from drifting apart.
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::Inspired,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
@@ -6532,6 +6545,141 @@ impl Action for CuttingWords {
 }
 
 pub static CUTTING_WORDS: LazyLock<CuttingWords> = LazyLock::new(|| CuttingWords {});
+
+/// Class-feature tag for the College of Eloquence Bard's **Unsettling
+/// Words**. RAW spends one Bardic Inspiration use; we collapse the
+/// die pool to a single per-rest charge the same way `CUTTING_WORDS_TAG`
+/// does on the Lore chassis, and refresh it via `SHORT_REST_FEATURES`.
+///
+/// A separate charge from `BARDIC_INSPIRATION_TAG` rather than a second
+/// draw on it. RAW they share a pool, but the pool in this engine is
+/// one use deep, and a shared charge would mean an Eloquence bard who
+/// unsettled somebody could not inspire anyone for the rest of the
+/// fight — which reads as "the subclass took the bard's signature
+/// feature away" rather than "the subclass gave it a second use".
+pub const UNSETTLING_WORDS_TAG: &str = "bard.unsettling_words";
+
+/// Class-feature tag for the College of Eloquence Bard's lv6
+/// **Unfailing Inspiration**. Passive — it carries no charge and is
+/// read via `has_passive_feature` off the *granting* bard by
+/// `EncounterInstance::unfailing_inspiration_granter`, which finds them
+/// through the `Inspired` back-link on whoever is holding the die.
+///
+/// The indirection is the feature: RAW's subject is the creature that
+/// rolled, but the thing that decides whether their die survives is a
+/// property of the bard who handed it over, and the holder may be
+/// carrying a die from an ordinary bard, from Guidance, or from a
+/// potion. Only a die with this bard's name on it comes back.
+pub const UNFAILING_INSPIRATION_TAG: &str = "bard.unfailing_inspiration";
+
+/// Unsettling Words — College of Eloquence Bard lv3 subclass feature.
+/// Bonus action; one creature within 60 ft subtracts a Bardic
+/// Inspiration die from its next saving throw.
+///
+/// The exact inverse of the bard's own signature feature, and built out
+/// of the same parts: `Unsettled` is a flat −4 on
+/// `CONDITION_SAVE_BONUSES` (d8 average floored, matching the +4
+/// Precision Attack collapses a d8 to) and a row on `CONSUMED_ON_SAVE`,
+/// which is what makes it one save deep rather than a standing debuff.
+///
+/// Sibling to Cutting Words on the Lore chassis — same cost, same
+/// range, same once-per-rest charge, same `hostile_target_feature_ready`
+/// gate — and deliberately on the other axis. Cutting Words fouls what
+/// the target *does* (disadvantage on their next attack roll); this
+/// fouls what the target *survives*, which is the axis the bard's own
+/// spell list attacks. A bard who unsettles a target and then lands
+/// Hold Person is playing a combination no other bard on the roster
+/// has: the −4 is worth about a fifth of the DC.
+///
+/// RAW's window is "before the end of your next turn", which is
+/// modelled as `Rounds(2)` plus the consume-on-save row rather than
+/// `UntilStartOfNextTurn` — see `Condition::Unsettled` for why the
+/// longer timer is the accurate one here.
+pub struct UnsettlingWords {}
+
+impl Action for UnsettlingWords {
+    fn name(&self) -> &str {
+        "unsettling words"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["uw", "unsettle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles. Matches Bardic Inspiration and Cutting
+        // Words — the bard's voice carries the same distance whoever
+        // it is aimed at.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "a creature you can see within 60 feet of you."
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Charge + hostile-target + already-Unsettled dedup, all on the
+        // shared gate Cutting Words / Nature's Wrath / Abjure Enemy
+        // ride. The dedup matters more here than on most of the cohort:
+        // the penalty is spent by the first save the target rolls, so
+        // re-applying it while it is still up would burn the bard's
+        // only charge to replace a die with an identical die.
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            UNSETTLING_WORDS_TAG,
+            Condition::Unsettled,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(UNSETTLING_WORDS_TAG);
+        }
+        encounter
+            .log("  unsettling words: the bard's barb shakes the target's nerve.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Unsettled,
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static UNSETTLING_WORDS: LazyLock<UnsettlingWords> = LazyLock::new(|| UnsettlingWords {});
 
 /// Class-feature tag for the Fighter's Precision Attack Battle Master
 /// maneuver (once per long rest in our model). Listed in
