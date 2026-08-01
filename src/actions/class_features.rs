@@ -15,7 +15,7 @@ use crate::{
         saves::SaveDamagePolicy,
         side_effects::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, GiveResource, Heal,
-            Resource,
+            RemoveCondition, Resource,
         },
         types::{AbilityScoreType, Coordinate, DamageType},
     },
@@ -39,6 +39,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     ACTION_SURGE_TAG,
     ARCANE_RECOVERY_TAG,
     NATURAL_RECOVERY_TAG,
+    // 5e Circle of Stars Druid — Starry Form. RAW spends a Wild Shape
+    // use, and Wild Shape recovers on a short rest, so the charge
+    // belongs on this cadence next to its Land-circle sibling above.
+    STARRY_FORM_TAG,
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     // 5e College of Eloquence Bard lv3 — Unsettling Words. RAW spends a
@@ -12493,6 +12497,336 @@ impl Action for HaloOfSpores {
 }
 
 pub static HALO_OF_SPORES: LazyLock<HaloOfSpores> = LazyLock::new(|| HaloOfSpores {});
+
+/// Tag for the Circle of Stars Druid's **Starry Form** (subclass level
+/// 2). RAW spends a use of Wild Shape, of which the circle has two per
+/// short rest; the engine's per-tag charge model collapses that to one
+/// and rides `SHORT_REST_FEATURES`, so the cadence stays RAW's even
+/// though the count does not. The same collapse Bladesong makes, for
+/// the same reason.
+///
+/// One tag for all three shapes rather than three tags, which is what
+/// makes the choice a choice: a druid gets one constellation per short
+/// rest and has to decide, before the fight tells them what they
+/// needed, whether this is a round they want an extra attack, an extra
+/// heal, or the concentration to survive being hit.
+pub const STARRY_FORM_TAG: &str = "druid.starry_form";
+
+/// Shared shape for the three **Starry Form** bonus actions (5e Circle
+/// of Stars Druid, subclass level 2). Config-driven for the same reason
+/// `TurnBurst` and `ManeuverPrime` are: the three differ in a name, a
+/// condition and a line of flavor text, and in nothing else at all.
+///
+/// The one thing this shape does that `prime_self_condition` does not
+/// is strip the sibling forms — see `STARRY_FORMS`. Re-transforming
+/// replaces the constellation RAW, and without the strip a druid with
+/// two charges (or a Dispel that missed) could stand in two at once.
+pub struct StarryForm {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Which of the three shapes this action assumes. Must be a member
+    /// of `STARRY_FORMS` — `the_three_starry_forms_are_the_registry`
+    /// pins that, since a shape missing from the slice would install
+    /// fine and simply never be stripped by its siblings.
+    pub form: Condition,
+    pub log_line: &'static str,
+}
+
+impl Action for StarryForm {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // `feature_prime_ready` also refuses to re-install a shape the
+        // druid is already standing in, which is the right answer for
+        // all three: the charge is the whole cost, and spending it to
+        // refresh a timer that has nine rounds left is never what the
+        // player meant.
+        feature_prime_ready(encounter, caster_id, STARRY_FORM_TAG, self.form)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        starry_form_effects(encounter, caster_id, self.form, self.log_line)
+    }
+}
+
+/// Spend the shared Starry Form charge, strip whichever sibling shapes
+/// the druid is currently standing in, and install `form` for ten
+/// rounds.
+///
+/// Split out of `StarryForm::side_effects` so the strip-then-install
+/// order is stated once. The `RemoveCondition`s are emitted *ahead* of
+/// the `ApplyCondition` in the returned vector because side-effects
+/// apply in order — reversing them would strip the form that was just
+/// installed if a future shape ever shared a variant with its sibling.
+fn starry_form_effects(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    form: Condition,
+    log_line: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(STARRY_FORM_TAG);
+    }
+    encounter.log(log_line.to_string());
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = crate::conditions::condition_template::STARRY_FORMS
+        .iter()
+        .filter(|&&sibling| sibling != form)
+        .map(|&sibling| {
+            Box::new(RemoveCondition {
+                actor_id: caster_id,
+                condition: sibling,
+            }) as Box<dyn ApplicableSideEffect>
+        })
+        .collect();
+    effects.push(Box::new(ApplyCondition {
+        actor_id: caster_id,
+        condition: form,
+        // 10 rounds = 1 minute RAW, the same window Bladesong and Rage
+        // run on.
+        timer: ConditionTimer::Rounds(10),
+    }));
+    effects
+}
+
+/// Starry Form: Archer — the constellation of the bowman. Buys the
+/// bonus-action `STARRY_BOLT` for ten rounds.
+pub static STARRY_FORM_ARCHER: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+    name: "starry form archer",
+    aliases: &["archer", "sfa", "starry archer"],
+    form: Condition::StarryFormArcher,
+    log_line: "  starry form: the druid takes the shape of the Archer.",
+});
+
+/// Starry Form: Chalice — the constellation of the cup. Every slot-cast
+/// heal spills over onto a second wounded ally within 30 ft.
+pub static STARRY_FORM_CHALICE: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+    name: "starry form chalice",
+    aliases: &["chalice", "sfc", "starry chalice"],
+    form: Condition::StarryFormChalice,
+    log_line: "  starry form: the druid takes the shape of the Chalice.",
+});
+
+/// Starry Form: Dragon — the constellation of the wyrm. Floors the d20
+/// on concentration saves at 10.
+pub static STARRY_FORM_DRAGON: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+    name: "starry form dragon",
+    aliases: &["dragon form", "sfd", "starry dragon"],
+    form: Condition::StarryFormDragon,
+    log_line: "  starry form: the druid takes the shape of the Dragon.",
+});
+
+/// Starry Bolt — the Archer form's payload (5e Circle of Stars Druid,
+/// subclass level 2). A bonus-action ranged spell attack out to 60 ft:
+/// 1d8 + WIS radiant on a hit.
+///
+/// RAW folds the first bolt into the bonus action that assumes the
+/// form and then hands out one per turn thereafter. Here assuming the
+/// form and firing the bolt are two separate bonus actions, so the
+/// Archer's opening round buys the constellation and the bolts start
+/// on the round after. That is a real cost — one round of tempo — and
+/// it is the honest one to pay: the engine prices a bonus action as
+/// the scarce thing on every other chassis (Flurry of Blows, Hand of
+/// Healing, Cutting Words), and a version that fired for free on the
+/// turn it was bought would make Archer strictly better than the two
+/// forms it competes with rather than differently good.
+///
+/// Not a `SimpleWeapon` even though the numbers would fit one, because
+/// the two things that make it this subclass's feature — the bonus
+/// action cost and the gate on standing in the right constellation —
+/// are exactly the two things `SimpleWeapon` has no room for.
+pub struct StarryBolt {}
+
+impl Action for StarryBolt {
+    fn name(&self) -> &str {
+        "starry bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        // Neither "bolt" nor "sb": the first is already shared by Fire
+        // Bolt and Guiding Bolt, and the second by four other actions
+        // including the Soulknife's second blade. Alias collisions
+        // resolve by list order rather than erroring, so a Stars druid
+        // carrying Guiding Bolt would have had two of its own actions
+        // fighting over one token.
+        vec!["starbolt", "sbolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    /// 60 ft on the 2.5 ft grid. No long-range band — RAW gives the
+    /// bolt a flat 60 ft, so the reach *is* the range.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The constellation is the entire gate — the bolt costs no
+        // charge of its own and is at-will for as long as the form
+        // holds.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.has_condition(Condition::StarryFormArcher))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let damage_bonus = caster.ability_modifier(AbilityScoreType::Wisdom);
+        // Routed through the shared spell-attack chokepoint rather than
+        // open-coded, so the bolt picks up cover, Sanctuary, Bless, the
+        // defender-side reactive taxes, the interception cohort and the
+        // crit dice on exactly the same terms every other spell attack
+        // in the game does.
+        crate::actions::spells::spell_attack_outcome(
+            encounter,
+            caster_id,
+            target_id,
+            "starry bolt",
+            attack_mod,
+            Dice::new(1, 8),
+            damage_bonus,
+            DamageType::Radiant,
+            false,
+        )
+        .0
+    }
+}
+
+pub static STARRY_BOLT: LazyLock<StarryBolt> = LazyLock::new(|| StarryBolt {});
+
+/// The Chalice form's payload (5e Circle of Stars Druid, subclass level
+/// 2): "whenever you cast a spell using a spell slot that restores hit
+/// points to a creature, you or another creature within 30 feet of you
+/// can regain hit points equal to 1d8 + your Wisdom modifier."
+///
+/// Called from the shared slot-heal sites alongside
+/// `disciple_of_life_bonus`, and returns the extra `Heal` to append —
+/// or nothing at all when the form isn't up, the heal was a cantrip,
+/// or there is no second wounded ally in range. Returning an
+/// `Option<Box<_>>` rather than mutating a vector keeps the call sites
+/// to a one-line `.extend(...)` next to the bonus they already compute.
+///
+/// Two judgement calls RAW leaves to the player, made here:
+///
+///   - **Who.** The most wounded eligible creature, by missing HP. RAW
+///     lets the druid pick anyone in range; the most wounded is what a
+///     druid picking on purpose would pick, and it matches how the
+///     rest of the AI's heal lane already chooses targets.
+///   - **Not a creature the spell already healed.** RAW's "you or
+///     another creature" does permit doubling up on the spell's own
+///     target, but the primary `Heal`s have not been applied yet when
+///     this runs, so those targets still read as fully wounded and
+///     would win the comparison almost every time. `already_healed`
+///     carries them — one id for Cure Wounds and Healing Word, up to
+///     six for Mass Cure Wounds — and excluding them makes the Chalice
+///     what its name says it is: a cup that overflows onto someone
+///     else, rather than a flat healing bump on a creature the spell
+///     had covered.
+///
+/// Nothing fires for a druid healing alone: with the spell's targets
+/// excluded, a solo Chalice druid healing themselves has no second
+/// creature to spill onto. That is the correct reading of a feature
+/// whose whole text is about a second creature.
+pub fn starry_chalice_overflow(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    already_healed: &[usize],
+    spell_slot_lvl: u32,
+) -> Option<Box<dyn ApplicableSideEffect>> {
+    // RAW gates on "using a spell slot", which is the same cantrip
+    // exclusion `disciple_of_life_bonus` makes one line above every
+    // call site.
+    if spell_slot_lvl == 0 {
+        return None;
+    }
+    let caster = encounter.actors.get(&caster_id)?;
+    if !caster.has_condition(Condition::StarryFormChalice) {
+        return None;
+    }
+    let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
+    // 30 ft on the 2.5 ft grid.
+    let recipient = encounter.most_wounded_ally_within(caster_id, 12, already_healed)?;
+    let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+    let amount = (raw + wis_mod).max(1) as u32;
+    let name = encounter.actor_name(recipient);
+    encounter.log(format!(
+        "  chalice: 1d8({}){:+} = {} HP spills onto {}",
+        raw, wis_mod, amount, name
+    ));
+    Some(Box::new(Heal {
+        actor_id: recipient,
+        amount,
+    }))
+}
 
 /// Tag for the Conquest Paladin's **Conquering Presence** (Oath of
 /// Conquest, subclass level 3 Channel Divinity). Once per short rest,

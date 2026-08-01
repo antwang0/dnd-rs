@@ -518,3 +518,85 @@ pub static SPORES_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ..DRUID_TEMPLATE.clone()
     }
 });
+
+/// Stars Druid — Druid Circle **Circle of the Stars** subclass build
+/// (Tasha's), and the fourth circle on the roster. One subclass
+/// feature, in three shapes, plus the star map that comes with it.
+///
+///   - **Star Map** (lv2) — the circle's spell ribbon. Guiding Bolt
+///     joins the list, and it is the one thing the baseline druid kit
+///     is missing: a level-1 ranged spell attack whose payload is
+///     4d6 radiant *and* advantage for the next creature to swing at
+///     the target. Guidance is already on the baseline chassis.
+///   - **Starry Form** (lv2) — a bonus action, once per short rest,
+///     that puts the druid inside one of three constellations for ten
+///     rounds. `STARRY_FORM_ARCHER`, `STARRY_FORM_CHALICE` and
+///     `STARRY_FORM_DRAGON`, sharing one charge.
+///   - **Starry Bolt** — the Archer's payload, and the only one of the
+///     three that is an action rather than a passive. Bonus action,
+///     1d8 + WIS radiant at 60 ft, at-will while the form holds.
+///
+/// The three shapes are the subclass, and the reason it plays unlike
+/// the other three circles is that they are not three grades of the
+/// same thing — they are three different answers to "what is this
+/// round short of":
+///
+///   - **Archer** buys damage the druid otherwise has no way to spend
+///     a bonus action on. A druid holding concentration on Moonbeam
+///     has an Action committed to moving the beam and nothing at all
+///     to do with the rest of the turn; the bolt is that turn's
+///     second half.
+///   - **Chalice** buys reach for the heal lane. Cure Wounds is one
+///     ally at touch range and Healing Word is one ally at 60 ft; the
+///     Chalice makes every one of them two, and picks the second
+///     target itself — the most wounded ally the spell did not already
+///     cover.
+///   - **Dragon** buys nothing on the turn it is cast, and is the
+///     strongest of the three in the fight where the druid's
+///     concentration is what the enemy is trying to break. Floored at
+///     10, a DC 10 concentration save on this chassis stops being a
+///     roll.
+///
+/// Contrast the sibling circles, which all answer the same question by
+/// changing what the druid *is*. Moon trades the spell list for a bear.
+/// Spores trades hit points for a melee rider. Land trades nothing and
+/// hands slots back. Stars is the only one whose feature changes what
+/// the druid's *existing* kit is worth without touching the kit, which
+/// is why it is also the only one that stacks cleanly with everything
+/// on the baseline list.
+///
+/// RAW features not shipped: **Cosmic Omen** (lv6 — a reaction that
+/// adds or subtracts 1d6 from a roll, gated on a coin-flip the engine
+/// has nowhere to consult), **Twinkling Constellations** (lv10 — bumps
+/// the Archer die to 2d8, gives the Chalice and Dragon flight, and lets
+/// the form change shape every turn, all of it RAW-gated well past this
+/// chassis), and **Full of Stars** (lv14 — bludgeoning / piercing /
+/// slashing resistance while transformed).
+///
+/// Glyph 'S' — for the **S**tars. Distinct from baseline druid 'D',
+/// Land Druid 'L', Moon Druid 'B' and Spores Druid 'F'.
+pub static STARS_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        STARRY_BOLT, STARRY_FORM_ARCHER, STARRY_FORM_CHALICE, STARRY_FORM_DRAGON, STARRY_FORM_TAG,
+    };
+    // Four actions on top of the baseline caster chassis plus the Star
+    // Map spell — the same additive shape the Spores Druid above uses.
+    // Nothing about the druid's body changes: Stars adds reach and
+    // reliability to the kit it already has rather than replacing it.
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::spells::GUIDING_BOLT);
+    actions.push(&*STARRY_FORM_ARCHER);
+    actions.push(&*STARRY_FORM_CHALICE);
+    actions.push(&*STARRY_FORM_DRAGON);
+    actions.push(&*STARRY_BOLT);
+    CreatureTemplate {
+        name: "Stars Druid",
+        glyph: 'S',
+        // One tag for all three constellations — see `STARRY_FORM_TAG`.
+        // The choice between them is the feature; three charges would
+        // make it three features.
+        features: HashSet::from([STARRY_FORM_TAG]),
+        actions,
+        ..DRUID_TEMPLATE.clone()
+    }
+});

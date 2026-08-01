@@ -301,8 +301,20 @@ pub fn spell_attack_roll(
     SpellAttackRoll { hit: true, is_crit }
 }
 
+/// The attack-roll-plus-damage half of a spell attack: roll to hit
+/// through `spell_attack_roll`, then roll and apply damage through the
+/// shared caster-aware chokepoints (Empowered Spell, Empowered
+/// Evocation, Potent Spellcasting, the item / buff / curse damage
+/// lanes, crit dice). Returns the side-effects and the final amount.
+///
+/// `pub` for the same reason `spell_attack_roll` above it is: a spell
+/// attack that lives outside this file is still a spell attack, and
+/// the alternative is a class feature open-coding the roll and
+/// silently losing cover, Sanctuary, Bless, the reactive taxes and the
+/// rest. The Circle of Stars Druid's Starry Bolt is the current
+/// out-of-file caller.
 #[allow(clippy::too_many_arguments)]
-fn spell_attack_outcome(
+pub fn spell_attack_outcome(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
@@ -1487,10 +1499,21 @@ impl Action for HealSpell {
             crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
         ));
-        vec![Box::new(Heal {
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(Heal {
             actor_id: target_id,
             amount,
-        })]
+        })];
+        // 5e Circle of Stars Druid **Starry Form: Chalice** — a
+        // slot-cast heal spills 1d8 + WIS onto a second wounded ally
+        // within 30 ft. Returns `None` for every caster who isn't
+        // standing in the Chalice, so the stock heal lands unchanged.
+        effects.extend(crate::actions::class_features::starry_chalice_overflow(
+            encounter,
+            caster_id,
+            &[target_id],
+            lvl,
+        ));
+        effects
     }
 }
 
@@ -6448,15 +6471,25 @@ impl Action for MassCureWounds {
             crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
         ));
-        candidates
-            .into_iter()
-            .map(|(_, id)| {
+        let healed: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = healed
+            .iter()
+            .map(|&id| {
                 Box::new(Heal {
                     actor_id: id,
                     amount,
                 }) as Box<dyn ApplicableSideEffect>
             })
-            .collect()
+            .collect();
+        // 5e Circle of Stars Druid **Starry Form: Chalice**. The burst
+        // has already taken up to six allies; the overflow finds a
+        // seventh — someone wounded within 30 ft of the druid who fell
+        // outside the 15 ft burst, which on a spread-out party is
+        // exactly the ally the spell was placed too far away to reach.
+        effects.extend(crate::actions::class_features::starry_chalice_overflow(
+            encounter, caster_id, &healed, 5,
+        ));
+        effects
     }
 }
 

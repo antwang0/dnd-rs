@@ -774,6 +774,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p'. Starry Form — Circle of Stars Druid. Sits above
+        //      Shillelagh because the two compete for the same bonus
+        //      action and they are not the same size of purchase: the
+        //      constellation is ten rounds of a new capability bought
+        //      once per short rest, and Shillelagh is +1d8 on one
+        //      swing. Deferring the form to buy the die would mean the
+        //      druid never transforms at all, since a Stars druid
+        //      standing in melee has a Shillelagh worth casting every
+        //      single round.
+        if let Some(aei) = try_starry_form(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q. Shillelagh — druid bonus-action cantrip prime that adds
         //     +1d8 force damage to the next melee weapon hit. Fire when
         //     an enemy is footprint-adjacent so the prime is consumed
@@ -3288,6 +3301,69 @@ fn try_self_buff_concentration(
         return None;
     }
     try_self_action(encounter, actor_id, action_name)
+}
+
+/// Starry Form — Circle of Stars Druid bonus action, once per short
+/// rest, and the only pick on the roster where the AI has to choose
+/// *which* buff rather than whether to take one.
+///
+/// The three constellations are not ranked against each other, so the
+/// choice is made by asking which of them has work to do *this* fight,
+/// most specific condition first:
+///
+///   1. **Chalice** if a hurt ally is inside the 30 ft spill radius.
+///      The overflow needs the druid to cast a heal to have anything to
+///      spill, and the druid's heal lane only fires when somebody is
+///      hurt — so a wounded ally in range is the gate that says the
+///      form will pay for itself.
+///   2. **Dragon** if the druid is concentrating on something *and* has
+///      already taken damage. Both halves are load-bearing: a
+///      concentration save is only rolled when the holder is hit, so a
+///      druid at full HP has not yet been shown that its concentration
+///      is under any threat at all, and floors nothing by taking this.
+///   3. **Archer** otherwise — the opening-round answer and the solo
+///      answer. A bonus action the druid had no other use for becomes
+///      1d8 + WIS a round for the next ten rounds.
+///
+/// The order matters more than it looks, because this rung sits below
+/// the concentration self-buff cohort: by the time it runs, a druid
+/// that had a self-buff to cast has already cast it and is
+/// concentrating on *something*. Testing concentration alone would
+/// therefore have picked Dragon on essentially every chassis that
+/// carries a self-buff, every fight — which is how the first draft
+/// behaved, and it made two of the three constellations unreachable.
+/// The damage clause is what distinguishes "holding a spell" from
+/// "holding a spell that is being knocked out of me".
+///
+/// The enemy-proximity gate is shared by all three: ten rounds started
+/// in an empty room is ten rounds of nothing, and the charge does not
+/// come back until a short rest.
+fn try_starry_form(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.feature_available(crate::actions::class_features::STARRY_FORM_TAG) {
+        return None;
+    }
+    // 30 ft — the same engagement radius Rage uses, and far enough out
+    // that the form is up before the first exchange rather than after
+    // it.
+    if !any_enemy_within(encounter, actor_id, 12) {
+        return None;
+    }
+    let taking_fire = actor.hitpoints() < actor.max_hitpoints();
+    let name = if encounter
+        .most_wounded_ally_within(actor_id, 12, &[actor_id])
+        .is_some()
+    {
+        "starry form chalice"
+    } else if actor.is_concentrating() && taking_fire {
+        "starry form dragon"
+    } else {
+        "starry form archer"
+    };
+    try_self_action(encounter, actor_id, name)
 }
 
 /// Barbarian Rage trigger: a barbarian who isn't already Raging fires
@@ -9624,11 +9700,13 @@ mod tests {
     /// select — the mark rides an ordinary greataxe swing — so an AI
     /// wiring test would only be re-testing the rider, which the
     /// engine-side sweep already covers.
+    
+
     #[test]
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
-        use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
+        use crate::actors::creatures::druids::{SPORES_DRUID_TEMPLATE, STARS_DRUID_TEMPLATE};
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
         use crate::actors::creatures::monks::{
             KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
@@ -9645,7 +9723,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 18] = [
+        let cases: [(&CreatureTemplate, &str); 20] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9692,6 +9770,18 @@ mod tests {
             // feature hangs off, and the wail itself is pinned
             // engine-side where a second body can be put on the board.
             (&PHANTOM_ROGUE_TEMPLATE, "sneak attack"),
+            // Archer, not Chalice or Dragon: this fixture is one PC
+            // against one ogre, so there is no ally to spill a heal
+            // onto, and the druid picks its constellation on the
+            // opening round before it is concentrating on anything.
+            // Those two branches are pinned by
+            // `the_starry_form_pick_follows_what_the_round_needs`.
+            (&STARS_DRUID_TEMPLATE, "shape of the Archer"),
+            // The bolt is reached for by the ordinary attack picker
+            // rather than by a rung of its own — reach 24 beats the
+            // scimitar's 1 — so seeing it in the log is also the check
+            // that a bonus-action attack survives that picker.
+            (&STARS_DRUID_TEMPLATE, "starry bolt"),
         ];
 
         for (template, marker) in cases {
@@ -9740,6 +9830,90 @@ mod tests {
                 marker
             );
         }
+    }
+
+    /// The Starry Form pick reads the round, not the roster.
+    ///
+    /// Three fixtures, one for each branch of `try_starry_form`. The
+    /// Chalice and Dragon branches are unreachable from the one-PC
+    /// fixture the subclass-signature sweep uses — Chalice needs a
+    /// second body and Dragon needs a druid that is both concentrating
+    /// and already hurt — so they are pinned here instead.
+    #[test]
+    fn the_starry_form_pick_follows_what_the_round_needs() {
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        // Helper: build a druid two tiles from a zombie, hand the
+        // caller the encounter, and ask what the AI transforms into.
+        let pick = |setup: &dyn Fn(&mut EncounterInstance, usize)| -> String {
+            let mut e = empty_arena();
+            let druid = e
+                .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+                .unwrap();
+            setup(&mut e, druid);
+            try_starry_form(&e, druid)
+                .map(|aei| aei.action().name().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+
+        // Nothing special about the round: the Archer, which is the
+        // opening-round and solo answer.
+        assert_eq!(pick(&|_e, _d| {}), "starry form archer");
+
+        // A hurt ally inside the 30 ft spill radius: the Chalice, so
+        // the heal lane's next cast covers two creatures.
+        assert_eq!(
+            pick(&|e, _d| {
+                let ally = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                    .unwrap();
+                let max = e.actors[&ally].max_hitpoints();
+                e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+            }),
+            "starry form chalice"
+        );
+
+        // Concentrating AND already taking fire: the Dragon. Both
+        // halves are required — the two single-clause fixtures below
+        // are what stop this from collapsing back into "always Dragon",
+        // which is how the first draft of the heuristic behaved.
+        assert_eq!(
+            pick(&|e, d| {
+                e.actors.get_mut(&d).unwrap().take_damage(5);
+                e.actors
+                    .get_mut(&d)
+                    .unwrap()
+                    .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+                e.actors.get_mut(&d).unwrap().start_concentration(
+                    crate::actors::actor_template::ConcentrationData::new("Moonbeam"),
+                );
+            }),
+            "starry form dragon"
+        );
+
+        // Concentrating but untouched: no evidence the concentration is
+        // under threat, so the Archer still wins.
+        assert_eq!(
+            pick(&|e, d| {
+                e.actors.get_mut(&d).unwrap().start_concentration(
+                    crate::actors::actor_template::ConcentrationData::new("Moonbeam"),
+                );
+            }),
+            "starry form archer"
+        );
+
+        // Hurt but holding nothing: there is no concentration for the
+        // floor to protect.
+        assert_eq!(
+            pick(&|e, d| {
+                e.actors.get_mut(&d).unwrap().take_damage(5);
+            }),
+            "starry form archer"
+        );
     }
 
     /// Every action name the AI's heuristics look up is the canonical

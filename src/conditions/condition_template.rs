@@ -1782,6 +1782,47 @@ pub enum Condition {
     /// own turn. The consume-on-save row is what stops the longer
     /// timer from over-granting.
     Unsettled,
+    /// 5e Circle of Stars Druid **Starry Form: Archer** (subclass level
+    /// 2). The druid takes on the shape of a constellation and gains a
+    /// bonus-action ranged attack — `STARRY_BOLT`, a 1d8 + WIS radiant
+    /// spell attack out to 60 ft — for as long as the form holds.
+    ///
+    /// The condition carries no passive modifier of its own; it is
+    /// purely the gate the bolt's `custom_validate_input` reads. That
+    /// is the whole shape of the Archer: one extra button, available
+    /// every round, on a chassis whose bonus action was otherwise
+    /// spent on Healing Word or nothing at all.
+    ///
+    /// Mutually exclusive with its two siblings — see
+    /// `STARRY_FORMS`, which the install path walks to strip the other
+    /// two before applying this one.
+    StarryFormArcher,
+    /// 5e Circle of Stars Druid **Starry Form: Chalice** (subclass
+    /// level 2). While the form holds, every slot-cast heal the druid
+    /// lands spills over: a second wounded ally within 30 ft regains
+    /// 1d8 + WIS on top of whatever the spell itself restored.
+    ///
+    /// Read at the shared slot-heal chokepoint
+    /// (`starry_chalice_overflow`), which is why Cure Wounds, Healing
+    /// Word and Mass Cure Wounds all pick it up without three separate
+    /// riders. Like `StarryFormArcher` it stores no magnitude — the
+    /// die and the ability modifier are re-derived at the heal site
+    /// from the druid's own Wisdom.
+    StarryFormChalice,
+    /// 5e Circle of Stars Druid **Starry Form: Dragon** (subclass level
+    /// 2). While the form holds, a d20 of 9 or lower on a
+    /// concentration save counts as a 10.
+    ///
+    /// The only one of the three forms that reaches into the dice
+    /// rather than into the action economy, and the reason
+    /// `roll_save_with_extra_mode_and_bonus` grew a `d20_floor`
+    /// parameter. On a WIS-18 druid with CON +2 and no save
+    /// proficiency the floor turns a coin-flip on a DC 10
+    /// concentration check into a near-certainty, which is what makes
+    /// Dragon the form a druid picks when the thing they are holding
+    /// up — Moonbeam, Call Lightning, Spike Growth — matters more than
+    /// anything they could do with the round.
+    StarryFormDragon,
 }
 
 impl Condition {
@@ -1941,6 +1982,9 @@ impl Condition {
             Condition::SeekingSpelling => "primed with seeking spell",
             Condition::SubtleSpelling => "primed with subtle spell",
             Condition::TidesOfChaos => "riding the tides of chaos",
+            Condition::StarryFormArcher => "starry form (archer)",
+            Condition::StarryFormChalice => "starry form (chalice)",
+            Condition::StarryFormDragon => "starry form (dragon)",
             Condition::TransmutedSpelling => "primed with transmuted spell",
             Condition::CunningStrikePoison => "primed with cunning poison",
             Condition::CunningStrikeTrip => "primed with cunning trip",
@@ -2039,6 +2083,14 @@ impl Condition {
                 | Condition::SpiritShrouded
                 | Condition::SymbioticEntity
                 | Condition::Bladesinging
+                // 5e Circle of Stars Druid Starry Form, all three
+                // shapes. Ten-round self-buffs bought with a
+                // once-per-short-rest charge, which is exactly the
+                // envelope Bladesong directly above already sits in —
+                // and, like Bladesong, worth a Dispel Magic.
+                | Condition::StarryFormArcher
+                | Condition::StarryFormChalice
+                | Condition::StarryFormDragon
                 | Condition::FormOfDread
                 | Condition::HolyAuraed
                 | Condition::Foreseen
@@ -2500,6 +2552,30 @@ impl std::fmt::Display for Condition {
         f.write_str(self.name())
     }
 }
+
+/// The three shapes of the 5e Circle of Stars Druid's **Starry Form**,
+/// in the order the AI considers them.
+///
+/// RAW picks one shape per transformation, and re-transforming replaces
+/// whatever was already up rather than layering on top of it. Since the
+/// three are ordinary conditions with ordinary timers, nothing about
+/// the condition machinery enforces that on its own — a druid who took
+/// Archer on round one and Dragon on round four would otherwise be
+/// standing in two constellations at once with the bonus-action bolt
+/// *and* the concentration floor.
+///
+/// So the install path (`starry_form_effects`) walks this slice and
+/// emits a `RemoveCondition` for every shape that is not the one being
+/// assumed. Keeping the roster here rather than spelling out "the other
+/// two" at each of the three action sites means a fourth shape — RAW's
+/// level-10 Twinkling Constellations does not add one, but a homebrew
+/// circle could — is a single row rather than three edits that have to
+/// agree with each other.
+pub const STARRY_FORMS: &[Condition] = &[
+    Condition::StarryFormArcher,
+    Condition::StarryFormChalice,
+    Condition::StarryFormDragon,
+];
 
 /// How long a condition application persists. `Permanent` requires an
 /// explicit removal (e.g. Stand-up clears Prone, Lesser Restoration clears

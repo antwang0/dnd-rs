@@ -3301,7 +3301,7 @@ impl EncounterInstance {
         dc: i32,
         extra_mode: RollMode,
     ) -> crate::engine::saves::SaveOutcome {
-        self.roll_save_with_extra_mode_and_bonus(actor_id, ability, dc, extra_mode, 0)
+        self.roll_save_with_extra_mode_and_bonus(actor_id, ability, dc, extra_mode, 0, 0)
     }
 
     /// `roll_save_with_extra_mode` plus a flat bonus that applies to
@@ -3316,6 +3316,18 @@ impl EncounterInstance {
     /// concentration* and to nothing else, so putting it on any of
     /// those lanes would over-grant it to every poison save and every
     /// Fireball the wizard ever ducks.
+    /// `d20_floor` is the second call-site-scoped lane, and it is a
+    /// different kind of thing from `call_site_bonus`: it raises the
+    /// *die*, not the total, so a 3 on the d20 becomes a 10 before any
+    /// modifier is added rather than after. Pass 0 to disable.
+    ///
+    /// The distinction matters because the features that grant it —
+    /// the Circle of Stars Druid's Dragon constellation is the first —
+    /// are worth nothing on a roll that was already going to clear the
+    /// floor and are worth a great deal on the bad half of the die. A
+    /// flat +N would smear the same value across every roll and would
+    /// keep helping a save that rolled a 19, which is not what "counts
+    /// as a 10" says.
     fn roll_save_with_extra_mode_and_bonus(
         &mut self,
         actor_id: usize,
@@ -3323,6 +3335,7 @@ impl EncounterInstance {
         dc: i32,
         extra_mode: RollMode,
         call_site_bonus: i32,
+        d20_floor: u32,
     ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
 
@@ -3340,7 +3353,18 @@ impl EncounterInstance {
         let mode = self.compute_save_mode(actor_id, ability).combine(extra_mode);
         // 5e Lucky: same nat-1 reroll hook as on attack rolls. RAW
         // explicitly lists "saving throw" as one of the trigger contexts.
-        let raw = self.roll_d20_lucky(actor_id, mode);
+        let rolled = self.roll_d20_lucky(actor_id, mode);
+        // Apply the call-site die floor (Starry Form: Dragon) after
+        // Lucky has had its say, so a rerolled 1 is floored on the
+        // number the reroll actually produced. `raw` from here down is
+        // the face the save is resolved on; `rolled` survives only for
+        // the log, which shows both when they differ.
+        let raw = rolled.max(d20_floor);
+        let floor_suffix = if raw > rolled {
+            format!("\u{2192}{}(dragon)", raw)
+        } else {
+            String::new()
+        };
         // Bless / Bane rider — add or subtract 1d4 to the save total
         // (cancel out if both). Roll early so we can include the
         // breakdown in the log.
@@ -3404,10 +3428,11 @@ impl EncounterInstance {
         };
         let name = actor.name().to_string();
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+}{} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}{}){:+}{} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
-            raw,
+            rolled,
+            floor_suffix,
             modifier,
             extra_suffix,
             total,
@@ -3696,12 +3721,35 @@ impl EncounterInstance {
             .filter(|a| a.has_condition(Condition::Bladesinging))
             .map(|a| a.ability_modifier(AbilityScoreType::Intelligence).max(1))
             .unwrap_or(0);
+        // 5e Circle of Stars Druid **Starry Form: Dragon**: "whenever
+        // you make an Intelligence or Wisdom check or a Constitution
+        // saving throw to maintain concentration, you can treat a roll
+        // of 9 or lower on the d20 as a 10." Scoped to this call site
+        // for the same reason Bladesong's bonus is — RAW names this one
+        // kind of save, and the two ability checks in the other half of
+        // the clause have no combat surface in this engine.
+        //
+        // It sits on the die rather than on the total (see
+        // `d20_floor`), which is what makes it the defensive answer to
+        // the Moon Druid's offensive one: a Stars druid holding
+        // Moonbeam through a round of focused fire keeps it, and a
+        // druid who was going to make the save anyway gains nothing.
+        let dragon_floor = if self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::StarryFormDragon))
+        {
+            10
+        } else {
+            0
+        };
         self.roll_save_with_extra_mode_and_bonus(
             actor_id,
             AbilityScoreType::Constitution,
             dc,
             extra_mode,
             bladesong_bonus,
+            dragon_floor,
         )
     }
 
@@ -4971,6 +5019,52 @@ impl EncounterInstance {
                 Some((*id, dist))
             })
             .collect()
+    }
+
+    /// The ally within `range_tiles` who is missing the most hit
+    /// points, skipping every id in `exclude` and every ally already at
+    /// full HP. Returns `None` when nobody qualifies.
+    ///
+    /// Built on `ally_candidates_in_range` directly above, so it shares
+    /// that helper's team / combat-active / footprint-Chebyshev filters
+    /// — including its deliberate inclusion of *dying* allies, which is
+    /// what lets an overflow heal pick up a creature at 0 HP rather
+    /// than stepping over the one target on the field who most needs
+    /// it.
+    ///
+    /// Ties break on the lower actor id so the pick stays deterministic
+    /// under a fixed seed; `self.actors` is a hash map and its
+    /// iteration order is not.
+    ///
+    /// The Circle of Stars Druid's Chalice overflow is the first
+    /// caller. It is written as a general "who should this spill onto"
+    /// question rather than as part of that feature because it is one:
+    /// any future rider that has healing to place and no target named
+    /// for it wants exactly this.
+    pub fn most_wounded_ally_within(
+        &self,
+        caster_id: usize,
+        range_tiles: isize,
+        exclude: &[usize],
+    ) -> Option<usize> {
+        self.ally_candidates_in_range(caster_id, range_tiles)
+            .into_iter()
+            .filter_map(|(id, _)| {
+                if exclude.contains(&id) {
+                    return None;
+                }
+                let actor = self.actors.get(&id)?;
+                let missing = actor.max_hitpoints().saturating_sub(actor.hitpoints());
+                if missing == 0 {
+                    return None;
+                }
+                Some((missing, id))
+            })
+            // `max_by_key` keeps the LAST maximum, so the id half of the
+            // key is negated to turn "largest id wins the tie" into
+            // "smallest id wins".
+            .max_by_key(|&(missing, id)| (missing, std::cmp::Reverse(id)))
+            .map(|(_, id)| id)
     }
 
     /// Negation of `actors_allied` that also fails on missing actors —
@@ -73205,5 +73299,274 @@ mod tests {
         }
         assert!(saw_weapon_tax, "the weapon lane should pay the die");
         assert!(saw_spell_tax, "and so should the spell lane");
+    }
+
+    /// Every `StarryForm` action's `form` is a member of `STARRY_FORMS`.
+    ///
+    /// The slice is what `starry_form_effects` walks to strip the
+    /// shapes the druid is *not* assuming. A form missing from it would
+    /// install perfectly well and simply never be stripped by its
+    /// siblings, which is a druid standing in two constellations at
+    /// once — and nothing else in the engine would notice.
+    #[test]
+    fn the_three_starry_forms_are_the_registry() {
+        use crate::actions::class_features::{
+            STARRY_FORM_ARCHER, STARRY_FORM_CHALICE, STARRY_FORM_DRAGON,
+        };
+        use crate::conditions::condition_template::STARRY_FORMS;
+        let declared = [
+            STARRY_FORM_ARCHER.form,
+            STARRY_FORM_CHALICE.form,
+            STARRY_FORM_DRAGON.form,
+        ];
+        for form in declared {
+            assert!(
+                STARRY_FORMS.contains(&form),
+                "{:?} is installed by an action but missing from STARRY_FORMS",
+                form
+            );
+        }
+        assert_eq!(
+            STARRY_FORMS.len(),
+            declared.len(),
+            "STARRY_FORMS carries a shape no action installs"
+        );
+    }
+
+    /// Assuming a constellation strips whichever one the druid was
+    /// already standing in. RAW replaces the form rather than layering.
+    #[test]
+    fn a_second_starry_form_replaces_the_first() {
+        use crate::actions::class_features::{STARRY_FORM_ARCHER, STARRY_FORM_DRAGON};
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for eff in STARRY_FORM_ARCHER.side_effects(&mut e, druid, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&druid].has_condition(Condition::StarryFormArcher));
+        // Hand the charge back so the second transformation is legal —
+        // the point under test is the strip, not the once-per-rest gate
+        // (which `feature_prime_ready` covers).
+        e.actors.get_mut(&druid).unwrap().restore_feature_charge(
+            crate::actions::class_features::STARRY_FORM_TAG,
+        );
+        for eff in STARRY_FORM_DRAGON.side_effects(&mut e, druid, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&druid].has_condition(Condition::StarryFormDragon),
+            "the new shape should be up"
+        );
+        assert!(
+            !e.actors[&druid].has_condition(Condition::StarryFormArcher),
+            "and the old one should have been stripped"
+        );
+    }
+
+    /// Starry Form: Dragon floors the concentration save's d20 at 10.
+    ///
+    /// Driven over enough trials that a druid without the form is
+    /// certain to have rolled at least one sub-10 face; the assertion
+    /// is that the log never shows the *floored* form failing to reach
+    /// 10, and that it does show the floor firing at all.
+    #[test]
+    fn the_dragon_form_floors_the_concentration_die_at_ten() {
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        let mut saw_floor_fire = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let druid = e
+                .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&druid)
+                .unwrap()
+                .add_condition(Condition::StarryFormDragon, ConditionTimer::Rounds(10));
+            let before = e.messages().len();
+            e.roll_concentration_save(druid, 10);
+            let line = e.messages()[before..].join("\n");
+            if line.contains("(dragon)") {
+                saw_floor_fire = true;
+                assert!(
+                    line.contains("\u{2192}10(dragon)"),
+                    "the floor should raise the die to exactly 10, got: {}",
+                    line
+                );
+            }
+        }
+        assert!(
+            saw_floor_fire,
+            "40 concentration saves should have rolled at least one face under 10"
+        );
+    }
+
+    /// A druid *without* the Dragon constellation never shows the
+    /// floor — the sibling half of the test above, so a floor that
+    /// fired unconditionally would be caught.
+    #[test]
+    fn without_the_dragon_form_the_concentration_die_is_not_floored() {
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let druid = e
+                .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let before = e.messages().len();
+            e.roll_concentration_save(druid, 10);
+            assert!(
+                !e.messages()[before..].join("\n").contains("(dragon)"),
+                "a druid not standing in the Dragon should get no floor"
+            );
+        }
+    }
+
+    /// Starry Form: Chalice spills a slot-cast heal onto the most
+    /// wounded ally the spell did not already cover.
+    #[test]
+    fn the_chalice_spills_onto_a_second_wounded_ally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let healed = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        for id in [healed, bystander] {
+            let max = e.actors[&id].max_hitpoints();
+            e.actors.get_mut(&id).unwrap().take_damage(max - 1);
+        }
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .add_condition(Condition::StarryFormChalice, ConditionTimer::Rounds(10));
+        let bystander_before = e.actors[&bystander].hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, druid, Some(vec![healed]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&bystander].hitpoints() > bystander_before,
+            "the chalice should have spilled onto the ally the spell missed"
+        );
+        assert!(
+            e.messages().join("\n").contains("chalice:"),
+            "and should have said so"
+        );
+    }
+
+    /// The Chalice needs a *second* creature. A druid healing the only
+    /// wounded ally on the field spills nothing — RAW's whole clause is
+    /// about somebody else.
+    #[test]
+    fn the_chalice_is_silent_with_nobody_left_to_spill_onto() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let healed = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&healed].max_hitpoints();
+        e.actors.get_mut(&healed).unwrap().take_damage(max - 1);
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .add_condition(Condition::StarryFormChalice, ConditionTimer::Rounds(10));
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, druid, Some(vec![healed]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            !e.messages().join("\n").contains("chalice:"),
+            "the only wounded ally was the spell's own target"
+        );
+    }
+
+    /// Starry Bolt is gated on standing in the Archer, not on carrying
+    /// the action. A Stars druid out of form has the button and cannot
+    /// press it.
+    #[test]
+    fn the_starry_bolt_needs_the_archer_constellation() {
+        use crate::actions::class_features::STARRY_BOLT;
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*STARRY_BOLT, druid, Some(vec![ogre]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "no constellation, no bolt"
+        );
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .add_condition(Condition::StarryFormArcher, ConditionTimer::Rounds(10));
+        assert!(
+            aei.validate(&e),
+            "the Archer is the whole gate"
+        );
+    }
+
+    /// `most_wounded_ally_within` picks by missing HP, honors the
+    /// exclusion list, and skips allies at full health.
+    #[test]
+    fn the_overflow_picker_takes_the_worst_hurt_ally_it_is_allowed_to() {
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&STARS_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let lightly_hurt = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let badly_hurt = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let untouched = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&lightly_hurt).unwrap().take_damage(1);
+        let max = e.actors[&badly_hurt].max_hitpoints();
+        e.actors.get_mut(&badly_hurt).unwrap().take_damage(max - 1);
+
+        assert_eq!(
+            e.most_wounded_ally_within(druid, 12, &[]),
+            Some(badly_hurt),
+            "the worst hurt ally wins"
+        );
+        assert_eq!(
+            e.most_wounded_ally_within(druid, 12, &[badly_hurt]),
+            Some(lightly_hurt),
+            "excluding them falls through to the next one"
+        );
+        assert_eq!(
+            e.most_wounded_ally_within(druid, 12, &[badly_hurt, lightly_hurt]),
+            None,
+            "and the untouched ally is never a candidate"
+        );
+        let _ = untouched;
     }
 }
