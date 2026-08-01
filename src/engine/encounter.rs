@@ -5158,7 +5158,16 @@ impl EncounterInstance {
             .is_some_and(|c| c.is_leveled_spell_of(school))
     }
 
-    fn template_pool() -> Vec<&'static CreatureTemplate> {
+    /// Every creature template the encounter generator can roll — the
+    /// bestiary half of the engine's answer to "what exists?", with
+    /// `creatures::pc_template_families` as the playable half. Between
+    /// them they cover every template that can reach a battlefield.
+    ///
+    /// `pub` so cross-module sweeps can read it. `class_features`'s
+    /// per-rest registry check needs both halves: a feature tag is only
+    /// an orphan if *nothing* instantiable carries it, and half the tags
+    /// in the registry are carried by monsters.
+    pub fn template_pool() -> Vec<&'static CreatureTemplate> {
         vec![
             &ANKHEG_TEMPLATE,
             &ANIMATED_ARMOR_TEMPLATE,
@@ -6049,6 +6058,29 @@ impl EncounterInstance {
             &MULE_TEMPLATE,
             &PONY_TEMPLATE,
             &ELK_TEMPLATE,
+            // Lineage builds — humanoid opponents on class chassis, in
+            // the CR 1-3 band. They sit here for the same reason
+            // `CLERIC_TEMPLATE`, `KNIGHT_TEMPLATE`, `MAGE_TEMPLATE` and
+            // `VETERAN_TEMPLATE` already do: a PC-shaped stat block is a
+            // perfectly good enemy, and these were written, tested and
+            // then reachable by nothing but a unit test. Each brings a
+            // racial trait the bestiary otherwise has no source for —
+            // the Tiefling's Hellish Rebuke, the Aasimar's Healing
+            // Hands, Dwarven Resilience, Halfling Luck, Relentless
+            // Endurance, Gnome Cunning.
+            //
+            // One dragonborn, not fifteen. The chromatic / metallic /
+            // gem ancestries differ only in their breath weapon's damage
+            // type, so putting every one in the pool would weight the
+            // generator a third towards "a dragonborn, again" for no
+            // variety in return. The other fourteen stay playable.
+            &crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE,
+            &crate::actors::creatures::tieflings::TIEFLING_TEMPLATE,
+            &crate::actors::creatures::aasimars::AASIMAR_TEMPLATE,
+            &crate::actors::creatures::dwarves::DWARF_TEMPLATE,
+            &crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE,
+            &crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE,
+            &crate::actors::creatures::gnomes::GNOME_TEMPLATE,
         ]
     }
 
@@ -56032,6 +56064,69 @@ mod tests {
             !e.actors[&other].has_taken_turn_in_combat(),
             "an actor whose slot hasn't come up is untouched"
         );
+    }
+
+    /// The lineage builds are reachable from both registries.
+    ///
+    /// All twenty-one — fifteen dragonborn ancestries and six
+    /// single-lineage builds — were fully implemented, carried racial
+    /// traits nothing else on the roster has, and could be reached by
+    /// nothing but a unit test: they were in neither
+    /// `pc_template_families` (so no player could pick one) nor
+    /// `template_pool` (so no encounter could roll one). This pins both
+    /// halves of that fix.
+    ///
+    /// The asymmetry is deliberate and is the second thing pinned here:
+    /// every ancestry is playable, but only one dragonborn is in the
+    /// bestiary. The fifteen differ solely in their breath weapon's
+    /// damage type, so putting them all in the pool would tilt the
+    /// generator a sixth of the way towards "a dragonborn, again" and
+    /// buy no variety for it.
+    #[test]
+    fn the_lineage_builds_are_playable_and_in_the_bestiary() {
+        use crate::actors::creatures::pc_template_families;
+
+        let playable: std::collections::HashSet<&str> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_family, templates)| templates)
+            .map(|t| t.name)
+            .collect();
+        let bestiary: std::collections::HashSet<&str> = EncounterInstance::template_pool()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+
+        // Both registries, for the builds that carry a racial trait no
+        // other template sources: Hellish Rebuke, Healing Hands, Dwarven
+        // Resilience, Halfling Luck, Relentless Endurance, Gnome
+        // Cunning, and the breath weapon.
+        for name in [
+            "Tiefling",
+            "Aasimar",
+            "Mountain Dwarf Defender",
+            "Halfling Scout",
+            "Half-Orc Marauder",
+            "Rock Gnome Illusionist",
+            "Red Dragonborn Champion",
+        ] {
+            assert!(playable.contains(name), "{} is not playable", name);
+            assert!(bestiary.contains(name), "{} cannot be rolled", name);
+        }
+
+        // The other fourteen ancestries: playable, and deliberately not
+        // in the bestiary.
+        for name in [
+            "Black Dragonborn Champion",
+            "Gold Dragonborn Champion",
+            "Amethyst Dragonborn Champion",
+        ] {
+            assert!(playable.contains(name), "{} is not playable", name);
+            assert!(
+                !bestiary.contains(name),
+                "{} should stay out of the generator — see the doc above",
+                name
+            );
+        }
     }
 
     /// Every encounter reports a seed, and replaying that seed

@@ -12914,13 +12914,12 @@ mod tests {
     /// because `ActorInstance::short_rest` chains the two. Writing the
     /// test is what surfaced the drift.
     ///
-    /// What is *not* checked here, and why: a coverage assertion
-    /// ("every registered tag is carried by some template") would be
-    /// the more valuable invariant, and it can't be written honestly
-    /// today. `pc_template_families` is the engine's only template
-    /// registry and it holds class builds only, so a racial feature
-    /// like the Dragonborn's Breath Weapon reads as an orphan against
-    /// it. The gap is in the registry, not in the tag list.
+    /// The coverage half — "every registered tag is carried by some
+    /// template" — lives in its own test below. It was described here as
+    /// unwritable because `pc_template_families` held class builds only,
+    /// so a racial feature like the Dragonborn's Breath Weapon read as
+    /// an orphan against it. The gap was in the registry, and the
+    /// registry has since been filled.
     #[test]
     fn the_short_rest_registry_matches_the_templates_that_use_it() {
         let short_rest: Set<&str> = SHORT_REST_FEATURES.iter().copied().collect();
@@ -12940,6 +12939,49 @@ mod tests {
             both.is_empty(),
             "short_rest chains both registries, so {:?} would refresh twice",
             both
+        );
+    }
+
+    /// Every tag in the two per-rest registries is carried by a template
+    /// something can actually instantiate.
+    ///
+    /// A tag is a `&'static str`, and the two consumers of one — the
+    /// template's `features` set and the registry — are in different
+    /// files with nothing tying them together. A typo in either, or a
+    /// feature whose template was later renamed out from under it, does
+    /// not fail to compile: the tag simply never matches, the charge
+    /// never refreshes on a rest, and every test still passes. This is
+    /// the check that catches it.
+    ///
+    /// The instantiable set is both halves of the engine's answer to
+    /// "what exists" — `pc_template_families` for the playable
+    /// templates, `EncounterInstance::template_pool` for the bestiary.
+    /// Both are needed: roughly half these tags are monster features
+    /// (the Doppelganger's Shapechanger, the Ghost's Horrifying
+    /// Visage), and checking against the playable half alone would
+    /// report them as orphans.
+    #[test]
+    fn every_per_rest_tag_is_carried_by_something_instantiable() {
+        use crate::actors::creatures::pc_template_families;
+        use crate::engine::encounter::EncounterInstance;
+
+        let carried: Set<&str> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_family, templates)| templates)
+            .chain(EncounterInstance::template_pool())
+            .flat_map(|t| t.features.iter().copied())
+            .collect();
+
+        let orphans: Vec<&str> = SHORT_REST_FEATURES
+            .iter()
+            .chain(BATTLE_MASTER_MANEUVERS.iter())
+            .copied()
+            .filter(|tag| !carried.contains(tag))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "registered for a rest but on no instantiable template: {:?}",
+            orphans
         );
     }
 }

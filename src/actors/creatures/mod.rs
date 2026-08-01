@@ -261,7 +261,18 @@ pub mod elks;
 
 use crate::actors::actor_template::CreatureTemplate;
 
-/// Every playable-class template in the engine, grouped by class family.
+/// Every playable template in the engine, grouped by family.
+///
+/// Twelve class families, plus two lineage families whose chassis is a
+/// class but whose identity is a racial trait — the fifteen dragonborn
+/// ancestries and the six single-lineage builds (Tiefling, Aasimar,
+/// Mountain Dwarf, Halfling, Half-Orc, Gnome). Those twenty-one existed
+/// fully implemented and completely unreachable: absent from this
+/// registry so no player could pick them, and absent from
+/// `EncounterInstance::template_pool` so no encounter could roll them.
+/// The only thing that ever instantiated one was a unit test. Listing
+/// them here makes them playable and, more usefully, subjects them to
+/// every sweep below.
 ///
 /// One registry, two consumers today — the `every_pc_class_family_renders_unambiguously`
 /// sweep in `engine::encounter` (no two templates in a family share a
@@ -430,6 +441,37 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*warlocks::EFREETI_WARLOCK_TEMPLATE,
                     &*warlocks::HEXBLADE_WARLOCK_TEMPLATE,
                     &*warlocks::UNDEAD_WARLOCK_TEMPLATE,
+                ],
+            ),
+            (
+                "dragonborn",
+                vec![
+                    &*dragonborn::DRAGONBORN_TEMPLATE,
+                    &*dragonborn::BLACK_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::BLUE_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::GREEN_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::WHITE_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::AMETHYST_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::CRYSTAL_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::EMERALD_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::SAPPHIRE_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::TOPAZ_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::SILVER_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::BRASS_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::BRONZE_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::COPPER_DRAGONBORN_TEMPLATE,
+                    &*dragonborn::GOLD_DRAGONBORN_TEMPLATE,
+                ],
+            ),
+            (
+                "lineage",
+                vec![
+                    &*tieflings::TIEFLING_TEMPLATE,
+                    &*aasimars::AASIMAR_TEMPLATE,
+                    &*dwarves::DWARF_TEMPLATE,
+                    &*halflings::HALFLING_SCOUT_TEMPLATE,
+                    &*half_orcs::HALF_ORC_TEMPLATE,
+                    &*gnomes::GNOME_TEMPLATE,
                 ],
             ),
             (
