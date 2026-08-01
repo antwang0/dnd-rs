@@ -630,169 +630,46 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3j. Holy Aura — level-8 concentration burst centered on the
-        //     caster. Fire when allies are clustered and a fight has
-        //     started. Slot-cheaper than Foresight per ally affected.
-        if let Some(aei) = try_holy_aura(encounter, actor_id) {
+        // 3j. The concentration self-buff cohort, upper half — Holy
+        //     Aura, Spirit Shroud, Bigby's Hand, Tenser's
+        //     Transformation. One rung per table row used to live here,
+        //     each calling a one-line wrapper; see
+        //     `SELF_BUFFS_ABOVE_DUPLICITY`.
+        if let Some(aei) = try_self_buff_pick(encounter, actor_id, SELF_BUFFS_ABOVE_DUPLICITY) {
             return ControllerDecision::Act(aei);
         }
 
-        // 3k. Spirit Shroud — level-3 self concentration. Fire when an
-        //     enemy is in melee so the cold rider lands this round.
-        if let Some(aei) = try_spirit_shroud(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3l. Bigby's Hand — level-5 wizard concentration self-buff
-        //     (persistent +1d10 force per-hit rider). Fire when an
-        //     enemy is in attack reach so the rider lands this turn.
-        if let Some(aei) = try_bigbys_hand(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m. Tenser's Transformation — level-6 wizard concentration
-        //     self-buff (50 temp HP + self-attack-advantage). Fire
-        //     when engaged so the temp HP buffer matters this round.
-        if let Some(aei) = try_tensers_transformation(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m*. Invoke Duplicity — Trickery Domain Cleric Channel
-        //      Divinity (Action, once per short rest). Ten rounds of
-        //      advantage on every attack roll the cleric makes. Sits
-        //      directly under Tenser's Transformation because it is the
-        //      same purchase — an Action spent up front to make every
-        //      later swing land — and above the damage lane for the
-        //      same reason: a turn spent arming pays back over the rest
-        //      of the fight, and paying for it after the shooting
-        //      starts wastes the window it buys.
+        // 3k. Invoke Duplicity — Trickery Domain Cleric Channel
+        //     Divinity (Action, once per short rest). Ten rounds of
+        //     advantage on every attack roll the cleric makes. Sits
+        //     between the two halves of the self-buff cohort because it
+        //     is the same purchase — an Action spent up front to make
+        //     every later swing land — and above the damage lane for
+        //     the same reason: a turn spent arming pays back over the
+        //     rest of the fight, and paying for it after the shooting
+        //     starts wastes the window it buys.
         if let Some(aei) = try_invoke_duplicity(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 3m'. Investiture of Flame — level-6 caster concentration
-        //      self-buff (fire resistance + 1d10 fire melee retaliation).
-        //      Fire when at least one enemy is in attack reach so the
-        //      melee retaliation will trigger this round. Mirrors the
-        //      Bigby's Hand / Tenser's Transformation gates.
-        if let Some(aei) = try_investiture_of_flame(encounter, actor_id) {
+        // 3l. The concentration self-buff cohort, lower half — the four
+        //     Investitures, Wind Wall, Shadow Blade, Antilife Shell, the
+        //     two paladin auras, Holy Weapon and Pass Without Trace. See
+        //     `SELF_BUFFS_BELOW_DUPLICITY` for what each row's
+        //     engagement and ally gates are buying.
+        if let Some(aei) = try_self_buff_pick(encounter, actor_id, SELF_BUFFS_BELOW_DUPLICITY) {
             return ControllerDecision::Act(aei);
         }
 
-        // 3m'a. Investiture of Ice — level-6 caster concentration self-buff
-        //       (cold resistance + 1d10 cold melee retaliation). Symmetric
-        //       to Investiture of Flame; same engagement gate, swapped
-        //       element. The concentration check inside the helper makes
-        //       the two picks mutually exclusive — a caster who already
-        //       holds either invest is correctly skipped.
-        if let Some(aei) = try_investiture_of_ice(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m'a'. Investiture of Stone — level-6 caster concentration self-buff
-        //        (bludgeoning + piercing + slashing resistance + 1d10 force
-        //        melee retaliation). Sibling to Investiture of Flame / Ice
-        //        with a broader resistance envelope (the physical trio) and
-        //        force-typed retaliation (the rarest type to resist). Same
-        //        engagement gate as the elemental siblings; mutually
-        //        exclusive via the concentration short-circuit.
-        if let Some(aei) = try_investiture_of_stone(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m'a''. Investiture of Wind — level-6 caster concentration self-buff
-        //         (ranged-attack disadvantage + +60ft flying). Sibling to the
-        //         Flame / Ice / Stone investitures with a mobility / ranged-
-        //         deflection envelope instead of damage resistance. Engagement
-        //         gate uses the longer 20-tile radius (matching Wind Wall) so
-        //         the deflection rider matters this fight; mutually exclusive
-        //         with the other Investitures via the concentration short-
-        //         circuit shared with the sibling helpers.
-        if let Some(aei) = try_investiture_of_wind(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m''. Wind Wall — level-3 caster concentration self-buff
-        //       (ranged-attack disadvantage). Fire when an enemy sits
-        //       at long range so the deflection rider matters this
-        //       fight. Slot-cheap (lv3) and the bigger concentration
-        //       buffs above (Bigby's Hand / Tenser's / Investiture)
-        //       take priority via earlier branches.
-        if let Some(aei) = try_wind_wall(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m'''. Shadow Blade — level-2 warlock/wizard concentration
-        //        self-buff (advantage on attacks + psychic rider). Fire
-        //        when an enemy is in melee range so the conjured blade
-        //        sees use immediately.
-        if let Some(aei) = try_self_buff_concentration(
-            encounter,
-            actor_id,
-            "shadow blade",
-            Condition::SpiritShrouded,
-            1,
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3m''''. Antilife Shell — level-5 cleric concentration self-buff.
-        //         Push adjacent enemies away and apply Warded. Fire when
-        //         2+ enemies are in melee reach so the push-back matters.
-        if let Some(aei) = try_self_buff_concentration(
-            encounter,
-            actor_id,
-            "antilife shell",
-            Condition::Warded,
-            2,
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3n. Aura of Life — level-4 paladin concentration aura. Fire
-        //     when at least one ally is clustered in the aura radius
-        //     and a fight has started.
-        if let Some(aei) = try_aura_of_life(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3n*. Aura of Purity — level-4 paladin concentration aura,
-        //      same envelope as Aura of Life but trades the killing-blow
-        //      interception for broad debuff immunity (Charmed /
-        //      Frightened / Poisoned + poison resistance). Ordered after
-        //      Aura of Life so the lethality button gets first pick;
-        //      both auras gate on the same engagement + ally-cluster
-        //      check and share the lv4 slot lane via concentration.
-        if let Some(aei) = try_aura_of_purity(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3n''. Holy Weapon — level-5 paladin self concentration buff
-        //       (persistent +2d8 radiant per-hit rider). Fire when an
-        //       enemy is in attack reach so the rider lands this turn.
-        //       Slot-cost is steeper than Spirit Shroud / Bigby's Hand
-        //       so we gate on the same engagement radius.
-        if let Some(aei) = try_holy_weapon(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3n'''. Pass Without Trace — level-2 druid / ranger aura that
-        //        imposes disadvantage on attackers targeting any ally in
-        //        the 30ft sphere. Fire when at least one ally is in the
-        //        aura radius and a fight has started — concentration-
-        //        gated so the caster picks the highest-leverage buff
-        //        across all the lv2-and-up self-buff branches above.
-        if let Some(aei) = try_pass_without_trace(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3n'. Warding Bond — cleric / paladin lv2 abjuration. Touch-
-        //      range damage-share bond: bonded ally gets +1 AC, +1 saves,
-        //      and damage resistance; the caster takes the mirrored
-        //      (post-resistance) damage. Fire on a footprint-adjacent
-        //      ally that isn't already bonded, when the caster has spare
-        //      HP to sink the mirror cost. The action's `custom_validate`
-        //      handles the team / already-bonded / self-target gates.
+        // 3m. Warding Bond — cleric / paladin lv2 abjuration. Touch-
+        //     range damage-share bond: bonded ally gets +1 AC, +1 saves,
+        //     and damage resistance; the caster takes the mirrored
+        //     (post-resistance) damage. Fire on a footprint-adjacent
+        //     ally that isn't already bonded, when the caster has spare
+        //     HP to sink the mirror cost. Not a row on the cohort above
+        //     — it targets an ally rather than the caster, and its gate
+        //     is about the caster's own remaining hit points rather than
+        //     about who is standing where.
         if let Some(aei) = try_warding_bond(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
@@ -1586,287 +1463,219 @@ fn try_armor_of_agathys(
     try_self_action(encounter, actor_id, "armor of agathys")
 }
 
-/// Holy Aura — level-8 concentration burst centered on the caster. Fire
-/// only when at least 2 allies (caster + 1 other) sit within 30ft AND a
-/// hostile is engaged. Single-caster clerics get more value from a
-/// level-2 Hold Person than a level-8 self-only aura, so we gate on
-/// actual ally clustering. Skips re-cast when already concentrating.
-fn try_holy_aura(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::HolyAuraed) {
-        return None;
-    }
-    // Engagement check — don't burn a level-8 slot in an empty room.
-    if !any_enemy_within(encounter, actor_id, 60) {
-        return None;
-    }
-    // Ally-cluster check: 12 tiles = 30ft aura radius. Require at least
-    // 1 other combat-active ally inside (caster is free).
-    if n_actors_within(encounter, actor_id, 12, true, 1) < 1 {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "holy aura")
+/// One row in the concentration self-buff cohort — a spell whose whole
+/// AI decision is the same three questions: am I already concentrating,
+/// is the buff already up, and is anything close enough for it to be
+/// worth a slot this round.
+///
+/// Fifteen of these had fourteen consecutive rungs in the decision
+/// ladder — thirteen of them reached through a one-line wrapper
+/// function that existed only to pass three constants, and two spelled
+/// out inline. The rungs had run out of names: the labels were four
+/// prime marks deep by the end. Every row differs in a name, a
+/// condition, and one or two distances, and in nothing else, which is
+/// what a table is for.
+struct SelfBuffPick {
+    /// Canonical action name, matched the way `try_self_action`
+    /// resolves it.
+    name: &'static str,
+    /// The condition the buff installs. Doubles as the don't-recast
+    /// gate: holding it means the buff is already up.
+    condition: Condition,
+    /// Fire only with a combat-active hostile inside this many tiles.
+    /// This is the value on the row that carries most of the per-spell
+    /// judgement — a melee retaliation rider wants somebody in contact
+    /// (1), a ranged-deflection rider wants somebody far enough away to
+    /// be shooting (20), a party-wide aura only wants the fight to have
+    /// started at all (60).
+    engage_gap: isize,
+    /// `Some(gap)` for the rows that buff the party rather than the
+    /// caster: require at least one *other* combat-active ally inside
+    /// `gap` tiles before spending the slot. `None` for the self-buffs,
+    /// which are worth casting alone.
+    ///
+    /// The distinction is the aura radius, and it is per-spell: Holy
+    /// Aura reaches 30 ft (12 tiles), the paladin auras 15 ft (6). A
+    /// row that got this wrong would fire in a formation the aura
+    /// doesn't actually cover.
+    allies_within: Option<isize>,
 }
 
-/// Spirit Shroud — level-3 concentration self-buff. Fire when an enemy
-/// is in melee reach so the cold rider lands this turn. Concentration-
-/// gated; skip if the holder already concentrates.
-fn try_spirit_shroud(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "spirit shroud",
-        Condition::SpiritShrouded,
-        1,
-    )
-}
+/// The self-buffs that outrank the Trickery Cleric's Invoke Duplicity,
+/// in priority order.
+///
+/// The cohort is split in two because Invoke Duplicity sits between the
+/// halves, and the seam is load-bearing rather than historical: the
+/// baseline cleric list carries both Spirit Shroud and Antilife Shell,
+/// so the Trickery Cleric reaches this cohort twice with a Channel
+/// Divinity decision in the middle. Collapsing the two into one table
+/// would move Antilife Shell above Invoke Duplicity or Spirit Shroud
+/// below it, and either way a template that exists today would start
+/// making a different opening move.
+const SELF_BUFFS_ABOVE_DUPLICITY: &[SelfBuffPick] = &[
+    // Level-8: the party-wide apex aura, and the only row up here that
+    // buffs anyone but the caster — hence the ally gate. Slot-cheaper
+    // than Foresight per ally affected, which is why the rung above
+    // this cohort is Foresight and this is the first row in it.
+    SelfBuffPick {
+        name: "holy aura",
+        condition: Condition::HolyAuraed,
+        engage_gap: 60,
+        allies_within: Some(12),
+    },
+    // Level-3 concentration; the cold rider only lands on a melee
+    // swing, so it wants somebody in contact.
+    SelfBuffPick {
+        name: "spirit shroud",
+        condition: Condition::SpiritShrouded,
+        engage_gap: 1,
+        allies_within: None,
+    },
+    // Level-5 wizard; +1d10 force on every attack the caster makes.
+    // 8 tiles is melee plus close-ranged reach.
+    SelfBuffPick {
+        name: "bigby's hand",
+        condition: Condition::BigbysHanded,
+        engage_gap: 8,
+        allies_within: None,
+    },
+    // Level-6 wizard; 50 temp HP and self-attack advantage. The 30 ft
+    // gate is Holy Aura's — the temp HP buffer wants a fight, not a
+    // contact.
+    SelfBuffPick {
+        name: "tenser's transformation",
+        condition: Condition::Transformed,
+        engage_gap: 12,
+        allies_within: None,
+    },
+];
 
-/// Bigby's Hand — level-5 wizard concentration self-buff. The on-hit
-/// rider lands +1d10 force on every attack the caster makes. Fire when
-/// at least one enemy is within melee + close-ranged reach (8 tiles ≈
-/// 20ft) so the rider lands this round; concentration-gated.
-fn try_bigbys_hand(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "bigby's hand",
-        Condition::BigbysHanded,
-        8,
-    )
-}
+/// The self-buffs that sit below Invoke Duplicity, in priority order.
+///
+/// The four Investitures are mutually exclusive with each other and
+/// with everything else here — `try_self_buff_concentration`'s
+/// concentration short-circuit means the first row that fires ends the
+/// walk for the rest of the fight, so table order *is* the preference
+/// between them.
+const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
+    // Level-6: fire resistance + 1d10 fire melee retaliation.
+    SelfBuffPick {
+        name: "investiture of flame",
+        condition: Condition::InvestedInFlame,
+        engage_gap: 6,
+        allies_within: None,
+    },
+    // Level-6: cold resistance + 1d10 cold melee retaliation.
+    SelfBuffPick {
+        name: "investiture of ice",
+        condition: Condition::InvestedInIce,
+        engage_gap: 6,
+        allies_within: None,
+    },
+    // Level-6: the physical resistance trio + 1d10 force retaliation —
+    // a broader envelope than the elemental pair above, and force is
+    // the rarest damage type to resist.
+    SelfBuffPick {
+        name: "investiture of stone",
+        condition: Condition::InvestedInStone,
+        engage_gap: 6,
+        allies_within: None,
+    },
+    // Level-6: ranged-attack disadvantage + 60 ft of flight. The odd
+    // gate in the family — the deflection clause is the load-bearing
+    // half, so it wants a shooter at range rather than a body in
+    // contact, and 20 tiles matches Wind Wall directly below.
+    SelfBuffPick {
+        name: "investiture of wind",
+        condition: Condition::InvestedInWind,
+        engage_gap: 20,
+        allies_within: None,
+    },
+    // Level-3: the cheap version of Investiture of Wind's deflection
+    // clause, which is why it sits under all four of them.
+    SelfBuffPick {
+        name: "wind wall",
+        condition: Condition::WindWalled,
+        engage_gap: 20,
+        allies_within: None,
+    },
+    // Level-2 warlock / wizard: advantage on attacks plus a psychic
+    // rider, so it wants contact.
+    SelfBuffPick {
+        name: "shadow blade",
+        condition: Condition::SpiritShrouded,
+        engage_gap: 1,
+        allies_within: None,
+    },
+    // Level-5 cleric: pushes adjacent enemies off and installs Warded.
+    SelfBuffPick {
+        name: "antilife shell",
+        condition: Condition::Warded,
+        engage_gap: 2,
+        allies_within: None,
+    },
+    // Level-4 paladin: intercepts a killing blow on anyone in the 15 ft
+    // aura. Ahead of Aura of Purity because the lethality button gets
+    // first pick when both are affordable and only one can be held.
+    SelfBuffPick {
+        name: "aura of life",
+        condition: Condition::DeathWarded,
+        engage_gap: 60,
+        allies_within: Some(6),
+    },
+    // Level-4 paladin, same envelope: Charmed / Frightened / Poisoned
+    // immunity and poison resistance instead of the interception.
+    SelfBuffPick {
+        name: "aura of purity",
+        condition: Condition::Purified,
+        engage_gap: 60,
+        allies_within: Some(6),
+    },
+    // Level-5 paladin: +2d8 radiant on every weapon hit. Same 20 ft
+    // engagement envelope as Bigby's Hand, and for the same reason —
+    // the rider is worthless until something is in reach.
+    SelfBuffPick {
+        name: "holy weapon",
+        condition: Condition::HolyWeaponed,
+        engage_gap: 8,
+        allies_within: None,
+    },
+    // Level-2 druid / ranger: disadvantage on attacks against anyone in
+    // the 30 ft sphere. No ally gate despite being an aura — the caster
+    // is inside their own sphere, so a solo druid still collects it,
+    // which is the one place the two aura shapes genuinely differ.
+    SelfBuffPick {
+        name: "pass without trace",
+        condition: Condition::Untracked,
+        engage_gap: 60,
+        allies_within: None,
+    },
+];
 
-/// Tenser's Transformation — level-6 wizard concentration self-buff.
-/// Grants 50 temp HP plus advantage on weapon attacks. Concentration-
-/// gated; fire only when engaged so the temp HP buffer matters.
-fn try_tensers_transformation(
+/// Walk a self-buff cohort in order and return the first row that
+/// passes `try_self_buff_concentration`'s gate.
+fn try_self_buff_pick(
     encounter: &EncounterInstance,
     actor_id: usize,
+    picks: &[SelfBuffPick],
 ) -> Option<ActionExecutionInfo> {
-    // 30ft engagement radius — same envelope as Holy Aura's gate.
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "tenser's transformation",
-        Condition::Transformed,
-        12,
-    )
-}
-
-/// Investiture of Flame — level-6 caster concentration self-buff. The
-/// holder gains fire resistance and 1d10 fire retaliation on melee
-/// hits. Concentration-gated; skip when already invested (the install
-/// site's `custom_validate_input` also blocks this, but the explicit
-/// gate keeps the picker from re-considering the action on every turn).
-/// Engagement gate: at least one enemy within 6 tiles (~15ft) so a
-/// melee swing actually arrives before the buff times out.
-fn try_investiture_of_flame(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "investiture of flame",
-        Condition::InvestedInFlame,
-        6,
-    )
-}
-
-/// Investiture of Ice — level-6 caster concentration self-buff (cold
-/// resistance + 1d10 cold melee retaliation). Symmetric to
-/// `try_investiture_of_flame`: same engagement gate, swapped condition.
-/// The two are mutually exclusive (concentration-bound on both), so the
-/// `is_concentrating` short-circuit inside `try_self_buff_concentration`
-/// keeps a caster from double-priming.
-fn try_investiture_of_ice(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "investiture of ice",
-        Condition::InvestedInIce,
-        6,
-    )
-}
-
-/// Investiture of Stone — level-6 caster concentration self-buff
-/// (bludgeoning + piercing + slashing resistance + 1d10 force melee
-/// retaliation). Sibling to `try_investiture_of_flame` /
-/// `try_investiture_of_ice`: same engagement gate, swapped condition.
-/// Mutually exclusive with the elemental siblings via the
-/// `is_concentrating` short-circuit inside `try_self_buff_concentration`.
-fn try_investiture_of_stone(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "investiture of stone",
-        Condition::InvestedInStone,
-        6,
-    )
-}
-
-/// Investiture of Wind — level-6 caster concentration self-buff (ranged
-/// attacks against caster have disadvantage + +60ft flying speed).
-/// Sibling to `try_investiture_of_flame` / `try_investiture_of_ice` /
-/// `try_investiture_of_stone`, but the engagement gate uses the longer
-/// 20-tile radius matching Wind Wall: the ranged-deflection clause is
-/// the load-bearing rider, so the buff wants a longer engagement window
-/// before the slot is spent. Mutually exclusive with the other
-/// Investitures via the `is_concentrating` short-circuit inside
-/// `try_self_buff_concentration`.
-fn try_investiture_of_wind(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "investiture of wind",
-        Condition::InvestedInWind,
-        20,
-    )
-}
-
-/// Wind Wall — level-3 evocation, concentration. Self-buff that imposes
-/// disadvantage on ranged attacks against the caster. Concentration-
-/// gated; fire when at least one enemy with a ranged weapon is within
-/// ~20 tiles (50ft) so the buff matters this round. We approximate
-/// "ranged threat" by checking any enemy within range — the engine
-/// doesn't model intent, but the disadvantage rider lands the moment
-/// any ranged attack arrives so the buff is cheap insurance.
-fn try_wind_wall(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    // 20 tiles ≈ 50ft — typical longbow range. If no enemy can shoot
-    // us yet, skip; the concentration slot is better held for an
-    // active fight.
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "wind wall",
-        Condition::WindWalled,
-        20,
-    )
-}
-
-/// Aura of Life — level-4 paladin concentration aura. Fires when at
-/// least one ally sits in the 30ft radius and a hostile is engaged.
-/// Concentration-gated; skip re-cast when the caster already holds the
-/// DeathWarded buff (i.e. the aura is already up on them).
-fn try_aura_of_life(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::DeathWarded) {
-        // The aura installs DeathWarded on the caster; if the caster
-        // already has it, the aura is presumed active.
-        return None;
-    }
-    // Engagement check — don't burn a level-4 slot in an empty room.
-    if !any_enemy_within(encounter, actor_id, 60) {
-        return None;
-    }
-    // Ally-cluster check: 6 tiles = 30ft aura radius. Require at least
-    // 1 other combat-active ally inside.
-    if n_actors_within(encounter, actor_id, 6, true, 1) < 1 {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "aura of life")
-}
-
-/// Aura of Purity — level-4 paladin concentration aura. Mirrors the
-/// Aura of Life gate shape (concentration-free, ally-cluster, enemy
-/// engaged) but skips re-cast when the caster already holds the
-/// Purified condition instead of DeathWarded. The two auras burn the
-/// same lv4 slot lane, so the AI's decision loop picks the first one
-/// to clear its gates and the other naturally backs off via the
-/// `is_concentrating()` check.
-fn try_aura_of_purity(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::Purified) {
-        return None;
-    }
-    if !any_enemy_within(encounter, actor_id, 60) {
-        return None;
-    }
-    if n_actors_within(encounter, actor_id, 6, true, 1) < 1 {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "aura of purity")
-}
-
-/// Holy Weapon — level-5 paladin concentration self-buff. Every weapon
-/// hit lands +2d8 radiant via the on_hit_riders table for the duration.
-/// Same engagement gate as Spirit Shroud / Bigby's Hand — fire when an
-/// enemy is within attack reach so the rider matters this round. The
-/// action's `custom_validate_input` covers the not-already-concentrating
-/// and not-already-buffed clauses.
-fn try_holy_weapon(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    // 8 tiles ≈ 20ft — same envelope as Bigby's Hand. A paladin who
-    // hasn't engaged yet should save the lv5 slot for the actual fight.
-    try_self_buff_concentration(
-        encounter,
-        actor_id,
-        "holy weapon",
-        Condition::HolyWeaponed,
-        8,
-    )
-}
-
-/// Pass Without Trace — level-2 druid / ranger aura. Cloaks every ally
-/// inside the 30ft sphere (12 tiles), imposing disadvantage on attackers
-/// targeting them for the duration. Fires when the caster isn't already
-/// concentrating, isn't already cloaked, and at least one ally sits in
-/// the radius (the caster covers themselves for free, so a solo caster
-/// can fire too — the aura still buffs the caster). The engagement gate
-/// keeps the slot from burning in an empty room.
-fn try_pass_without_trace(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::Untracked) {
-        return None;
-    }
-    // Engagement check — don't burn a lv2 slot in an empty room.
-    if !any_enemy_within(encounter, actor_id, 60) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "pass without trace")
+    picks.iter().find_map(|pick| {
+        // The ally-cluster gate is the row's own, not the shared one:
+        // `try_self_buff_concentration` answers "is this worth a slot
+        // at all", and this answers "is anybody standing in it".
+        if let Some(gap) = pick.allies_within
+            && n_actors_within(encounter, actor_id, gap, true, 1) < 1
+        {
+            return None;
+        }
+        try_self_buff_concentration(
+            encounter,
+            actor_id,
+            pick.name,
+            pick.condition,
+            pick.engage_gap,
+        )
+    })
 }
 
 /// Ordered roster of the "bonus action; spend a per-rest charge to
@@ -3443,9 +3252,9 @@ fn try_self_action_inc_items(
 /// - at least one combat-active enemy is within `engage_radius` tiles
 ///   (don't burn the slot in an empty room).
 ///
-/// Used by `try_bigbys_hand` / `try_tensers_transformation` /
-/// `try_investiture_of_flame` / `try_spirit_shroud` — every
-/// concentration-bound self-buff with the same three-step gate.
+/// Every caller reaches it through `try_self_buff_pick`, which walks
+/// one of the two `SelfBuffPick` cohorts — this is the gate, and the
+/// cohorts are the ten spells that want it.
 fn try_self_buff_concentration(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -5977,6 +5786,55 @@ mod tests {
     use crate::engine::side_effects::Resource;
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::DamageType;
+
+    /// Every name in the self-buff cohorts belongs to an action some
+    /// registered PC template actually carries.
+    ///
+    /// The rows are matched against the actor's action list by string,
+    /// so a typo, a renamed spell, or a pick for a spell nothing has
+    /// been given is not an error anywhere — it is a row that silently
+    /// never fires. That is exactly the failure the twenty-one
+    /// unreachable lineage templates had before the registry existed,
+    /// and it is invisible for the same reason: nothing asks.
+    #[test]
+    fn every_self_buff_pick_names_an_action_a_template_carries() {
+        use crate::actors::creatures::pc_template_families;
+        let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (_family, templates) in pc_template_families() {
+            for t in templates {
+                for a in &t.actions {
+                    known.insert(a.name());
+                }
+            }
+        }
+        for pick in SELF_BUFFS_ABOVE_DUPLICITY
+            .iter()
+            .chain(SELF_BUFFS_BELOW_DUPLICITY.iter())
+        {
+            assert!(
+                known.contains(pick.name),
+                "self-buff pick '{}' names no action on any registered PC template",
+                pick.name
+            );
+        }
+    }
+
+    /// The two cohorts are disjoint. A spell listed on both sides of the
+    /// Invoke Duplicity seam would be reconsidered after the Channel
+    /// Divinity rung had already declined to fire, which reads as a
+    /// priority decision and is really a copy-paste.
+    #[test]
+    fn the_self_buff_cohorts_do_not_overlap() {
+        for above in SELF_BUFFS_ABOVE_DUPLICITY {
+            for below in SELF_BUFFS_BELOW_DUPLICITY {
+                assert_ne!(
+                    above.name, below.name,
+                    "'{}' appears on both sides of the seam",
+                    above.name
+                );
+            }
+        }
+    }
 
     /// Every playable template, driven by the AI, gets through a whole
     /// fight without panicking, without asking for player input, and
