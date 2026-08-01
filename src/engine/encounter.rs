@@ -92,7 +92,8 @@ use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
 use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use crate::actors::creatures::dragons::{
-    ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
+    ADULT_GREEN_DRAGON_TEMPLATE, ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE,
+    YOUNG_WHITE_DRAGON_TEMPLATE,
 };
 use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
 use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
@@ -5573,6 +5574,7 @@ impl EncounterInstance {
             &ADULT_RED_DRAGON_TEMPLATE,
             &YOUNG_WHITE_DRAGON_TEMPLATE,
             &ANCIENT_BLUE_DRAGON_TEMPLATE,
+            &ADULT_GREEN_DRAGON_TEMPLATE,
             // Mid / low-CR fill-ins added alongside the new templates:
             // Giant Eagle (CR 1 large beast — aerial), Sahuagin (CR ½
             // humanoid w/ Blood Frenzy), Lizardfolk (CR ½ humanoid, sturdy
@@ -73928,6 +73930,207 @@ mod tests {
                 e.actors[&downed].hitpoints() > 0,
                 "{} should have lifted the downed ally",
                 spell.name()
+            );
+        }
+    }
+
+    /// Every `pub static` action in the action modules is referenced by
+    /// something outside them — a template, an item, or the AI.
+    ///
+    /// The engine has shipped fully-written, fully-correct actions that
+    /// no player could ever pick, more than once. Warding Wind was a
+    /// complete `impl Action` on nobody's list. So was the green
+    /// dragon's poison breath, the only breath weapon on the chassis
+    /// that rolls a Constitution save. So was the Hobgoblin Warlord's
+    /// Multiattack, named after the one template that did not carry it.
+    /// None of them failed anything: an action nothing references is
+    /// not a compile error, not a dead-code warning (they are `pub`),
+    /// and not a test failure. It is simply content that does not
+    /// exist, and the only symptom is its absence.
+    ///
+    /// This reads the source rather than a registry because a registry
+    /// is the thing that gets forgotten. A new spell is reachable when
+    /// some template names it, and that is exactly what this looks for.
+    ///
+    /// A genuinely caster-less action — one reached only through a
+    /// mechanism the sweep cannot see — belongs on `EXEMPT` with the
+    /// reason, the same bargain the slot-heal sweep makes.
+    #[test]
+    fn every_action_written_is_an_action_something_can_reach() {
+        use std::collections::{HashMap, HashSet};
+        use std::path::Path;
+
+        /// Drop `//`-style comments so a name that survives only in
+        /// prose doesn't read as a use. Without this the sweep is
+        /// almost useless: the natural way to unwire an action is to
+        /// comment out the line that pushes it, and the commented line
+        /// still contains the name. Doc comments count too — most of
+        /// the templates in this codebase name their neighbours in
+        /// prose, and one of those mentions would have kept a genuinely
+        /// unreachable action looking reached.
+        fn strip_comments(text: &str) -> String {
+            text.lines()
+                .map(|line| match line.find("//") {
+                    Some(i) => &line[..i],
+                    None => line,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        /// Actions that are deliberately unreferenced, with the reason.
+        const EXEMPT: &[(&str, &str)] = &[];
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let action_modules = [
+            "actions/spells.rs",
+            "actions/class_features.rs",
+            "actions/class_attacks.rs",
+            "actions/metamagic.rs",
+            "actions/item_actions.rs",
+            "actions/monster_attacks.rs",
+        ];
+
+        // Collect every `pub static NAME` declared in the action
+        // modules, and the file it came from.
+        let mut declared: HashMap<String, &str> = HashMap::new();
+        let mut own_text = String::new();
+        for rel in action_modules {
+            let text = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|e| panic!("reading {}: {}", rel, e));
+            for line in text.lines() {
+                let line = line.trim_start();
+                let Some(rest) = line.strip_prefix("pub static ") else {
+                    continue;
+                };
+                let Some(name) = rest.split(':').next() else {
+                    continue;
+                };
+                let name = name.trim();
+                if !name.is_empty() && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+                    declared.insert(name.to_string(), rel);
+                }
+            }
+            own_text.push_str(&text);
+        }
+        let own_code = strip_comments(&own_text);
+        assert!(
+            declared.len() > 500,
+            "the scan found only {} action statics, which means it stopped \
+             matching the source rather than that the actions went away",
+            declared.len()
+        );
+
+        // Every identifier mentioned anywhere outside the action
+        // modules. Templates, the item catalog and the AI all live
+        // here, and naming an action from any of them makes it
+        // reachable.
+        let mut referenced: HashSet<String> = HashSet::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("walking src/") {
+                let path = entry.expect("a readable dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let rel = path.strip_prefix(&root).expect("under src/");
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                if action_modules.contains(&rel.as_str()) {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("a readable source file");
+                for token in strip_comments(&text)
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                {
+                    if !token.is_empty() {
+                        referenced.insert(token.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut unreachable: Vec<(&str, &str)> = Vec::new();
+        for (name, rel) in &declared {
+            if EXEMPT.iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            if referenced.contains(name) {
+                continue;
+            }
+            // A static named only by its own module is still reachable
+            // if another action lists it — Multiattack sub-attacks and
+            // the `DEFAULT_ACTIONS` roster both work that way. Two
+            // mentions means the declaration plus a use.
+            if own_code.matches(name.as_str()).count() > 1 {
+                continue;
+            }
+            unreachable.push((name.as_str(), rel));
+        }
+        unreachable.sort_unstable();
+        assert!(
+            unreachable.is_empty(),
+            "these actions are written but nothing can reach them — put each on a \
+             template, or on EXEMPT with a reason: {:?}",
+            unreachable
+        );
+    }
+
+    /// The green dragon's breath is a Constitution save, and its three
+    /// siblings' are Dexterity.
+    ///
+    /// This is the whole reason the template exists rather than being a
+    /// recolour of the red. Every other burst on the dragon chassis
+    /// rewards the same answers — Evasion, a high-DEX chassis, spread
+    /// out — and an inhaled cloud ignores all three. The breath weapon
+    /// was written that way and then sat on no template at all, so
+    /// nothing had ever rolled it.
+    #[test]
+    fn the_green_dragons_cloud_is_inhaled_rather_than_dodged() {
+        use crate::actors::creatures::dragons::{
+            ADULT_GREEN_DRAGON_TEMPLATE, ADULT_RED_DRAGON_TEMPLATE,
+            ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
+        };
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        for (template, breath, save) in [
+            (&*ADULT_GREEN_DRAGON_TEMPLATE, "poison breath", "Constitution"),
+            (&*ADULT_RED_DRAGON_TEMPLATE, "fire breath", "Dexterity"),
+            (&*ANCIENT_BLUE_DRAGON_TEMPLATE, "lightning breath", "Dexterity"),
+            (&*YOUNG_WHITE_DRAGON_TEMPLATE, "cold breath", "Dexterity"),
+        ] {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            let dragon = e
+                .instantiate_creature(template, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+                .unwrap();
+            let action = e.actors[&dragon]
+                .find_action(breath)
+                .unwrap_or_else(|| panic!("{} should carry \"{}\"", template.name, breath));
+            let loc = e.actors[&victim].location();
+            e.pop_prompt();
+            let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![loc]), None);
+            assert!(
+                aei.validate(&e),
+                "{} should be able to breathe on a target 4 tiles away",
+                template.name
+            );
+            let before = e.messages().len();
+            e.push_action(aei);
+            e.process_stack();
+            let log = e.messages()[before..].join("\n");
+            assert!(
+                log.contains(&format!("{} save", save)),
+                "{}'s {} should force a {} save; log was:\n{}",
+                template.name,
+                breath,
+                save,
+                log
             );
         }
     }

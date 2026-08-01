@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    DRAGON_BITE, DRAGON_BREATH_COLD, DRAGON_BREATH_FIRE, DRAGON_BREATH_LIGHTNING, DRAGON_CLAW,
-    DRAGON_MULTI, FRIGHTFUL_PRESENCE,
+    DRAGON_BITE, DRAGON_BREATH_COLD, DRAGON_BREATH_FIRE, DRAGON_BREATH_LIGHTNING,
+    DRAGON_BREATH_POISON, DRAGON_CLAW, DRAGON_MULTI, FRIGHTFUL_PRESENCE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -165,6 +165,73 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
+        has_extra_attack: true,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Adult Green Dragon — CR 15 dragon, and the one the engine's poison
+/// breath was written for.
+///
+/// `DRAGON_BREATH_POISON` has existed for as long as its three
+/// elemental siblings: a complete `BreathWeapon` with the MM's 12d6,
+/// DC 21, 60-ft cone, and the one detail that makes it worth having —
+/// a **Constitution** save rather than the DEX save every other breath
+/// on the chassis rolls, because the cloud is inhaled rather than
+/// dodged. No template carried it, so no encounter could roll it and
+/// no test could see it. The same way Warding Wind sat unreachable on
+/// the spell list.
+///
+/// Sits between the Young White (CR 6) and the Ancient Blue (CR 23) on
+/// the dragon ladder, which is also where it belongs mechanically: one
+/// legendary resistance rather than the ancient's three, Frightful
+/// Presence, and no legendary actions. AC 19, ~207 average HP.
+///
+/// The CON breath is what makes it play differently from its siblings
+/// rather than being a recolour. Every DEX-save burst in the game
+/// rewards the same answers — Evasion, a high-DEX chassis, spreading
+/// out — and the green dragon's cloud ignores all three. A rogue who
+/// walks through Fire Breath for nothing takes the poison in full.
+///
+/// Glyph 'G' for the **G**reen. Distinct from the red 'R', white 'W'
+/// and blue 'B' already on the ladder.
+pub static ADULT_GREEN_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*DRAGON_MULTI);
+    actions.push(&DRAGON_BITE);
+    actions.push(&DRAGON_CLAW);
+    actions.push(&DRAGON_BREATH_POISON);
+    actions.push(&*FRIGHTFUL_PRESENCE);
+    CreatureTemplate {
+        name: "Adult Green Dragon",
+        glyph: 'G',
+        ac: 19,
+        // 17d12+102 = 207 average per MM (CR 15).
+        hitpoints: "17d12+102".parse().unwrap(),
+        speed: 40.,
+        strength: 23,
+        intelligence: 18,
+        dexterity: 12,
+        wisdom: 15,
+        constitution: 21,
+        charisma: 17,
+        senses: HashSet::from([
+            SpecialSense::Blindsight(60),
+            SpecialSense::Darkvision(120),
+        ]),
+        languages: HashSet::from([Language::Common, Language::Draconic]),
+        cr: 15.0,
+        size: Size::Large,
+        creature_type: CreatureType::Dragon,
+        actions,
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        proficient_saves: DRAGON_LEGENDARY_SAVES.clone(),
+        // MM gives the adult green poison immunity, which carries the
+        // Poisoned condition immunity with it.
+        condition_immunities: HashSet::from([Condition::Poisoned]),
+        // Adults get legendary resistances but not the ancient's three.
+        legendary_resistances: 1,
+        recharge_abilities: vec![("breath_weapon", 5)],
         has_extra_attack: true,
         ..CreatureTemplate::defaults()
     }
