@@ -2243,6 +2243,30 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// Frightened targets" subclass rider) lands as another closure
     /// here without widening the helper.
     pub target_gate: fn(&ActorInstance) -> bool,
+    /// Condition the rider lays on the target alongside its die, or
+    /// `None` for the eight rows that are damage and nothing else.
+    ///
+    /// The Way of Mercy Monk's Hand of Harm is the first row with one:
+    /// RAW's Physician's Touch clause makes the necrotic strike poison
+    /// its target as well, and every other rider on this cohort happens
+    /// to be pure damage. A `RiderCondition` rather than a bare
+    /// `Condition` because the timer is as much part of the clause as
+    /// the flag — "until the end of your next turn" and "for a minute"
+    /// are different features.
+    ///
+    /// Installed through the ordinary `ApplyCondition` path, so target-
+    /// side immunity applies: a poison-immune target takes the die and
+    /// shrugs off the flag, which is what RAW asks for and what a
+    /// hand-rolled install here would have had to remember.
+    pub installs: Option<RiderCondition>,
+}
+
+/// A condition an `OncePerTurnWeaponRiderSpec` lays on its target, and
+/// how long it sticks. Split out of the spec so the row reads as a
+/// labeled pair rather than a tuple whose halves have to be counted.
+pub struct RiderCondition {
+    pub condition: crate::conditions::Condition,
+    pub timer: crate::conditions::ConditionTimer,
 }
 
 /// Fire a once-per-turn weapon-hit +XdY typed die rider — the shared shape
@@ -2306,6 +2330,19 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
         (spec.damage_type)(p),
         spec.label,
     );
+    // Rows that carry a condition lay it alongside the die. Queued as a
+    // side effect rather than written straight onto the actor so it
+    // lands in the same ordering as the damage and picks up the
+    // immunity / logging that `ApplyCondition` already owns.
+    if let Some(rider) = &spec.installs {
+        effects.push(Box::new(
+            crate::engine::side_effects::ApplyCondition {
+                actor_id: p.target_id,
+                condition: rider.condition,
+                timer: rider.timer,
+            },
+        ));
+    }
     if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
         caster.mark_once_per_turn_used(spec.tag);
     }
@@ -2366,6 +2403,9 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///     docstring); the Psi Warrior's distinguishing feature is the
 ///     Protective Field row on `REACTIVE_DAMAGE_CLAMPS`, not this
 ///     rider.
+///   - **Hand of Harm** (Way of Mercy Monk lv3, TCE): +1d6 Necrotic,
+///     no target gate, and the only row that also installs a condition
+///     — Physician's Touch's Poisoned rider. See its `installs` field.
 pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
@@ -2373,6 +2413,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |p| p.damage_type,
         label: "colossus slayer",
         target_gate: |t| t.is_wounded(),
+        installs: None,
     },
     // 5e Way of the Kensei Monk **Deft Strike** (subclass level 6):
     // "when you hit a target with a kensei weapon, you can spend 1 ki
@@ -2388,6 +2429,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |p| p.damage_type,
         label: "deft strike",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
@@ -2395,6 +2437,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |_| DamageType::Psychic,
         label: "dreadful strikes",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
@@ -2402,6 +2445,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |_| DamageType::Psychic,
         label: "psychic blades",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PLANAR_WARRIOR_TAG,
@@ -2409,6 +2453,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |_| DamageType::Force,
         label: "planar warrior",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::SLAYERS_PREY_TAG,
@@ -2416,6 +2461,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |p| p.damage_type,
         label: "slayer's prey",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::GATHERED_SWARM_TAG,
@@ -2423,6 +2469,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |_| DamageType::Piercing,
         label: "gathered swarm",
         target_gate: |_| true,
+        installs: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSIONIC_STRIKE_TAG,
@@ -2430,6 +2477,40 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         damage_type: |_| DamageType::Force,
         label: "psionic strike",
         target_gate: |_| true,
+        installs: None,
+    },
+    // 5e Way of Mercy Monk **Hand of Harm** (subclass lv3) with
+    // **Physician's Touch** (lv6) folded in: the monk's hand carries
+    // the disease it usually cures. +1d6 necrotic — the martial arts
+    // die at this chassis — and the target is Poisoned until the end of
+    // the monk's next turn.
+    //
+    // The only row on this cohort that installs anything, and the row
+    // that is worth more for what it installs than for what it rolls: a
+    // Poisoned target attacks at disadvantage and saves at
+    // disadvantage, which is a bigger swing than 3.5 damage against
+    // anything the monk is likely to be standing next to.
+    //
+    // RAW gates the rider on an *unarmed* strike and prices it at 1 ki.
+    // Both are dropped for the reasons Deft Strike directly above drops
+    // its kensei-weapon gate and its ki cost: there is no ki pool here,
+    // the once-per-turn cap is the limiting resource, and the monk
+    // chassis swings unarmed anyway.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::HAND_OF_HARM_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |_| DamageType::Necrotic,
+        label: "hand of harm",
+        target_gate: |_| true,
+        installs: Some(RiderCondition {
+            condition: crate::conditions::Condition::Poisoned,
+            // RAW: "until the end of your next turn." The engine's
+            // nearest timer is one round, which expires at the start of
+            // the monk's next turn rather than its end — half a turn
+            // short, and the same rounding every `Rounds(1)` debuff in
+            // the engine already makes.
+            timer: crate::conditions::ConditionTimer::Rounds(1),
+        }),
     },
 ];
 

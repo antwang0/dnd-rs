@@ -2538,6 +2538,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // mechanism, different purpose — which is the argument for the
     // ledger being keyed by plain tag rather than by rider identity.
     ANCESTRAL_PROTECTORS_TAG,
+    HAND_OF_HARM_TAG,
     // Also not a damage rider: Form of Dread uses the ledger to enforce
     // RAW's "once on each of your turns" on its fear rider, which keeps
     // the form itself alive across the trigger where
@@ -3756,6 +3757,188 @@ impl Action for WholenessOfBody {
 }
 
 pub static WHOLENESS_OF_BODY: LazyLock<WholenessOfBody> = LazyLock::new(|| WholenessOfBody {});
+
+/// 5e Way of Mercy Monk **Hand of Harm** (subclass level 3) feature
+/// tag, with **Physician's Touch**'s poison clause (lv6) folded in.
+/// Passive once-per-turn weapon-hit rider: +1d6 necrotic and Poisoned
+/// on the target. Lives as a row on
+/// `engine::attack::ONCE_PER_TURN_WEAPON_DIE_RIDERS` and as a key on
+/// the shared `ONCE_PER_TURN_RIDER_TAGS` ledger, so nothing reads it as
+/// an action — the monk's ordinary unarmed strike carries it.
+///
+/// Sibling to `TOUCH_OF_DEATH_TAG` (Long Death Monk lv3) on the "monk
+/// subclass whose flavour is necrotic" lane and the exact inverse of
+/// the same subclass's Hand of Healing: one hand mends, the other
+/// sickens, and the RAW subclass is built on the pair being the same
+/// gesture.
+pub const HAND_OF_HARM_TAG: &str = "monk.hand_of_harm";
+
+/// Conditions **Physician's Touch** (Way of Mercy Monk lv6) lifts when
+/// Hand of Healing lands. RAW's list exactly: "blinded, deafened,
+/// paralyzed, poisoned, or stunned."
+///
+/// Ordered heaviest-first, because `RemoveOneOfConditions` pops the
+/// first match and RAW lets the monk choose. Paralyzed costs its holder
+/// every turn they have left; Deafened costs almost nothing in this
+/// engine. A monk who would rather cure the deafness than the paralysis
+/// is not a case worth modelling.
+///
+/// Deliberately narrower than `CLEANSING_TOUCH_DEBUFFS`, which lifts
+/// any spell effect. This is a physician's list — five afflictions of
+/// the body — and it does not touch Charmed, Frightened, or any of the
+/// curses and marks on the paladin's list.
+pub const PHYSICIANS_TOUCH_CLEANSES: &[Condition] = &[
+    Condition::Paralyzed,
+    Condition::Stunned,
+    Condition::Blinded,
+    Condition::Poisoned,
+    Condition::Deafened,
+];
+
+/// Hand of Healing — Way of Mercy Monk lv3 subclass action, with
+/// **Physician's Touch** (lv6) folded in. Bonus action; one ally within
+/// reach is healed for `1d6 + WIS modifier` and loses one of the five
+/// afflictions in `PHYSICIANS_TOUCH_CLEANSES`.
+///
+/// **At-will, and RAW prices it in ki.** That is the same trade Flurry
+/// of Blows, Patient Defense, Step of the Wind and Deft Strike already
+/// make on this chassis: the engine has no ki pool, and the bonus
+/// action *is* the monk's scarce resource. A monk who spends their
+/// bonus action mending has given up the Flurry, the Dodge, the
+/// disengage-dash and the Stunning Strike prime for that round, which
+/// is a real cost and the reason this doesn't need an artificial
+/// charge on top of it.
+///
+/// **A bonus action, and RAW makes it an Action** until level 11, when
+/// Flurry of Healing and Harm moves it onto the Flurry's bonus action.
+/// The monk chassis here already ships Empty Body (RAW lv18) and
+/// Diamond Soul (RAW lv14), so the lv11 version is the one that belongs
+/// on it — and the Action-cost version would be unpickable anyway: an
+/// Action on this chassis is two unarmed strikes, and no controller
+/// would ever trade them for five hit points.
+///
+/// **The cleanse is what makes it a subclass feature** rather than a
+/// small heal. Nothing else on the roster lifts Paralyzed or Stunned
+/// for less than a level-5 slot (Greater Restoration) or a paladin's
+/// once-per-rest Cleansing Touch. A Mercy monk standing next to a
+/// paralyzed fighter can hand them their turn back every round, for
+/// free, and still have their Action to swing with.
+///
+/// RAW's "a creature you touch" includes the monk. It is written as an
+/// ally-only touch here because the monk already has Wholeness of Body
+/// for themselves, and because `try_support_heal` — the AI rung that
+/// finds this action — walks allies other than the caster. A self-target
+/// lane would be a second gate for a strictly worse self-heal.
+pub struct HandOfHealing {}
+
+impl Action for HandOfHealing {
+    fn name(&self) -> &str {
+        "hand of healing"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hoh", "mercy-heal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW: touch.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // Allies only, and only ones the touch can still do something
+        // for — a target at full HP with nothing to cleanse would burn
+        // the monk's bonus action on a no-op. A dying ally is always
+        // worth touching: the heal is what stands them back up.
+        if target.team() != caster.team() {
+            return false;
+        }
+        if !target.is_combat_active() && !target.is_dying() {
+            return false;
+        }
+        target.is_wounded()
+            || PHYSICIANS_TOUCH_CLEANSES
+                .iter()
+                .any(|&c| target.has_condition(c))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Martial arts die + WIS modifier, RAW. The die is the monk's,
+        // the modifier is the monk's — the target contributes nothing,
+        // which is why both reads are off the caster.
+        let wis = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.ability_modifier(AbilityScoreType::Wisdom))
+            .unwrap_or(0);
+        let rolled = encounter.roll(&Dice::new(1, 6)) as i32;
+        let amount = (rolled + wis).max(1) as u32;
+        let target_name = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "  hand of healing: monk mends {} for {} HP.",
+            target_name, amount
+        ));
+        vec![
+            Box::new(Heal {
+                actor_id: target_id,
+                amount,
+            }),
+            Box::new(crate::engine::side_effects::RemoveOneOfConditions {
+                actor_id: target_id,
+                candidates: PHYSICIANS_TOUCH_CLEANSES.to_vec(),
+            }),
+        ]
+    }
+}
+
+pub static HAND_OF_HEALING: LazyLock<HandOfHealing> = LazyLock::new(|| HandOfHealing {});
 
 /// Class-feature tag for the Monk's **Empty Body** (RAW: level 18 monk
 /// capstone-adjacent, once per long rest). Action; the monk spends 4 ki

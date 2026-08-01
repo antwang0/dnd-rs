@@ -599,3 +599,70 @@ pub static SUN_SOUL_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// Way of Mercy Monk — subclass build (TCE). The roster's first monk
+/// whose hands do something other than damage, and the only support
+/// build on a chassis that has otherwise been six variations on
+/// "unarmed strike, with a rider".
+///
+/// **Hand of Healing** (lv3, with lv6 **Physician's Touch** folded in)
+/// is a bonus-action touch that mends `1d6 + WIS` and lifts one of
+/// Paralyzed, Stunned, Blinded, Poisoned or Deafened. The heal is
+/// small; the cleanse is not. Nothing else on the roster ends Paralyzed
+/// or Stunned without a level-5 slot or a paladin's once-per-rest
+/// Cleansing Touch, and this one does it every round, for free, while
+/// the monk's Action is still available to swing with. A Mercy monk
+/// standing beside a paralyzed fighter is handing back a whole turn per
+/// round.
+///
+/// **Hand of Harm** (lv3, with the same lv6 feature's poison clause) is
+/// the same gesture inverted: once per turn the monk's strike carries
+/// +1d6 necrotic and leaves the target Poisoned. It rides
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS` next to Deft Strike and Psychic
+/// Blades, and it is the first row on that cohort that installs a
+/// condition — which is where most of its value is. Poisoned means
+/// disadvantage on attacks *and* on saves, and the monk's own Stunning
+/// Strike is a save the target now rolls at disadvantage.
+///
+/// That pairing is the subclass. Every other monk here spends its bonus
+/// action to swing more (Flurry), to swing safer (Patient Defense), or
+/// to reposition (Step of the Wind); this one can spend it on somebody
+/// else's turn instead. And the two hands compose in one direction that
+/// reads as design rather than accident: Hand of Harm poisons the
+/// target, Hand of Healing cures poison, and a monk fighting another
+/// Mercy monk is undoing exactly what the other one just did.
+///
+/// The template ships both halves at their lv3 gate and folds in the
+/// lv6 Physician's Touch clauses, matching the way
+/// `OPEN_HAND_MONK_TEMPLATE` ships Wholeness of Body (RAW lv6) and the
+/// baseline chassis ships Empty Body (RAW lv18) — class templates
+/// target a balanced playable level, not lockstep PHB progression.
+///
+/// Left out: **Implements of Mercy** (lv3) is a proficiency ribbon.
+/// **Flurry of Healing and Harm** (lv11) lets the monk replace Flurry
+/// strikes with either hand, which is the level the bonus-action cost
+/// modelled here already reflects — shipping it again would double-
+/// count. **Hand of Ultimate Mercy** (lv17) revives a creature dead for
+/// under 24 hours; the engine removes the dead, so there is nothing to
+/// touch.
+///
+/// Glyph 'Y' — free on the monk family, where 'M', 'O', 'D', 'W', 'E',
+/// 'K' and 'U' are taken.
+pub static MERCY_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{HAND_OF_HARM_TAG, HAND_OF_HEALING};
+    // Hand of Harm is a tag and no action — the rider rides the monk's
+    // ordinary unarmed strike, so there is nothing for a controller to
+    // pick. Hand of Healing is the reverse: an action and no tag, since
+    // it carries no charge to spend.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*HAND_OF_HEALING);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(HAND_OF_HARM_TAG);
+    CreatureTemplate {
+        name: "Mercy Monk",
+        glyph: 'Y',
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});

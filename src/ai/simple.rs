@@ -9661,7 +9661,9 @@ mod tests {
         use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
         use crate::actors::creatures::druids::SPORES_DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
-        use crate::actors::creatures::monks::{KENSEI_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE};
+        use crate::actors::creatures::monks::{
+            KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
+        };
         use crate::actors::creatures::rogues::{SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::{
@@ -9672,7 +9674,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 16] = [
+        let cases: [(&CreatureTemplate, &str); 17] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9710,6 +9712,10 @@ mod tests {
             // fixture is one PC against one ogre. Its refund is pinned
             // engine-side.
             (&ELOQUENCE_BARD_TEMPLATE, "unsettling words"),
+            // Not Hand of Healing: it targets an ally, and this fixture
+            // is one PC against one ogre. Hand of Harm needs nothing but
+            // a swing, which the monk chassis does every turn.
+            (&MERCY_MONK_TEMPLATE, "hand of harm"),
         ];
 
         for (template, marker) in cases {

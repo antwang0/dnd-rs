@@ -29588,6 +29588,170 @@ mod tests {
         );
     }
 
+    /// Hand of Harm (Way of Mercy Monk lv3 + Physician's Touch lv6) is
+    /// the first row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS` that installs
+    /// a condition as well as rolling a die, so this pins both halves:
+    /// the necrotic line in the log and the Poisoned flag on the target.
+    #[test]
+    fn hand_of_harm_poisons_what_it_wounds() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::HAND_OF_HARM_TAG;
+        use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MERCY_MONK_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let m = e
+                .instantiate_creature(&MERCY_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let effects = MONK_UNARMED_STRIKE.side_effects(&mut e, m, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|s| s.contains("hand of harm"))
+            {
+                saw_rider = true;
+                assert!(
+                    e.actors[&m].once_per_turn_used(HAND_OF_HARM_TAG),
+                    "once-per-turn ledger should flip after the rider fires"
+                );
+                // The goblin may have died to the swing; only a live one
+                // can be poisoned, and that is the case worth pinning.
+                if let Some(goblin) = e.actors.get(&g) {
+                    assert!(
+                        goblin.has_condition(Condition::Poisoned),
+                        "physician's touch should leave the target poisoned"
+                    );
+                }
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'hand of harm' log line on at least one connecting swing"
+        );
+    }
+
+    /// The rider is Mercy-only. Locks the template composition against a
+    /// drift that would poison everything every monk on the roster hits.
+    #[test]
+    fn hand_of_harm_is_mercy_monk_only() {
+        use crate::actions::class_features::HAND_OF_HARM_TAG;
+        use crate::actors::creatures::monks::{
+            LONG_DEATH_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, MONK_TEMPLATE,
+            OPEN_HAND_MONK_TEMPLATE,
+        };
+        assert!(MERCY_MONK_TEMPLATE.features.contains(HAND_OF_HARM_TAG));
+        for t in [
+            &*MONK_TEMPLATE,
+            &*OPEN_HAND_MONK_TEMPLATE,
+            &*LONG_DEATH_MONK_TEMPLATE,
+        ] {
+            assert!(
+                !t.features.contains(HAND_OF_HARM_TAG),
+                "{} should not carry Hand of Harm",
+                t.name
+            );
+        }
+    }
+
+    /// Hand of Healing mends and cures in the same touch, and the cure
+    /// takes the heaviest affliction on the list rather than the first
+    /// one the target happens to be holding.
+    #[test]
+    fn hand_of_healing_mends_and_lifts_the_worst_affliction() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::HAND_OF_HEALING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::monks::MERCY_MONK_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&MERCY_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        {
+            let fighter = e.actors.get_mut(&f).unwrap();
+            fighter.take_damage(10);
+            fighter.add_condition(Condition::Paralyzed, ConditionTimer::Rounds(5));
+            fighter.add_condition(Condition::Poisoned, ConditionTimer::Rounds(5));
+        }
+        let hurt = e.actors[&f].hitpoints();
+        let tv = vec![f];
+        let effects = HAND_OF_HEALING.side_effects(&mut e, m, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&f].hitpoints() > hurt,
+            "the touch should restore hit points"
+        );
+        assert!(
+            !e.actors[&f].has_condition(Condition::Paralyzed),
+            "the cure should take the heaviest affliction first"
+        );
+        assert!(
+            e.actors[&f].has_condition(Condition::Poisoned),
+            "and only one of them — RAW cures a single condition"
+        );
+    }
+
+    /// The touch is refused when it would do nothing: a healthy ally
+    /// with nothing to cure isn't worth the monk's bonus action, and an
+    /// enemy isn't a legal target however wounded they are.
+    #[test]
+    fn hand_of_healing_refuses_a_wasted_touch() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::HAND_OF_HEALING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MERCY_MONK_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&MERCY_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 3), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&g).unwrap().take_damage(3);
+        let ally = vec![f];
+        let enemy = vec![g];
+        assert!(
+            !HAND_OF_HEALING.validate_input(&e, m, Some(&ally), None, None),
+            "an unhurt, unafflicted ally is not worth a bonus action"
+        );
+        assert!(
+            !HAND_OF_HEALING.validate_input(&e, m, Some(&enemy), None, None),
+            "a wounded enemy is not a legal target"
+        );
+        // A condition alone is enough, with no hit points missing.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(3));
+        assert!(
+            HAND_OF_HEALING.validate_input(&e, m, Some(&ally), None, None),
+            "an afflicted ally at full HP is still worth curing"
+        );
+    }
+
     /// Dreadful Strikes is once-per-turn. Once the shared ledger is set,
     /// subsequent swings on the same turn must not fire the rider — the
     /// sibling shape to the Colossus Slayer / Foe Slayer / Divine Fury
@@ -61110,7 +61274,8 @@ mod tests {
     /// registered tags — a Sneak Attack mark doesn't accidentally
     /// suppress a Colossus Slayer / Foe Slayer / Divine Fury / Dreadful
     /// Strikes / Psychic Blades / Planar Warrior / Slayer's Prey /
-    /// Gathered Swarm / Psionic Strike / Ancestral Protectors swing (and
+    /// Gathered Swarm / Psionic Strike / Hand of Harm / Ancestral
+    /// Protectors swing (and
     /// vice versa). Locks the HashSet-backed
     /// decoupling that the pre-refactor bool cohort trivially had by
     /// construction.
@@ -61120,19 +61285,21 @@ mod tests {
             ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG, DIVINE_FURY_TAG,
             DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG,
             GIANTS_MIGHT_RIDER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
-            PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
+            SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            14,
+            15,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&HAND_OF_HARM_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GIANTS_MIGHT_RIDER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
