@@ -73569,4 +73569,196 @@ mod tests {
         );
         let _ = untouched;
     }
+
+    /// Every slot-cast healing spell on a healer chassis routes through
+    /// `slot_heal_effects`, or is on the exemption list with a reason.
+    ///
+    /// This test exists because the alternative failed silently for as
+    /// long as the riders existed. Disciple of Life — the Life Cleric's
+    /// entire subclass — was spliced in by hand at five heal sites and
+    /// missing from four others the baseline Cleric carries: Prayer of
+    /// Healing, Healing Spirit, Aura of Vitality, and (on the druid
+    /// chassis) Goodberry. A Life Cleric cast three of its own healing
+    /// spells for exactly baseline numbers. Nothing failed, because
+    /// nothing compared the two lists.
+    ///
+    /// The marker is the rider's own log line rather than an HP delta,
+    /// which makes the assertion about *routing* instead of arithmetic
+    /// — Heal restores 70 and Regenerate 4d8+15, both of which top out
+    /// any test dummy long before the bonus could be observed in its
+    /// hit points. The arithmetic is pinned separately by
+    /// `disciple_of_life_amplifies_cure_wounds_by_2_plus_slot`.
+    ///
+    /// Two passes because no single chassis carries all ten: the Life
+    /// Cleric drives the Disciple lane and the Stars Druid drives the
+    /// Chalice lane, and both riders live behind the same helper, so
+    /// either marker proves the same routing. The final assertion is
+    /// that between them every amplifiable spell was actually reached
+    /// — a name that no pass exercises is a row that proves nothing.
+    #[test]
+    fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
+        use crate::actions::action_template::TargetingSchema;
+        use crate::actors::creatures::clerics::LIFE_CLERIC_TEMPLATE;
+        use crate::actors::creatures::druids::STARS_DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        /// Spells whose whole job is restoring hit points from a slot.
+        /// Every one of these must reach `slot_heal_effects`.
+        const AMPLIFIED: &[&str] = &[
+            "cure wounds",
+            "healing word",
+            "mass cure wounds",
+            "mass healing word",
+            "prayer of healing",
+            "healing spirit",
+            "aura of vitality",
+            "heal",
+            "regenerate",
+            "goodberry",
+        ];
+
+        /// Slot-cast actions that report `is_heal` but are not
+        /// amplifiable heals, each with the reason it sits out. The
+        /// list is exhaustive on purpose: a new supportive spell has to
+        /// be classified here or in `AMPLIFIED`, which is the whole
+        /// point of the coverage assertion below.
+        const EXEMPT: &[(&str, &str)] = &[
+            ("mass heal", "restores every ally to full by construction; an amplifier only overflows the pool"),
+            ("power word heal", "restores the target to full — same reason"),
+            ("aid", "grants temp HP and a max-HP bump, not a heal"),
+            ("heroism", "temp HP per round, not a heal"),
+            ("heroes' feast", "temp HP plus a fixed feast benefit, not a slot heal"),
+            ("warding bond", "redirects damage; restores nothing"),
+            ("spare the dying", "stabilises at 0 HP; restores nothing"),
+            ("revivify", "revival, not a heal"),
+            ("raise dead", "revival, not a heal"),
+            ("resurrection", "revival, not a heal"),
+            ("true resurrection", "revival, not a heal"),
+            ("wish", "its heal is one of many effects and is not slot-scaled"),
+            ("greater restoration", "strips conditions; the HP clause is not RAW"),
+            ("remove curse", "strips a condition"),
+            ("enhance ability", "an ability-check buff"),
+            ("protection from poison", "a damage-modifier buff"),
+        ];
+
+        // --- coverage: every slot-cast is_heal action is classified ---
+        for tpl in [&*LIFE_CLERIC_TEMPLATE, &*STARS_DRUID_TEMPLATE] {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let caster = e
+                .instantiate_creature(tpl, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            for action in &e.actors[&caster].actions {
+                if !action.is_heal() {
+                    continue;
+                }
+                let costs_a_slot = action
+                    .cost(&e, caster, None, None, None)
+                    .iter()
+                    .any(|r| matches!(r, Resource::SpellSlot(_)));
+                if !costs_a_slot {
+                    continue;
+                }
+                let name = action.name();
+                assert!(
+                    AMPLIFIED.contains(&name) || EXEMPT.iter().any(|(n, _)| *n == name),
+                    "{} carries the slot-cast heal \"{}\", which is on neither list — \
+                     classify it as amplifiable or exempt",
+                    tpl.name,
+                    name
+                );
+            }
+        }
+
+        // --- routing: each amplifiable spell reaches the chokepoint ---
+        //
+        // The Life Cleric drives all but one. Goodberry lives on the
+        // druid list and nowhere else, so it gets the second pass and
+        // the Chalice marker — the two riders share the helper, so
+        // either line proves the same routing.
+        //
+        // The mass heals are deliberately *not* driven through the
+        // Chalice pass. They already sweep every ally in range, so the
+        // overflow correctly finds nobody left to spill onto and stays
+        // silent; asserting its line there would be asserting a bug.
+        let mut exercised: Vec<&str> = Vec::new();
+        for (tpl, marker, chalice, only) in [
+            (&*LIFE_CLERIC_TEMPLATE, "disciple of life:", false, None),
+            (
+                &*STARS_DRUID_TEMPLATE,
+                "chalice:",
+                true,
+                Some(&["goodberry"][..]),
+            ),
+        ] {
+            for &name in AMPLIFIED {
+                if only.is_some_and(|list| !list.contains(&name)) {
+                    continue;
+                }
+                let mut e = ei_with_terrain(30, 30, &[]);
+                let caster = e
+                    .instantiate_creature(tpl, Coordinate::new(5, 5), 0, 0)
+                    .unwrap();
+                let Some(action) = e.actors[&caster].find_action(name) else {
+                    continue;
+                };
+                // Two wounded allies. `ally` is adjacent so touch-range
+                // heals validate; `spare` sits 11 tiles out — inside
+                // the Chalice's 30 ft spill radius and outside every
+                // burst radius on the list — so the overflow has
+                // somebody to find that the spell itself did not.
+                let ally = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                    .unwrap();
+                let spare = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 16), 0, 0)
+                    .unwrap();
+                for id in [ally, spare] {
+                    let max = e.actors[&id].max_hitpoints();
+                    e.actors.get_mut(&id).unwrap().take_damage(max - 1);
+                }
+                if chalice {
+                    e.actors
+                        .get_mut(&caster)
+                        .unwrap()
+                        .add_condition(Condition::StarryFormChalice, ConditionTimer::Rounds(10));
+                }
+                let loc = e.actors[&ally].location();
+                let (targets, locations) = match action.targeting_schema() {
+                    TargetingSchema::SingleActor => (Some(vec![ally]), None),
+                    TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
+                        (None, Some(vec![loc]))
+                    }
+                    TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+                };
+                e.pop_prompt();
+                let aei = ActionExecutionInfo::new(action, caster, targets, locations, None);
+                assert!(
+                    aei.validate(&e),
+                    "the fixture should let {} cast \"{}\"",
+                    tpl.name,
+                    name
+                );
+                let before = e.messages().len();
+                e.push_action(aei);
+                e.process_stack();
+                assert!(
+                    e.messages()[before..].join("\n").contains(marker),
+                    "\"{}\" cast by a {} never reached slot_heal_effects \
+                     (no \"{}\" line)",
+                    name,
+                    tpl.name,
+                    marker
+                );
+                exercised.push(name);
+            }
+        }
+        for &name in AMPLIFIED {
+            assert!(
+                exercised.contains(&name),
+                "no healer chassis in this test carries \"{}\", so its routing is unproven",
+                name
+            );
+        }
+    }
 }

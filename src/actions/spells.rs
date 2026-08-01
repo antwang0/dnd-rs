@@ -1465,12 +1465,6 @@ impl Action for HealSpell {
         let lvl = crate::engine::action_overrides::cast_level(overrides, self.spell_slot_lvl);
         let extra_dice = lvl - self.spell_slot_lvl;
         let dice = Dice::new(self.heal_dice.count + extra_dice, self.heal_dice.faces);
-        // 5e Life Domain Cleric **Disciple of Life** — the leveled-heal
-        // amplifier. Adds `2 + slot_level` on top of the roll for any
-        // spell of level 1+; returns 0 for a non-Life caster so the
-        // stock heal formula lands unchanged. Snapshot before the
-        // (mutable) roll so the borrow checker is happy.
-        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, lvl);
         // 5e Grave Domain Cleric **Circle of Mortality** — swap the
         // rolled dice for the max face-value when the target is at 0 HP.
         // Snapshot before the (mutable) roll so both immutable borrows
@@ -1487,33 +1481,23 @@ impl Action for HealSpell {
         } else {
             encounter.roll(&dice) as i32
         };
-        let base = (raw + ability_mod).max(1) as u32;
-        let amount = base + bonus;
+        let amount = (raw + ability_mod).max(1) as u32;
         encounter.log(format!(
-            "  {}: {}({}){}{:+}{} = {} HP",
+            "  {}: {}({}){}{:+} = {} HP",
             self.display_name,
             dice,
             raw,
             crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
             ability_mod,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
         ));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(Heal {
-            actor_id: target_id,
-            amount,
-        })];
-        // 5e Circle of Stars Druid **Starry Form: Chalice** — a
-        // slot-cast heal spills 1d8 + WIS onto a second wounded ally
-        // within 30 ft. Returns `None` for every caster who isn't
-        // standing in the Chalice, so the stock heal lands unchanged.
-        effects.extend(crate::actions::class_features::starry_chalice_overflow(
+        crate::actions::class_features::slot_heal_effects(
             encounter,
             caster_id,
             &[target_id],
+            amount,
             lvl,
-        ));
-        effects
+        )
     }
 }
 
@@ -4157,11 +4141,6 @@ impl Action for MassHealingWord {
         let caster_loc = caster.location();
         let caster_size = get_tiles_from_size(caster.size());
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
-        // Mass Healing Word is a fixed level-3 slot in this engine (no
-        // upcasting exposed). Feed the fixed level to the Disciple of
-        // Life bonus so a Life Cleric adds +5 per target on top of the
-        // shared roll. Snapshot before the (mutable) roll.
-        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 3);
         // RAW: pick up to 6 creatures. We snap to the closest 6 eligible
         // allies (combat-active OR dying — heals revive both).
         const RANGE_TILES: isize = 24;
@@ -4210,26 +4189,18 @@ impl Action for MassHealingWord {
         } else {
             encounter.roll(&dice) as i32
         };
-        let base = (raw + wis_mod).max(1) as u32;
-        let amount = base + bonus;
+        let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
-            "  mass healing word: {}({}){}{:+}{} = {} HP each",
+            "  mass healing word: {}({}){}{:+} = {} HP each",
             dice,
             raw,
             crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
             wis_mod,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
         ));
-        candidates
-            .into_iter()
-            .map(|(_, id)| {
-                Box::new(Heal {
-                    actor_id: id,
-                    amount,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect()
+        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
+        // Fixed level-3 slot in this engine (no upcasting exposed).
+        crate::actions::class_features::slot_heal_effects(encounter, caster_id, &targets, amount, 3)
     }
 }
 
@@ -6413,7 +6384,6 @@ impl Action for MassCureWounds {
         // level through the Disciple of Life bonus for a Life Cleric's
         // +7 per target on top of the shared roll. Snapshot before the
         // (mutable) roll.
-        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 5);
         const RADIUS: isize = 3;
         const MAX_TARGETS: usize = 6;
         // Pick allies inside the burst, sorted by current HP ascending so
@@ -6460,36 +6430,17 @@ impl Action for MassCureWounds {
         } else {
             encounter.roll(&dice) as i32
         };
-        let base = (raw + wis_mod).max(1) as u32;
-        let amount = base + bonus;
+        let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
-            "  mass cure wounds: {}({}){}{:+}{} = {} HP each",
+            "  mass cure wounds: {}({}){}{:+} = {} HP each",
             dice,
             raw,
             crate::actions::class_features::circle_of_mortality_log_suffix(use_max),
             wis_mod,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
             amount
         ));
-        let healed: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = healed
-            .iter()
-            .map(|&id| {
-                Box::new(Heal {
-                    actor_id: id,
-                    amount,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect();
-        // 5e Circle of Stars Druid **Starry Form: Chalice**. The burst
-        // has already taken up to six allies; the overflow finds a
-        // seventh — someone wounded within 30 ft of the druid who fell
-        // outside the 15 ft burst, which on a spread-out party is
-        // exactly the ally the spell was placed too far away to reach.
-        effects.extend(crate::actions::class_features::starry_chalice_overflow(
-            encounter, caster_id, &healed, 5,
-        ));
-        effects
+        let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
+        crate::actions::class_features::slot_heal_effects(encounter, caster_id, &targets, amount, 5)
     }
 }
 
@@ -7687,30 +7638,18 @@ impl Action for HealSpellHigh {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Baseline heal is a flat 70 HP; a Life Cleric adds `2 + 6 = 8`
-        // via Disciple of Life. Snapshot the caster before the log site
-        // so the mutable borrow on `encounter` for `log(...)` doesn't
-        // collide with the caster read.
-        let bonus = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| crate::actions::class_features::disciple_of_life_bonus(a, 6))
-            .unwrap_or(0);
-        let amount = 70 + bonus;
-        // Only log if the bonus fired — the base 70 HP heal is already
-        // implicit in the Heal side-effect's own "heals N HP" line.
-        if bonus > 0 {
-            encounter.log(format!(
-                "  heal: 70{} = {} HP",
-                crate::actions::class_features::disciple_of_life_log_suffix(bonus),
-                amount
-            ));
-        }
-        vec![
-            Box::new(Heal {
-                actor_id: target_id,
-                amount,
-            }),
+        // Baseline heal is a flat 70 HP; the shared chokepoint layers
+        // Disciple of Life (a Life Cleric adds `2 + 6 = 8`) and the
+        // Chalice on top. The base 70 needs no log line of its own —
+        // the `Heal` side-effect prints "heals N HP" already.
+        let mut effects = crate::actions::class_features::slot_heal_effects(
+            encounter,
+            caster_id,
+            &[target_id],
+            70,
+            6,
+        );
+        effects.extend::<Vec<Box<dyn ApplicableSideEffect>>>(vec![
             Box::new(RemoveCondition {
                 actor_id: target_id,
                 condition: Condition::Blinded,
@@ -7723,7 +7662,8 @@ impl Action for HealSpellHigh {
                 actor_id: target_id,
                 condition: Condition::Poisoned,
             }),
-        ]
+        ]);
+        effects
     }
 }
 
@@ -8940,15 +8880,9 @@ impl Action for PrayerOfHealing {
         ));
         let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, RADIUS);
         targets.truncate(MAX_TARGETS);
-        targets
-            .into_iter()
-            .map(|id| {
-                Box::new(Heal {
-                    actor_id: id,
-                    amount,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect()
+        crate::actions::class_features::slot_heal_effects(
+            encounter, caster_id, &targets, amount, 2,
+        )
     }
 }
 
@@ -9926,16 +9860,10 @@ impl Action for HealingSpirit {
             "  healing spirit: 1d6({}) = {} HP to each ally in area",
             raw, raw
         ));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
-            .ally_burst_targets(caster_id, point, 1)
-            .into_iter()
-            .map(|id| {
-                Box::new(Heal {
-                    actor_id: id,
-                    amount: raw,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect();
+        let targets = encounter.ally_burst_targets(caster_id, point, 1);
+        let mut effects = crate::actions::class_features::slot_heal_effects(
+            encounter, caster_id, &targets, raw, 2,
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::new("Healing Spirit"),
@@ -10008,16 +9936,10 @@ impl Action for AuraOfVitality {
             "  aura of vitality: 2d6({}) = {} HP to allies in aura",
             raw, raw
         ));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
-            .ally_burst_targets(caster_id, caster_loc, 6)
-            .into_iter()
-            .map(|id| {
-                Box::new(Heal {
-                    actor_id: id,
-                    amount: raw,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect();
+        let targets = encounter.ally_burst_targets(caster_id, caster_loc, 6);
+        let mut effects = crate::actions::class_features::slot_heal_effects(
+            encounter, caster_id, &targets, raw, 3,
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::new("Aura of Vitality"),
@@ -11989,7 +11911,7 @@ impl Action for Goodberry {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -11998,10 +11920,13 @@ impl Action for Goodberry {
             return Vec::new();
         };
         encounter.log("  goodberry: 10 HP restored from magical berries".to_string());
-        vec![Box::new(Heal {
-            actor_id: target_id,
-            amount: 10,
-        })]
+        crate::actions::class_features::slot_heal_effects(
+            encounter,
+            caster_id,
+            &[target_id],
+            10,
+            1,
+        )
     }
 }
 
@@ -20383,26 +20308,16 @@ impl Action for Regenerate {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Snapshot the Disciple of Life bonus (+9 at slot 7) BEFORE the
-        // (mutable) roll — the borrow checker won't let the caster read
-        // outlive `encounter.roll`.
-        let bonus = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| crate::actions::class_features::disciple_of_life_bonus(a, 7))
-            .unwrap_or(0);
         let raw = encounter.roll(&Dice::new(4, 8));
-        let total = raw + 15 + bonus;
-        encounter.log(format!(
-            "  regenerate: 4d8+15({}){} = {} HP",
-            raw,
-            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
-            total
-        ));
-        vec![Box::new(Heal {
-            actor_id: target_id,
-            amount: total,
-        })]
+        let total = raw + 15;
+        encounter.log(format!("  regenerate: 4d8+15({}) = {} HP", raw, total));
+        crate::actions::class_features::slot_heal_effects(
+            encounter,
+            caster_id,
+            &[target_id],
+            total,
+            7,
+        )
     }
 }
 

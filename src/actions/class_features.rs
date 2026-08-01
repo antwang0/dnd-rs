@@ -10156,20 +10156,71 @@ pub fn disciple_of_life_bonus(
     2 + spell_slot_lvl
 }
 
-/// Companion to `disciple_of_life_bonus`: format the log-line suffix
-/// callers splice into their existing heal-log format string right
-/// before the ` = <amount> HP` tail. Returns `""` for `bonus == 0`
-/// (non-Life caster / cantrip heal) so the base log stays untouched,
-/// or `"+<n>(disciple of life)"` when the bonus fired. Keeps every
-/// leveled-heal call site to a single `format!` with a stitched-in
-/// `{}` rather than the earlier `if bonus > 0 { format!(...) } else
-/// { format!(...) }` two-branch shape at each site.
-pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
-    if bonus == 0 {
-        String::new()
-    } else {
-        format!("+{}(disciple of life)", bonus)
+/// **The** slot-cast heal chokepoint. Every spell that spends a slot
+/// to restore hit points ends here: hand it the caster, the ids it
+/// picked, the amount it rolled and the slot level, and it emits the
+/// `Heal` side-effects with every rider that rides a slot heal already
+/// folded in.
+///
+/// Two riders live here today — the Life Cleric's Disciple of Life
+/// amplification and the Stars Druid's Chalice overflow — and the
+/// reason they live *here* rather than at the call sites is that the
+/// call sites got it wrong. Disciple of Life was spliced in by hand at
+/// five of the ten eligible sites. The baseline Cleric carries Prayer
+/// of Healing, Healing Spirit and Aura of Vitality, so a Life Cleric —
+/// whose entire subclass is "your healing is bigger" — was casting
+/// three of its own healing spells for exactly baseline numbers, and
+/// every test passed, because nothing anywhere compared the two lists.
+///
+/// The amount is the *pre-rider* roll. Callers keep their own log line
+/// for the dice (the formats differ per spell, and Circle of Mortality
+/// has to swap the dice before they are rolled at all), and this logs
+/// the amplification separately when it fires — which also means the
+/// bonus is stated once per cast rather than spliced into a per-target
+/// format string.
+///
+/// Not every `Heal` in the game belongs here. Mass Heal and Power Word
+/// Heal both restore a creature to full by construction, so an
+/// amplifier would only overflow a pool that was already big enough;
+/// Resurrection, True Resurrection and Wish are revivals rather than
+/// heals; Vampiric Touch drains onto the caster. Those keep their bare
+/// `Heal`, and `the_slot_heal_chokepoint_covers_every_amplifiable_heal`
+/// pins the list so a new healing spell has to make the choice
+/// deliberately instead of by omission.
+pub fn slot_heal_effects(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    targets: &[usize],
+    amount: u32,
+    spell_slot_lvl: u32,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let bonus = encounter
+        .actors
+        .get(&caster_id)
+        .map(|caster| disciple_of_life_bonus(caster, spell_slot_lvl))
+        .unwrap_or(0);
+    if bonus > 0 && !targets.is_empty() {
+        encounter.log(format!("  disciple of life: +{} HP each", bonus));
     }
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = targets
+        .iter()
+        .map(|&actor_id| {
+            Box::new(Heal {
+                actor_id,
+                amount: amount + bonus,
+            }) as Box<dyn ApplicableSideEffect>
+        })
+        .collect();
+    // The Chalice spills once per cast, not once per target — RAW's
+    // clause is "whenever you cast a spell… one creature", and a mass
+    // heal that paid one slot should not pay out six overflows.
+    effects.extend(starry_chalice_overflow(
+        encounter,
+        caster_id,
+        targets,
+        spell_slot_lvl,
+    ));
+    effects
 }
 
 /// 5e Grave Domain Cleric — **Circle of Mortality** subclass feature tag
