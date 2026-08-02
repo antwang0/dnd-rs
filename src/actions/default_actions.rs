@@ -1083,13 +1083,14 @@ impl Action for Search {
         }
 
         // Roll Perception once — the same roll compares against every
-        // hidden enemy's Stealth DC. Mirrors 5e Perception scan semantics.
+        // hidden enemy's Stealth DC. Mirrors 5e Perception scan
+        // semantics. `roll_ability_check` logs the roll and its
+        // breakdown itself, so there is no second line to print here.
         let perception = encounter.roll_ability_check(
             caster_id,
             AbilityScoreType::Wisdom,
             Some(Skill::Perception),
         );
-        encounter.log(format!("  search: perception check = {}", perception));
 
         // Walk the actor table; for any hidden / invisible enemy in range
         // with LOS, compare the searcher's roll to the target's stealth

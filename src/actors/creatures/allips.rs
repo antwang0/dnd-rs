@@ -171,13 +171,17 @@ mod tests {
             .find_action("allip maddening touch")
             .expect("allip should carry the maddening touch action");
         // The chassis bound: at most one DealDamage (psychic on hit)
-        // plus at most one ApplyCondition (Charmed on a failed INT
-        // save). The save rider only fires on a confirmed hit, so a
-        // miss produces an empty effect list.
+        // plus at most one condition install on a failed INT save. The
+        // install is two effects rather than one because Charmed
+        // carries a back-link — the flag says the bear is charmed, the
+        // link says the allip is who charmed it, and without the second
+        // half the bear would happily keep swinging at the thing
+        // charming it. The save rider only fires on a confirmed hit, so
+        // a miss produces an empty effect list.
         let effects = touch.side_effects(&mut e, allip, Some(&vec![target]), None, None);
         assert!(
-            effects.len() <= 2,
-            "chassis should produce at most 2 effects (damage + condition); got {}",
+            effects.len() <= 3,
+            "chassis should produce at most 3 effects (damage + condition + its link); got {}",
             effects.len(),
         );
     }

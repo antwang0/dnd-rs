@@ -214,6 +214,7 @@ pub fn save_or_damage_rider(
 #[allow(clippy::too_many_arguments)]
 pub fn save_or_condition_rider(
     encounter: &mut EncounterInstance,
+    caster_id: usize,
     target_id: usize,
     save_ability: AbilityScoreType,
     dc: i32,
@@ -222,15 +223,17 @@ pub fn save_or_condition_rider(
     rider_name: &str,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
 ) -> crate::engine::saves::SaveOutcome {
-    use crate::engine::side_effects::ApplyCondition;
     let save = encounter.roll_save(target_id, save_ability, dc);
     if !save.passed() {
         encounter.log(format!("  {}: target fails the save", rider_name));
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition,
-            timer,
-        }));
+        // Through the linked installer, so a rider whose condition
+        // carries a back-link records who applied it. Every caller
+        // already had the attacker in hand and was throwing it away at
+        // this line; a roper's tendril that grapples nobody in
+        // particular is a hold nothing can end.
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            condition, target_id, caster_id, timer,
+        ));
     }
     save
 }
@@ -971,6 +974,7 @@ impl Action for WeaponWithSaveCondition {
             }
             save_or_condition_rider(
                 e,
+                caster_id,
                 target_id,
                 self.save_ability,
                 self.save_dc,
@@ -1450,7 +1454,6 @@ impl Action for WeaponWithCondition {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -1479,11 +1482,21 @@ impl Action for WeaponWithCondition {
                 return effects;
             }
             e.log(format!("  {}: target is now {}", self.rider_name, self.condition));
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: self.condition,
-                timer: self.timer,
-            }));
+            // Through the linked installer rather than a bare
+            // `ApplyCondition`, so a rider whose condition carries a
+            // back-link records who applied it. For everything on
+            // `LINKED_CONDITIONS` that is the difference between a rule
+            // the engine can enforce and one it can only approximate:
+            // a chuul's pincer grapple now names the chuul, so escaping
+            // it is a contest against that creature and stunning the
+            // chuul lets go. Unlinked conditions come back as the same
+            // one-element vec this used to push.
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                self.condition,
+                target_id,
+                caster_id,
+                self.timer,
+            ));
             effects
         };
         let mut effects = swing(encounter);
@@ -1708,6 +1721,7 @@ impl Action for TripAttack {
         // (ConditionTimer::Permanent).
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Strength,
             13,
@@ -2625,6 +2639,7 @@ impl Action for GhoulClaws {
         };
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             10,
@@ -2944,6 +2959,7 @@ impl Action for LycanthropeBite {
         // rounds. DC tuned per wereXX CR — see template comments.
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             self.save_dc,
@@ -7205,11 +7221,12 @@ impl Action for ShamblingMoundEngulf {
         // engagement can't carry into another encounter.
         let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 14);
         if !save.passed() {
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Grappled,
-                timer: ConditionTimer::Rounds(10),
-            }));
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                Condition::Grappled,
+                target_id,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
         }
         effects
     }
@@ -11305,6 +11322,7 @@ impl Action for SpriteLongbow {
         }
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             10,
@@ -11378,6 +11396,7 @@ impl Action for DeathDogBite {
         // (matches Otyugh Bite's disease-save convention).
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             12,
@@ -11922,6 +11941,7 @@ impl Action for EttercapWeb {
         }
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Dexterity,
             11,
@@ -13215,7 +13235,6 @@ impl Action for CrocodileBite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -13237,11 +13256,12 @@ impl Action for CrocodileBite {
         // targets (the elemental / construct envelope) shrug it off at
         // the install site via `add_condition`'s immunity check.
         encounter.log("  crocodile bite: jaws latch on, target is grappled");
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Grappled,
-            timer: ConditionTimer::Rounds(10),
-        }));
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
         effects
     }
 }
@@ -13278,7 +13298,6 @@ impl Action for GiantCrocodileBite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -13297,11 +13316,12 @@ impl Action for GiantCrocodileBite {
             return effects;
         }
         encounter.log("  giant crocodile bite: massive jaws clamp shut, target is grappled");
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Grappled,
-            timer: ConditionTimer::Rounds(10),
-        }));
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
         effects
     }
 }
@@ -13685,6 +13705,7 @@ impl Action for MammothTramplingCharge {
         const DC: i32 = 18;
         save_or_condition_rider(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Strength,
             DC,

@@ -7178,18 +7178,26 @@ impl EncounterInstance {
     /// the encounter's very first actor, and the actor who slides into
     /// the index of someone who died on their own turn.
     fn ensure_turn_started(&mut self) {
+        // The lair acts before anything in the round does — before the
+        // current slot's turn opens, and before the id of whoever is in
+        // that slot is read. Reached from here as well as from the
+        // initiative wrap because round one never wraps into itself:
+        // without this call a dragon's cave would sit silent through the
+        // whole opening round. The round guard inside makes the second
+        // caller free.
+        //
+        // Read the slot *after* the dispatch rather than before, because
+        // a lair action can kill, and killing sweeps the initiative
+        // queue — an id captured first could name a creature the lair
+        // has since removed, and opening a turn for it would leave the
+        // latch unset and this function with nothing to repair it.
+        self.dispatch_lair_actions();
         let Some(curr_id) = self.initiative_tracker.current_player() else {
             return;
         };
         if self.turn_started_for == Some(curr_id) {
             return;
         }
-        // The lair acts before anything in the round does. Reached from
-        // here as well as from the initiative wrap because round one
-        // never wraps into itself — without this call a dragon's cave
-        // would sit silent through the whole opening round. The round
-        // guard inside makes the second caller free.
-        self.dispatch_lair_actions();
         self.start_turn_for(curr_id);
     }
 
@@ -34241,6 +34249,75 @@ mod tests {
         assert!(
             !e.actors[&goblin].has_condition(Condition::Grappled),
             "a stunned grappler cannot keep holding on"
+        );
+    }
+
+    /// A monster whose attack grapples names itself as the grappler,
+    /// same as the Grapple action does. Swept across the whole roster
+    /// rather than spot-checked on one creature, because the anchoring
+    /// arrives through three different chassis and a fourth that lands
+    /// tomorrow would look correct while quietly producing holds that
+    /// nothing can end.
+    ///
+    /// Anchoring is what makes two rules real for these attacks: the
+    /// escape is a contest against the creature holding on, and the
+    /// hold ends when that creature is incapacitated. Before it, a
+    /// roper's tendril grappled nobody in particular.
+    #[test]
+    fn a_monsters_grapple_names_the_monster() {
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+        use crate::conditions::Condition;
+        // The creatures whose attacks grapple, one per chassis the
+        // anchoring travels through: the auto-install-on-hit chassis
+        // (chuul, giant frog), the save-or-condition chassis
+        // (constrictor snake), and the two hand-rolled sites (crocodile,
+        // shambling mound).
+        let grapplers: &[&'static crate::actors::actor_template::CreatureTemplate] = &[
+            &crate::actors::creatures::chuuls::CHUUL_TEMPLATE,
+            &crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE,
+            &crate::actors::creatures::constrictor_snakes::CONSTRICTOR_SNAKE_TEMPLATE,
+            &crate::actors::creatures::crocodiles::CROCODILE_TEMPLATE,
+            &crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE,
+        ];
+        let mut checked = 0;
+        for template in grapplers {
+            for seed in 0..6u64 {
+                let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+                let monster = e
+                    .instantiate_creature(template, Coordinate::new(4, 4), 0, 0)
+                    .unwrap();
+                let victim = e
+                    .instantiate_creature(&BROWN_BEAR_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                    .unwrap();
+                let actions: Vec<&'static (dyn Action + Send + Sync)> =
+                    e.actors[&monster].available_actions();
+                for action in actions {
+                    let targets = vec![victim];
+                    let effects =
+                        action.side_effects(&mut e, monster, Some(&targets), None, None);
+                    for effect in effects {
+                        effect.apply(&mut e);
+                    }
+                    if e.actors
+                        .get(&victim)
+                        .is_some_and(|a| a.has_condition(Condition::Grappled))
+                    {
+                        checked += 1;
+                        assert_eq!(
+                            e.actors[&victim].linked_by(Condition::Grappled),
+                            Some(monster),
+                            "{}'s grapple should name it as the grappler",
+                            template.name
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no grappling monster in the sweep managed to land its grapple"
         );
     }
 
