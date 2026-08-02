@@ -4961,6 +4961,46 @@ impl ActorInstance {
             .copied()
     }
 
+    /// The attack this actor would hold if it took the Ready action:
+    /// the longest-reaching single-target harmful attack it carries,
+    /// with ties going to the earlier entry in its action list.
+    ///
+    /// 5e lets the readier choose, and we can't ask — the prompt
+    /// resolves one action name per line and has nowhere to put a
+    /// second. Longest reach is the choice that matches what readying
+    /// an attack is *for*: it fires the moment a target crosses into
+    /// range, so the longest weapon is both the one that fires soonest
+    /// and the one a player holding a bow and a sword would raise. A
+    /// creature with only a sword still readies the sword; the
+    /// selection collapses to "your attack" when there is only one.
+    ///
+    /// Deliberately narrower than `first_melee_weapon_action`, which
+    /// answers a different question (what swings on an opportunity
+    /// attack) and is therefore capped at melee reach rather than
+    /// sorted by it.
+    pub fn best_readyable_attack(&self) -> Option<&'static (dyn Action + Send + Sync)> {
+        use crate::actions::action_template::TargetingSchema;
+        self.actions
+            .iter()
+            .filter(|act| {
+                act.is_harmful()
+                    && act.deals_damage()
+                    && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                    && act.reach_tiles().is_some()
+            })
+            .fold(None, |best: Option<&&'static (dyn Action + Send + Sync)>, act| {
+                match best {
+                    Some(current)
+                        if current.reach_tiles().unwrap_or(0) >= act.reach_tiles().unwrap_or(0) =>
+                    {
+                        Some(current)
+                    }
+                    _ => Some(act),
+                }
+            })
+            .copied()
+    }
+
     /// Sum every carried item's `ItemBonuses` into one struct.
     pub fn total_item_bonuses(&self) -> ItemBonuses {
         self.items

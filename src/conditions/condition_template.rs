@@ -96,6 +96,23 @@ pub enum Condition {
     /// On fire — takes 1d4 fire at the start of each of its turns until
     /// extinguished. Burning is a DOT condition with `Rounds(n)` timer.
     Burning,
+    /// Holding a readied attack (5e **Ready**). The holder has spent
+    /// their Action to say "I attack the first enemy that comes into
+    /// range", and the swing fires as a reaction the moment one does —
+    /// see `EncounterInstance::dispatch_readied_attacks`.
+    ///
+    /// Installed with an `UntilStartOfNextTurn` timer, which is exactly
+    /// RAW's window: "you can act at any time up to the start of your
+    /// next turn". A readier whose trigger never happens simply loses
+    /// the action, the same as at a table.
+    ///
+    /// What it *doesn't* model is the choice. RAW lets you ready any
+    /// action against any trigger you can describe; the readier here
+    /// holds one attack against one trigger — "an enemy comes within
+    /// reach". That is the shape the engine can enforce without a
+    /// grammar for triggers, and it is the shape the action is nearly
+    /// always used in: the archer watching a doorway.
+    Readied,
     /// Took the Disengage action this turn: their movement doesn't
     /// provoke opportunity attacks. Cleared by `UntilStartOfNextTurn`.
     Disengaging,
@@ -1869,6 +1886,7 @@ impl Condition {
             Condition::Helped => "helped",
             Condition::Hidden => "hidden",
             Condition::Burning => "burning",
+            Condition::Readied => "readied",
             Condition::Disengaging => "disengaging",
             Condition::Unconscious => "unconscious",
             Condition::Baned => "baned",

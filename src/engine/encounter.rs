@@ -4573,7 +4573,136 @@ impl EncounterInstance {
     pub fn dispatch_reaction(&mut self, event: TriggerEvent) {
         match event {
             TriggerEvent::ActorLeaving { actor_id, from, to } => {
+                // Readied attacks first. Both dispatchers spend the same
+                // Reaction and the same step, and RAW resolves a readied
+                // attack "in response to" the trigger — the readier has
+                // been waiting for this since their own turn, so they
+                // get the swing before anyone who is merely reacting to
+                // it. It also matters mechanically: a readied shot that
+                // drops the mover ends the step, and the opportunity
+                // attacks that would have followed have nobody to hit.
+                self.dispatch_readied_attacks(actor_id, from, to);
                 self.dispatch_opportunity_attacks(actor_id, from, to);
+            }
+        }
+    }
+
+    /// Fire every readied attack the mover has just walked into.
+    ///
+    /// The mirror image of `dispatch_opportunity_attacks`, off the same
+    /// event and the same `(from, to)` pair: an opportunity attack asks
+    /// "were they in reach, and are they leaving it?", a readied attack
+    /// asks "were they out of reach, and are they entering it?". The
+    /// readier holds `Condition::Readied` (see the `Ready` action), and
+    /// the swing is their longest-reaching attack — the same one they
+    /// chose to hold.
+    ///
+    /// Both the reaction and the hold are spent on the swing, so a
+    /// readier fires once. Unlike an opportunity attack, Disengage does
+    /// nothing to stop this: RAW's Disengage suppresses attacks
+    /// provoked by *leaving* reach, and walking into a raised bow was
+    /// never a provocation in the first place.
+    fn dispatch_readied_attacks(
+        &mut self,
+        mover_id: usize,
+        from: Coordinate,
+        to: Coordinate,
+    ) {
+        use crate::engine::side_effects::Resource;
+
+        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+            None => return,
+        };
+        // Snapshot up-front: the loop body mutates the actor map.
+        type ReadiedCandidate = (
+            usize,
+            &'static (dyn crate::actions::action_template::Action + Send + Sync),
+            Coordinate,
+            usize,
+            isize,
+        );
+        let mut candidates: Vec<ReadiedCandidate> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == mover_id || a.team() == mover_team || !a.is_combat_active() {
+                    return None;
+                }
+                if !a.has_condition(Condition::Readied)
+                    || !a.can_consume_resource(Resource::Reaction)
+                {
+                    return None;
+                }
+                // A charmed readier can't spend their held swing on the
+                // creature that charmed them — the same gate the
+                // opportunity-attack dispatcher applies, for the same
+                // reason: neither path goes through `Action::validate`.
+                if a.linked_by(Condition::Charmed) == Some(mover_id) {
+                    return None;
+                }
+                let attack = a.best_readyable_attack()?;
+                let reach = attack.reach_tiles()?;
+                Some((
+                    *id,
+                    attack,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    reach,
+                ))
+            })
+            .collect();
+        // Sorted so several readiers covering the same doorway fire in a
+        // fixed order rather than in whatever order the map iterates.
+        candidates.sort_unstable_by_key(|(id, ..)| *id);
+
+        for (reactor_id, attack, r_loc, r_size, reach) in candidates {
+            if !self
+                .actors
+                .get(&reactor_id)
+                .is_some_and(|a| a.is_combat_active() && a.can_consume_resource(Resource::Reaction))
+            {
+                continue;
+            }
+            let was_in_reach = footprint_chebyshev(r_loc, r_size, from, mover_size) <= reach;
+            let now_in_reach = footprint_chebyshev(r_loc, r_size, to, mover_size) <= reach;
+            if was_in_reach || !now_in_reach {
+                continue;
+            }
+            // A readied ranged shot still needs to see its target; a
+            // readied swing doesn't, for the same reason melee never
+            // does. Checked against the tile the mover is stepping into,
+            // which is where the shot is aimed.
+            if attack.requires_los() && !self.has_line_of_sight(r_loc, to) {
+                continue;
+            }
+
+            let reactor_name = self.actor_name(reactor_id);
+            let mover_name = self.actor_name(mover_id);
+            self.log(format!(
+                "[reaction] {} looses their readied {} as {} closes",
+                reactor_name,
+                attack.name(),
+                mover_name
+            ));
+
+            let target_vec = vec![mover_id];
+            let effects = attack.side_effects(self, reactor_id, Some(&target_vec), None, None);
+            for e in effects {
+                e.apply(self);
+            }
+            if let Some(r) = self.actors.get_mut(&reactor_id) {
+                r.consume_resource(Resource::Reaction);
+                r.remove_condition(Condition::Readied);
+            }
+
+            self.cleanup_dead_actors();
+            if self
+                .actors
+                .get(&mover_id)
+                .is_none_or(|a| !a.is_combat_active())
+            {
+                return;
             }
         }
     }
@@ -34952,6 +35081,103 @@ mod tests {
         // The ladder has a top: nothing stacks past the rung that kills.
         a.gain_exhaustion(3);
         assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
+    }
+
+    /// A readied attack fires on the step that brings an enemy into
+    /// reach, and on no other step. The two negative cases are the ones
+    /// worth pinning: a mover who was *already* inside the reach isn't
+    /// entering it, and a mover crossing the room outside the reach
+    /// never triggers anything.
+    #[test]
+    fn a_readied_attack_fires_on_the_step_that_closes_the_distance() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let readier = e
+            .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let mover = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+        let reach = e.actors[&readier]
+            .best_readyable_attack()
+            .and_then(|a| a.reach_tiles())
+            .expect("a veteran should have something to ready");
+        e.actors
+            .get_mut(&readier)
+            .unwrap()
+            .add_condition(Condition::Readied, ConditionTimer::UntilStartOfNextTurn);
+
+        // A step that stays outside the reach: nothing happens.
+        let outside = Coordinate::new(4 + reach + 3, 4);
+        e.dispatch_readied_attacks(mover, Coordinate::new(4 + reach + 4, 4), outside);
+        assert!(
+            e.actors[&readier].has_condition(Condition::Readied),
+            "a mover still out of reach shouldn't trip the hold"
+        );
+
+        // The step that crosses in: the swing fires, and it costs the
+        // reaction and the hold.
+        let inside = Coordinate::new(4 + reach, 4);
+        let before = e.messages().len();
+        e.dispatch_readied_attacks(mover, outside, inside);
+        assert!(
+            e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("readied")),
+            "the readied attack should have fired: {:?}",
+            &e.messages()[before..]
+        );
+        assert!(!e.actors[&readier].has_condition(Condition::Readied));
+        assert!(!e.actors[&readier].can_consume_resource(Resource::Reaction));
+    }
+
+    /// Readying is not free and it is not repeatable. It costs the
+    /// Action; it requires an attack to hold and a reaction to spend it
+    /// with; and a creature already holding one can't hold a second.
+    #[test]
+    fn readying_needs_an_attack_a_reaction_and_an_unspent_hold() {
+        use crate::actions::default_actions::READY;
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let veteran = e
+            .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(READY.validate_input(&e, veteran, None, None, None));
+        assert_eq!(
+            READY.cost(&e, veteran, None, None, None),
+            vec![Resource::Action]
+        );
+        // Already holding: nothing left to ready.
+        e.actors
+            .get_mut(&veteran)
+            .unwrap()
+            .add_condition(Condition::Readied, ConditionTimer::UntilStartOfNextTurn);
+        assert!(!READY.validate_input(&e, veteran, None, None, None));
+        e.actors
+            .get_mut(&veteran)
+            .unwrap()
+            .remove_condition(Condition::Readied);
+        // Reaction already spent: the promise can't be kept.
+        e.actors
+            .get_mut(&veteran)
+            .unwrap()
+            .consume_resource(Resource::Reaction);
+        assert!(!READY.validate_input(&e, veteran, None, None, None));
+
+        // Nothing to hold.
+        let commoner = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
+            .unwrap();
+        if e.actors[&commoner].best_readyable_attack().is_none() {
+            assert!(!READY.validate_input(&e, commoner, None, None, None));
+        }
     }
 
     /// The lair acts once a round, on the resident's behalf, and never

@@ -5869,11 +5869,57 @@ fn try_escape_grapple(
     try_self_action(encounter, actor_id, "escape")
 }
 
-/// Last-resort: prefer Dodge (defensive posture if we still have an Action
-/// slot) over Skip so the turn doesn't go to waste. Falls through to Skip
-/// if Dodge isn't available, and finally AwaitInput if neither is —
-/// preventing an infinite loop on a malformed actor.
+/// True when readying an attack is the better use of a turn the actor
+/// has otherwise wasted: there is somebody left to shoot, and they are
+/// currently outside the reach of the attack the actor would hold.
+///
+/// The second half is the whole gate. An enemy already inside the reach
+/// cannot *enter* it, so a hold aimed at them can never fire — that
+/// actor should be swinging, and if it has reached this rung something
+/// else has already stopped it from doing so, in which case Dodge is
+/// the honest answer.
+fn should_ready_instead_of_dodging(encounter: &EncounterInstance, actor_id: usize) -> bool {
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let Some(reach) = actor
+        .best_readyable_attack()
+        .and_then(|a| a.reach_tiles())
+    else {
+        return false;
+    };
+    let my_team = actor.team();
+    let mut any_outside = false;
+    for (id, other) in encounter.actors.iter() {
+        if *id == actor_id || other.team() == my_team || !other.is_combat_active() {
+            continue;
+        }
+        if actor.footprint_gap_to(other) <= reach {
+            return false;
+        }
+        any_outside = true;
+    }
+    any_outside
+}
+
+/// Last-resort: hold an attack if there is anyone left to walk into it,
+/// otherwise Dodge (defensive posture if we still have an Action slot),
+/// otherwise Skip so the turn doesn't go to waste — and finally
+/// AwaitInput if none of the three is available, preventing an infinite
+/// loop on a malformed actor.
+///
+/// Ready sits above Dodge because the two answer the same question and
+/// only one of them can end a fight. A turn that reaches this rung is
+/// already spent; Dodge buys a chance not to be hit, while a raised bow
+/// buys a swing at whoever closes the distance. When nobody is
+/// approaching — nothing alive, or everything already in reach — the
+/// gate fails and Dodge is what is left.
 fn skip_or_await(encounter: &EncounterInstance, caster_id: usize) -> ControllerDecision {
+    if should_ready_instead_of_dodging(encounter, caster_id)
+        && let Some(aei) = try_self_action(encounter, caster_id, "ready")
+    {
+        return ControllerDecision::Act(aei);
+    }
     if let Some(aei) = try_self_action(encounter, caster_id, "dodge") {
         return ControllerDecision::Act(aei);
     }
@@ -5894,6 +5940,62 @@ mod tests {
     use crate::engine::side_effects::Resource;
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::DamageType;
+
+    /// The AI holds a shot rather than dodging when somebody is out
+    /// there to walk into it — and dodges when nobody is.
+    ///
+    /// Pinned at the rung rather than through a whole encounter,
+    /// because the rung is a *last* resort: reaching it in a live fight
+    /// means every attack, every spell and every approach has already
+    /// failed, which is hard to arrange and easy to arrange
+    /// accidentally differently.
+    #[test]
+    fn the_last_resort_holds_a_shot_before_it_ducks() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let veteran = e
+            .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let reach = e.actors[&veteran]
+            .best_readyable_attack()
+            .and_then(|a| a.reach_tiles())
+            .expect("a veteran has something to hold");
+
+        // Nobody on the board: nothing to wait for, so Dodge.
+        assert!(!should_ready_instead_of_dodging(&e, veteran));
+
+        // An enemy well outside the reach: hold the shot.
+        let far = e
+            .instantiate_creature(
+                &GOBLIN_TEMPLATE,
+                Coordinate::new(3 + reach + 4, 3),
+                1,
+                0,
+            )
+            .unwrap();
+        assert!(should_ready_instead_of_dodging(&e, veteran));
+        match skip_or_await(&e, veteran) {
+            ControllerDecision::Act(aei) => {
+                assert_eq!(aei.action().name(), "ready")
+            }
+            ControllerDecision::AwaitInput => panic!("expected an action"),
+        }
+
+        // Move them inside the reach and the gate closes — a creature
+        // already in range cannot walk into range, so a hold aimed at
+        // them could never fire.
+        e.place_actor_at(far, Coordinate::new(3 + reach, 3)).unwrap();
+        assert!(!should_ready_instead_of_dodging(&e, veteran));
+        match skip_or_await(&e, veteran) {
+            ControllerDecision::Act(aei) => {
+                assert_eq!(aei.action().name(), "dodge")
+            }
+            ControllerDecision::AwaitInput => panic!("expected an action"),
+        }
+    }
 
     /// A bloodied ally gets hit points, not a d4.
     ///

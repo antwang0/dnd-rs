@@ -34,13 +34,8 @@ const ATHLETICS_CONTEST: &[(
 ///
 /// Athletics is listed first so a defender equally good at both answers
 /// with the same skill the challenger used, which is the version of the
-/// tie a table would narrate.
-/// Escape DC for a hold with nobody on the other end of it — an ooze's
-/// adhesive, a spell's tentacles, a grappler who has since left the
-/// board. 8 + a typical grappler's Strength modifier + proficiency, the
-/// number the contest would average to.
-const UNANCHORED_ESCAPE_DC: i32 = 13;
-
+/// tie a table would narrate — `best_check_option` resolves ties to the
+/// earlier row for exactly that purpose.
 const GRAPPLE_DEFENSE_CONTEST: &[(
     crate::engine::types::AbilityScoreType,
     crate::engine::types::Skill,
@@ -54,6 +49,12 @@ const GRAPPLE_DEFENSE_CONTEST: &[(
         crate::engine::types::Skill::Acrobatics,
     ),
 ];
+
+/// Escape DC for a hold with nobody on the other end of it — an ooze's
+/// adhesive, a spell's tentacles, a grappler who has since left the
+/// board. 8 + a typical grappler's Strength modifier + proficiency, the
+/// number the contest would average to.
+const UNANCHORED_ESCAPE_DC: i32 = 13;
 
 pub struct Move {}
 
@@ -514,6 +515,91 @@ impl Action for Disengage {
 }
 
 pub static DISENGAGE: LazyLock<Disengage> = LazyLock::new(|| Disengage {});
+
+/// 5e **Ready** — spend your Action to hold an attack, and swing as a
+/// reaction the moment an enemy walks into its reach.
+///
+/// The last of the PHB's core actions to exist here. Dodge, Disengage,
+/// Help, Hide, Search, Grapple and Shove were all present; the one that
+/// lets a creature *wait* was not, so a bow-armed defender covering a
+/// doorway had nothing to do but fire at a wall or Dash into the open.
+///
+/// **What is narrowed, and why.** RAW readies any action against any
+/// trigger the player can describe ("when the cultist finishes his
+/// chant", "if anyone opens that door"). A trigger like that is a
+/// sentence, and the prompt takes one action name per line — there is
+/// nowhere to put it and nothing to parse it with. So this readies one
+/// thing against one trigger: the holder's longest-reaching attack, and
+/// "an enemy comes within its reach". That is the shape the action is
+/// nearly always used in at a table, and the one the engine's existing
+/// movement-trigger dispatcher can enforce exactly.
+///
+/// The reaction is *not* spent here — RAW spends it when the readied
+/// action fires, and a readier whose trigger never comes keeps theirs.
+/// What they lose is the Action, the same as at a table.
+pub struct Ready {}
+
+impl Action for Ready {
+    fn name(&self) -> &str {
+        "ready"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rd", "hold"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        // Nothing to hold without an attack to hold, and nothing to
+        // spend it with without a reaction — a creature that has
+        // already reacted this round would be buying a promise it
+        // cannot keep.
+        actor.best_readyable_attack().is_some()
+            && actor.can_consume_resource(Resource::Reaction)
+            && !actor.has_condition(crate::conditions::Condition::Readied)
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: caster_id,
+            condition: crate::conditions::Condition::Readied,
+            // RAW: "up to the start of your next turn". The engine's
+            // start-of-turn sweep expires this timer, so a readier whose
+            // trigger never came simply stops holding.
+            timer: crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static READY: LazyLock<Ready> = LazyLock::new(|| Ready {});
 
 /// 5e Help action: target one ally; their next attack against a
 /// designated foe before the start of *your* next turn has advantage.
@@ -1246,6 +1332,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*DROP_PRONE,
             &*DODGE,
             &*DISENGAGE,
+            &*READY,
             &*HELP,
             &*SHOVE,
             &*GRAPPLE,
