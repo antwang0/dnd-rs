@@ -6594,10 +6594,12 @@ impl ActorInstance {
             .sum()
     }
 
-    /// True if this actor pays no movement surcharge for stepping onto
-    /// `TerrainType::DifficultTerrain`. Read once per candidate step by
-    /// the pathfinder (`EncounterInstance::dijkstra_path`), which skips
-    /// the terrain multiplier entirely when it holds.
+    /// True if this actor pays no movement surcharge for the terrain it
+    /// crosses — `TerrainType::DifficultTerrain`, and the clamber over a
+    /// `TerrainType::LowWall`, which costs the same and is waived by the
+    /// same things. Read once per path by the pathfinder
+    /// (`EncounterInstance::dijkstra_path`), which skips the terrain
+    /// multiplier entirely when it holds.
     ///
     /// Any one matching row in `DIFFICULT_TERRAIN_IMMUNITIES` is enough
     /// — the surcharge is either charged or it isn't, so unlike the two

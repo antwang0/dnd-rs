@@ -4457,21 +4457,26 @@ impl EncounterInstance {
         }
     }
 
-    /// 5e cover from intervening creatures. Counts combat-active actors
-    /// (other than `attacker_id`/`target_id`) whose footprint a straight
-    /// origin-to-origin line from attacker to target passes through. 0
-    /// intervening = no cover; 1 = half cover (+2 AC); 2+ = three-quarters
-    /// cover (+5 AC). Total cover (line fully blocked by wall) is handled
-    /// upstream via `actor_has_line_of_sight`; this routine assumes LOS
-    /// already validated.
+    /// 5e cover. Counts the obstructions a straight origin-to-origin
+    /// line from attacker to target passes through: combat-active actors
+    /// other than the two ends, and `TerrainType::LowWall` tiles. 0
+    /// obstructions = no cover; 1 = half cover (+2 AC); 2+ =
+    /// three-quarters cover (+5 AC). Total cover (line fully blocked by
+    /// a `Wall`) is handled upstream via `actor_has_line_of_sight`; this
+    /// routine assumes LOS already validated.
+    ///
+    /// Creatures and low walls count on the same ladder rather than on
+    /// separate ones, which is RAW: a target gets "the most protective
+    /// degree of cover" from whatever is in the way, not a stacking
+    /// bonus per obstruction type. Standing behind a low wall *and*
+    /// behind an ally is three-quarters cover, the same as standing
+    /// behind two allies.
     ///
     /// The routine is deliberately conservative: it walks the Bresenham
     /// line between the two actors' anchor tiles and stops counting after
-    /// 2 hits (the bonus saturates at +5). It deliberately doesn't
-    /// consider walls — those are total cover and gate the attack via
-    /// LOS — and it doesn't model object cover (5e half cover from
-    /// terrain) because the terrain layer here has no per-tile cover
-    /// semantics.
+    /// 2 hits (the bonus saturates at +5). It deliberately doesn't count
+    /// `Wall` — that is total cover and gates the attack via LOS, so a
+    /// line that crosses one never reaches here.
     pub fn cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
         let (Some(a), Some(b)) = (
             self.actors.get(&attacker_id),
@@ -4531,6 +4536,22 @@ impl EncounterInstance {
                 && last_hit != Some(blocker_id)
             {
                 last_hit = Some(blocker_id);
+                hits = hits.saturating_add(1);
+                if hits >= 2 {
+                    return 5;
+                }
+            }
+            // A low wall under the line obstructs it the same way a body
+            // does. Counted independently of the creature check above:
+            // a creature standing *on* a low-wall tile is two things in
+            // the way, which is three-quarters cover, and RAW agrees —
+            // "if two sources of cover apply, the target gets the more
+            // protective degree", and two half-covers on one line is
+            // exactly what the +5 rung is for.
+            if self
+                .terrain_at(coord)
+                .is_some_and(|t| t.terrain_type.grants_cover())
+            {
                 hits = hits.saturating_add(1);
                 if hits >= 2 {
                     return 5;
@@ -27265,6 +27286,104 @@ mod tests {
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 2)
             .unwrap();
         assert_eq!(e.cover_ac_bonus(archer, target), 5);
+    }
+
+    /// A low wall is half cover, and unlike a `Wall` it does not stop
+    /// the shot from happening at all.
+    #[test]
+    fn a_low_wall_is_half_cover_and_still_lets_the_arrow_through() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+            .unwrap();
+        assert_eq!(e.cover_ac_bonus(archer, target), 0);
+
+        let idx = e.idx(Coordinate::new(15, 5)).unwrap();
+        e.terrain[idx] = TerrainInfo {
+            terrain_type: TerrainType::LowWall,
+        };
+        assert_eq!(
+            e.cover_ac_bonus(archer, target),
+            2,
+            "one low wall on the line is half cover"
+        );
+        assert!(
+            e.actor_has_line_of_sight(archer, target),
+            "a low wall is something you shoot over, not something you can't see past"
+        );
+        // A full wall in the same place is total cover instead, and the
+        // attack never reaches the cover walk at all. Walled across the
+        // goblins' whole 2-tile footprint span, because LOS is
+        // footprint-aware and a single blocked tile is something a
+        // Small creature can see around.
+        for y in 3..=8 {
+            let widx = e.idx(Coordinate::new(15, y)).unwrap();
+            e.terrain[widx] = TerrainInfo {
+                terrain_type: TerrainType::Wall,
+            };
+        }
+        assert!(!e.actor_has_line_of_sight(archer, target));
+    }
+
+    /// Low walls and bodies count on one ladder, not two: a target
+    /// behind both is three-quarters cover, the same as a target behind
+    /// two bodies.
+    #[test]
+    fn a_low_wall_and_a_body_together_are_three_quarters_cover() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+            .unwrap();
+        let _blocker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 1)
+            .unwrap();
+        assert_eq!(e.cover_ac_bonus(archer, target), 2);
+        let idx = e.idx(Coordinate::new(20, 5)).unwrap();
+        e.terrain[idx] = TerrainInfo {
+            terrain_type: TerrainType::LowWall,
+        };
+        assert_eq!(e.cover_ac_bonus(archer, target), 5);
+    }
+
+    /// Crossing a low wall is a clamber: it costs what difficult terrain
+    /// costs, and it is waived by the same things.
+    #[test]
+    fn clambering_a_low_wall_costs_what_difficult_terrain_costs() {
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        let (mut e, f_id) =
+            rough_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let rubble_cost = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+        e.terrain[4 + 3 * 20] = TerrainInfo {
+            terrain_type: TerrainType::LowWall,
+        };
+        let clamber_cost = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("a low wall is crossed, not blocked");
+        assert_eq!(clamber_cost, rubble_cost);
+
+        e.actors
+            .get_mut(&f_id)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        let flown = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("a low wall is crossed, not blocked");
+        assert!(
+            flown < clamber_cost,
+            "flying over a low wall costs nothing extra: {flown} vs {clamber_cost}"
+        );
     }
 
     #[test]

@@ -216,15 +216,20 @@ fn door_in_wall(rng: &mut Rng, wall_len: usize) -> (usize, usize) {
 
 pub fn generate_terrain(params: &TerrainGenParams, rng: &mut Rng) -> Vec<TerrainInfo> {
     let mut terrain = binary_space_partition(params, rng);
-    scatter_difficult_terrain(&mut terrain, params, rng);
+    scatter_obstructions(&mut terrain, params, rng);
     terrain
 }
 
-/// Randomly convert ~8% of floor tiles into difficult terrain (rubble,
-/// undergrowth, shallow water). Skips tiles adjacent to walls to keep
-/// corridors passable; the scatter rate is low enough that pathfinding
-/// still finds routes but high enough to make positioning matter.
-fn scatter_difficult_terrain(
+/// Randomly obstruct ~8% of open floor tiles: three parts difficult
+/// terrain (rubble, undergrowth, shallow water) to one part low wall.
+///
+/// Skips tiles adjacent to walls to keep corridors passable; the scatter
+/// rate is low enough that pathfinding still finds routes but high
+/// enough to make positioning matter. Neither kind blocks a route
+/// outright — difficult terrain and the clamber over a low wall both
+/// cost double, and both are passable — so the skip is about keeping
+/// doorways cheap rather than about keeping them open.
+fn scatter_obstructions(
     terrain: &mut [TerrainInfo],
     params: &TerrainGenParams,
     rng: &mut Rng,
@@ -248,8 +253,25 @@ fn scatter_difficult_terrain(
             if adj_wall {
                 continue;
             }
+            // One roll, two outcomes, in the order that keeps the older
+            // one's stream position: the 8% that used to become
+            // difficult terrain still does, and a second, narrower roll
+            // inside it promotes a quarter of those tiles to a low wall.
+            // Nesting rather than adding a sibling `rng.f32()` call is
+            // what keeps a seeded map from shifting under every test
+            // that pins one.
             if rng.f32() < 0.08 {
-                terrain[i].terrain_type = TerrainType::DifficultTerrain;
+                // Low walls are the rarer scatter (~2% of open floor)
+                // because each one is a +2 AC that nobody chose. Rubble
+                // taxes movement, which a player can route around; a
+                // low wall taxes an attack roll made from tiles the
+                // shooter may not know are obstructed, so a map covered
+                // in them would read as bad luck rather than as terrain.
+                terrain[i].terrain_type = if rng.f32() < 0.25 {
+                    TerrainType::LowWall
+                } else {
+                    TerrainType::DifficultTerrain
+                };
             }
         }
     }
@@ -296,6 +318,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The scatter puts both kinds of obstruction on a reasonably-sized
+    /// map, and keeps low walls the rarer of the two.
+    ///
+    /// Pinned because the two share one roll — the low wall is a nested
+    /// draw inside the difficult-terrain draw — so a refactor that
+    /// promoted it to a sibling `rng.f32()` would still produce both
+    /// kinds and would silently change every seeded map in the suite.
+    /// The ratio is what catches that.
+    #[test]
+    fn the_scatter_lays_down_rubble_and_the_occasional_low_wall() {
+        let params = TerrainGenParams {
+            width: 60,
+            height: 40,
+            branch_depth: 3,
+            branch_prob: 1.0,
+        };
+        let (mut rough, mut walls) = (0usize, 0usize);
+        for seed in 0..8u64 {
+            let mut rng = Rng::with_seed(seed);
+            for tile in generate_terrain(&params, &mut rng) {
+                match tile.terrain_type {
+                    TerrainType::DifficultTerrain => rough += 1,
+                    TerrainType::LowWall => walls += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(walls > 0, "low walls should appear across 8 maps");
+        assert!(rough > 0, "difficult terrain should too");
+        assert!(
+            walls < rough,
+            "low walls are the rarer scatter: {walls} against {rough}"
+        );
     }
 
     /// A door never eats the whole wall it is cut through, and never

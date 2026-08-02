@@ -202,6 +202,11 @@ pub fn render_map(
                         Some(TerrainType::Floor) => '░',
                         Some(TerrainType::Wall) => '█',
                         Some(TerrainType::DifficultTerrain) => '▒',
+                        // Denser than rubble's '▒' and lighter than a
+                        // wall's '█', which is what a low wall is: you
+                        // can cross it and you can shoot over it, but
+                        // both cost you something.
+                        Some(TerrainType::LowWall) => '▓',
                         _ => ' ',
                     }
                     .to_string(),
