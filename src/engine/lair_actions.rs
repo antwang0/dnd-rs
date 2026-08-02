@@ -113,10 +113,15 @@ fn eruption_point(
 }
 
 /// Resolve a "each creature in the lair must save or take damage" body,
-/// which three of the entries below share. Centred on the resident so
-/// the resident's own allies are spared — every lair effect in the
-/// rules exempts its resident, and the engine's enemy-only burst filter
-/// says the same thing in one call.
+/// which several of the entries below share.
+///
+/// Centred on `eruption_point` rather than on the resident, which
+/// matters for the tight-radius effects and costs the wide ones
+/// nothing: an eruption that goes off under the dragon's own feet has
+/// no intruders in it, and the wide ones cover the map from wherever
+/// they start. Targets come from the engine's enemy-only burst filter,
+/// which is the one call that says what every lair effect in the rules
+/// says — the resident and its allies are not in it.
 fn lair_burst_damage(
     encounter: &mut EncounterInstance,
     resident_id: usize,
@@ -148,7 +153,8 @@ fn lair_burst_damage(
 }
 
 /// Resolve a "each creature in the lair must save or pick something up"
-/// body — the condition half of the same shape.
+/// body — the condition half of the same shape, centred the same way
+/// and for the same reason.
 fn lair_burst_condition(
     encounter: &mut EncounterInstance,
     resident_id: usize,
@@ -157,7 +163,7 @@ fn lair_burst_condition(
     condition: Condition,
     timer: ConditionTimer,
 ) {
-    let Some(center) = encounter.actors.get(&resident_id).map(|a| a.location()) else {
+    let Some(center) = eruption_point(encounter, resident_id) else {
         return;
     };
     let dc = lair_dc(encounter, resident_id);
