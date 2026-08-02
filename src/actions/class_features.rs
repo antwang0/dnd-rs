@@ -43,6 +43,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // use, and Wild Shape recovers on a short rest, so the charge
     // belongs on this cadence next to its Land-circle sibling above.
     STARRY_FORM_TAG,
+    // 5e Arcane Archer Fighter — Arcane Shot. RAW: "You regain all
+    // expended uses of it when you finish a short or long rest." Both
+    // charges come back, which is what the pool-sized refill in
+    // `short_rest` is for.
+    ARCANE_SHOT_TAG,
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     // 5e College of Eloquence Bard lv3 — Unsettling Words. RAW spends a
@@ -309,9 +314,53 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     RIPOSTE_TAG,
 ];
 
+/// Features whose RAW resource is a *pool* rather than a single use,
+/// and how many charges that pool holds here. Read once per actor at
+/// instantiation by `ActorInstance::from_template`, which seeds both
+/// `features_max` and `features_remaining` from it; every tag absent
+/// from this table gets exactly one charge, which is what every
+/// feature in the engine had before the table existed.
+///
+/// The charge lane used to be a `HashSet<&'static str>` — a tag was
+/// either spent or it wasn't — and half a dozen doc comments in this
+/// file apologize for it. Psionic Strike says so outright: "the
+/// engine's per-rest charge lane is binary — one `features_remaining`
+/// entry per tag, not a counter — so a pool-accurate Psionic Strike
+/// would fire once per short rest rather than the four-plus times RAW
+/// allows". The set is now a count, and this table is where a feature
+/// says how big its pool is.
+///
+/// **Existing features deliberately stay at one.** Widening a pool
+/// changes what a chassis can do in a fight, and a template balanced
+/// around one Action Surge is not the same template with two. The
+/// table exists so that a feature whose pool is *load-bearing* can
+/// have one, and Arcane Shot is the first: the archer's whole subclass
+/// is a menu of six options sharing one pool, and a pool of one would
+/// make five of the six unreachable in any given fight.
+pub const FEATURE_CHARGES: &[(&str, u32)] = &[
+    // 5e Arcane Archer Fighter (XGE, subclass level 3): "You can use
+    // this feature twice. You regain all expended uses of it when you
+    // finish a short or long rest." RAW to the number.
+    (ARCANE_SHOT_TAG, 2),
+];
+
+/// How many charges `tag` starts a rest with. One unless
+/// `FEATURE_CHARGES` says otherwise.
+///
+/// A linear scan of a table this size costs less than the hash it
+/// would replace, and it runs once per feature per actor creation
+/// rather than per use.
+pub fn feature_charges(tag: &str) -> u32 {
+    FEATURE_CHARGES
+        .iter()
+        .find(|(name, _)| *name == tag)
+        .map(|(_, count)| *count)
+        .unwrap_or(1)
+}
+
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
 /// gate once-per-long-rest class features. Stored as `&'static str` so
-/// actor state stays a flat HashSet instead of carrying an enum import.
+/// actor state stays a flat map instead of carrying an enum import.
 pub const SECOND_WIND_TAG: &str = "fighter.second_wind";
 pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
 
@@ -12570,27 +12619,50 @@ pub static HALO_OF_SPORES: LazyLock<HaloOfSpores> = LazyLock::new(|| HaloOfSpore
 /// heal, or the concentration to survive being hit.
 pub const STARRY_FORM_TAG: &str = "druid.starry_form";
 
-/// Shared shape for the three **Starry Form** bonus actions (5e Circle
-/// of Stars Druid, subclass level 2). Config-driven for the same reason
-/// `TurnBurst` and `ManeuverPrime` are: the three differ in a name, a
-/// condition and a line of flavor text, and in nothing else at all.
+/// Shared shape for a bonus-action self-prime that belongs to a
+/// *mutually exclusive family* — one where installing any member has to
+/// strip the others. Config-driven for the same reason `TurnBurst` and
+/// `ManeuverPrime` are: the members differ in a name, a condition and a
+/// line of flavor text, and in nothing else at all.
 ///
-/// The one thing this shape does that `prime_self_condition` does not
-/// is strip the sibling forms — see `STARRY_FORMS`. Re-transforming
-/// replaces the constellation RAW, and without the strip a druid with
-/// two charges (or a Dispel that missed) could stand in two at once.
-pub struct StarryForm {
+/// The one thing this shape does that `ManeuverPrime` does not is strip
+/// the siblings. Two features need that today, for two different
+/// reasons that arrive at the same code:
+///
+///   - **Starry Form** (Circle of Stars Druid, subclass level 2).
+///     Re-transforming replaces the constellation RAW, and without the
+///     strip a druid with two charges (or a Dispel that missed) could
+///     stand in two at once.
+///   - **Arcane Shot** (Arcane Archer Fighter, subclass level 3). RAW
+///     nocks one option onto one arrow; the pool is two charges deep,
+///     so without the strip an archer could bank a Grasping Arrow on
+///     turn one, a Shadow Arrow on turn two, and cash *both* riders on
+///     a single shot.
+///
+/// The second case is why the family is a field rather than a hardcoded
+/// walk of `STARRY_FORMS`: the strip is a property of the family, and
+/// there is now more than one family.
+pub struct ExclusivePrime {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
-    /// Which of the three shapes this action assumes. Must be a member
-    /// of `STARRY_FORMS` — `the_three_starry_forms_are_the_registry`
-    /// pins that, since a shape missing from the slice would install
+    /// Per-rest charge the whole family shares. One tag for every
+    /// member, which is what makes the choice a choice.
+    pub tag: &'static str,
+    /// Which member of the family this action installs. Must be a
+    /// member of `family` — `every_exclusive_prime_is_in_its_own_family`
+    /// pins that, since a prime missing from its own slice would install
     /// fine and simply never be stripped by its siblings.
-    pub form: Condition,
+    pub prime_condition: Condition,
+    /// Every member of the family, this one included. Walked on install
+    /// to strip whichever siblings the caster is currently holding.
+    pub family: &'static [Condition],
+    /// How long the installed prime rides. Starry Form runs a minute;
+    /// an Arcane Shot sits on the bow until it is fired.
+    pub timer: ConditionTimer,
     pub log_line: &'static str,
 }
 
-impl Action for StarryForm {
+impl Action for ExclusivePrime {
     fn name(&self) -> &str {
         self.name
     }
@@ -12624,12 +12696,12 @@ impl Action for StarryForm {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // `feature_prime_ready` also refuses to re-install a shape the
-        // druid is already standing in, which is the right answer for
-        // all three: the charge is the whole cost, and spending it to
-        // refresh a timer that has nine rounds left is never what the
+        // `feature_prime_ready` also refuses to re-install a prime the
+        // caster is already holding, which is the right answer for every
+        // family member: the charge is the whole cost, and spending it
+        // to refresh a timer that has nine rounds left is never what the
         // player meant.
-        feature_prime_ready(encounter, caster_id, STARRY_FORM_TAG, self.form)
+        feature_prime_ready(encounter, caster_id, self.tag, self.prime_condition)
     }
     fn side_effects(
         &self,
@@ -12639,32 +12711,48 @@ impl Action for StarryForm {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        starry_form_effects(encounter, caster_id, self.form, self.log_line)
+        prime_exclusive_self_condition(
+            encounter,
+            caster_id,
+            self.tag,
+            self.prime_condition,
+            self.family,
+            self.timer,
+            self.log_line,
+        )
     }
 }
 
-/// Spend the shared Starry Form charge, strip whichever sibling shapes
-/// the druid is currently standing in, and install `form` for ten
-/// rounds.
+/// Spend the family's shared charge, strip whichever siblings the
+/// caster is currently holding, and install `prime`.
 ///
-/// Split out of `StarryForm::side_effects` so the strip-then-install
+/// Split out of `ExclusivePrime::side_effects` so the strip-then-install
 /// order is stated once. The `RemoveCondition`s are emitted *ahead* of
 /// the `ApplyCondition` in the returned vector because side-effects
-/// apply in order — reversing them would strip the form that was just
-/// installed if a future shape ever shared a variant with its sibling.
-fn starry_form_effects(
+/// apply in order — reversing them would strip the prime that was just
+/// installed.
+///
+/// The sibling filter compares against `prime` rather than trusting the
+/// family slice to exclude it, so a family that lists all of its own
+/// members (which every one of them does) doesn't strip what it came to
+/// install.
+#[allow(clippy::too_many_arguments)]
+fn prime_exclusive_self_condition(
     encounter: &mut EncounterInstance,
     caster_id: usize,
-    form: Condition,
+    feature_tag: &'static str,
+    prime: Condition,
+    family: &'static [Condition],
+    timer: ConditionTimer,
     log_line: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-        actor.spend_feature(STARRY_FORM_TAG);
+        actor.spend_feature(feature_tag);
     }
     encounter.log(log_line.to_string());
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = crate::conditions::condition_template::STARRY_FORMS
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = family
         .iter()
-        .filter(|&&sibling| sibling != form)
+        .filter(|&&sibling| sibling != prime)
         .map(|&sibling| {
             Box::new(RemoveCondition {
                 actor_id: caster_id,
@@ -12674,39 +12762,182 @@ fn starry_form_effects(
         .collect();
     effects.push(Box::new(ApplyCondition {
         actor_id: caster_id,
-        condition: form,
-        // 10 rounds = 1 minute RAW, the same window Bladesong and Rage
-        // run on.
-        timer: ConditionTimer::Rounds(10),
+        condition: prime,
+        timer,
     }));
     effects
 }
 
+/// How long a constellation holds: 10 rounds = 1 minute RAW, the same
+/// window Bladesong and Rage run on.
+const STARRY_FORM_TIMER: ConditionTimer = ConditionTimer::Rounds(10);
+
 /// Starry Form: Archer — the constellation of the bowman. Buys the
 /// bonus-action `STARRY_BOLT` for ten rounds.
-pub static STARRY_FORM_ARCHER: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+pub static STARRY_FORM_ARCHER: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
     name: "starry form archer",
     aliases: &["archer", "sfa", "starry archer"],
-    form: Condition::StarryFormArcher,
+    tag: STARRY_FORM_TAG,
+    prime_condition: Condition::StarryFormArcher,
+    family: crate::conditions::condition_template::STARRY_FORMS,
+    timer: STARRY_FORM_TIMER,
     log_line: "  starry form: the druid takes the shape of the Archer.",
 });
 
 /// Starry Form: Chalice — the constellation of the cup. Every slot-cast
 /// heal spills over onto a second wounded ally within 30 ft.
-pub static STARRY_FORM_CHALICE: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+pub static STARRY_FORM_CHALICE: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
     name: "starry form chalice",
     aliases: &["chalice", "sfc", "starry chalice"],
-    form: Condition::StarryFormChalice,
+    tag: STARRY_FORM_TAG,
+    prime_condition: Condition::StarryFormChalice,
+    family: crate::conditions::condition_template::STARRY_FORMS,
+    timer: STARRY_FORM_TIMER,
     log_line: "  starry form: the druid takes the shape of the Chalice.",
 });
 
 /// Starry Form: Dragon — the constellation of the wyrm. Floors the d20
 /// on concentration saves at 10.
-pub static STARRY_FORM_DRAGON: LazyLock<StarryForm> = LazyLock::new(|| StarryForm {
+pub static STARRY_FORM_DRAGON: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
     name: "starry form dragon",
     aliases: &["dragon form", "sfd", "starry dragon"],
-    form: Condition::StarryFormDragon,
+    tag: STARRY_FORM_TAG,
+    prime_condition: Condition::StarryFormDragon,
+    family: crate::conditions::condition_template::STARRY_FORMS,
+    timer: STARRY_FORM_TIMER,
     log_line: "  starry form: the druid takes the shape of the Dragon.",
+});
+
+/// Tag for the Arcane Archer Fighter's **Arcane Shot** pool (subclass
+/// level 3, XGE). Two charges, refreshed on a short or long rest —
+/// `FEATURE_CHARGES` carries the count and `SHORT_REST_FEATURES` the
+/// cadence, both RAW to the letter.
+///
+/// One tag for all six options rather than six tags, and this is the
+/// feature that made the charge lane learn to count. Six separate
+/// per-rest charges would hand the archer six free riders a fight,
+/// which is not a subclass but a shopping list; a single shared charge
+/// would leave five of the six options untouched in any fight that
+/// lasted less than two rests. Two shared charges is what RAW says and
+/// also what makes the feature interesting: the archer picks twice,
+/// knowing the second pick is the last.
+pub const ARCANE_SHOT_TAG: &str = "fighter.arcane_shot";
+
+/// How long a nocked arrow waits for a shot. Two rounds — the same
+/// window every Battle Master prime rides, and for the same reason:
+/// the prime exists to be cashed on the swing the archer is about to
+/// take, and a prime that outlived the round it was declared in would
+/// let the archer bank both charges in a lull and fire them in a
+/// burst RAW has no room for.
+const ARCANE_SHOT_TIMER: ConditionTimer = ConditionTimer::Rounds(2);
+
+/// Arcane Shot: Banishing Arrow. CHA save or the target is swept out of
+/// the fight until the end of the archer's next turn.
+///
+/// No rider damage. RAW gives Banishing Arrow its 2d6 force only at
+/// subclass level 18, and the banishment is already the strongest thing
+/// on this menu — a failed save takes a creature's whole turn away,
+/// which is what Hold Person costs a slot for.
+pub static BANISHING_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "banishing arrow",
+    aliases: &["banishing shot", "banish arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotBanishing,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: a banishing arrow is nocked.",
+});
+
+/// Arcane Shot: Beguiling Arrow. 2d6 psychic, then a CHA save or the
+/// target is Charmed and cannot raise a hand against the archer.
+pub static BEGUILING_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "beguiling arrow",
+    aliases: &["beguiling shot", "beguile arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotBeguiling,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: a beguiling arrow is nocked.",
+});
+
+/// Arcane Shot: Bursting Arrow. The arrow detonates on impact, spraying
+/// 2d6 force over everything standing near what it hit — no save, no
+/// attack roll of its own.
+pub static BURSTING_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "bursting arrow",
+    aliases: &["bursting shot", "burst arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotBursting,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: a bursting arrow is nocked.",
+});
+
+/// Arcane Shot: Enfeebling Arrow. 2d6 necrotic, then a CON save or the
+/// target's weapon damage is halved until the end of the archer's next
+/// turn.
+pub static ENFEEBLING_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "enfeebling arrow",
+    aliases: &["enfeebling shot", "enfeeble arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotEnfeebling,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: an enfeebling arrow is nocked.",
+});
+
+/// Arcane Shot: Grasping Arrow. 2d6 poison, then a STR save or brambles
+/// erupt from the shaft and hold the target fast.
+pub static GRASPING_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "grasping arrow",
+    aliases: &["grasping shot", "grasp arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotGrasping,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: a grasping arrow is nocked.",
+});
+
+/// Arcane Shot: Shadow Arrow. 2d6 psychic, then a WIS save or the
+/// target can see nothing past arm's reach.
+pub static SHADOW_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePrime {
+    name: "shadow arrow",
+    aliases: &["shadow shot", "shade arrow"],
+    tag: ARCANE_SHOT_TAG,
+    prime_condition: Condition::ArcaneShotShadow,
+    family: crate::conditions::condition_template::ARCANE_SHOTS,
+    timer: ARCANE_SHOT_TIMER,
+    log_line: "  arcane shot: a shadow arrow is nocked.",
+});
+
+/// Tag for the Arcane Archer Fighter's **Curving Shot** (subclass level
+/// 7, XGE): "when you make an attack roll with a magic arrow and miss,
+/// you can use a bonus action to reroll the attack roll against the
+/// same or a different target."
+///
+/// Rides the shared `MISSED_ATTACK_BOOSTS` cohort in `engine::attack`,
+/// which adds a die to the missed total rather than rerolling it — the
+/// cohort's standing trade, and the same one the Soulknife's Homing
+/// Strikes makes on the row above. RAW's bonus-action cost is dropped
+/// along with the reroll: the cohort fires inside the attack resolver,
+/// where there is no action economy left to spend, and the per-rest
+/// charge is doing the limiting work either way.
+pub const CURVING_SHOT_TAG: &str = "fighter.curving_shot";
+
+/// Every Arcane Shot action, in the order a template should carry them.
+/// Mirrors `ARCANE_SHOTS` (the condition family) one-for-one —
+/// `every_exclusive_prime_is_in_its_own_family` pins the two against
+/// each other, so an option added to one and forgotten in the other is
+/// a test failure rather than a prime nothing ever strips.
+pub static ARCANE_SHOT_ACTIONS: LazyLock<Vec<&'static ExclusivePrime>> = LazyLock::new(|| {
+    vec![
+        &BANISHING_ARROW,
+        &BEGUILING_ARROW,
+        &BURSTING_ARROW,
+        &ENFEEBLING_ARROW,
+        &GRASPING_ARROW,
+        &SHADOW_ARROW,
+    ]
 });
 
 /// Starry Bolt — the Archer form's payload (5e Circle of Stars Druid,

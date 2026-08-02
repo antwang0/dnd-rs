@@ -3483,6 +3483,23 @@ impl SpellSlotManager {
     }
 }
 
+/// Expand a template's flat set of feature tags into the charge map an
+/// `ActorInstance` carries, asking `class_features::feature_charges`
+/// how deep each pool runs.
+///
+/// The template side stays a `HashSet<&'static str>` on purpose: a
+/// template says *which* features a creature has, and the size of a
+/// feature's pool is a property of the feature, not of whoever carries
+/// it. Writing the count on the template would mean every chassis that
+/// picks up Arcane Shot has to remember the number, and one that forgot
+/// would silently ship a weaker subclass.
+fn feature_charge_map(features: &HashSet<&'static str>) -> HashMap<&'static str, u32> {
+    features
+        .iter()
+        .map(|&tag| (tag, crate::actions::class_features::feature_charges(tag)))
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct ActorInstance {
     name: String,
@@ -3622,10 +3639,18 @@ pub struct ActorInstance {
     proficient_saves: HashSet<AbilityScoreType>,
     /// Conditions the actor is wholly immune to.
     condition_immunities: HashSet<Condition>,
-    /// Class-feature tags currently available (consumed on use, refreshed
-    /// on long rest).
-    features_remaining: HashSet<&'static str>,
-    features_max: HashSet<&'static str>,
+    /// Class-feature charges currently unspent, keyed by feature tag
+    /// (decremented on use, refilled to `features_max` on long rest and
+    /// — for the short-rest cohorts — on short rest).
+    ///
+    /// A count rather than a set membership: most features hold exactly
+    /// one charge, but a feature whose RAW resource is a pool declares
+    /// its size in `FEATURE_CHARGES` and gets that many. A tag present
+    /// with a count of zero is a *spent* feature the holder still
+    /// carries — which is why `has_passive_feature` reads `features_max`
+    /// and `feature_available` reads this map's value, not its keys.
+    features_remaining: HashMap<&'static str, u32>,
+    features_max: HashMap<&'static str, u32>,
     /// Bless / Resistance flat to-hit and save bonuses. Independent of the
     /// `Blessed` condition flag for stacking flexibility.
     attack_bonus_buff: i32,
@@ -4018,8 +4043,8 @@ impl ActorInstance {
             xp: 0,
             proficient_saves: ct.proficient_saves.clone(),
             condition_immunities: ct.condition_immunities.clone(),
-            features_remaining: ct.features.clone(),
-            features_max: ct.features.clone(),
+            features_remaining: feature_charge_map(&ct.features),
+            features_max: feature_charge_map(&ct.features),
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
@@ -4557,8 +4582,9 @@ impl ActorInstance {
     /// through the template's `features` HashSet at creation time.
     #[cfg(test)]
     pub fn grant_feature_for_test(&mut self, tag: &'static str) {
-        self.features_max.insert(tag);
-        self.features_remaining.insert(tag);
+        let charges = crate::actions::class_features::feature_charges(tag);
+        self.features_max.insert(tag, charges);
+        self.features_remaining.insert(tag, charges);
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance
@@ -5156,7 +5182,11 @@ impl ActorInstance {
             {
                 continue;
             }
-            self.features_remaining.insert(tag);
+            // Refill to the pool's own size rather than to one, so a
+            // multi-charge feature comes back off a short rest with
+            // everything RAW says it has.
+            let max = self.features_max.get(tag).copied().unwrap_or(1);
+            self.features_remaining.insert(tag, max);
         }
 
         // 5e Relentless Rage RAW: DC resets to 10 on short / long rest.
@@ -6919,9 +6949,7 @@ impl ActorInstance {
         if matches!(self.hp_state, HpState::Active)
             && self.hitpoints > 0
             && self.hitpoints * 2 <= self.max_hitpoints()
-            && self
-                .features_max
-                .contains(crate::actions::class_features::SURVIVOR_TAG)
+            && self.has_passive_feature(crate::actions::class_features::SURVIVOR_TAG)
         {
             let con_mod = modifier_from_score(self.constitution);
             let amount = (5 + con_mod).max(1) as u32;
@@ -7034,6 +7062,38 @@ impl ActorInstance {
 
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + self.proficiency_bonus() + self.ability_modifier(ability)
+    }
+
+    /// Everything this actor adds to a saving throw of `ability` from
+    /// its own sheet: the ability modifier, the proficiency bonus if it
+    /// is proficient, carried-item bonuses, the spell-installed save
+    /// buff (Bless's `AdjustSaveBuff`), and the condition-only flat lane
+    /// (a Bardic Inspiration die already handed over).
+    ///
+    /// Deliberately *not* the whole save total.
+    /// `roll_save_with_extra_mode_and_bonus` adds three more things that
+    /// no actor can answer alone — the Bless / Bane d4, a nearby
+    /// paladin's Aura of Protection, and whatever call-site bonus the
+    /// feature rolling the save brought with it — and it applies
+    /// advantage and disadvantage, which are not a number at all. The
+    /// save site sums this and then those.
+    ///
+    /// Its other caller is the AI, which uses it to ask "which of this
+    /// creature's saves is the weak one" before choosing what to throw
+    /// at it. That is a heuristic and the omissions above are fine for
+    /// it: an aura or a Bless lifts every save by the same amount and
+    /// so does not change which one is lowest.
+    pub fn save_modifier(&self, ability: AbilityScoreType) -> i32 {
+        let prof = if self.is_save_proficient(ability) {
+            self.proficiency_bonus()
+        } else {
+            0
+        };
+        self.ability_modifier(ability)
+            + prof
+            + self.item_save_bonus()
+            + self.save_bonus_buff()
+            + self.condition_save_bonus()
     }
 
     /// Standard d20 attack-roll modifier — proficiency bonus + the
@@ -7273,9 +7333,8 @@ impl ActorInstance {
                     // Massive Damage (overflow ≥ max HP) also short-
                     // circuits before this cohort (RAW).
                     for &tag in LETHAL_DAMAGE_ABSORBER_FEATURES {
-                        if self.features_remaining.contains(tag) {
+                        if self.spend_feature(tag) {
                             self.hitpoints = 1;
-                            self.features_remaining.remove(tag);
                             return DamageOutcome::Reduced;
                         }
                     }
@@ -7379,18 +7438,42 @@ impl ActorInstance {
     }
 
 
-    /// Class-feature gates (Second Wind, Action Surge, etc.).
+    /// Class-feature gates (Second Wind, Action Surge, etc.). True while
+    /// the holder still has at least one unspent charge of `tag`.
     pub fn feature_available(&self, tag: &'static str) -> bool {
-        self.features_remaining.contains(tag)
+        self.feature_charges_remaining(tag) > 0
     }
 
+    /// How many charges of `tag` are left. `0` covers both "spent" and
+    /// "never had it", which is what every caller wants — the two are
+    /// distinguished by `has_passive_feature`.
+    ///
+    /// Public because the multi-charge features are exactly the ones
+    /// whose tests need to see the pool draining a charge at a time
+    /// rather than flipping a bit.
+    pub fn feature_charges_remaining(&self, tag: &'static str) -> u32 {
+        self.features_remaining.get(tag).copied().unwrap_or(0)
+    }
+
+    /// Spend one charge of `tag`. Returns `true` if a charge was
+    /// actually there to spend — every caller that gates on
+    /// `feature_available` first can ignore the result, and the ones
+    /// that don't (the lethal-damage absorber cohort) use it as the
+    /// gate itself.
     pub fn spend_feature(&mut self, tag: &'static str) -> bool {
-        self.features_remaining.remove(tag)
+        match self.features_remaining.get_mut(tag) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Put a spent per-use charge back without waiting for a rest.
-    /// Returns `true` if the charge was actually restored (it had been
-    /// spent), `false` if it was already up.
+    /// Returns `true` if the charge was actually restored (the pool had
+    /// room), `false` if it was already full or the actor doesn't carry
+    /// the feature at all.
     ///
     /// The counterpart to `spend_feature` for features whose RAW
     /// recharge condition is an in-encounter event rather than a rest —
@@ -7400,11 +7483,20 @@ impl ActorInstance {
     /// writes `features_max` and so *adds* a feature the template never
     /// had: this only refills a charge for a feature the actor already
     /// carries, and is a no-op for one they don't.
+    ///
+    /// Refills one charge, not the pool: a feature whose recharge
+    /// trigger fires twice hands back two charges, which is the RAW
+    /// reading of every event-driven recharge in the book.
     pub fn restore_feature_charge(&mut self, tag: &'static str) -> bool {
-        if !self.features_max.contains(tag) {
+        let Some(&max) = self.features_max.get(tag) else {
+            return false;
+        };
+        let remaining = self.features_remaining.entry(tag).or_insert(0);
+        if *remaining >= max {
             return false;
         }
-        self.features_remaining.insert(tag)
+        *remaining += 1;
+        true
     }
 
     /// True if this actor was instantiated with `tag` in their template's
@@ -7413,7 +7505,7 @@ impl ActorInstance {
     /// Used by always-on passives (Wild Magic Surge, Sorcerous Restoration)
     /// whose trigger fires every encounter regardless of any charge pool.
     pub fn has_passive_feature(&self, tag: &'static str) -> bool {
-        self.features_max.contains(tag)
+        self.features_max.contains_key(tag)
     }
 
     /// Has the rogue used their once-per-turn Sneak Attack already?

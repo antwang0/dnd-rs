@@ -1857,6 +1857,71 @@ pub enum Condition {
     /// up — Moonbeam, Call Lightning, Spike Growth — matters more than
     /// anything they could do with the round.
     StarryFormDragon,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Banishing Arrow**
+    /// (subclass level 3). Nocked onto the bow; the next ranged weapon
+    /// hit forces a CHA save or the target is swept into a harmless
+    /// demiplane until the end of the archer's next turn.
+    ///
+    /// The six Arcane Shot primes are one family (`ARCANE_SHOTS`) and
+    /// share one charge pool, so nocking a second one strips the first
+    /// — see `ExclusivePrime`. Every one of them rides
+    /// `RiderLane::RangedWeapon`: RAW is "when you fire an arrow from a
+    /// shortbow or longbow", and an archer who drew a sword would be
+    /// firing nothing.
+    ArcaneShotBanishing,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Beguiling Arrow**
+    /// (subclass level 3). 2d6 psychic on the hit, then a CHA save or
+    /// the target is Charmed.
+    ///
+    /// RAW charms the target of an *ally* the archer chooses, which the
+    /// engine has no way to nominate at rider-resolution time; the charm
+    /// links back to the archer instead. That is the narrower reading —
+    /// it takes the target out of the archer's own fight rather than
+    /// someone else's — and it is the one the `Charmed` back-link
+    /// machinery already enforces end to end.
+    ArcaneShotBeguiling,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Bursting Arrow**
+    /// (subclass level 3). The arrow detonates: 2d6 force to everything
+    /// standing near the creature it struck, with no save.
+    ///
+    /// The only Arcane Shot whose payload is not aimed at the creature
+    /// hit, and the reason `FollowUpEffect` grew a `Burst` variant —
+    /// `Splash` picks one adjacent enemy, and a detonation that hit one
+    /// bystander out of four would be a different feature.
+    ArcaneShotBursting,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Enfeebling Arrow**
+    /// (subclass level 3). 2d6 necrotic on the hit, then a CON save or
+    /// the target's own weapon damage is halved until the end of the
+    /// archer's next turn — the `Enfeebled` condition below.
+    ArcaneShotEnfeebling,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Grasping Arrow**
+    /// (subclass level 3). 2d6 poison on the hit, then a STR save or
+    /// brambles erupt and hold the target fast (Restrained).
+    ///
+    /// RAW's ongoing 2d6 slashing per turn of struggle collapses into
+    /// the Restrained condition alone, which is where the tactical
+    /// weight of the shot sits: speed zero, disadvantage on its own
+    /// attacks, advantage for everyone shooting at it.
+    ArcaneShotGrasping,
+    /// 5e Arcane Archer Fighter **Arcane Shot: Shadow Arrow**
+    /// (subclass level 3). 2d6 psychic on the hit, then a WIS save or
+    /// the target can see nothing beyond 5 ft.
+    ///
+    /// Modeled as Blinded, which is the honest collapse of "can't see
+    /// beyond 5 feet" on a grid where the archer is never inside 5 feet
+    /// of the thing they just shot: from the target's side, everything
+    /// worth attacking has gone dark.
+    ArcaneShotShadow,
+    /// Weapon damage dealt by this creature is halved. Installed by the
+    /// Arcane Archer's Enfeebling Arrow on a failed CON save.
+    ///
+    /// The mirror image of `DamageResistant`, which halves damage on the
+    /// way *in*; this halves it on the way *out*, and it is read at the
+    /// attacker-scoped site in `attack::attacker_scoped_damage_reduction`
+    /// rather than at the victim's. Weapon attacks only, per RAW — a
+    /// spellcaster shrugs the arrow's necrotic drain off entirely, which
+    /// is the trade the shot makes for how hard it hits a multiattacker.
+    Enfeebled,
 }
 
 impl Condition {
@@ -2020,6 +2085,13 @@ impl Condition {
             Condition::StarryFormArcher => "starry form (archer)",
             Condition::StarryFormChalice => "starry form (chalice)",
             Condition::StarryFormDragon => "starry form (dragon)",
+            Condition::ArcaneShotBanishing => "banishing arrow nocked",
+            Condition::ArcaneShotBeguiling => "beguiling arrow nocked",
+            Condition::ArcaneShotBursting => "bursting arrow nocked",
+            Condition::ArcaneShotEnfeebling => "enfeebling arrow nocked",
+            Condition::ArcaneShotGrasping => "grasping arrow nocked",
+            Condition::ArcaneShotShadow => "shadow arrow nocked",
+            Condition::Enfeebled => "enfeebled",
             Condition::TransmutedSpelling => "primed with transmuted spell",
             Condition::CunningStrikePoison => "primed with cunning poison",
             Condition::CunningStrikeTrip => "primed with cunning trip",
@@ -2602,17 +2674,40 @@ impl std::fmt::Display for Condition {
 /// standing in two constellations at once with the bonus-action bolt
 /// *and* the concentration floor.
 ///
-/// So the install path (`starry_form_effects`) walks this slice and
-/// emits a `RemoveCondition` for every shape that is not the one being
-/// assumed. Keeping the roster here rather than spelling out "the other
-/// two" at each of the three action sites means a fourth shape — RAW's
-/// level-10 Twinkling Constellations does not add one, but a homebrew
-/// circle could — is a single row rather than three edits that have to
-/// agree with each other.
+/// So the install path (`prime_exclusive_self_condition`) walks this
+/// slice and emits a `RemoveCondition` for every shape that is not the
+/// one being assumed. Keeping the roster here rather than spelling out
+/// "the other two" at each of the three action sites means a fourth
+/// shape — RAW's level-10 Twinkling Constellations does not add one, but
+/// a homebrew circle could — is a single row rather than three edits
+/// that have to agree with each other.
 pub const STARRY_FORMS: &[Condition] = &[
     Condition::StarryFormArcher,
     Condition::StarryFormChalice,
     Condition::StarryFormDragon,
+];
+
+/// The six **Arcane Shot** options of the 5e Arcane Archer Fighter,
+/// in the order the AI considers them.
+///
+/// The second family to ride `ExclusivePrime`, and it needs the strip
+/// for a sharper reason than Starry Form does. The archer's pool is two
+/// charges deep, and RAW nocks one option onto one arrow: "you can use
+/// only one Arcane Shot option per attack". Without the strip, nocking
+/// Grasping on turn one and Shadow on turn two and then firing once
+/// would cash both riders — a Restrained *and* Blinded target off a
+/// single shot, which is not an option the subclass offers at any
+/// level.
+///
+/// The order is the AI's preference and it is load-bearing; see
+/// `ARCANE_SHOT_ORDER` in the AI module for the reasoning.
+pub const ARCANE_SHOTS: &[Condition] = &[
+    Condition::ArcaneShotBanishing,
+    Condition::ArcaneShotBeguiling,
+    Condition::ArcaneShotBursting,
+    Condition::ArcaneShotEnfeebling,
+    Condition::ArcaneShotGrasping,
+    Condition::ArcaneShotShadow,
 ];
 
 /// How long a condition application persists. `Permanent` requires an

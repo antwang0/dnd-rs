@@ -392,9 +392,11 @@ pub fn spell_attack_outcome(
         }
     ));
     // Attacker-scoped reductions (Ancestral Protectors) — before the
-    // reactive clamps, matching the weapon path.
+    // reactive clamps, matching the weapon path. `is_weapon: false`
+    // keeps Enfeebling Arrow out: RAW halves the enfeebled creature's
+    // *weapon* damage and says nothing about its spells.
     let total_dmg = crate::engine::attack::attacker_scoped_damage_reduction(
-        encounter, caster_id, target_id, total_dmg,
+        encounter, caster_id, target_id, total_dmg, false,
     );
     // Reactive damage clamps — Uncanny Dodge, Deflect Missiles, Parry,
     // Fighting Style: Interception. Shared with the weapon path in

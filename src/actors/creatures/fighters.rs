@@ -782,3 +782,109 @@ pub static RUNE_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         ..FIGHTER_TEMPLATE.clone()
     }
 });
+
+/// Arcane Archer Fighter — the Martial Archetype **Arcane Archer**
+/// (XGE), and the first fighter on the roster whose primary weapon is a
+/// bow.
+///
+/// Every other fighter here answers the question "what happens when I
+/// hit you" with a bigger number or a save-or-suck rider on a sword.
+/// The Arcane Archer answers it from thirty feet away, with a menu, and
+/// the menu is the subclass. Six options, two charges, and the whole
+/// feature is which two you pick before the fight has finished telling
+/// you what it is:
+///
+///   - **Banishing Arrow** takes a creature's turn away on a failed CHA
+///     save. No damage attached — RAW withholds Banishing Arrow's dice
+///     until subclass level 18, and it does not need them.
+///   - **Beguiling Arrow** charms on a failed CHA save, which on this
+///     engine means the target cannot raise a hand against the archer
+///     until it shakes it off.
+///   - **Bursting Arrow** detonates: 2d6 force to everything standing
+///     within 10 ft of what it hit, no save, and nothing at all to the
+///     creature that took the arrow. The crowd-control option, and the
+///     only one that gets better the worse the archer's positioning is.
+///   - **Enfeebling Arrow** halves the target's weapon damage on a
+///     failed CON save. The answer to a multiattacker.
+///   - **Grasping Arrow** Restrains on a failed STR save — speed zero,
+///     disadvantage on its own swings, advantage for every ally
+///     shooting at it.
+///   - **Shadow Arrow** Blinds on a failed WIS save.
+///
+/// The six are mutually exclusive by construction (see `ARCANE_SHOTS`):
+/// nocking one strips whatever was already on the string, so the two
+/// charges buy two shots and not one doubled-up shot. Every save is
+/// against 8 + proficiency + **Intelligence**, which is why this
+/// fighter carries an INT 16 no other fighter on the roster has any use
+/// for — RAW makes the Arcane Archer the one martial whose damage
+/// depends on a caster's stat.
+///
+/// **Curving Shot** (lv7) rides the shared missed-attack cohort: once
+/// per rest, an arrow that missed gets +1d8 on the roll. The cohort
+/// adds rather than rerolls, which is the trade every member of it
+/// makes.
+///
+/// **Stats** diverge from the baseline Fighter more than any other
+/// subclass here, because the chassis has to actually be an archer:
+/// DEX 18 and the Archery fighting style in place of STR 16 and
+/// Dueling, AC 16 from studded leather plus the DEX rather than from
+/// chain mail, and a longbow as the primary. The Battle Master
+/// maneuvers inherited from the baseline stay — an archer forced into
+/// melee still has a scimitar and a reason to trip somebody with it —
+/// but the arcane shots are the reason to field this template.
+///
+/// Left out: **Magic Arrow** (lv7) makes the archer's arrows magical for
+/// overcoming resistance, and the engine's damage pipeline has no
+/// non-magical-physical carve-out for it to matter against;
+/// **Ever-Ready Shot** (lv15) hands back a charge on initiative, which
+/// needs a roll-initiative hook the encounter loop does not expose;
+/// **Arcane Archer Lore** is a skill ribbon.
+///
+/// Glyph 'A' — for **A**rcane Archer. Distinct from baseline Fighter
+/// 'F', Champion 'C', Samurai 'S', Eldritch Knight 'E', Psi Warrior 'P',
+/// Cavalier 'V' and Rune Knight 'R'.
+pub static ARCANE_ARCHER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{ARCANE_SHOT_ACTIONS, ARCANE_SHOT_TAG, CURVING_SHOT_TAG};
+    use crate::actions::monster_attacks::LONGBOW;
+    // The bow goes on ahead of the inherited scimitar so the action list
+    // reads primary-first, which is also the order the prompt's
+    // ambiguous-prefix resolution walks.
+    let mut actions = vec![&LONGBOW as &'static (dyn crate::actions::action_template::Action + Send + Sync)];
+    actions.extend(FIGHTER_TEMPLATE.actions.iter().copied());
+    for shot in ARCANE_SHOT_ACTIONS.iter() {
+        actions.push(*shot as &'static (dyn crate::actions::action_template::Action + Send + Sync));
+    }
+    let mut features = FIGHTER_TEMPLATE.features.clone();
+    features.insert(ARCANE_SHOT_TAG);
+    features.insert(CURVING_SHOT_TAG);
+    CreatureTemplate {
+        name: "Arcane Archer",
+        glyph: 'A',
+        actions,
+        features,
+        // Studded leather (12) + DEX 18 (+4). Two AC below the baseline
+        // fighter's chain mail, which is the price of standing where the
+        // bow is worth carrying.
+        ac: 16,
+        strength: 12,
+        dexterity: 18,
+        // The Arcane Shot DC anchor. A fighter's dump stat everywhere
+        // else on this roster, and the only reason six of this
+        // template's actions do anything at all.
+        intelligence: 16,
+        // Dueling is a melee-damage style and buys an archer nothing.
+        has_dueling_style: false,
+        has_archery_style: true,
+        // Extends the baseline fighter's Athletics / Perception rather
+        // than replacing it — Stealth is the archer's addition, and a
+        // subclass that dropped a family skill would fail
+        // `subclass_templates_inherit_their_familys_skills`.
+        skills: FIGHTER_TEMPLATE
+            .skills
+            .iter()
+            .cloned()
+            .chain([Skill::Stealth])
+            .collect(),
+        ..FIGHTER_TEMPLATE.clone()
+    }
+});

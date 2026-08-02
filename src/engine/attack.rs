@@ -825,19 +825,51 @@ fn fire_clamp(
 /// reaction, which this costs nobody. So it sits between the two, called
 /// from both attack chokepoints with both ids in hand.
 ///
-/// One rule today - the Ancestral Guardian's half of Ancestral
-/// Protectors. RAW words it as the *victim* gaining resistance, but the
-/// gate is entirely on the attacker (are they haunted, and is their
-/// target someone other than the barbarian who haunted them), so the
-/// attacker-scoped framing is the one that can actually be evaluated.
+/// Two rules today, and they halve in sequence — a haunted, enfeebled
+/// attacker deals a quarter, which is what two independent halvings
+/// mean everywhere else in the engine.
+///
+///   - The Ancestral Guardian's half of **Ancestral Protectors**. RAW
+///     words it as the *victim* gaining resistance, but the gate is
+///     entirely on the attacker (are they haunted, and is their target
+///     someone other than the barbarian who haunted them), so the
+///     attacker-scoped framing is the one that can actually be
+///     evaluated.
+///   - The Arcane Archer's **Enfeebling Arrow**: "the target deals only
+///     half damage with weapon attacks". Weapon attacks only, which is
+///     what `is_weapon` is for — the spell-attack chokepoint calls this
+///     with `false` and an enfeebled wizard's Fire Bolt lands in full.
 pub fn attacker_scoped_damage_reduction(
     encounter: &mut EncounterInstance,
     attacker_id: usize,
     target_id: usize,
     damage: u32,
+    is_weapon: bool,
 ) -> u32 {
     if damage == 0 {
         return 0;
+    }
+    let mut damage = damage;
+    // 5e Enfeebling Arrow. Checked first so the log reads in the order
+    // the reductions were imposed on the attacker rather than in the
+    // order this function happens to test them; the arithmetic is the
+    // same either way, since halving twice commutes up to the rounding
+    // that both orders share.
+    if is_weapon
+        && encounter
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.has_condition(Condition::Enfeebled))
+    {
+        let weakened = damage / 2;
+        encounter.log(format!(
+            "  enfeebling arrow: the attacker's strength fails them ({} -> {})",
+            damage, weakened
+        ));
+        damage = weakened;
+        if damage == 0 {
+            return 0;
+        }
     }
     // 5e Ancestral Protectors: "when the creature hits a creature other
     // than you with an attack, that target has resistance to the damage
@@ -1570,7 +1602,7 @@ pub fn resolve_attack_outcome_with_rider(
     // damage-reduction reactions in, and the order that keeps a
     // doubly-protected ally from taking more than a singly-protected
     // one.
-    damage = attacker_scoped_damage_reduction(encounter, p.caster_id, p.target_id, damage);
+    damage = attacker_scoped_damage_reduction(encounter, p.caster_id, p.target_id, damage, true);
     // Target-side and ally-side reactive damage clamps — Uncanny Dodge
     // (Rogue lv5), Deflect Missiles (Monk lv3), Parry (Battle Master
     // maneuver), Fighting Style: Interception. All four are rows on the
@@ -2655,6 +2687,29 @@ pub enum FollowUpEffect {
         dice: Dice,
         damage_type: DamageType,
     },
+    /// Detonate around the creature that was hit: every enemy of the
+    /// caster within `radius_tiles` of the target takes the rolled
+    /// `dice` as `damage_type`. Used by the Arcane Archer's Bursting
+    /// Arrow.
+    ///
+    /// The plural sibling of `Splash`, and worth its own variant rather
+    /// than a `count` field on that one: Splash reaches for the single
+    /// *closest* bystander and has an opinion about which one, where a
+    /// burst has no opinion at all — it hits everything standing in it.
+    /// Collapsing the two would mean a "pick the closest N" ordering
+    /// that the burst would immediately throw away.
+    ///
+    /// One die roll for the whole burst rather than one per victim,
+    /// matching how every other area effect in the engine rolls: RAW's
+    /// area spells roll damage once and apply it to everyone caught.
+    /// The creature that was hit is excluded — it already took the
+    /// arrow, and RAW's Bursting Arrow damages "each creature within 10
+    /// feet of the target", not the target itself.
+    Burst {
+        radius_tiles: isize,
+        dice: Dice,
+        damage_type: DamageType,
+    },
 }
 
 /// A per-rest source that can rescue a swing which just missed, by
@@ -2700,6 +2755,22 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
         eligible: |p| {
             p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE.name
                 || p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE_FLOURISH.name
+        },
+    },
+    // 5e Arcane Archer Fighter **Curving Shot** (subclass level 7):
+    // "when you make an attack roll with a magic arrow and miss, you
+    // can use a bonus action to reroll the attack roll." The arrow has
+    // to be one the archer's own magic made, which on this chassis
+    // means one fired from a bow — matched off the two bow statics by
+    // name, for the same reason Homing Strikes matches off its blades
+    // rather than on a substring.
+    MissedAttackBoost {
+        label: "curving shot",
+        tag: crate::actions::class_features::CURVING_SHOT_TAG,
+        dice: Dice::new(1, 8),
+        eligible: |p| {
+            p.action_name == crate::actions::monster_attacks::LONGBOW.display_name
+                || p.action_name == crate::actions::monster_attacks::SHORTBOW.display_name
         },
     },
 ];
@@ -3669,7 +3740,179 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
+        // 5e Arcane Archer Fighter **Arcane Shot** (subclass level 3,
+        // XGE) — six rows, one per option, all six on
+        // `RiderLane::RangedWeapon` and all six consumed by the shot
+        // that cashes them. RAW: "when you fire an arrow from a
+        // shortbow or longbow", which is the ranged weapon lane exactly.
+        //
+        // Every save is against the archer's Arcane Shot DC, which RAW
+        // anchors on Intelligence — the one martial DC in the book that
+        // does, and the reason the Arcane Archer template carries an INT
+        // a fighter otherwise has no use for.
+        //
+        // The six primes are mutually exclusive (see `ARCANE_SHOTS`), so
+        // at most one of these rows can fire on any given shot even
+        // though the walker would happily fire all six.
+        //
+        // Banishing Arrow: no rider damage — RAW withholds the 2d6 until
+        // subclass level 18, and taking a creature's turn away is
+        // already the heaviest thing on this menu.
+        OnHitRider {
+            condition: Condition::ArcaneShotBanishing,
+            dice: Dice::new(0, 1),
+            label: "banishing arrow",
+            damage_type: DamageType::Force,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Charisma),
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Condition {
+                    // RAW banishes the target to a harmless demiplane
+                    // until the end of the archer's next turn.
+                    // Incapacitated is the engine's word for "present on
+                    // the board and able to do nothing with it" — the
+                    // creature keeps its space, which is the one thing
+                    // the demiplane reading loses, and loses every
+                    // action, which is the whole point of the shot.
+                    condition: Condition::Incapacitated,
+                    timer: ConditionTimer::Rounds(1),
+                },
+                label: "banishing arrow banish",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
+        // Beguiling Arrow: 2d6 psychic, then a CHA save or Charmed. The
+        // charm links back to the archer rather than to the ally RAW
+        // lets them nominate — see `Condition::ArcaneShotBeguiling`.
+        OnHitRider {
+            condition: Condition::ArcaneShotBeguiling,
+            dice: Dice::new(2, 6),
+            label: "beguiling arrow",
+            damage_type: DamageType::Psychic,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Charisma),
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Charmed,
+                    timer: ConditionTimer::Rounds(1),
+                },
+                label: "beguiling arrow charm",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
+        // Bursting Arrow: no damage to the creature struck — RAW's force
+        // burst spares the target and catches everything around it. The
+        // only row on the table whose follow-up is a `Burst`, and the
+        // reason the variant exists. 10 ft on the 2.5 ft grid is a
+        // four-tile footprint gap, the same reach Halo of Spores uses
+        // for the same RAW distance.
+        OnHitRider {
+            condition: Condition::ArcaneShotBursting,
+            dice: Dice::new(0, 1),
+            label: "bursting arrow",
+            damage_type: DamageType::Force,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Burst {
+                    radius_tiles: 4,
+                    dice: Dice::new(2, 6),
+                    damage_type: DamageType::Force,
+                },
+                label: "bursting arrow burst",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
+        // Enfeebling Arrow: 2d6 necrotic, then a CON save or the
+        // target's own weapon damage is halved. See `Condition::Enfeebled`.
+        OnHitRider {
+            condition: Condition::ArcaneShotEnfeebling,
+            dice: Dice::new(2, 6),
+            label: "enfeebling arrow",
+            damage_type: DamageType::Necrotic,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Enfeebled,
+                    timer: ConditionTimer::Rounds(1),
+                },
+                label: "enfeebling arrow enfeeble",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
+        // Grasping Arrow: 2d6 poison, then a STR save or Restrained.
+        // RAW's ongoing 2d6 slashing per turn of struggle is dropped —
+        // the hold is what the shot is for.
+        OnHitRider {
+            condition: Condition::ArcaneShotGrasping,
+            dice: Dice::new(2, 6),
+            label: "grasping arrow",
+            damage_type: DamageType::Poison,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(2),
+                },
+                label: "grasping arrow brambles",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
+        // Shadow Arrow: 2d6 psychic, then a WIS save or Blinded.
+        OnHitRider {
+            condition: Condition::ArcaneShotShadow,
+            dice: Dice::new(2, 6),
+            label: "shadow arrow",
+            damage_type: DamageType::Psychic,
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Wisdom),
+                dc_ability: AbilityScoreType::Intelligence,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Blinded,
+                    timer: ConditionTimer::Rounds(1),
+                },
+                label: "shadow arrow blind",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
 ];
+
+/// The blast radius the Bursting Arrow row actually delivers, read back
+/// out of `ON_HIT_RIDERS`. `None` if the row has gone.
+///
+/// Exists so the AI's own copy of the number can be pinned against the
+/// rider's by `the_bursting_arrow_radius_agrees_with_its_rider` — the
+/// picker has to know how wide the blast is before it spends a charge
+/// on one, and the table is private.
+pub fn bursting_arrow_rider_radius() -> Option<isize> {
+    ON_HIT_RIDERS
+        .iter()
+        .filter(|row| row.condition == Condition::ArcaneShotBursting)
+        .find_map(|row| match row.follow_up.map(|f| f.effect) {
+            Some(FollowUpEffect::Burst { radius_tiles, .. }) => Some(radius_tiles),
+            _ => None,
+        })
+}
 
 /// Build the `SetXBy` side-effect that records the attacker for a
 /// linked condition (`Goaded`/`Goaded` back-link, `Distracted`/`Distracted` back-link
@@ -3721,7 +3964,14 @@ fn apply_smite_follow_up(
     }
     let Some(save_ability) = follow.save_ability else {
         encounter.log(format!("  {}: auto-apply on hit", follow.label));
-        push_follow_up_effect(encounter, effects, caster_id, target_id, follow.effect);
+        push_follow_up_effect(
+            encounter,
+            effects,
+            caster_id,
+            target_id,
+            follow.effect,
+            follow.label,
+        );
         return;
     };
     let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -3734,7 +3984,14 @@ fn apply_smite_follow_up(
         return;
     }
     encounter.log(format!("  {}: target fails save", follow.label));
-    push_follow_up_effect(encounter, effects, caster_id, target_id, follow.effect);
+    push_follow_up_effect(
+        encounter,
+        effects,
+        caster_id,
+        target_id,
+        follow.effect,
+        follow.label,
+    );
 }
 
 /// Materialize a `FollowUpEffect` into the side-effect queue. Splits the
@@ -3742,14 +3999,21 @@ fn apply_smite_follow_up(
 /// gates above so a future variant (e.g. forced grapple, dispel) plugs
 /// in here without re-walking the gates. `caster_id` is the attacker —
 /// used by `Push` to anchor the shove on the attacker's tile and by
-/// `Splash` to scope the secondary-target search to enemies of the
-/// caster.
+/// `Splash` / `Burst` to scope the secondary-target search to enemies
+/// of the caster.
+///
+/// `label` is the rider's own log tag, carried down from
+/// `SmiteFollowUp::label` so the secondary-damage variants can name
+/// themselves. It used to be hardcoded to "sweeping attack" inside the
+/// `Splash` arm, which was true of the only row that used the variant
+/// and would have quietly mislabeled the next one.
 fn push_follow_up_effect(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     caster_id: usize,
     target_id: usize,
     effect: FollowUpEffect,
+    label: &'static str,
 ) {
     match effect {
         FollowUpEffect::Condition { condition, timer } => {
@@ -3816,12 +4080,13 @@ fn push_follow_up_effect(
                 }
             }
             let Some((_, splash_id)) = best else {
-                encounter.log("  sweeping attack: no adjacent enemy to splash".to_string());
+                encounter.log(format!("  {}: no adjacent enemy to splash", label));
                 return;
             };
             let rolled = encounter.roll(&dice);
             encounter.log(format!(
-                "  sweeping attack: +{} {:?} splashes to {}",
+                "  {}: +{} {:?} splashes to {}",
+                label,
                 rolled,
                 damage_type,
                 encounter.actor_name(splash_id)
@@ -3831,6 +4096,56 @@ fn push_follow_up_effect(
                 amount: rolled,
                 damage_type,
             }));
+        }
+        FollowUpEffect::Burst {
+            radius_tiles,
+            dice,
+            damage_type,
+        } => {
+            let Some(caster_team) = encounter.actors.get(&caster_id).map(|c| c.team()) else {
+                return;
+            };
+            // Sorted so the log — and the order damage lands in — is the
+            // same on every run with the same seed. `actors` is a
+            // HashMap, and iteration order over one is not.
+            let mut caught: Vec<usize> = encounter
+                .actors
+                .iter()
+                .filter(|(id, other)| {
+                    **id != caster_id
+                        && **id != target_id
+                        && other.team() != caster_team
+                        && other.is_combat_active()
+                })
+                .filter_map(|(id, _)| {
+                    encounter
+                        .footprint_distance(*id, target_id)
+                        .filter(|dist| *dist <= radius_tiles)
+                        .map(|_| *id)
+                })
+                .collect();
+            caught.sort_unstable();
+            if caught.is_empty() {
+                encounter.log(format!("  {}: nobody else caught in the blast", label));
+                return;
+            }
+            // One roll for the whole burst, the same way every area
+            // effect in the engine rolls its damage.
+            let rolled = encounter.roll(&dice);
+            for victim in caught {
+                encounter.log(format!(
+                    "  {}: +{} {:?} to {}",
+                    label,
+                    rolled,
+                    damage_type,
+                    encounter.actor_name(victim)
+                ));
+                effects.push(Box::new(DealDamage {
+                    actor_id: victim,
+                    amount: rolled,
+                    damage_type,
+                }));
+            }
         }
     }
 }

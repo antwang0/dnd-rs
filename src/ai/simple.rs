@@ -11,6 +11,7 @@ use crate::ai::{Controller, ControllerDecision};
 use crate::conditions::Condition;
 use crate::engine::dice::RollMode;
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::types::AbilityScoreType;
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
 /// Tactical heuristic AI. The decision pipeline runs in priority order:
@@ -771,6 +772,19 @@ impl Controller for SimpleAi {
         if let Some(aei) =
             try_self_action_when_enemy_within(encounter, actor_id, BOW_RANGE_GAP, "kensei's shot")
         {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q-'. Arcane Shot — the Arcane Archer's bonus-action prime.
+        //       Sits beside Kensei's Shot for the same reason: it is a
+        //       ranged prime, so its gate is bow range rather than
+        //       melee reach, and an archer who waited to be adjacent
+        //       would never spend it. Below the Battle Master rungs
+        //       above because those are gated on an enemy already in
+        //       reach — a turn where both fire is a turn the archer got
+        //       caught in melee, and the maneuver that is already
+        //       cashable should win the bonus action.
+        if let Some(aei) = try_arcane_shot(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -3363,6 +3377,160 @@ fn try_starry_form(
     } else {
         "starry form archer"
     };
+    try_self_action(encounter, actor_id, name)
+}
+
+/// The Arcane Archer's six shots, paired with the save each one forces
+/// and the condition it lands. Read by `try_arcane_shot`.
+///
+/// **The order is the tie-break and it is load-bearing.** The picker
+/// chooses the shot the target is worst at saving against, and a
+/// creature with two equally bad saves — an ogre's CHA and WIS are both
+/// −2 — has to be resolved somehow. Resolving it by this order means
+/// the tie goes to the shot that is worth more, so the list runs
+/// strongest first:
+///
+///   1. `banishing arrow` — a failed save costs the target its whole
+///      turn. Nothing else on the menu buys that.
+///   2. `grasping arrow` — Restrained is speed zero, disadvantage on
+///      its own swings, and advantage for every ally shooting at it.
+///      The archer's answer to anything that has to close to hurt them.
+///   3. `shadow arrow` — Blinded is the same disadvantage without the
+///      speed clause, so it ranks below Grasping against a melee threat
+///      and is the better answer to a caster or an archer.
+///   4. `enfeebling arrow` — halves what the target deals rather than
+///      stopping it dealing anything. Worth most against a
+///      multiattacker and least against a single big swing.
+///   5. `beguiling arrow` — Charmed only forbids attacking the archer,
+///      so an enemy with other targets shrugs most of it off.
+///
+/// Bursting Arrow is deliberately absent: its value has nothing to do
+/// with the target's saves — there is no save — and everything to do
+/// with how many bystanders are standing near it, so it is chosen ahead
+/// of this table rather than inside it.
+const ARCANE_SHOT_ORDER: &[(&str, AbilityScoreType, Condition)] = &[
+    (
+        "banishing arrow",
+        AbilityScoreType::Charisma,
+        Condition::Incapacitated,
+    ),
+    (
+        "grasping arrow",
+        AbilityScoreType::Strength,
+        Condition::Restrained,
+    ),
+    (
+        "shadow arrow",
+        AbilityScoreType::Wisdom,
+        Condition::Blinded,
+    ),
+    (
+        "enfeebling arrow",
+        AbilityScoreType::Constitution,
+        Condition::Enfeebled,
+    ),
+    (
+        "beguiling arrow",
+        AbilityScoreType::Charisma,
+        Condition::Charmed,
+    ),
+];
+
+/// Blast radius of Bursting Arrow in footprint tiles — 10 ft on the
+/// 2.5 ft grid, the same four tiles the rider itself uses. Kept in step
+/// with `FollowUpEffect::Burst`'s `radius_tiles` by
+/// `the_bursting_arrow_radius_agrees_with_its_rider`; an AI that
+/// believed in a wider blast than the rider delivers would spend a
+/// charge on a detonation that caught nobody.
+pub(crate) const BURSTING_ARROW_RADIUS: isize = 4;
+
+/// Arcane Archer Fighter — nock an Arcane Shot before the bow comes up.
+///
+/// Two charges per short rest and six options, so the pick is the whole
+/// feature. It is made in two steps:
+///
+///   1. **Is anybody standing next to the target?** Bursting Arrow is
+///      the only shot whose payload scales with the crowd, and the only
+///      one with no save to fail, so a blast that catches even one
+///      bystander beats any single-target rider on expected damage.
+///   2. **Otherwise, where is the target weak?** Walk
+///      `ARCANE_SHOT_ORDER` and take the shot forcing the save the
+///      target adds least to, skipping any whose condition it already
+///      carries — a second Blinded does nothing, and the charge is too
+///      scarce to spend on it. Ties go to the earlier row, which is why
+///      that order runs strongest-first.
+///
+/// The target the picker reads is the nearest hostile in bow range, not
+/// the lowest-HP one the attack rung will eventually shoot. They are the
+/// same creature in nearly every fight, and where they differ the prime
+/// is still spent on a shot that lands — the rider fires on whatever the
+/// archer hits, so a mis-guessed target costs accuracy of the *choice*,
+/// not the charge.
+fn try_arcane_shot(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::conditions::condition_template::ARCANE_SHOTS;
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.feature_available(crate::actions::class_features::ARCANE_SHOT_TAG) {
+        return None;
+    }
+    // One arrow on the string at a time. The action's own validator
+    // only refuses the *same* shot twice; without this the archer would
+    // nock a second option over the first and throw the first charge
+    // away, since installing one strips the rest.
+    if ARCANE_SHOTS.iter().any(|&c| actor.has_condition(c)) {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let target_id = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|&tid| {
+            encounter.actors.get(&tid).is_some_and(|t| {
+                tid != actor_id && t.team() != my_team && t.is_combat_active()
+            })
+        })
+        .min_by_key(|&tid| {
+            let t = &encounter.actors[&tid];
+            (
+                footprint_chebyshev(my_loc, my_size, t.location(), get_tiles_from_size(t.size())),
+                tid,
+            )
+        })
+        .filter(|&tid| {
+            let t = &encounter.actors[&tid];
+            footprint_chebyshev(my_loc, my_size, t.location(), get_tiles_from_size(t.size()))
+                <= BOW_RANGE_GAP
+        })?;
+    let bystanders = encounter
+        .actors
+        .iter()
+        .filter(|(id, other)| {
+            **id != actor_id
+                && **id != target_id
+                && other.team() != my_team
+                && other.is_combat_active()
+        })
+        .filter(|(id, _)| {
+            encounter
+                .footprint_distance(**id, target_id)
+                .is_some_and(|gap| gap <= BURSTING_ARROW_RADIUS)
+        })
+        .count();
+    if bystanders > 0
+        && let Some(aei) = try_self_action(encounter, actor_id, "bursting arrow")
+    {
+        return Some(aei);
+    }
+    let target = encounter.actors.get(&target_id)?;
+    let name = ARCANE_SHOT_ORDER
+        .iter()
+        .filter(|(_, _, lands)| !target.has_condition(*lands))
+        .min_by_key(|(_, save, _)| target.save_modifier(*save))
+        .map(|(name, _, _)| *name)?;
     try_self_action(encounter, actor_id, name)
 }
 
@@ -9820,7 +9988,9 @@ mod tests {
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
         use crate::actors::creatures::druids::{SPORES_DRUID_TEMPLATE, STARS_DRUID_TEMPLATE};
-        use crate::actors::creatures::fighters::RUNE_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::fighters::{
+            ARCANE_ARCHER_FIGHTER_TEMPLATE, RUNE_KNIGHT_FIGHTER_TEMPLATE,
+        };
         use crate::actors::creatures::monks::{
             KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
         };
@@ -9836,7 +10006,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 20] = [
+        let cases: [(&CreatureTemplate, &str); 22] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -9895,6 +10065,17 @@ mod tests {
             // scimitar's 1 — so seeing it in the log is also the check
             // that a bonus-action attack survives that picker.
             (&STARS_DRUID_TEMPLATE, "starry bolt"),
+            // Banishing, not one of the other five: the ogre's worst
+            // saves are CHA and WIS at -2 apiece, and `ARCANE_SHOT_ORDER`
+            // breaks that tie toward the shot that costs the target its
+            // turn. Bursting is unreachable here for the same reason
+            // Searing Sunburst is — the blast needs a bystander and this
+            // fixture has one ogre.
+            (&ARCANE_ARCHER_FIGHTER_TEMPLATE, "banishing arrow"),
+            // The rider firing is a separate fact from the prime being
+            // declared: it proves the shot reached the ranged lane of
+            // the on-hit table rather than sitting on the string.
+            (&ARCANE_ARCHER_FIGHTER_TEMPLATE, "banishing arrow banish"),
         ];
 
         for (template, marker) in cases {
@@ -9943,6 +10124,137 @@ mod tests {
                 marker
             );
         }
+    }
+
+    /// The Arcane Shot pick reads the target, not the roster.
+    ///
+    /// One ogre, walked down its own save sheet. Each step installs the
+    /// condition the previous pick would have landed, which takes that
+    /// shot off the menu — RAW-wise a second Blinded buys nothing, and
+    /// the pool is two charges deep — and forces the picker onto the
+    /// next-weakest save. The ogre's sheet (STR +4, CON +3, WIS −2,
+    /// CHA −2) is what makes the walk deterministic, and the CHA / WIS
+    /// tie at the top is what pins `ARCANE_SHOT_ORDER`'s
+    /// strongest-first ordering as the tie-break.
+    #[test]
+    fn the_arcane_shot_pick_follows_the_targets_weakest_save() {
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let pick = |setup: &dyn Fn(&mut EncounterInstance, usize)| -> String {
+            let mut e = empty_arena();
+            let archer = e
+                .instantiate_creature(
+                    &ARCANE_ARCHER_FIGHTER_TEMPLATE,
+                    Coordinate::new(3, 5),
+                    0,
+                    0,
+                )
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+                .unwrap();
+            setup(&mut e, ogre);
+            try_arcane_shot(&e, archer)
+                .map(|aei| aei.action().name().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+
+        // CHA −2 ties WIS −2, and the tie goes to the shot that costs
+        // the ogre its turn.
+        assert_eq!(pick(&|_e, _o| {}), "banishing arrow");
+
+        // Already out of the fight: Banishing has nothing left to take,
+        // so the other −2 save wins.
+        assert_eq!(
+            pick(&|e, o| {
+                e.actors
+                    .get_mut(&o)
+                    .unwrap()
+                    .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(1));
+            }),
+            "shadow arrow"
+        );
+
+        // Blind as well: the last −2 shot on the menu.
+        assert_eq!(
+            pick(&|e, o| {
+                for c in [Condition::Incapacitated, Condition::Blinded] {
+                    e.actors
+                        .get_mut(&o)
+                        .unwrap()
+                        .add_condition(c, ConditionTimer::Rounds(1));
+                }
+            }),
+            "beguiling arrow"
+        );
+
+        // Out of −2 saves, so the picker drops to CON +3 over STR +4.
+        assert_eq!(
+            pick(&|e, o| {
+                for c in [
+                    Condition::Incapacitated,
+                    Condition::Blinded,
+                    Condition::Charmed,
+                ] {
+                    e.actors
+                        .get_mut(&o)
+                        .unwrap()
+                        .add_condition(c, ConditionTimer::Rounds(1));
+                }
+            }),
+            "enfeebling arrow"
+        );
+
+        // Everything else spent: the ogre's best save is all that is
+        // left to shoot at.
+        assert_eq!(
+            pick(&|e, o| {
+                for c in [
+                    Condition::Incapacitated,
+                    Condition::Blinded,
+                    Condition::Charmed,
+                    Condition::Enfeebled,
+                ] {
+                    e.actors
+                        .get_mut(&o)
+                        .unwrap()
+                        .add_condition(c, ConditionTimer::Rounds(1));
+                }
+            }),
+            "grasping arrow"
+        );
+
+        // A bystander inside the blast beats every save-based shot,
+        // because the burst has no save to fail and scales with the
+        // crowd. Checked last so it is clearly the crowd and not the
+        // ogre's sheet doing the work.
+        assert_eq!(
+            pick(&|e, _o| {
+                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 6), 1, 0)
+                    .unwrap();
+            }),
+            "bursting arrow"
+        );
+
+        // One arrow on the string at a time: an archer already holding
+        // a shot declares nothing, even with a charge left.
+        let mut e = empty_arena();
+        let archer = e
+            .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&archer)
+            .unwrap()
+            .add_condition(Condition::ArcaneShotGrasping, ConditionTimer::Rounds(2));
+        assert!(
+            try_arcane_shot(&e, archer).is_none(),
+            "a nocked archer should not nock again and throw the first charge away"
+        );
     }
 
     /// The Starry Form pick reads the round, not the roster.

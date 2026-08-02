@@ -3462,14 +3462,14 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
-        let item_bonus = actor.item_save_bonus();
-        let buff = actor.save_bonus_buff();
-        // Condition-only flat save bonus lane (Bardic Inspiration's
-        // +3). Symmetric with `condition_attack_bonus` on the attack
-        // path. Kept separate from `save_bonus_buff` so install/uninstall
-        // bookkeeping (Bless's AdjustSaveBuff) and read-only flag
-        // bonuses don't double-count.
-        let cond_save_bonus = actor.condition_save_bonus();
+        // Everything the actor's own sheet contributes — ability
+        // modifier, save proficiency, carried-item bonus, the
+        // spell-installed `save_bonus_buff` and the condition-only flat
+        // lane (a Bardic Inspiration die already handed over). Summed
+        // behind `save_modifier` so the AI, which asks the same
+        // question when it is picking which save to attack, cannot
+        // drift from what the save actually rolls.
+        let sheet_modifier = actor.save_modifier(ability);
         // One-shot save riders (Bardic Inspiration's +3, Unsettling
         // Words' −4). Their magnitudes are already folded into
         // `cond_save_bonus` above; what's captured here is which of
@@ -3488,28 +3488,16 @@ impl EncounterInstance {
         // on a back-link that the clear drops; acted on after it, so
         // the ordinary case pays no attention to it at all.
         let unfailing = self.unfailing_inspiration_granter(actor_id);
-        // 5e: actors proficient in this save add their proficiency bonus.
-        // Previously this lane was dead code — the per-template
-        // `proficient_saves` set existed but was never read at roll time,
-        // so wizards proficient in INT/WIS saves got no edge.
-        let prof_bonus = if actor.is_save_proficient(ability) {
-            actor.proficiency_bonus()
-        } else {
-            0
-        };
         // 5e Paladin Aura of Protection: every ally (and the paladin) within
         // 10ft adds the paladin's CHA mod (min +1) to all saves. Computed
         // outside the immutable borrow chain — we re-immut-borrow inside the
         // helper. Stacks via "best bonus wins" rather than summing so two
         // paladins don't double-pump every save.
         let aura_bonus = self.aura_of_protection_bonus(actor_id);
-        let modifier = actor.ability_modifier(ability)
-            + item_bonus
-            + buff
-            + cond_save_bonus
-            + prof_bonus
-            + aura_bonus
-            + call_site_bonus;
+        // The two lanes no actor can answer alone ride on top: a nearby
+        // paladin's aura, and whatever the feature rolling this save
+        // brought with it.
+        let modifier = sheet_modifier + aura_bonus + call_site_bonus;
         let total = raw as i32 + modifier + extra;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -73693,12 +73681,12 @@ mod tests {
         );
 
         assert_eq!(
-            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, barb, 20),
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, barb, 20, true),
             20,
             "damage to the barbarian is not reduced"
         );
         assert_eq!(
-            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, wizard, 20),
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, wizard, 20, true),
             10,
             "damage to anyone else is halved"
         );
@@ -74888,36 +74876,56 @@ mod tests {
         assert!(saw_spell_tax, "and so should the spell lane");
     }
 
-    /// Every `StarryForm` action's `form` is a member of `STARRY_FORMS`.
+    /// Every `ExclusivePrime` action installs a condition its own
+    /// `family` slice lists, and every family lists exactly the
+    /// conditions its actions install.
     ///
-    /// The slice is what `starry_form_effects` walks to strip the
-    /// shapes the druid is *not* assuming. A form missing from it would
-    /// install perfectly well and simply never be stripped by its
-    /// siblings, which is a druid standing in two constellations at
-    /// once — and nothing else in the engine would notice.
+    /// The slice is what `prime_exclusive_self_condition` walks to strip
+    /// the siblings the caster is *not* assuming. A member missing from
+    /// it would install perfectly well and simply never be stripped —
+    /// a druid standing in two constellations at once, or an archer
+    /// cashing two arcane shots on one arrow — and nothing else in the
+    /// engine would notice.
+    ///
+    /// Covers both families in one walk, so a third one added later is
+    /// checked by adding a row rather than by copying a test.
     #[test]
-    fn the_three_starry_forms_are_the_registry() {
+    fn every_exclusive_prime_is_in_its_own_family() {
         use crate::actions::class_features::{
-            STARRY_FORM_ARCHER, STARRY_FORM_CHALICE, STARRY_FORM_DRAGON,
+            ARCANE_SHOT_ACTIONS, ExclusivePrime, STARRY_FORM_ARCHER, STARRY_FORM_CHALICE,
+            STARRY_FORM_DRAGON,
         };
-        use crate::conditions::condition_template::STARRY_FORMS;
-        let declared = [
-            STARRY_FORM_ARCHER.form,
-            STARRY_FORM_CHALICE.form,
-            STARRY_FORM_DRAGON.form,
+        use crate::conditions::condition_template::{ARCANE_SHOTS, STARRY_FORMS};
+        let starry: Vec<&ExclusivePrime> = vec![
+            &STARRY_FORM_ARCHER,
+            &STARRY_FORM_CHALICE,
+            &STARRY_FORM_DRAGON,
         ];
-        for form in declared {
-            assert!(
-                STARRY_FORMS.contains(&form),
-                "{:?} is installed by an action but missing from STARRY_FORMS",
-                form
+        let arcane: Vec<&ExclusivePrime> = ARCANE_SHOT_ACTIONS.to_vec();
+        for (family, actions) in [(STARRY_FORMS, starry), (ARCANE_SHOTS, arcane)] {
+            for action in &actions {
+                // Compared by contents rather than by pointer: the
+                // family slices are `const`, so each use site gets its
+                // own inlined copy and `ptr::eq` would be false even
+                // for two references to the same declaration.
+                assert_eq!(
+                    action.family, family,
+                    "{} points at a different family than the one it was grouped with",
+                    action.name,
+                );
+                assert!(
+                    family.contains(&action.prime_condition),
+                    "{} installs {:?}, which its family does not list",
+                    action.name,
+                    action.prime_condition,
+                );
+            }
+            assert_eq!(
+                family.len(),
+                actions.len(),
+                "a family carries a member no action installs",
             );
         }
-        assert_eq!(
-            STARRY_FORMS.len(),
-            declared.len(),
-            "STARRY_FORMS carries a shape no action installs"
-        );
     }
 
     /// Assuming a constellation strips whichever one the druid was
@@ -75673,5 +75681,249 @@ mod tests {
                 log
             );
         }
+    }
+
+    /// The Arcane Shot pool is two charges deep, drains one at a time,
+    /// and comes back full off a short rest.
+    ///
+    /// The whole point of teaching the charge lane to count. Before
+    /// `FEATURE_CHARGES`, `features_remaining` was a set and the second
+    /// assertion below would have failed on the first spend.
+    #[test]
+    fn the_arcane_shot_pool_holds_two_charges() {
+        use crate::actions::class_features::{ARCANE_SHOT_TAG, BANISHING_ARROW, GRASPING_ARROW};
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let archer = e
+            .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&archer].feature_charges_remaining(ARCANE_SHOT_TAG),
+            2,
+            "RAW: you can use this feature twice"
+        );
+        for eff in BANISHING_ARROW.side_effects(&mut e, archer, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&archer].feature_charges_remaining(ARCANE_SHOT_TAG),
+            1,
+            "one shot should leave one charge, not zero"
+        );
+        assert!(
+            e.actors[&archer].feature_available(ARCANE_SHOT_TAG),
+            "and the feature should still be usable"
+        );
+        for eff in GRASPING_ARROW.side_effects(&mut e, archer, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&archer].feature_available(ARCANE_SHOT_TAG),
+            "the second shot empties the pool"
+        );
+        e.short_rest();
+        assert_eq!(
+            e.actors[&archer].feature_charges_remaining(ARCANE_SHOT_TAG),
+            2,
+            "RAW: you regain all expended uses on a short rest — all of them"
+        );
+    }
+
+    /// Nocking a second arcane shot strips the first.
+    ///
+    /// The pool is two charges deep, so unlike Starry Form this is
+    /// reachable without handing a charge back: an archer can legally
+    /// declare two shots in two rounds, and RAW fires only one per
+    /// arrow.
+    #[test]
+    fn a_second_arcane_shot_replaces_the_first() {
+        use crate::actions::class_features::{GRASPING_ARROW, SHADOW_ARROW};
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let archer = e
+            .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for eff in GRASPING_ARROW.side_effects(&mut e, archer, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&archer].has_condition(Condition::ArcaneShotGrasping));
+        for eff in SHADOW_ARROW.side_effects(&mut e, archer, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&archer].has_condition(Condition::ArcaneShotShadow),
+            "the new shot should be on the string"
+        );
+        assert!(
+            !e.actors[&archer].has_condition(Condition::ArcaneShotGrasping),
+            "and the old one should have been stripped — one option per arrow"
+        );
+    }
+
+    /// The AI's blast radius and the rider's blast radius are the same
+    /// number.
+    ///
+    /// They are written down in two files: `BURSTING_ARROW_RADIUS` in
+    /// the AI decides whether the shot is worth nocking, and the
+    /// `FollowUpEffect::Burst` row in the rider table decides who
+    /// actually takes damage. An AI that believed in a wider blast
+    /// would spend a scarce charge on a detonation that caught nobody.
+    #[test]
+    fn the_bursting_arrow_radius_agrees_with_its_rider() {
+        assert_eq!(
+            crate::ai::simple::BURSTING_ARROW_RADIUS,
+            crate::engine::attack::bursting_arrow_rider_radius()
+                .expect("the rider table should carry a Bursting Arrow row"),
+        );
+    }
+
+    /// Bursting Arrow detonates around the creature it hit: bystanders
+    /// take the force damage and the creature that took the arrow does
+    /// not take it twice.
+    #[test]
+    fn the_bursting_arrow_catches_bystanders_and_spares_its_target() {
+        use crate::actions::class_features::BURSTING_ARROW;
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 15, &[]);
+        let archer = e
+            .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(2, 7), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 7), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 8), 1, 0)
+            .unwrap();
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 14), 1, 0)
+            .unwrap();
+        for eff in BURSTING_ARROW.side_effects(&mut e, archer, None, None, None) {
+            eff.apply(&mut e);
+        }
+        let target_hp = e.actors[&target].hitpoints();
+        let bystander_hp = e.actors[&bystander].hitpoints();
+        let far_hp = e.actors[&far].hitpoints();
+        // Drive the bow until a shot lands — the burst rides the hit,
+        // and a run of misses would prove nothing either way.
+        let longbow = e.actors[&archer]
+            .find_action("longbow")
+            .expect("the archer carries a longbow");
+        let mut landed = false;
+        for _ in 0..40 {
+            if !e.actors[&archer].has_condition(Condition::ArcaneShotBursting) {
+                landed = true;
+                break;
+            }
+            let aei = ActionExecutionInfo::new(longbow, archer, Some(vec![target]), None, None);
+            for eff in aei.action().side_effects(&mut e, archer, Some(&vec![target]), None, None) {
+                eff.apply(&mut e);
+            }
+        }
+        assert!(landed, "40 shots should have produced at least one hit");
+        assert!(
+            e.actors[&bystander].hitpoints() < bystander_hp,
+            "the goblin standing next to the target should have been caught"
+        );
+        assert_eq!(
+            e.actors[&far].hitpoints(),
+            far_hp,
+            "the goblin across the room should not have been"
+        );
+        // The target took the arrow, so its own HP bar moved and can't
+        // tell us whether the blast also hit it. The log can: exactly
+        // one creature should be named in the burst, and the fixture
+        // put exactly one bystander inside it.
+        let burst_lines = e
+            .messages()
+            .iter()
+            .filter(|line| line.contains("bursting arrow burst: +"))
+            .count();
+        assert_eq!(
+            burst_lines, 1,
+            "the blast should name the one bystander in it and nobody else"
+        );
+        assert!(
+            e.actors[&target].hitpoints() < target_hp,
+            "and the arrow itself should still have hurt what it hit"
+        );
+    }
+
+    /// Enfeebling Arrow halves the target's weapon damage and leaves
+    /// its spells alone.
+    ///
+    /// Both halves matter: RAW says "half damage with weapon attacks",
+    /// and the reduction rides the shared attacker-scoped lane which
+    /// the spell chokepoint also calls.
+    #[test]
+    fn enfeebled_halves_weapon_damage_but_not_spell_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, victim, 20, true),
+            20,
+            "an ogre that hasn't been shot deals its full damage"
+        );
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(Condition::Enfeebled, ConditionTimer::Rounds(1));
+        assert_eq!(
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, victim, 20, true),
+            10,
+            "an enfeebled creature's weapon damage is halved"
+        );
+        assert_eq!(
+            crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, victim, 20, false),
+            20,
+            "but RAW says weapon attacks, so the spell lane is untouched"
+        );
+    }
+
+    /// Curving Shot rescues a bow shot that missed, once per rest.
+    #[test]
+    fn curving_shot_adds_a_die_to_a_missed_bow_shot() {
+        use crate::actions::class_features::CURVING_SHOT_TAG;
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut saw_curve = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 15, &[], seed);
+            let archer = e
+                .instantiate_creature(
+                    &ARCANE_ARCHER_FIGHTER_TEMPLATE,
+                    Coordinate::new(2, 7),
+                    0,
+                    0,
+                )
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 7), 1, 0)
+                .unwrap();
+            let longbow = e.actors[&archer].find_action("longbow").unwrap();
+            let before = e.messages().len();
+            for eff in longbow.side_effects(&mut e, archer, Some(&vec![ogre]), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages()[before..].join("\n").contains("curving shot") {
+                saw_curve = true;
+                assert!(
+                    !e.actors[&archer].feature_available(CURVING_SHOT_TAG),
+                    "firing the rescue should burn the charge"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_curve,
+            "40 seeds should have produced at least one miss for Curving Shot to rescue"
+        );
     }
 }
