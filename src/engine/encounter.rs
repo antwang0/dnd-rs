@@ -4127,17 +4127,29 @@ impl EncounterInstance {
         options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
     ) -> Option<(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)> {
         let actor = self.actors.get(&actor_id)?;
-        options
-            .iter()
-            .max_by_key(|(ability, skill)| {
-                let prof = if actor.has_skill(skill.clone()) {
-                    actor.proficiency_bonus()
-                } else {
-                    0
-                };
-                actor.ability_modifier(*ability) + prof
-            })
-            .cloned()
+        let score = |(ability, skill): &(
+            crate::engine::types::AbilityScoreType,
+            crate::engine::types::Skill,
+        )| {
+            let prof = if actor.has_skill(skill.clone()) {
+                actor.proficiency_bonus()
+            } else {
+                0
+            };
+            actor.ability_modifier(*ability) + prof
+        };
+        // Written as a fold rather than `max_by_key` because the tie
+        // rule is part of the contract and the two disagree:
+        // `max_by_key` keeps the *last* of several equal maxima, and a
+        // caller that listed its preferred option first would silently
+        // get its least preferred one back.
+        options.iter().fold(None, |best: Option<&(_, _)>, option| {
+            match best {
+                Some(current) if score(current) >= score(option) => Some(current),
+                _ => Some(option),
+            }
+        })
+        .cloned()
     }
 
     /// Resolve one 5e contested ability check: both sides roll through
@@ -9540,10 +9552,20 @@ impl EncounterInstance {
         }
     }
 
-    /// 5e: "the grapple ends if the grappler is incapacitated." Lift
-    /// `actor_id`'s `Grappled` when the creature named by its back-link
-    /// can no longer hold on — gone from the board, out of the fight, or
-    /// under any condition that blocks their action economy.
+    /// 5e's two ways out of a grapple that aren't an escape check:
+    /// "the grapple ends if the grappler is incapacitated", and it ends
+    /// "if an effect removes the grappled creature from the reach of the
+    /// grappler". Lift `actor_id`'s `Grappled` when the creature named
+    /// by its back-link can no longer hold on — gone from the board, out
+    /// of the fight, under any condition that blocks their action
+    /// economy, or simply no longer within arm's length.
+    ///
+    /// The reach clause is not a nicety. A grappled creature's speed is
+    /// 0, so it cannot walk out of the hold; the grappler, however, can
+    /// walk away, and every teleport and shove in the game can separate
+    /// the two. Without this the pair would drift apart and the victim
+    /// would stay pinned to the floor by a creature on the far side of
+    /// the map until the timer ran out.
     ///
     /// A `Grappled` with no back-link is left alone. Those come from
     /// spells and monster abilities that pin a target with something
@@ -9559,14 +9581,28 @@ impl EncounterInstance {
         else {
             return;
         };
-        let still_holding = self.actors.get(&grappler_id).is_some_and(|g| {
+        let able = self.actors.get(&grappler_id).is_some_and(|g| {
             g.is_combat_active()
                 && !g
                     .conditions()
                     .keys()
                     .any(|c| c.blocks_action_economy())
         });
-        if still_holding {
+        // Reach is read off the grappler's own melee envelope rather
+        // than assumed to be one tile, because the creatures that
+        // grapple are disproportionately the long-armed ones — a giant
+        // crocodile's jaws close at two tiles and its grip should not
+        // lapse the moment its victim is a tile and a half away.
+        let in_reach = able
+            && self
+                .actors
+                .get(&grappler_id)
+                .and_then(|g| g.first_melee_weapon_action())
+                .and_then(|a| a.reach_tiles())
+                .max(Some(crate::actions::action_template::MELEE_REACH))
+                .zip(self.footprint_distance(grappler_id, actor_id))
+                .is_some_and(|(reach, gap)| gap <= reach);
+        if able && in_reach {
             return;
         }
         let name = self.actor_name(actor_id);
@@ -9574,10 +9610,17 @@ impl EncounterInstance {
         if let Some(a) = self.actors.get_mut(&actor_id) {
             a.remove_condition(Condition::Grappled);
         }
-        self.log(format!(
-            "  {} can no longer hold on \u{2014} {} slips out of the grapple.",
-            grappler_name, name
-        ));
+        self.log(if able {
+            format!(
+                "  {} is out of {}'s reach \u{2014} the grapple ends.",
+                name, grappler_name
+            )
+        } else {
+            format!(
+                "  {} can no longer hold on \u{2014} {} slips out of the grapple.",
+                grappler_name, name
+            )
+        });
     }
 
     /// 5e repeated saves: at the end of each turn, targets of certain
@@ -34147,6 +34190,18 @@ mod tests {
         // move the answer. Nothing in the game gives an ogre Acrobatics,
         // so the pin is on the arithmetic — the chosen pairing's total
         // is the maximum available.
+        // Ties go to the earlier row, which is what lets a caller order
+        // its options by preference. Two copies of the same pairing are
+        // the cleanest way to ask.
+        const TIED: &[(AbilityScoreType, Skill)] = &[
+            (AbilityScoreType::Strength, Skill::Athletics),
+            (AbilityScoreType::Strength, Skill::Acrobatics),
+        ];
+        assert_eq!(
+            e.best_check_option(ogre, TIED).map(|(_, s)| s),
+            Some(Skill::Athletics)
+        );
+
         let best = e.best_check_option(ogre, OPTIONS).unwrap();
         let actor = &e.actors[&ogre];
         let score = |(ability, skill): &(AbilityScoreType, Skill)| {
@@ -34249,6 +34304,42 @@ mod tests {
         assert!(
             !e.actors[&goblin].has_condition(Condition::Grappled),
             "a stunned grappler cannot keep holding on"
+        );
+    }
+
+    /// The grapple's other RAW ending: separation. A grappled creature's
+    /// speed is 0, so it can never walk out of the hold — but the
+    /// grappler can walk away, and every teleport and shove in the game
+    /// can pull the two apart. Without this the victim would stay pinned
+    /// by a creature on the far side of the map.
+    #[test]
+    fn a_grapple_ends_when_the_two_are_pulled_apart() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        for effect in crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            goblin,
+            ogre,
+            ConditionTimer::Rounds(10),
+        ) {
+            effect.apply(&mut e);
+        }
+        // Adjacent: the hold survives the sweep.
+        e.release_broken_grapples(goblin);
+        assert!(e.actors[&goblin].has_condition(Condition::Grappled));
+        // Walk the grappler across the room and it does not.
+        e.place_actor_at(ogre, Coordinate::new(15, 15)).unwrap();
+        e.release_broken_grapples(goblin);
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Grappled),
+            "a hold does not reach across the map"
         );
     }
 
