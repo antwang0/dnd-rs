@@ -4512,6 +4512,21 @@ impl EncounterInstance {
         let mut err = dx + dy;
         let mut hits = 0u32;
         let mut last_hit: Option<usize> = None;
+        // The two endpoints' own footprints, so the terrain walk below
+        // can skip them.
+        //
+        // The creature check doesn't need this — it excludes both ids by
+        // name — but the terrain check has no id to exclude, and the
+        // anchor-to-anchor line runs *through* both footprints on the
+        // way out and in. Without the skip, a shooter standing on a low
+        // wall would be granting their target cover with the wall they
+        // are themselves braced against, and a target could be given
+        // cover by a tile inside its own square.
+        let endpoint_tiles = |c: Coordinate, anchor: Coordinate, span: isize| -> bool {
+            c.x >= anchor.x && c.x < anchor.x + span && c.y >= anchor.y && c.y < anchor.y + span
+        };
+        let a_span = get_tiles_from_size(a.size()) as isize;
+        let b_span = get_tiles_from_size(b.size()) as isize;
         loop {
             let e2 = 2 * err;
             if e2 >= dy {
@@ -4548,9 +4563,11 @@ impl EncounterInstance {
             // "if two sources of cover apply, the target gets the more
             // protective degree", and two half-covers on one line is
             // exactly what the +5 rung is for.
-            if self
-                .terrain_at(coord)
-                .is_some_and(|t| t.terrain_type.grants_cover())
+            if !endpoint_tiles(coord, from, a_span)
+                && !endpoint_tiles(coord, to, b_span)
+                && self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type.grants_cover())
             {
                 hits = hits.saturating_add(1);
                 if hits >= 2 {
@@ -27328,6 +27345,40 @@ mod tests {
             };
         }
         assert!(!e.actor_has_line_of_sight(archer, target));
+    }
+
+    /// A low wall inside either combatant's own footprint is not cover
+    /// between them.
+    ///
+    /// The anchor-to-anchor line runs through both footprints on its way
+    /// out and in, and unlike the creature check — which excludes both
+    /// ids by name — the terrain check has no id to exclude. Without the
+    /// skip, a shooter braced on a low wall would be handing their
+    /// target +2 AC with it.
+    #[test]
+    fn a_low_wall_underfoot_is_nobodys_cover() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+            .unwrap();
+        // Goblins are Small — 2x2 footprints anchored at (2,5) and
+        // (30,5), so (3,5) and (30,5) are inside them.
+        for tile in [Coordinate::new(3, 5), Coordinate::new(30, 5)] {
+            let idx = e.idx(tile).unwrap();
+            e.terrain[idx] = TerrainInfo {
+                terrain_type: TerrainType::LowWall,
+            };
+        }
+        assert_eq!(
+            e.cover_ac_bonus(archer, target),
+            0,
+            "the wall you are standing on is not between you and them"
+        );
     }
 
     /// Low walls and bodies count on one ladder, not two: a target

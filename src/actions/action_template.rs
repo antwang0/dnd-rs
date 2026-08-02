@@ -729,11 +729,24 @@ pub trait Action {
     ///
     /// An estimate, and only ever an estimate. It does not model
     /// accuracy, crits, resistance (the matchup score already outranks
-    /// it) or anything the die does after it is rolled. Actions that
-    /// can't put a number on themselves return `None` and fall back to
-    /// the picker's earlier tie-breaks, so the hint is strictly
-    /// additive — an unannotated action is ranked exactly as it was
-    /// before this existed.
+    /// it) or anything the die does after it is rolled.
+    ///
+    /// The picker only lets the estimate decide a tie when *both* sides
+    /// return `Some`. Most attacks in the bestiary are bespoke `impl
+    /// Action` blocks that roll their dice inline and have nothing to
+    /// declare here; ranking a `None` as zero would sort every one of
+    /// them below every annotated weapon, which is not a better ordering
+    /// than the declaration order it replaced — just a different
+    /// arbitrary one. So the hint is strictly additive: a pair where
+    /// either side declines is ordered exactly as it was before this
+    /// existed.
+    ///
+    /// The one place that makes it a *requirement* rather than a nicety
+    /// is a wrapper action — `Multiattack`, `CompoundAttack` — that sits
+    /// on the same action list as the swings it contains. Those must
+    /// aggregate their parts, because a wrapper that returned `None`
+    /// against a sub-attack that returns `Some` would be ranked by
+    /// declaration order against something strictly worse than itself.
     fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
         None
     }

@@ -2086,6 +2086,20 @@ impl Action for Multiattack {
         self.sub_attack.damage_types()
     }
 
+    /// `count` copies of the sub-attack's own estimate.
+    ///
+    /// Delegating this is not optional the way most trait defaults are.
+    /// A monster's action list usually carries both the Multiattack and
+    /// the single swing it wraps, and the AI's picker ranks the two
+    /// against each other; a wrapper that declined to estimate would
+    /// score 0.0 against its own sub-attack's positive number and lose
+    /// every tie, which would quietly stop every Multiattack creature in
+    /// the bestiary from using its Multiattack.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let per = self.sub_attack.expected_damage(encounter, caster_id)?;
+        Some(per * self.count as f32)
+    }
+
     fn cost(
         &self,
         encounter: &EncounterInstance,
@@ -2210,6 +2224,26 @@ impl Action for CompoundAttack {
             }
         }
         out
+    }
+
+    /// Sum of every part's estimate, each times its repeat count.
+    ///
+    /// Same reason `Multiattack` delegates: the wrapper and its parts
+    /// sit on the same action list and are ranked against each other, so
+    /// a wrapper that declined to estimate would lose to the single
+    /// swing it contains. A part that declines contributes nothing
+    /// rather than voiding the whole sum — an under-estimate for a
+    /// compound whose pieces are half-annotated is still a better
+    /// ranking than none.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let total: f32 = self
+            .parts
+            .iter()
+            .filter_map(|(a, n)| {
+                a.expected_damage(encounter, caster_id).map(|d| d * *n as f32)
+            })
+            .sum();
+        Some(total)
     }
 
     fn cost(

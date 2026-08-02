@@ -5934,15 +5934,23 @@ fn best_attack_against(
     // separated by nothing but their order in the actor's action list —
     // a Knight swung whichever of its two weapons happened to be pushed
     // first, and a Beast Barbarian's claws, which land three swings a
-    // turn to a greataxe's two, could never be picked at all. Actions
-    // that decline to estimate (`expected_damage` → `None`) sort as 0.0,
-    // which is below any real weapon and leaves their relative order
-    // exactly as it was.
+    // turn to a greataxe's two, could never be picked at all.
     //
     // Reach still outranks damage, and deliberately: a swing that cannot
     // reach is worth nothing, and the picker is choosing among options
     // for *this* turn from *this* tile.
-    let mut best: Option<(u8, isize, f32, &(dyn Action + Send + Sync))> = None;
+    //
+    // The damage key only decides a tie when *both* sides put a number
+    // on themselves, and that restraint is the whole safety argument.
+    // Most attacks in the bestiary are bespoke `impl Action` blocks that
+    // roll their dice inline and have no estimate to give; treating a
+    // missing estimate as zero would have sorted every one of them below
+    // every annotated weapon, which is not a better ranking than the
+    // declaration order it replaced — it is a different arbitrary one,
+    // biased toward whichever attacks happened to be annotated. Two
+    // unannotated actions, or one of each, fall through to the order
+    // they had before this key existed.
+    let mut best: Option<(u8, isize, Option<f32>, &(dyn Action + Send + Sync))> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
@@ -5975,12 +5983,18 @@ fn best_attack_against(
         if !aei.validate(encounter) {
             continue;
         }
-        let damage = action.expected_damage(encounter, actor_id).unwrap_or(0.0);
+        let damage = action.expected_damage(encounter, actor_id);
         let pick = match &best {
             None => true,
-            Some((bs, br, bd, _)) => {
-                (score, -reach, -damage) < (*bs, -*br, -*bd)
-            }
+            Some((bs, br, bd, _)) => match (score.cmp(bs), reach.cmp(br)) {
+                (std::cmp::Ordering::Less, _) => true,
+                (std::cmp::Ordering::Greater, _) => false,
+                (_, std::cmp::Ordering::Greater) => true,
+                (_, std::cmp::Ordering::Less) => false,
+                // Same matchup, same reach: the estimate decides, but
+                // only if both sides have one.
+                _ => matches!((damage, bd), (Some(d), Some(b)) if d > *b),
+            },
         };
         if pick {
             best = Some((score, reach, damage, action));
@@ -7728,6 +7742,47 @@ mod tests {
             try_beast_bite_when_bloodied(&e, barb).is_none(),
             "the rung stands down once the heal is spent"
         );
+    }
+
+    /// A wrapper attack outranks the single swing it contains.
+    ///
+    /// A monster's action list carries the Multiattack / CompoundAttack
+    /// *and* the swings inside it, and the picker ranks them against
+    /// each other. Before `expected_damage` existed the wrapper won by
+    /// being declared last; now it has to win on the number, which means
+    /// the wrappers must aggregate their parts rather than fall through
+    /// to the "no estimate" default — a wrapper scoring 0.0 against its
+    /// own sub-attack's positive score would lose every tie and take
+    /// every Multiattack creature in the bestiary out of its
+    /// Multiattack.
+    #[test]
+    fn the_picker_prefers_a_multiattack_to_the_swing_inside_it() {
+        use crate::actions::monster_attacks::{BROWN_BEAR_BITE, BROWN_BEAR_MULTI};
+        use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut e = empty_arena();
+        let bear = e
+            .instantiate_creature(&BROWN_BEAR_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let actor = e.actors[&bear].clone();
+        let picked = best_attack_against(bear, &actor, &e, ogre)
+            .map(|(_, a)| a.name().to_string())
+            .expect("the bear should find a swing");
+        let bite = BROWN_BEAR_BITE
+            .expected_damage(&e, bear)
+            .expect("a plain swing estimates itself");
+        let multi = BROWN_BEAR_MULTI
+            .expected_damage(&e, bear)
+            .expect("a wrapper aggregates its parts");
+        assert!(
+            multi > bite,
+            "bite + claws should out-estimate the bite alone: {multi} vs {bite}"
+        );
+        assert_eq!(picked, BROWN_BEAR_MULTI.name());
     }
 
     /// A greataxe out-damages a bite and loses to claws. Both halves
