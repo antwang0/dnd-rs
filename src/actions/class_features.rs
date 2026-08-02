@@ -10096,6 +10096,48 @@ pub const ROVING_TAG: &str = "ranger.roving";
 /// scattering magic numbers into the accessor.
 pub const ROVING_SPEED_BONUS: f32 = 5.0;
 
+/// 5e **Land's Stride** (Ranger level 8; Circle of the Land Druid level
+/// 6). Passive: moving through nonmagical difficult terrain costs the
+/// holder no extra movement.
+///
+/// This is the first *content* row on the difficult-terrain-immunity
+/// lane, and the reason that lane exists. The engine has had difficult
+/// terrain since `TerrainType::DifficultTerrain` landed — the terrain
+/// generator scatters it across ~8% of the floor and the pathfinder
+/// charges double for every tile of it — but nothing in the game could
+/// ignore it, so the tax was uniform and therefore invisible: every
+/// actor paid it, so no build ever routed around or through it
+/// differently from any other. Land's Stride is the feature that makes
+/// the rubble mean something, and `DIFFICULT_TERRAIN_IMMUNITIES` is the
+/// cohort it reads through.
+///
+/// RAW carries two more clauses that don't ship: the "can't be impeded
+/// by nonmagical plants" half needs a plant-origin tag on terrain the
+/// generator doesn't emit, and the ranger's advantage-on-saves-against
+/// -magical-plants half needs a per-effect-origin save filter the
+/// blanket save-mode lanes don't express. The movement half is the
+/// load-bearing one on a tactical grid, and it folds through the shared
+/// cohort as a one-line entry.
+///
+/// The engine models the RAW "nonmagical" qualifier as "all difficult
+/// terrain" for the same reason `item_template.rs` collapses the Boots
+/// of the Winterlands' ice-and-snow clause: the terrain enum carries no
+/// origin, so there is no magical difficult terrain to exclude. Every
+/// tile the generator scatters is rubble and undergrowth, which is
+/// exactly what the RAW clause covers.
+///
+/// Ships on `RANGER_TEMPLATE` (and inherits to every ranger subclass
+/// via `..RANGER_TEMPLATE.clone()`) and on `LAND_DRUID_TEMPLATE`, both
+/// at or above their strict RAW level gates, for the same reason
+/// `ROVING_TAG` (RAW lv6) already rides the CR-1 baseline ranger —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The tag
+/// lives in the actor's `features` pool, not in `SHORT_REST_FEATURES` /
+/// long-rest tables — nothing consumes it and nothing refreshes it.
+pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
+
 /// 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE).
 /// Passive: the scout's walking speed increases by 10 feet, and they
 /// also gain climbing and swimming speeds matching that walking speed.

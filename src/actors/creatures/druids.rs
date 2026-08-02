@@ -371,7 +371,20 @@ pub static LAND_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     spell slots — mirroring the Arcane Recovery shape.
         //     Fires at will as a free-cost action; the once-per-rest
         //     charge is the entire resource cost.
-        features: HashSet::from([crate::actions::class_features::NATURAL_RECOVERY_TAG]),
+        //   - `LANDS_STRIDE_TAG`: Land's Stride (lv6). Nonmagical
+        //     difficult terrain costs the druid no extra movement.
+        //     Read at the shared `DIFFICULT_TERRAIN_IMMUNITIES` cohort
+        //     the pathfinder consults before charging
+        //     `TerrainType::movement_cost`. The same tag the baseline
+        //     Ranger carries (RAW gives both classes the feature under
+        //     the same name), which is why it lives in the shared
+        //     `shared.` tag namespace rather than a `druid.` one.
+        //     Ships above its strict RAW lv6 gate on this CR-1 chassis
+        //     for the same reason Natural Recovery (lv2) does.
+        features: HashSet::from([
+            crate::actions::class_features::NATURAL_RECOVERY_TAG,
+            crate::actions::class_features::LANDS_STRIDE_TAG,
+        ]),
         ..DRUID_TEMPLATE.clone()
     }
 });

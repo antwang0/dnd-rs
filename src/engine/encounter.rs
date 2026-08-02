@@ -5728,6 +5728,13 @@ impl EncounterInstance {
         let cardinal_mft = to_mft(2.5) * prone_factor;
         let diagonal_mft = to_mft(2.5 * std::f32::consts::SQRT_2) * prone_factor;
         let budget_mft = to_mft(actor.remaining_movement() + 0.5);
+        // Freedom of Movement, magical flight, and Land's Stride all
+        // waive the difficult-terrain surcharge — see the shared
+        // `DIFFICULT_TERRAIN_IMMUNITIES` cohort. Resolved once here
+        // rather than per candidate step: the answer can't change while
+        // a single path is being searched, and the inner loop below runs
+        // eight times per expanded tile.
+        let ignores_rough = actor.ignores_difficult_terrain();
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -5773,10 +5780,13 @@ impl EncounterInstance {
                     } else {
                         diagonal_mft
                     };
-                    let terrain_mult = self
-                        .terrain_at(next)
-                        .map(|t| t.terrain_type.movement_cost())
-                        .unwrap_or(1.0);
+                    let terrain_mult = if ignores_rough {
+                        1.0
+                    } else {
+                        self.terrain_at(next)
+                            .map(|t| t.terrain_type.movement_cost())
+                            .unwrap_or(1.0)
+                    };
                     let step = (base_step as f32 * terrain_mult) as u32;
                     let next_cost = cost.saturating_add(step);
                     if next_cost > budget_mft {
@@ -44650,33 +44660,200 @@ mod tests {
         assert!(nightmare.is_resistant_to(DamageType::Cold));
     }
 
+    /// A three-tile walled corridor whose middle tile is difficult
+    /// terrain, with `template` standing at the mouth of it. The only
+    /// route to the far end runs through the rough tile, so the returned
+    /// path cost is the terrain surcharge and nothing else — there is no
+    /// cheaper way around for the pathfinder to find.
+    ///
+    /// Every difficult-terrain test below wants exactly this board and
+    /// differs only in who is walking it and what they are holding, so
+    /// the corridor is built once here.
+    fn rough_corridor_walker(
+        template: &'static crate::actors::actor_template::CreatureTemplate,
+    ) -> (EncounterInstance, usize) {
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        // A Medium creature's footprint is 2x2 tiles on this 2.5-ft
+        // grid, so the corridor has to be two tiles tall: rows 3 and 4
+        // are the lane, rows 2 and 5 are its walls. That leaves row 3 as
+        // the only row a footprint can be anchored on, so the walker
+        // cannot slip around the rough tile diagonally.
+        let walls: Vec<(isize, isize)> = (1..=9)
+            .flat_map(|x: isize| [(x, 2isize), (x, 5isize)])
+            .collect();
+        let mut e = ei_with_terrain(20, 20, &walls);
+        let id = e
+            .instantiate_creature(template, Coordinate::new(3, 3), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        e.terrain[4 + 3 * 20] = TerrainInfo {
+            terrain_type: TerrainType::DifficultTerrain,
+        };
+        (e, id)
+    }
+
+    /// The rough tile at (4,3) is the only way from (3,3) to (5,3), so
+    /// the two-step walk costs one normal step plus one doubled step.
+    /// On a 2.5-ft-per-tile grid that is 2.5 + 5.0 = 7.5 ft, against
+    /// 5.0 ft for the same two steps over clean floor.
     #[test]
     fn difficult_terrain_costs_more_movement() {
         use crate::engine::terrain::{TerrainInfo, TerrainType};
-        let mut e = ei_with_terrain(20, 20, &[]);
-        let f_id = e
-            .instantiate_creature(
-                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
-                Coordinate::new(3, 3),
-                0,
-                1,
-            )
-            .unwrap();
-        e.actors.get_mut(&f_id).unwrap().reset_for_new_round();
-        let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
-        assert!(normal_cost.is_some(), "should reach (5,3) over normal floor");
-        let _normal_c = normal_cost.unwrap();
+        let (mut e, f_id) =
+            rough_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let rough_cost = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
 
-        let idx = 6 + 3 * 20; // tile (6,3)
-        e.terrain[idx] = TerrainInfo {
-            terrain_type: TerrainType::DifficultTerrain,
+        // Same board, same walk, with the rough tile paved back to floor.
+        e.terrain[4 + 3 * 20] = TerrainInfo {
+            terrain_type: TerrainType::Floor,
         };
-        let _diff_cost = e.path_cost_to(f_id, Coordinate::new(7, 3));
-        let normal_to_7 = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        let clean_cost = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+
         assert!(
-            normal_to_7.is_some(),
-            "should still reach (5,3) — not through difficult"
+            rough_cost > clean_cost,
+            "difficult terrain should cost more: rough {rough_cost} vs clean {clean_cost}"
         );
+        assert!(
+            (rough_cost - (clean_cost + 2.5)).abs() < 0.01,
+            "the surcharge is one extra tile-step (2.5 ft): rough {rough_cost}, clean {clean_cost}"
+        );
+    }
+
+    /// Freedom of Movement's `Footloose` docstring has always promised
+    /// "the target ignores difficult terrain". Until the
+    /// `DIFFICULT_TERRAIN_IMMUNITIES` cohort landed, the pathfinder
+    /// charged the surcharge anyway.
+    #[test]
+    fn freedom_of_movement_waives_the_difficult_terrain_surcharge() {
+        let (mut e, f_id) =
+            rough_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let taxed = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+
+        e.actors
+            .get_mut(&f_id)
+            .unwrap()
+            .add_condition(Condition::Footloose, ConditionTimer::Rounds(10));
+        let free = e
+            .path_cost_to(f_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+
+        assert!(
+            free < taxed,
+            "Footloose should waive the surcharge: {free} vs {taxed}"
+        );
+        assert!(
+            (free - 5.0).abs() < 0.01,
+            "two clean tile-steps is 5.0 ft, got {free}"
+        );
+    }
+
+    /// A creature sixty feet in the air isn't wading through the rubble
+    /// under it. The flight row deliberately reuses the same triple-OR
+    /// predicate as the flying-speed bonus, so all three flight
+    /// conditions are checked here.
+    #[test]
+    fn magical_flight_waives_the_difficult_terrain_surcharge() {
+        for flight in [
+            Condition::Flying,
+            Condition::InvestedInWind,
+            Condition::OtherworldlyGuised,
+        ] {
+            let (mut e, f_id) =
+                rough_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+            let taxed = e
+                .path_cost_to(f_id, Coordinate::new(5, 3))
+                .expect("corridor is walkable");
+            e.actors
+                .get_mut(&f_id)
+                .unwrap()
+                .add_condition(flight, ConditionTimer::Rounds(10));
+            let airborne = e
+                .path_cost_to(f_id, Coordinate::new(5, 3))
+                .expect("corridor is walkable");
+            assert!(
+                airborne < taxed,
+                "{flight:?} should waive the surcharge: {airborne} vs {taxed}"
+            );
+        }
+    }
+
+    /// Land's Stride is the build-choice row on the cohort: a baseline
+    /// Fighter pays the surcharge on the same corridor a baseline Ranger
+    /// crosses for free.
+    #[test]
+    fn lands_stride_waives_the_difficult_terrain_surcharge() {
+        use crate::actions::class_features::LANDS_STRIDE_TAG;
+        let (e, ranger_id) =
+            rough_corridor_walker(&crate::actors::creatures::rangers::RANGER_TEMPLATE);
+        assert!(
+            e.actors[&ranger_id].has_passive_feature(LANDS_STRIDE_TAG),
+            "the baseline Ranger ships Land's Stride"
+        );
+        let ranger_cost = e
+            .path_cost_to(ranger_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+
+        let (e, fighter_id) =
+            rough_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(
+            !e.actors[&fighter_id].has_passive_feature(LANDS_STRIDE_TAG),
+            "the Fighter does not"
+        );
+        let fighter_cost = e
+            .path_cost_to(fighter_id, Coordinate::new(5, 3))
+            .expect("corridor is walkable");
+
+        assert!(
+            ranger_cost < fighter_cost,
+            "Land's Stride should waive the surcharge: ranger {ranger_cost} vs fighter {fighter_cost}"
+        );
+    }
+
+    /// Land's Stride reaches every ranger subclass and the Land Druid,
+    /// and stops there — it is not a blanket grant. Guards the
+    /// clone-the-baseline-features shape the Hunter Ranger now uses:
+    /// re-listing baseline tags inline is what let a subclass silently
+    /// drop one.
+    #[test]
+    fn lands_stride_ships_on_the_ranger_line_and_the_land_druid() {
+        use crate::actions::class_features::LANDS_STRIDE_TAG;
+        use crate::actors::creatures::{druids, rangers};
+        let carriers: &[&crate::actors::actor_template::CreatureTemplate] = &[
+            &rangers::RANGER_TEMPLATE,
+            &rangers::HUNTER_RANGER_TEMPLATE,
+            &rangers::GLOOM_STALKER_RANGER_TEMPLATE,
+            &rangers::FEY_WANDERER_RANGER_TEMPLATE,
+            &rangers::HORIZON_WALKER_RANGER_TEMPLATE,
+            &rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
+            &rangers::SWARMKEEPER_RANGER_TEMPLATE,
+            &rangers::BEAST_MASTER_RANGER_TEMPLATE,
+            &druids::LAND_DRUID_TEMPLATE,
+        ];
+        for t in carriers {
+            assert!(
+                t.features.contains(LANDS_STRIDE_TAG),
+                "{} should ship Land's Stride",
+                t.name
+            );
+        }
+        let non_carriers: &[&crate::actors::actor_template::CreatureTemplate] = &[
+            &druids::DRUID_TEMPLATE,
+            &druids::MOON_DRUID_TEMPLATE,
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+        ];
+        for t in non_carriers {
+            assert!(
+                !t.features.contains(LANDS_STRIDE_TAG),
+                "{} should not ship Land's Stride",
+                t.name
+            );
+        }
     }
 
     #[test]

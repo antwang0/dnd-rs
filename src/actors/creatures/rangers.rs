@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
     COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, GATHERED_SWARM_TAG,
-    MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, RANGERS_COMPANION, RANGERS_COMPANION_TAG,
-    ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
+    LANDS_STRIDE_TAG, MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, RANGERS_COMPANION,
+    RANGERS_COMPANION_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -215,7 +215,19 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Barbarian Fast Movement / Tiger Totem — the ranger picks up
         // +5 ft always-on, half a step further than Fast Movement's
         // +10 but sibling on the same lane.
-        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG]),
+        // 5e Ranger **Land's Stride** (level 8): moving through
+        // nonmagical difficult terrain costs no extra movement. Read at
+        // the shared `DIFFICULT_TERRAIN_IMMUNITIES` cohort, which the
+        // pathfinder consults before applying
+        // `TerrainType::movement_cost`. Pairs with Roving above on the
+        // ranger's mobility axis from a different angle: Roving buys
+        // more feet, Land's Stride stops the map from charging double
+        // for them — a ranger crossing the rubble the terrain generator
+        // scatters covers twice the ground of anyone else in the party.
+        // Ships on the CR-1 baseline above its strict RAW lv8 gate for
+        // the same reason Roving (lv6) / Feral Senses (lv18) / Foe
+        // Slayer (lv20) already ride here.
+        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG, LANDS_STRIDE_TAG]),
         skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
@@ -243,53 +255,40 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // features). The `..base.clone()` tail picks up every other field
     // — actions, spell slots, extra-attack, save profs — without an
     // N-line field-by-field copy.
+    //
+    // The features set *extends* the baseline rather than replacing it,
+    // which is the shape every other ranger subclass here already uses
+    // (`with_subclass_tag` for the tag-only ones, an explicit
+    // clone-then-insert for Beast Master). It used to re-list the
+    // baseline's own tags inline, and each one carried a comment
+    // explaining that it was re-listed because the set was replaced
+    // wholesale — three tags' worth of a rule that only ever pointed at
+    // its own workaround. Cloning means the next tag added to baseline
+    // Ranger reaches the Hunter without anyone remembering to copy it,
+    // which is exactly how Land's Stride reached it.
+    let mut features = RANGER_TEMPLATE.features.clone();
+    // Hunter subclass features layered onto the baseline ranger
+    // envelope:
+    //   - `COLOSSUS_SLAYER_TAG`: Hunter's Prey (lv3, "Colossus
+    //     Slayer" option). Once-per-turn +1d8 weapon-typed rider
+    //     on any hit against a wounded target. Fires in
+    //     `resolve_attack_outcome`.
+    //   - `MULTIATTACK_DEFENSE_TAG`: Defensive Tactics (lv7,
+    //     "Multiattack Defense" option). Passive +4 AC vs any
+    //     attacker who has already landed a hit this turn — the
+    //     "shrug off the second swing" envelope that pairs
+    //     naturally with the ranger's kite pattern (drop the first
+    //     hit, walk out of range before the follow-up connects).
+    //     Ships on the CR-1 Hunter Ranger template above its
+    //     strict RAW level gate for the same reason Colossus
+    //     Slayer does — class templates target a balanced playable
+    //     level, not lockstep PHB progression.
+    features.insert(COLOSSUS_SLAYER_TAG);
+    features.insert(MULTIATTACK_DEFENSE_TAG);
     CreatureTemplate {
         name: "Hunter Ranger",
         glyph: 'H',
-        // Hunter subclass features layered onto the baseline ranger
-        // envelope:
-        //   - `COLOSSUS_SLAYER_TAG`: Hunter's Prey (lv3, "Colossus
-        //     Slayer" option). Once-per-turn +1d8 weapon-typed rider
-        //     on any hit against a wounded target. Fires in
-        //     `resolve_attack_outcome`.
-        //   - `MULTIATTACK_DEFENSE_TAG`: Defensive Tactics (lv7,
-        //     "Multiattack Defense" option). Passive +4 AC vs any
-        //     attacker who has already landed a hit this turn — the
-        //     "shrug off the second swing" envelope that pairs
-        //     naturally with the ranger's kite pattern (drop the first
-        //     hit, walk out of range before the follow-up connects).
-        //     Ships on the CR-1 Hunter Ranger template above its
-        //     strict RAW level gate for the same reason Colossus
-        //     Slayer does — class templates target a balanced playable
-        //     level, not lockstep PHB progression.
-        features: HashSet::from([
-            COLOSSUS_SLAYER_TAG,
-            MULTIATTACK_DEFENSE_TAG,
-            // Foe Slayer (lv20 ranger capstone) — inherited from the
-            // baseline `RANGER_TEMPLATE` on the subclass since we
-            // override the whole `features` set here rather than
-            // extending it. Kept aligned with baseline so a Hunter
-            // Ranger drops the +WIS-mod once-per-turn damage rider
-            // alongside the Hunter-specific Colossus Slayer.
-            FOE_SLAYER_TAG,
-            // 5e Ranger Vanish (lv14) — same "override the whole
-            // features set" caveat: re-listed here so the Hunter
-            // ranger's `VANISH` action (inherited via the baseline
-            // action list) still passes its `has_passive_feature`
-            // gate. Falling back on the baseline copy would leave
-            // the paired action gated off silently.
-            VANISH_TAG,
-            // 5e Ranger Roving (2024 PHB lv6 optional class feature) —
-            // same "override the whole features set" caveat as Foe
-            // Slayer / Vanish above: re-listed here so the Hunter
-            // Ranger's passive +5 ft walking speed reads through the
-            // `passive_feature_speed_bonus` chokepoint. The subclass
-            // doesn't itself pick up Roving RAW; the tag rides on
-            // baseline Ranger so any subclass (Hunter, future Beast
-            // Master / Gloom Stalker) picks it up when it fully
-            // inherits the baseline features HashSet.
-            ROVING_TAG,
-        ]),
+        features,
         // 5e Hunter Ranger Superior Hunter's Defense (lv15, "Evasion"
         // option): on DEX saves for half damage, take 0 on a pass and
         // half on a fail instead of half / full. Ships on the CR-1

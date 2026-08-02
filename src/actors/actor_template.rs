@@ -1484,6 +1484,69 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     },
 ];
 
+/// One row in the `DIFFICULT_TERRAIN_IMMUNITIES` cohort — a single
+/// source of "this actor pays no movement surcharge for difficult
+/// terrain". `flag` is any predicate on the actor (a held condition, a
+/// passive-feature tag, or an OR of several); a single matching row is
+/// enough, so the cohort is read with `.any()` rather than summed.
+///
+/// Shape sibling to `PassiveFeatureSpeedBonus` / `ConditionSpeedBonus`
+/// minus the magnitude — terrain immunity is a boolean, so the row is
+/// the flag alone. Same reason those two hold a function pointer
+/// instead of an enum tag: a new row points at any predicate without
+/// expanding a central enum.
+struct DifficultTerrainImmunity {
+    flag: fn(&ActorInstance) -> bool,
+}
+
+/// Difficult-terrain-immunity cohort read by
+/// `ActorInstance::ignores_difficult_terrain`, which the pathfinder
+/// consults once per candidate step to decide whether
+/// `TerrainType::movement_cost` applies at all.
+///
+/// Before this cohort existed, `dijkstra_path` multiplied every step
+/// onto a `DifficultTerrain` tile by 2.0 with no escape hatch, which
+/// made two shipped effects lie about what they do: `Condition::Footloose`
+/// (Freedom of Movement) documents "the target ignores difficult
+/// terrain" and did not, and a creature flying under `Fly` /
+/// `Investiture of Wind` / `Otherworldly Guise` was charged for rubble
+/// it was sixty feet above. Both are rows here now, and the lane is
+/// open for the content that wants it.
+///
+/// Entries (in order):
+///   - **Freedom of Movement** (`Footloose`, lv4 abjuration): RAW's
+///     "the target's movement is unaffected by difficult terrain" — the
+///     clause the condition's own docstring already promised. The
+///     condition's other half (dynamic immunity to Paralyzed /
+///     Restrained / Grappled) sits on `dynamic_immunity_to`; this is
+///     the movement half.
+///   - **Magical flight** (`Flying` / `InvestedInWind` /
+///     `OtherworldlyGuised`): a creature in the air doesn't wade
+///     through the mud under it. Deliberately the same triple-OR
+///     predicate the `CONDITION_SPEED_BONUSES` flight row uses, so the
+///     two lanes can never disagree about what counts as flying — an
+///     actor getting the +60 ft flying-speed bump is exactly an actor
+///     that skips the terrain tax.
+///   - **Land's Stride** (`LANDS_STRIDE_TAG`, Ranger lv8 / Land Druid
+///     lv6): the class-feature row, and the first one that is a build
+///     choice rather than a spell effect. See the tag's docstring for
+///     which RAW clauses ship.
+const DIFFICULT_TERRAIN_IMMUNITIES: &[DifficultTerrainImmunity] = &[
+    DifficultTerrainImmunity {
+        flag: |a| a.has_condition(Condition::Footloose),
+    },
+    DifficultTerrainImmunity {
+        flag: |a| {
+            a.has_condition(Condition::Flying)
+                || a.has_condition(Condition::InvestedInWind)
+                || a.has_condition(Condition::OtherworldlyGuised)
+        },
+    },
+    DifficultTerrainImmunity {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::LANDS_STRIDE_TAG),
+    },
+];
+
 /// The 5e exhaustion ladder, one constant per rung, named for what the
 /// rung does rather than for its number.
 ///
@@ -6529,6 +6592,24 @@ impl ActorInstance {
             .filter(|row| (row.flag)(self))
             .map(|row| row.bonus_ft)
             .sum()
+    }
+
+    /// True if this actor pays no movement surcharge for stepping onto
+    /// `TerrainType::DifficultTerrain`. Read once per candidate step by
+    /// the pathfinder (`EncounterInstance::dijkstra_path`), which skips
+    /// the terrain multiplier entirely when it holds.
+    ///
+    /// Any one matching row in `DIFFICULT_TERRAIN_IMMUNITIES` is enough
+    /// — the surcharge is either charged or it isn't, so unlike the two
+    /// speed-bonus cohorts (which sum) this one short-circuits on the
+    /// first hit. Adding a fresh source (a Boots of Striding rider, the
+    /// 2024 Circle of the Land's terrain grant, a monster's burrow
+    /// speed) lands as a one-line entry in that table rather than a new
+    /// branch here or — worse — in the pathfinder's inner loop.
+    pub fn ignores_difficult_terrain(&self) -> bool {
+        DIFFICULT_TERRAIN_IMMUNITIES
+            .iter()
+            .any(|row| (row.flag)(self))
     }
 
     pub fn item_save_bonus(&self) -> i32 {
