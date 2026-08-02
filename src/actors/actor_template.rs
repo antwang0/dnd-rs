@@ -1484,6 +1484,40 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     },
 ];
 
+/// The 5e exhaustion ladder, one constant per rung, named for what the
+/// rung does rather than for its number.
+///
+/// Each tier's effect is cumulative with every tier below it, so the
+/// gates are all `>=`. They are constants rather than literals for the
+/// usual reason — six sites in four modules read them, and a bare `3`
+/// at a save site says nothing about why — but also because the ladder
+/// is the one part of exhaustion a table is likely to house-rule, and a
+/// house rule that moves a rung should be one edit.
+///
+/// Tier 1 — disadvantage on ability checks. Read by
+/// `EncounterInstance::compute_check_mode`.
+pub const EXHAUSTION_CHECK_DISADVANTAGE_TIER: u32 = 1;
+/// Tier 2 — speed halved. Rides `CONDITION_SPEED_MULTIPLIERS` as a
+/// ×0.5 factor, so it composes with Haste and Slow the way every other
+/// speed multiplier does.
+pub const EXHAUSTION_HALF_SPEED_TIER: u32 = 2;
+/// Tier 3 — disadvantage on attack rolls *and* saving throws. The rung
+/// the old single-flag model collapsed the whole ladder onto: before
+/// the tiers existed, one application of exhaustion handed out this
+/// penalty plus tier 1's immediately.
+pub const EXHAUSTION_ROLL_PENALTY_TIER: u32 = 3;
+/// Tier 4 — hit point maximum halved. Read by `max_hitpoints`; current
+/// HP is clipped to the new ceiling as the tier lands.
+pub const EXHAUSTION_HALF_HP_TIER: u32 = 4;
+/// Tier 5 — speed 0. Read by `remaining_movement` alongside the
+/// `zeros_movement` condition cohort, rather than as another speed
+/// multiplier, because RAW's "speed 0" is not a number a Dash can add
+/// to.
+pub const EXHAUSTION_ZERO_SPEED_TIER: u32 = 5;
+/// Tier 6 — death. Also the cap: a creature cannot hold more
+/// exhaustion than the amount that kills it.
+pub const EXHAUSTION_DEATH_TIER: u32 = 6;
+
 /// One row in the `CONDITION_SPEED_MULTIPLIERS` cohort — a single
 /// condition whose presence applies a multiplicative factor to the
 /// holder's final walking speed. Sibling to `ConditionSpeedBonus` on
@@ -1537,6 +1571,15 @@ const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
     },
     ConditionSpeedMultiplier {
         flag: |a| a.has_condition(Condition::PowerWordPained),
+        factor: 0.5,
+    },
+    // 5e exhaustion tier 2: "speed halved". The first row on this
+    // cohort gated on something other than a bare condition flag, which
+    // is what the `flag` closure was for — the ladder's tiers are a
+    // number, not six conditions. Tier 5's "speed 0" deliberately does
+    // *not* ride here: see `remaining_movement`.
+    ConditionSpeedMultiplier {
+        flag: |a| a.exhaustion_level() >= EXHAUSTION_HALF_SPEED_TIER,
         factor: 0.5,
     },
 ];
@@ -3662,6 +3705,27 @@ pub struct ActorInstance {
     /// counterpart: the list of conditions whose install emits a
     /// `SetConditionLink` alongside the `ApplyCondition`.
     condition_links: HashMap<Condition, usize>,
+    /// 5e Exhaustion, as its six cumulative tiers rather than a flag.
+    ///
+    /// The number and `Condition::Exhausted` are two views of one
+    /// state, held in step by `add_condition` / `remove_condition`: the
+    /// flag is present exactly when this is non-zero. That pairing is
+    /// what let the tiers arrive without touching a single caller —
+    /// every existing source already says `add_condition(Exhausted)`,
+    /// which is now "gain a level" (RAW's own phrasing), and every
+    /// existing cleanse already says `remove_condition(Exhausted)`,
+    /// which is now "reduce by one level" (also RAW's own phrasing,
+    /// and the thing Greater Restoration and a long rest both actually
+    /// do). Immunity is unchanged: `add_condition` bounces first, so a
+    /// creature immune to exhaustion never picks up a tier.
+    ///
+    /// Read through `exhaustion_level`. The tiers land at:
+    /// `EXHAUSTION_CHECK_DISADVANTAGE_TIER` (checks),
+    /// `EXHAUSTION_HALF_SPEED_TIER` (speed), `EXHAUSTION_ROLL_PENALTY_TIER`
+    /// (attacks and saves), `EXHAUSTION_HALF_HP_TIER` (hit point
+    /// maximum), `EXHAUSTION_ZERO_SPEED_TIER` (speed again), and
+    /// `EXHAUSTION_DEATH_TIER`.
+    exhaustion: u32,
     /// 5e Fighter Indomitable — one-shot "reroll the next failed save"
     /// marker. Set by the Indomitable action; consumed at the save
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
@@ -3941,6 +4005,7 @@ impl ActorInstance {
             regen_suppressed: false,
             mirror_images: 0,
             condition_links: HashMap::new(),
+            exhaustion: 0,
             indomitable_pending: false,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
@@ -4937,6 +5002,16 @@ impl ActorInstance {
     /// concentration and any temp HP. 5e long rest semantics.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
+        // 5e: "finishing a long rest reduces a creature's exhaustion
+        // level by 1." One rung, not the whole ladder — a creature that
+        // marched itself to tier 4 wakes up at tier 3, and the halved
+        // hit point maximum below is computed *after* the reduction so a
+        // rest that clears tier 4 also restores the full pool.
+        //
+        // Explicit rather than riding the `conditions.clear()` below,
+        // which bypasses `remove_condition` and would otherwise strand
+        // the tier count with no flag beside it.
+        self.reduce_exhaustion(1);
         self.hitpoints = self.max_hitpoints();
         self.temp_hp = 0;
         // 5e Arcane Ward RAW: "once you create the ward, you can't create
@@ -4961,6 +5036,14 @@ impl ActorInstance {
         self.overchannel_backlash_pending = false;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
+        // Exhaustion is the one condition a long rest does not lift
+        // outright, so the blanket clear above has to be walked back
+        // whenever a tier survived the reduction. Re-installed from the
+        // number, which is the authority — the flag is its shadow.
+        if self.exhaustion > 0 {
+            self.conditions
+                .insert(Condition::Exhausted, ConditionTimer::Permanent);
+        }
         self.concentration = None;
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
@@ -5712,7 +5795,18 @@ impl ActorInstance {
         if self.effectively_immune_to_condition(c) {
             return false;
         }
+        // 5e exhaustion is gained a level at a time, and every source in
+        // the game says "gains 1 level of exhaustion" rather than
+        // "becomes exhausted". Routing the install through the ladder is
+        // what makes that true of every existing caller at once — the
+        // flag they set is still set, it just now means "at least one
+        // level", and a second application stacks instead of being
+        // swallowed by the `contains_key` check below.
         let is_new = !self.conditions.contains_key(&c);
+        if c == Condition::Exhausted {
+            self.gain_exhaustion(1);
+            return is_new;
+        }
         let new_timer = match (self.conditions.get(&c).copied(), timer) {
             (None, t) => t,
             (Some(ConditionTimer::Permanent), _) => ConditionTimer::Permanent,
@@ -5732,6 +5826,68 @@ impl ActorInstance {
         };
         self.conditions.insert(c, new_timer);
         is_new
+    }
+
+    /// Current exhaustion tier, 0 (none) through
+    /// `EXHAUSTION_DEATH_TIER`. `has_condition(Exhausted)` is exactly
+    /// `exhaustion_level() > 0`; the two are held in step by
+    /// `gain_exhaustion` / `reduce_exhaustion`, which are the only
+    /// writers.
+    pub fn exhaustion_level(&self) -> u32 {
+        self.exhaustion
+    }
+
+    /// Climb `levels` rungs of the exhaustion ladder, returning the new
+    /// tier. Saturates at `EXHAUSTION_DEATH_TIER`, and reaching that
+    /// rung kills outright — RAW's tier 6 is "death", with no save and
+    /// no dying state to roll out of.
+    ///
+    /// Reached by every caller through `add_condition(Exhausted, _)`;
+    /// public for the sources that hand out more than one level at a
+    /// time and for tests that want to start partway up.
+    pub fn gain_exhaustion(&mut self, levels: u32) -> u32 {
+        if levels == 0 {
+            return self.exhaustion;
+        }
+        self.exhaustion = self
+            .exhaustion
+            .saturating_add(levels)
+            .min(EXHAUSTION_DEATH_TIER);
+        self.conditions
+            .insert(Condition::Exhausted, ConditionTimer::Permanent);
+        if self.exhaustion >= EXHAUSTION_DEATH_TIER {
+            self.hitpoints = 0;
+            self.temp_hp = 0;
+            self.hp_state = HpState::Dead;
+            return self.exhaustion;
+        }
+        // Tier 4 halves the hit point maximum, and a creature sitting
+        // above the new ceiling has to come down to it. Clipped here
+        // rather than inside `max_hitpoints` because that accessor is
+        // read on every damage and heal and has no business mutating.
+        let cap = self.max_hitpoints();
+        self.hitpoints = self.hitpoints.min(cap);
+        self.exhaustion
+    }
+
+    /// Walk `levels` rungs back down, returning true if any tier was
+    /// actually shed. Dropping to 0 clears `Condition::Exhausted`; any
+    /// other landing keeps it, because the creature is still exhausted,
+    /// just less so.
+    ///
+    /// Reached by every cleanse through `remove_condition(Exhausted)`.
+    pub fn reduce_exhaustion(&mut self, levels: u32) -> bool {
+        if self.exhaustion == 0 {
+            // Keep the flag and the number honest even if something
+            // desynced them — a bare `conditions.remove` elsewhere would
+            // otherwise leave a level-0 creature flagged as exhausted.
+            return self.conditions.remove(&Condition::Exhausted).is_some();
+        }
+        self.exhaustion = self.exhaustion.saturating_sub(levels);
+        if self.exhaustion == 0 {
+            self.conditions.remove(&Condition::Exhausted);
+        }
+        true
     }
 
     pub fn is_immune_to_condition(&self, c: Condition) -> bool {
@@ -5796,6 +5952,15 @@ impl ActorInstance {
     }
 
     pub fn remove_condition(&mut self, c: Condition) -> bool {
+        // The mirror of the install: RAW's cleanses for exhaustion —
+        // Greater Restoration, a long rest — each say "reduce the
+        // target's exhaustion level by 1", not "end the condition". A
+        // creature dragged to tier 4 and then given Greater Restoration
+        // walks away at tier 3, still slowed and still rolling badly,
+        // which is the whole texture of the mechanic.
+        if c == Condition::Exhausted {
+            return self.reduce_exhaustion(1);
+        }
         let removed = self.conditions.remove(&c).is_some();
         if removed {
             // Keep tightly-linked auxiliary state in sync with the
@@ -5835,7 +6000,15 @@ impl ActorInstance {
                     // Route through remove_condition so auxiliary state
                     // (Charmed back-link, mirror_images) clears too.
                     self.remove_condition(c);
-                    expired.push(c);
+                    // Report the expiry only if the flag actually left.
+                    // Exhaustion is the one condition whose removal is a
+                    // *decrement* — a timed application that lands on a
+                    // creature already two rungs up leaves it exhausted,
+                    // and announcing "no longer exhausted" would be a
+                    // lie the caller has no way to check.
+                    if !self.conditions.contains_key(&c) {
+                        expired.push(c);
+                    }
                 }
                 ConditionTimer::Rounds(n) => {
                     self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
@@ -6134,7 +6307,17 @@ impl ActorInstance {
 
     pub fn max_hitpoints(&self) -> u32 {
         let bonus = self.total_item_bonuses().max_hp;
-        (self.base_hitpoints as i32 + bonus).max(1) as u32
+        let raw = (self.base_hitpoints as i32 + bonus).max(1) as u32;
+        // 5e exhaustion tier 4: "hit point maximum halved". Applied
+        // after the item bonuses fold in, so a Ring of Regeneration's
+        // +HP is halved along with everything else — RAW halves the
+        // maximum, whatever built it. Floors at 1 so a halved maximum
+        // can never itself be the thing that kills; tier 6 is the rung
+        // that does that.
+        if self.exhaustion >= EXHAUSTION_HALF_HP_TIER {
+            return (raw / 2).max(1);
+        }
+        raw
     }
 
     /// True if the actor has taken any damage relative to their full HP
@@ -6399,6 +6582,15 @@ impl ActorInstance {
 
     pub fn remaining_movement(&self) -> f32 {
         if self.conditions.keys().any(|c| c.zeros_movement()) {
+            return 0.0;
+        }
+        // 5e exhaustion tier 5: "speed reduced to 0". Read here rather
+        // than as another `CONDITION_SPEED_MULTIPLIERS` row with a
+        // factor of 0, because those factors scale the *speed* that
+        // fills the budget at turn start, and a Dash pours a second
+        // helping straight back in. A creature this exhausted does not
+        // get to sprint; it does not get to move.
+        if self.exhaustion >= EXHAUSTION_ZERO_SPEED_TIER {
             return 0.0;
         }
         // 5e RAW: a prone creature crawls at half speed. Every tile of

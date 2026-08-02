@@ -513,6 +513,17 @@ pub fn render_sideinfo(
             .conditions()
             .iter()
             .map(|(c, timer)| {
+                // Exhaustion is the one condition whose severity isn't
+                // carried by its timer — it has six rungs and a
+                // permanent timer on every one of them, so a bare
+                // "exhausted" would read the same at tier 1 as at the
+                // tier that halves your hit points. Show the rung.
+                if matches!(c, crate::conditions::Condition::Exhausted) {
+                    return (
+                        format!("{} {}", c.name(), curr_actor.exhaustion_level()),
+                        c.name(),
+                    );
+                }
                 let label = match timer {
                     crate::conditions::ConditionTimer::Permanent => c.name().to_string(),
                     crate::conditions::ConditionTimer::Rounds(n) => format!("{}({})", c.name(), n),

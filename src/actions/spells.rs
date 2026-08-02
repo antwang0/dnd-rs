@@ -11165,9 +11165,11 @@ impl GreaterRestoration {
     /// targets the lockdown set (Paralyzed, Stunned, Petrified, Charmed)
     /// that LR can't touch. Includes Lesser-Restoration's targets too so
     /// a stuck-with-only-GR caster can still cleanse Poisoned / etc.
-    /// Also lifts Exhausted (RAW: GR removes one level of exhaustion;
-    /// we model the simplified single-tier flag so cleansing it ends
-    /// the condition outright) and Feebled (RAW: GR explicitly removes
+    /// Also lifts Exhausted — RAW's "reduce the target's exhaustion
+    /// level by one", which is exactly what removing that condition
+    /// does now that the ladder has six rungs, so a target dragged to
+    /// tier 4 walks away at tier 3 rather than fresh — and Feebled
+    /// (RAW: GR explicitly removes
     /// Feeblemind's mind-shattering effect — high-priority since it
     /// otherwise locks down INT/WIS/CHA saves indefinitely).
     const CANDIDATES: [Condition; 10] = [
@@ -15048,17 +15050,26 @@ impl Action for SickeningRadiance {
                 amount: raw,
                 damage_type: DamageType::Radiant,
             }));
+            // RAW: "the creature gains 1 level of exhaustion". A level,
+            // once gained, is the target's to carry — the spell ending
+            // does not give it back, which is what makes standing in
+            // this zone a decision rather than an inconvenience. So the
+            // exhaustion is `Permanent` and stays off the concentration
+            // teardown list below, while the glow that marks the victim
+            // rides the concentration the ordinary way.
+            //
+            // Every round the target fails again is another rung, and
+            // the sixth is fatal.
             effects.push(Box::new(ApplyCondition {
                 actor_id: tid,
                 condition: Condition::Exhausted,
-                timer: ConditionTimer::Rounds(10),
+                timer: ConditionTimer::Permanent,
             }));
             effects.push(Box::new(ApplyCondition {
                 actor_id: tid,
                 condition: Condition::SickeningRadiated,
                 timer: ConditionTimer::Rounds(10),
             }));
-            conditions.push((tid, Condition::Exhausted));
             conditions.push((tid, Condition::SickeningRadiated));
         }
         effects.push(Box::new(StartConcentration {

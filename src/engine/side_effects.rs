@@ -1037,6 +1037,27 @@ impl ApplicableSideEffect for ApplyCondition {
         };
         let name = actor.name().to_string();
         let newly_added = actor.add_condition(self.condition, self.timer);
+        // Exhaustion's severity is a rung, not a timer, so neither the
+        // "is now exhausted" nor the "exhaustion refreshes" line says
+        // anything true about what just happened. Report the climb —
+        // and the rung that ends it.
+        if self.condition == Condition::Exhausted {
+            let level = actor.exhaustion_level();
+            if level == 0 {
+                // Immunity bounced the install; `add_condition` already
+                // declined it, so there is nothing to announce.
+                return;
+            }
+            if level >= crate::actors::actor_template::EXHAUSTION_DEATH_TIER {
+                ei.log(format!(
+                    "{} reaches the last rung of exhaustion and collapses, dead.",
+                    name
+                ));
+            } else {
+                ei.log(format!("{} is exhausted (level {}).", name, level));
+            }
+            return;
+        }
         let suffix = match self.timer {
             ConditionTimer::Permanent => String::new(),
             ConditionTimer::Rounds(n) => {
@@ -1073,9 +1094,10 @@ impl ApplicableSideEffect for RemoveCondition {
             return;
         };
         let name = actor.name().to_string();
-        if actor.remove_condition(self.condition) {
-            ei.log(format!("{} is no longer {}.", name, self.condition.name()));
+        if !actor.remove_condition(self.condition) {
+            return;
         }
+        announce_condition_lifted(ei, self.actor_id, &name, self.condition);
     }
 }
 
@@ -1329,11 +1351,43 @@ impl ApplicableSideEffect for RemoveOneOfConditions {
         let name = actor.name().to_string();
         for c in &self.candidates {
             if actor.remove_condition(*c) {
-                ei.log(format!("{} is no longer {}.", name, c.name()));
+                announce_condition_lifted(ei, self.actor_id, &name, *c);
                 return;
             }
         }
     }
+}
+
+/// Say what a just-completed `remove_condition` actually did.
+///
+/// Shared by the two effects that lift conditions, because for one
+/// condition the obvious sentence is wrong. Every other removal in the
+/// game ends the thing outright, and "X is no longer Y" is the whole
+/// truth. Exhaustion's removal steps one rung down a ladder of six, so
+/// a creature dragged to tier 4 and then handed Greater Restoration is
+/// still exhausted — and telling the player otherwise hides the three
+/// rungs they are still carrying.
+///
+/// Call *after* the removal, with the name captured before it: the
+/// answer is read off the actor's new state.
+fn announce_condition_lifted(
+    ei: &mut EncounterInstance,
+    actor_id: usize,
+    name: &str,
+    condition: Condition,
+) {
+    if condition == Condition::Exhausted {
+        let level = ei
+            .actors
+            .get(&actor_id)
+            .map(|a| a.exhaustion_level())
+            .unwrap_or(0);
+        if level > 0 {
+            ei.log(format!("{}'s exhaustion eases to level {}.", name, level));
+            return;
+        }
+    }
+    ei.log(format!("{} is no longer {}.", name, condition.name()));
 }
 
 /// Promote a Dying actor to Stable without restoring any HP — the 5e

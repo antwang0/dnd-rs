@@ -659,8 +659,9 @@ const BLANKET_SAVE_DISADVANTAGE_CONDITIONS: &[Condition] = &[
     // 5e Frightened: disadvantage on ability checks while you can see
     // the source. Tests treat this as blanket save disadvantage too.
     Condition::Frightened,
-    // 5e Exhaustion tier 3: disadvantage on saving throws.
-    Condition::Exhausted,
+    // Exhausted is deliberately absent: the flag means "at least tier
+    // 1", and RAW's save penalty does not arrive until tier 3. The gate
+    // lives in `compute_save_mode`, which can read the tier.
 ];
 
 /// Conditions whose presence combines a blanket **advantage** into
@@ -2544,6 +2545,16 @@ impl EncounterInstance {
         // `grants_self_attack_advantage`) so adding a new condition is a
         // one-line change to the helper rather than a re-edit here.
         if let Some(attacker) = self.actors.get(&attacker_id) {
+            // 5e exhaustion tier 3: "disadvantage on attack rolls and
+            // saving throws". Off the condition cohort for the same
+            // reason it is off the save one — that table is keyed by
+            // condition, and the flag is up two rungs before the
+            // penalty is earned.
+            if attacker.exhaustion_level()
+                >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
             for c in attacker.conditions().keys() {
                 if c.imposes_attacker_disadvantage() {
                     mode = mode.combine(RollMode::Disadvantage);
@@ -3007,6 +3018,15 @@ impl EncounterInstance {
             if actor.has_condition(*c) {
                 mode = mode.combine(RollMode::Advantage);
             }
+        }
+        // 5e exhaustion tier 3: "disadvantage on attack rolls and saving
+        // throws". Off the blanket cohort because that table is keyed by
+        // condition and this is keyed by tier — the flag is up from tier
+        // 1, three rungs before this penalty is earned.
+        if actor.exhaustion_level()
+            >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
+        {
+            mode = mode.combine(RollMode::Disadvantage);
         }
         // DEX-save cluster — every clause here gates on
         // `AbilityScoreType::Dexterity` in RAW so we branch once and
@@ -3974,6 +3994,14 @@ impl EncounterInstance {
             if actor.has_condition(*c) {
                 mode = mode.combine(RollMode::Advantage);
             }
+        }
+        // 5e exhaustion tier 1: "disadvantage on ability checks", and
+        // nothing else until tier 3. This is the rung the ladder starts
+        // on, and until the check lane existed it had nothing to bite.
+        if actor.exhaustion_level()
+            >= crate::actors::actor_template::EXHAUSTION_CHECK_DISADVANTAGE_TIER
+        {
+            mode = mode.combine(RollMode::Disadvantage);
         }
         if matches!(ability, AbilityScoreType::Strength) {
             for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
@@ -34548,11 +34576,14 @@ mod tests {
         assert!(actor.is_immune_to_condition(Condition::Paralyzed));
     }
 
-    /// Exhausted: imposes disadvantage on attacks via compute_attack_mode
-    /// and on saves via compute_save_mode. Symmetric envelope so a single
-    /// flag captures the two load-bearing tiers of 5e exhaustion.
+    /// Exhaustion's roll penalty arrives on the third rung and not
+    /// before. The two earlier tiers are a check penalty and a speed
+    /// cut, neither of which an attack roll or a saving throw can see —
+    /// and pinning that is the point, because the previous single-flag
+    /// model handed both of these out on the *first* application.
     #[test]
-    fn exhausted_imposes_attack_and_save_disadvantage() {
+    fn the_roll_penalty_waits_for_the_third_rung_of_exhaustion() {
+        use crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER;
         use crate::conditions::ConditionTimer;
         let mut e = ei_with_terrain(15, 15, &[]);
         let attacker = e
@@ -34561,17 +34592,175 @@ mod tests {
         let target = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
             .unwrap();
+        let wis = crate::engine::types::AbilityScoreType::Wisdom;
+        for tier in 1..EXHAUSTION_ROLL_PENALTY_TIER {
+            e.actors
+                .get_mut(&attacker)
+                .unwrap()
+                .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
+            assert_eq!(e.actors[&attacker].exhaustion_level(), tier);
+            assert!(
+                e.actors[&attacker].has_condition(Condition::Exhausted),
+                "the flag is up from the first rung"
+            );
+            assert!(
+                matches!(e.compute_attack_mode(attacker, target, true), RollMode::Normal),
+                "tier {} should not touch the attack roll",
+                tier
+            );
+            assert!(
+                matches!(e.compute_save_mode(attacker, wis), RollMode::Normal),
+                "tier {} should not touch the saving throw",
+                tier
+            );
+            assert!(
+                matches!(e.compute_check_mode(attacker, wis), RollMode::Disadvantage),
+                "every tier from the first touches the ability check"
+            );
+        }
         e.actors
             .get_mut(&attacker)
             .unwrap()
             .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
-        // Attack mode should be Disadvantage from the attacker side.
-        let mode = e.compute_attack_mode(attacker, target, true);
-        assert!(matches!(mode, RollMode::Disadvantage));
-        // Save mode should also be Disadvantage (tier-3 envelope).
-        let save_mode =
-            e.compute_save_mode(attacker, crate::engine::types::AbilityScoreType::Wisdom);
-        assert!(matches!(save_mode, RollMode::Disadvantage));
+        assert_eq!(
+            e.actors[&attacker].exhaustion_level(),
+            EXHAUSTION_ROLL_PENALTY_TIER
+        );
+        assert!(matches!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        ));
+        assert!(matches!(
+            e.compute_save_mode(attacker, wis),
+            RollMode::Disadvantage
+        ));
+    }
+
+    /// The rungs that are not roll modes: half speed at tier 2, half hit
+    /// point maximum at tier 4 (with current HP clipped down to it as the
+    /// tier lands), no movement at all at tier 5, and death at tier 6.
+    #[test]
+    fn the_exhaustion_ladder_bites_speed_then_hit_points_then_the_creature() {
+        use crate::actors::actor_template::{
+            EXHAUSTION_DEATH_TIER, EXHAUSTION_HALF_HP_TIER, EXHAUSTION_HALF_SPEED_TIER,
+            EXHAUSTION_ZERO_SPEED_TIER,
+        };
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&id].speed();
+        let base_max_hp = e.actors[&id].max_hitpoints();
+        assert!(base_speed > 0.0 && base_max_hp > 1);
+
+        let a = e.actors.get_mut(&id).unwrap();
+        a.gain_exhaustion(EXHAUSTION_HALF_SPEED_TIER);
+        assert!(
+            (a.speed() - base_speed * 0.5).abs() < 0.01,
+            "tier {} halves speed",
+            EXHAUSTION_HALF_SPEED_TIER
+        );
+        assert_eq!(a.max_hitpoints(), base_max_hp, "and nothing else yet");
+
+        a.gain_exhaustion(EXHAUSTION_HALF_HP_TIER - EXHAUSTION_HALF_SPEED_TIER);
+        assert_eq!(a.max_hitpoints(), (base_max_hp / 2).max(1));
+        assert!(
+            a.hitpoints() <= a.max_hitpoints(),
+            "current HP is clipped down to the new ceiling"
+        );
+
+        a.gain_exhaustion(EXHAUSTION_ZERO_SPEED_TIER - EXHAUSTION_HALF_HP_TIER);
+        assert_eq!(
+            a.remaining_movement(),
+            0.0,
+            "tier {} is speed 0, not merely slow",
+            EXHAUSTION_ZERO_SPEED_TIER
+        );
+
+        a.gain_exhaustion(EXHAUSTION_DEATH_TIER - EXHAUSTION_ZERO_SPEED_TIER);
+        assert!(!a.is_combat_active(), "tier {} is death", EXHAUSTION_DEATH_TIER);
+        assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
+        // The ladder has a top: nothing stacks past the rung that kills.
+        a.gain_exhaustion(3);
+        assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
+    }
+
+    /// A source that hands out exhaustion hands out a *level*, and a
+    /// second application stacks on the first. Under the old single
+    /// flag the second one was swallowed whole by the "already has this
+    /// condition" check — Sickening Radiance could hold a creature in
+    /// its glow for ten rounds and never make it any worse off than the
+    /// first failed save did.
+    ///
+    /// Both log lines are pinned too, because they are the only way a
+    /// player can see the rung they are on: the climb has to name it,
+    /// and a partial cleanse must not claim the whole ladder.
+    #[test]
+    fn a_second_helping_of_exhaustion_stacks_and_says_so() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, RemoveCondition};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let install = ApplyCondition {
+            actor_id: id,
+            condition: Condition::Exhausted,
+            timer: ConditionTimer::Permanent,
+        };
+        install.apply(&mut e);
+        install.apply(&mut e);
+        assert_eq!(e.actors[&id].exhaustion_level(), 2);
+        assert!(
+            e.messages().iter().any(|m| m.contains("exhausted (level 2)")),
+            "the second application should announce the rung it reached"
+        );
+        let before = e.messages().len();
+        RemoveCondition {
+            actor_id: id,
+            condition: Condition::Exhausted,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].exhaustion_level(), 1);
+        let logged: Vec<&String> = e.messages()[before..].iter().collect();
+        assert!(
+            logged.iter().any(|m| m.contains("eases to level 1")),
+            "a partial cleanse must not read as 'no longer exhausted': {:?}",
+            logged
+        );
+    }
+
+    /// Every cleanse 5e writes for exhaustion says "reduce by 1", and
+    /// both of ours now do. Greater Restoration reaches it through
+    /// `remove_condition`; a long rest reaches it through `long_rest`,
+    /// which also has to walk back its own blanket condition wipe.
+    #[test]
+    fn a_cleanse_walks_one_rung_back_down_rather_than_the_whole_ladder() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let a = e.actors.get_mut(&id).unwrap();
+        a.gain_exhaustion(3);
+        // The Greater Restoration lane.
+        a.remove_condition(Condition::Exhausted);
+        assert_eq!(a.exhaustion_level(), 2);
+        assert!(a.has_condition(Condition::Exhausted), "still exhausted, just less so");
+        // The long-rest lane, which clears every other condition
+        // wholesale and must leave this one standing.
+        a.long_rest();
+        assert_eq!(a.exhaustion_level(), 1);
+        assert!(a.has_condition(Condition::Exhausted));
+        a.long_rest();
+        assert_eq!(a.exhaustion_level(), 0);
+        assert!(!a.has_condition(Condition::Exhausted), "the last rung clears the flag");
+        // And a rest with nothing to shed is a no-op rather than an
+        // underflow.
+        a.long_rest();
+        assert_eq!(a.exhaustion_level(), 0);
     }
 
     /// Storm of Vengeance: 2d6 thunder + 4d6 lightning on every enemy

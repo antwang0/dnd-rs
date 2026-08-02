@@ -371,13 +371,30 @@ pub enum Condition {
     /// Concentration-free; the timer caps unused inspiration at 10
     /// rounds (1 minute RAW).
     Inspired,
-    /// Exhausted (5e Exhaustion, simplified to a single level). RAW
-    /// models 6 cumulative tiers; we collapse to one flag with the
-    /// load-bearing penalties: disadvantage on attack rolls AND ability
-    /// checks (tier 1) plus disadvantage on saving throws (tier 3).
-    /// Cleared by a long rest. Distinct from `Poisoned` so cleanse
-    /// pickers (Lesser Restoration / Greater Restoration) can target
-    /// it explicitly.
+    /// Exhausted — the flag half of 5e's six-rung exhaustion ladder.
+    /// Present exactly when `ActorInstance::exhaustion_level()` is
+    /// non-zero; the tier itself is the number, and the two are held in
+    /// step by `add_condition` / `remove_condition`.
+    ///
+    /// Which is why this variant carries almost no mechanics of its own.
+    /// It sits on none of the roll-mode cohorts, because every penalty
+    /// RAW attaches to exhaustion is attached to a *rung*, and the flag
+    /// is up from the first one: tier 1 is disadvantage on ability
+    /// checks, tier 2 halves speed, tier 3 reaches attack rolls and
+    /// saving throws, tier 4 halves the hit point maximum, tier 5 is
+    /// speed 0, tier 6 is death. Each gate reads the number.
+    ///
+    /// The flag still earns its place: it is what makes exhaustion
+    /// visible to everything that speaks in conditions — immunity
+    /// (celestials, constructs, undead), the cleanse pickers, the status
+    /// panel — without any of them having to learn about tiers. Adding a
+    /// level to a creature immune to the condition is impossible for the
+    /// ordinary reason: `add_condition` bounces on immunity before it
+    /// reaches the ladder.
+    ///
+    /// Unlike every other condition here, removing it walks one rung
+    /// down rather than clearing outright — which is what both of RAW's
+    /// cleanses (Greater Restoration, a long rest) actually say.
     Exhausted,
     /// Spirit Shroud (5e level-3, concentration). The holder wraps
     /// themselves in deathly mist: every melee weapon attack the holder
@@ -2333,7 +2350,10 @@ impl Condition {
                 | Condition::Blinded
                 | Condition::Mocked
                 | Condition::HeatMetaled
-                | Condition::Exhausted
+                // Exhausted is deliberately absent: the flag now means
+                // "at least tier 1", and RAW's attack-roll penalty does
+                // not arrive until tier 3. The gate lives in
+                // `compute_attack_mode`, which can read the tier.
                 | Condition::Confused
                 | Condition::Dominated
                 | Condition::Feebled
