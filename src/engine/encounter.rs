@@ -59659,6 +59659,172 @@ mod tests {
     /// Wild Shape hands over the beast body and takes the spell list in
     /// exchange: temp HP lands, the claws unlock, and every levelled
     /// spell stops being affordable. Reverting restores all three.
+    /// Form of the Beast only exists while the rage does, and each form
+    /// only answers to its own tag.
+    #[test]
+    fn the_beast_forms_need_both_the_rage_and_their_own_tag() {
+        use crate::actions::class_attacks::{BEAST_BITE, BEAST_CLAWS, BEAST_TAIL};
+        use crate::actors::creatures::barbarians::{
+            BITE_BEAST_BARBARIAN_TEMPLATE, CLAW_BEAST_BARBARIAN_TEMPLATE,
+            TAIL_BEAST_BARBARIAN_TEMPLATE,
+        };
+        use crate::actions::action_template::Action;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bite_barb = e
+            .instantiate_creature(&BITE_BEAST_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(
+                &crate::actors::creatures::zombies::ZOMBIE_TEMPLATE,
+                Coordinate::new(4, 2),
+                1,
+                0,
+            )
+            .unwrap();
+        let targets = vec![target];
+
+        assert!(
+            !BEAST_BITE.validate_input(&e, bite_barb, Some(&targets), None, None),
+            "the form manifests with the rage, not before it"
+        );
+        e.actors
+            .get_mut(&bite_barb)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert!(
+            BEAST_BITE.validate_input(&e, bite_barb, Some(&targets), None, None),
+            "raging, the bite is live"
+        );
+        // The tag is what makes the three forms exclusive: a raging bite
+        // barbarian handed the claws would still be refused.
+        assert!(
+            !BEAST_CLAWS.validate_input(&e, bite_barb, Some(&targets), None, None),
+            "one form per build"
+        );
+        assert!(!BEAST_TAIL.validate_input(&e, bite_barb, Some(&targets), None, None));
+
+        // And each sibling template answers to its own.
+        for (template, weapon) in [
+            (
+                &*CLAW_BEAST_BARBARIAN_TEMPLATE,
+                &*BEAST_CLAWS as &dyn Action,
+            ),
+            (&*TAIL_BEAST_BARBARIAN_TEMPLATE, &*BEAST_TAIL as &dyn Action),
+        ] {
+            let id = e
+                .instantiate_creature(template, Coordinate::new(8, 8), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&id)
+                .unwrap()
+                .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+            let near = e
+                .instantiate_creature(
+                    &crate::actors::creatures::zombies::ZOMBIE_TEMPLATE,
+                    Coordinate::new(10, 8),
+                    1,
+                    0,
+                )
+                .unwrap();
+            let near_targets = vec![near];
+            assert!(
+                weapon.validate_input(&e, id, Some(&near_targets), None, None),
+                "{} should be able to swing its own form",
+                template.name
+            );
+            assert!(
+                !BEAST_BITE.validate_input(&e, id, Some(&near_targets), None, None),
+                "{} should not be able to bite",
+                template.name
+            );
+        }
+    }
+
+    /// The bite's heal is gated three ways — below half hit points, once
+    /// per turn, and only on a swing that landed.
+    #[test]
+    fn the_beast_bite_heals_only_a_bloodied_barbarian_and_only_once_a_turn() {
+        use crate::actions::class_attacks::BEAST_BITE;
+        use crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG;
+        use crate::actors::creatures::barbarians::BITE_BEAST_BARBARIAN_TEMPLATE;
+
+        // The zombie is AC 8 and the raging barbarian swings at +7, so
+        // across a handful of seeds at least one bite lands; the assert
+        // below is on the heal, not on the roll.
+        let mut healed_in = 0;
+        let mut healed_while_healthy = 0;
+        for seed in 0..8u64 {
+            for bloodied in [false, true] {
+                let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+                let barb = e
+                    .instantiate_creature(
+                        &BITE_BEAST_BARBARIAN_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(
+                        &crate::actors::creatures::zombies::ZOMBIE_TEMPLATE,
+                        Coordinate::new(4, 2),
+                        1,
+                        0,
+                    )
+                    .unwrap();
+                e.actors
+                    .get_mut(&barb)
+                    .unwrap()
+                    .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+                let max = e.actors[&barb].max_hitpoints();
+                // Hurt either way so the heal has room to show; only the
+                // `bloodied` arm crosses below half.
+                let wound = if bloodied { max / 2 + 1 } else { 1 };
+                e.actors.get_mut(&barb).unwrap().take_damage(wound);
+                let before = e.actors[&barb].hitpoints();
+
+                let targets = vec![target];
+                let effects = BEAST_BITE.side_effects(&mut e, barb, Some(&targets), None, None);
+                for ef in effects {
+                    ef.apply(&mut e);
+                }
+                let gained = e.actors[&barb].hitpoints().saturating_sub(before);
+                if bloodied {
+                    if gained > 0 {
+                        healed_in += 1;
+                        assert_eq!(
+                            gained,
+                            e.actors[&barb].proficiency_bonus() as u32,
+                            "the heal is the proficiency bonus, flat"
+                        );
+                        assert!(
+                            e.actors[&barb].once_per_turn_used(FORM_OF_THE_BEAST_BITE_TAG),
+                            "a fired heal marks itself spent for the turn"
+                        );
+                        // Extra Attack already swung twice inside that
+                        // one Action; the mark is what kept the second
+                        // swing from healing again.
+                        assert!(
+                            gained <= e.actors[&barb].proficiency_bonus() as u32,
+                            "once per turn, not once per swing"
+                        );
+                    }
+                } else if gained > 0 {
+                    healed_while_healthy += 1;
+                }
+            }
+        }
+        assert!(
+            healed_in > 0,
+            "the bite should have healed a bloodied barbarian in at least one of 8 seeds"
+        );
+        assert_eq!(
+            healed_while_healthy, 0,
+            "a barbarian above half hit points should never have healed"
+        );
+    }
+
     #[test]
     fn wild_shape_trades_the_spell_list_for_a_beast_body() {
         use crate::actions::class_features::WILD_SHAPE;

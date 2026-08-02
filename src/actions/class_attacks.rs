@@ -84,6 +84,22 @@ impl Action for RogueWeapon {
         vec![self.damage_type]
     }
 
+    /// Sneak Attack is left out of the estimate on purpose. It is far
+    /// larger than the weapon die and it rides whichever blade the rogue
+    /// picks, so counting it would raise every candidate by the same
+    /// amount and separate none of them — while making the number look
+    /// like a damage prediction rather than the tie-break it is.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::weapon_expected_damage(
+            encounter,
+            caster_id,
+            self.dice,
+            Some(crate::engine::types::AbilityScoreType::Dexterity),
+            self.cost_resource,
+            0,
+        )
+    }
+
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -788,3 +804,269 @@ impl Action for BeastFormClaws {
 }
 
 pub static BEAST_FORM_CLAWS: LazyLock<BeastFormClaws> = LazyLock::new(|| BeastFormClaws {});
+
+/// What a Path of the Beast natural weapon does beyond rolling its die.
+///
+/// The three forms differ in exactly one clause each — the bite heals,
+/// the claws swing again, the tail reaches further — and the tail's
+/// difference is already carried by `BeastNaturalWeapon::reach`. So the
+/// enum names the two riders and a "nothing else" arm rather than
+/// splitting the weapon into three near-identical structs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeastFormRider {
+    /// **Bite**: once per turn, a landed bite on a barbarian who is
+    /// below half their hit points heals them for their proficiency
+    /// bonus.
+    BloodiedHeal,
+    /// **Claws**: one additional swing as part of the same Attack
+    /// action, on top of Extra Attack.
+    ExtraSwing,
+    /// **Tail**: nothing beyond the reach the weapon already declares.
+    ReachOnly,
+}
+
+/// One of the three natural weapons a Path of the Beast barbarian
+/// manifests while raging (TCE, subclass level 3).
+///
+/// Config-driven for the same reason `RogueWeapon` is: the three forms
+/// differ in name, die, damage type, reach and one rider clause, and in
+/// nothing else. Spelling them out as three `impl Action` blocks would
+/// have triplicated the rage gate, the STR derivation and the Extra
+/// Attack chain — the three things that must not drift between them.
+///
+/// Both gates are checked, not just the rage one. `Raging` is RAW's
+/// trigger (the form manifests when the barbarian rages and vanishes
+/// when the rage ends), and `feature_tag` is what makes the three forms
+/// mutually exclusive: a barbarian who somehow carried two of these
+/// actions could still only swing the one whose tag their template
+/// grants.
+pub struct BeastNaturalWeapon {
+    /// Display name — action list entry, prompt parser's canonical
+    /// name, and the attack log's subject.
+    pub name: &'static str,
+    /// Alias set for the prompt parser.
+    pub aliases: &'static [&'static str],
+    /// Damage die.
+    pub dice: Dice,
+    /// Damage type of the swing.
+    pub damage_type: DamageType,
+    /// Maximum footprint gap, in tile-gap units. `MELEE_REACH` for the
+    /// bite and claws; `2` for the tail's 10 ft.
+    pub reach: isize,
+    /// The Form of the Beast tag this weapon belongs to. Gated on as
+    /// well as declared, so the forms stay exclusive.
+    pub feature_tag: &'static str,
+    /// The form's one extra clause.
+    pub rider: BeastFormRider,
+}
+
+impl Action for BeastNaturalWeapon {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+
+    /// The claws' extra swing is the whole reason this hint exists. On
+    /// dice alone the greataxe wins every comparison — 1d12 against 1d6
+    /// — and on dice plus the Strength modifier, three claw swings
+    /// (3 x 7.5 = 22.5) edge out two axe swings (2 x 10.5 = 21). A
+    /// per-swing estimate would report the opposite.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::weapon_expected_damage(
+            encounter,
+            caster_id,
+            self.dice,
+            Some(crate::engine::types::AbilityScoreType::Strength),
+            Resource::Action,
+            u32::from(self.rider == BeastFormRider::ExtraSwing),
+        )
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.has_condition(Condition::Raging) && a.has_passive_feature(self.feature_tag)
+        })
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attack::{AttackParams, resolve_attack_with_rider};
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Natural weapons are Strength weapons: STR to hit (with
+        // proficiency — RAW counts them as simple weapons the barbarian
+        // is proficient with) and STR to damage.
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Strength);
+        let damage_bonus = caster.ability_modifier(AbilityScoreType::Strength);
+        let bite_heal = BloodiedBite;
+        let mut swing = |e: &mut EncounterInstance| {
+            resolve_attack_with_rider(
+                e,
+                AttackParams {
+                    caster_id,
+                    target_id,
+                    action_name: self.name,
+                    attack_bonus,
+                    damage_dice: self.dice,
+                    damage_bonus,
+                    damage_type: self.damage_type,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+                // The rider no-ops on the forms that don't hold the bite
+                // tag, so all three swings can share one call site.
+                &bite_heal,
+            )
+        };
+        let mut effects = swing(encounter);
+        crate::actions::monster_attacks::maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            &mut effects,
+            &mut swing,
+        );
+        // RAW: "you can make one additional attack with them as part of
+        // the Attack action". Suppressed inside a Multiattack expansion
+        // for the same reason Extra Attack is — the wrapper already
+        // encodes the swing count.
+        if self.rider == BeastFormRider::ExtraSwing && !encounter.in_multiattack() {
+            encounter.log("  Form of the Beast (claws): additional claw:");
+            effects.extend(swing(encounter));
+        }
+        effects
+    }
+}
+
+/// The Bite's self-heal, as an `ActionOnHitRider` on the shared attack
+/// pipeline.
+///
+/// RAW: "if you're missing any of your hit points when you hit a
+/// creature with it, you regain hit points equal to your proficiency
+/// bonus" — with TCE's once-per-turn cap. We read "missing hit points"
+/// as *below half*, which is where the 2024 reprint puts it and which is
+/// also the only reading that makes the form a comeback rather than a
+/// permanent trickle: an unhurt barbarian who takes 1 damage would
+/// otherwise heal it back on their next swing, every turn, forever.
+///
+/// Returns 0 extra damage — the bite heals the barbarian, it does not
+/// hit the target harder — but rides the shared pipeline anyway so the
+/// heal only fires on a swing that actually connected, and fires after
+/// the pipeline's own riders have had their say.
+struct BloodiedBite;
+
+impl crate::engine::attack::ActionOnHitRider for BloodiedBite {
+    fn apply(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &crate::engine::attack::AttackParams,
+        _mode: crate::engine::dice::RollMode,
+        _is_crit: bool,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        use crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG;
+        use crate::engine::side_effects::Heal;
+        let Some(barbarian) = encounter.actors.get(&p.caster_id) else {
+            return 0;
+        };
+        if !barbarian.has_passive_feature(FORM_OF_THE_BEAST_BITE_TAG)
+            || barbarian.once_per_turn_used(FORM_OF_THE_BEAST_BITE_TAG)
+        {
+            return 0;
+        }
+        // Strictly below half, so a barbarian at exactly half is not yet
+        // hurt enough. `* 2` rather than `/ 2` keeps the odd-max case
+        // honest: 25 of 51 is below half, 26 is not.
+        if barbarian.hitpoints() * 2 >= barbarian.max_hitpoints() {
+            return 0;
+        }
+        let heal = barbarian.proficiency_bonus().max(0) as u32;
+        if heal == 0 {
+            return 0;
+        }
+        if let Some(barbarian) = encounter.actors.get_mut(&p.caster_id) {
+            barbarian.mark_once_per_turn_used(FORM_OF_THE_BEAST_BITE_TAG);
+        }
+        encounter.log(format!(
+            "  form of the beast (bite): the kill feeds the rage, {} HP back.",
+            heal
+        ));
+        effects.push(Box::new(Heal {
+            actor_id: p.caster_id,
+            amount: heal,
+        }));
+        0
+    }
+}
+
+/// Form of the Beast — **Bite**. 1d8 piercing, and the barbarian's only
+/// self-heal.
+pub static BEAST_BITE: LazyLock<BeastNaturalWeapon> = LazyLock::new(|| BeastNaturalWeapon {
+    name: "bite",
+    aliases: &["bt", "maw"],
+    dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    feature_tag: crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG,
+    rider: BeastFormRider::BloodiedHeal,
+});
+
+/// Form of the Beast — **Claws**. 1d6 slashing, three swings a turn on
+/// the level-9 chassis.
+pub static BEAST_CLAWS: LazyLock<BeastNaturalWeapon> = LazyLock::new(|| BeastNaturalWeapon {
+    name: "claws",
+    aliases: &["cl", "rake"],
+    dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    feature_tag: crate::actions::class_features::FORM_OF_THE_BEAST_CLAWS_TAG,
+    rider: BeastFormRider::ExtraSwing,
+});
+
+/// Form of the Beast — **Tail**. 1d8 piercing at 10 ft, the only reach
+/// weapon on the barbarian chassis.
+pub static BEAST_TAIL: LazyLock<BeastNaturalWeapon> = LazyLock::new(|| BeastNaturalWeapon {
+    name: "tail",
+    aliases: &["tl", "lash"],
+    dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    // RAW's 10 ft reach on the engine's 2.5 ft grid, in footprint-gap
+    // units — the same `2` every reach weapon in `monster_attacks` uses.
+    reach: 2,
+    feature_tag: crate::actions::class_features::FORM_OF_THE_BEAST_TAIL_TAG,
+    rider: BeastFormRider::ReachOnly,
+});

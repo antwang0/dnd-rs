@@ -2113,6 +2113,73 @@ pub const PANTHER_TOTEM_TAG: &str = "barbarian.panther_totem";
 /// always-on, Panther is rage-gated).
 pub const PANTHER_TOTEM_SPEED_BONUS: f32 = 5.0;
 
+/// 5e Barbarian Path of the Beast — **Form of the Beast** (subclass
+/// level 3, TCE), Bite. While raging, the barbarian's teeth become a
+/// natural weapon: 1d8 piercing, and once per turn a landed bite on a
+/// barbarian below half their hit points heals them for their
+/// proficiency bonus.
+///
+/// The three Form of the Beast tags are the engine's first *mutually
+/// exclusive* subclass tell. Every other subclass family here — the
+/// seven totem spirits, the three storm heralds — reads as one tag per
+/// build because the subclasses themselves are distinct. Path of the
+/// Beast is one subclass whose one feature offers three weapons, and
+/// RAW re-picks between them on every rage.
+///
+/// It ships as three templates rather than as a per-rage choice for the
+/// same reason the seven totem spirits are seven templates: a template
+/// is this engine's unit of "a build", the pick is made once when the
+/// character is created, and the alternative — a `beast_form:
+/// Option<BeastForm>` field with a choosing surface wired into Rage —
+/// buys a re-pick nobody in a single encounter would use. What the
+/// tags do carry is the exclusion: each natural weapon gates on its own
+/// tag as well as on `Raging`, so a hypothetical template that listed
+/// two of the actions would still only be able to swing the one whose
+/// tag it holds.
+///
+/// The Bite is the sustain form, and it is the only self-heal on the
+/// barbarian chassis. Rage already halves the physical damage coming
+/// in; the bite turns the back half of a long fight around, because its
+/// heal only starts once the barbarian is below half — exactly where
+/// Relentless Rage is keeping them standing.
+pub const FORM_OF_THE_BEAST_BITE_TAG: &str = "barbarian.form_of_the_beast.bite";
+
+/// 5e Barbarian Path of the Beast — **Form of the Beast** (subclass
+/// level 3, TCE), Claws. While raging, 1d6 slashing, and RAW's "you can
+/// make one additional attack with them as part of the Attack action".
+///
+/// The extra swing stacks *on top of* Extra Attack rather than
+/// replacing it, which is RAW and is the whole reason to pick this form
+/// over the Bite: a level-9 barbarian with claws swings three times a
+/// turn. The smaller die is the price — 3d6+12 against the Bite's
+/// 2d8+8 — and Reckless Attack is what makes the trade pay, since
+/// advantage on three swings is worth more than advantage on two.
+///
+/// See `FORM_OF_THE_BEAST_BITE_TAG` for why the three forms ship as
+/// three templates.
+pub const FORM_OF_THE_BEAST_CLAWS_TAG: &str = "barbarian.form_of_the_beast.claws";
+
+/// 5e Barbarian Path of the Beast — **Form of the Beast** (subclass
+/// level 3, TCE), Tail. While raging, 1d8 piercing with 10 ft of reach.
+///
+/// The reach is the feature. A barbarian is a melee chassis with no
+/// answer to a caster who steps back five feet, and the tail is the
+/// only reach weapon on the class — it swings from a tile further out,
+/// which on this grid also means it threatens a wider ring for
+/// opportunity attacks.
+///
+/// RAW's other half — a reaction that adds 1d8 to the barbarian's AC
+/// against one attack that would otherwise hit — isn't shipped. The
+/// engine's reactive-AC lane resolves before the attack roll rather
+/// than after it (`Shield`, Warding Flare), so "an attack that would
+/// hit you" has no hook to hang on, and approximating it as a flat
+/// pre-roll bonus would make the tail strictly better than the other
+/// two forms rather than differently good.
+///
+/// See `FORM_OF_THE_BEAST_BITE_TAG` for why the three forms ship as
+/// three templates.
+pub const FORM_OF_THE_BEAST_TAIL_TAG: &str = "barbarian.form_of_the_beast.tail";
+
 /// 5e Monk **Purity of Body** (level 10) feature tag. Passive: the monk
 /// gains immunity to disease and poison (RAW: "your mastery of the ki
 /// flowing through you makes you immune to disease and poison"). Two

@@ -28,6 +28,19 @@ impl Dice {
     pub const fn max_roll(&self) -> u32 {
         self.count.saturating_mul(self.faces)
     }
+
+    /// The mean sum of this dice pool: `count * (faces + 1) / 2`.
+    ///
+    /// For estimating, not for rolling — nothing that resolves an effect
+    /// may call this, or the effect stops being random. The caller is
+    /// the AI's attack picker, which needs to compare two swings it has
+    /// not made yet, and comparing means a number rather than a die.
+    /// Returned as `f32` because the half is load-bearing: a d6 averages
+    /// 3.5 and a d7 does not exist, so rounding here would make 2d6 and
+    /// 1d12 look like the same weapon.
+    pub fn average_roll(&self) -> f32 {
+        self.count as f32 * (self.faces as f32 + 1.0) / 2.0
+    }
 }
 
 impl fmt::Display for Dice {

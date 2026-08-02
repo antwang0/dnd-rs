@@ -1098,6 +1098,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5e. Form of the Beast (Bite) — the Beast Barbarian's swing for
+        //     when the fight has turned. It sits above focus-fire rather
+        //     than inside it because the damage picker would never
+        //     choose it: 1d8 loses to the greataxe's 1d12 on every
+        //     comparison the picker makes, and correctly so. What the
+        //     picker cannot see is that below half HP the bite is also a
+        //     heal, and two points of average damage is a bad price for
+        //     that.
+        if let Some(aei) = try_beast_bite_when_bloodied(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 6. Focus-fire: pick targets with advantage > normal > disadv;
         //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
@@ -4528,6 +4540,61 @@ fn try_dodge_when_low_hp(
     try_self_action(encounter, actor_id, "dodge")
 }
 
+/// Bite instead of swinging the axe, once the Beast Barbarian is hurt
+/// enough for the bite to heal.
+///
+/// A rung of its own rather than a case in `best_attack_against`,
+/// because the two answers disagree and both are right. The picker ranks
+/// by expected damage, and by that measure the bite is the worse swing —
+/// 1d8+STR twice against the greataxe's 1d12+STR twice, four points of
+/// average damage given up. Below half hit points the bite also returns
+/// the barbarian's proficiency bonus, and four points of damage is a
+/// good price for four points of healing on a body that Rage is already
+/// halving incoming damage against.
+///
+/// The gates are the heal's own: the tag, the below-half threshold, and
+/// the once-per-turn mark the rider sets. Past the mark the bite is
+/// simply the worse weapon again, so the rung stands down and the
+/// ordinary picker takes the axe back.
+///
+/// Targets the lowest-HP enemy in reach, matching every other picker in
+/// this file, with `sorted_actor_ids` making the tie-break
+/// deterministic.
+fn try_beast_bite_when_bloodied(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG;
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_passive_feature(FORM_OF_THE_BEAST_BITE_TAG)
+        || actor.once_per_turn_used(FORM_OF_THE_BEAST_BITE_TAG)
+    {
+        return None;
+    }
+    // Strictly below half — the same threshold the rider itself checks,
+    // so the rung never reaches for a bite that would heal nothing.
+    if actor.hitpoints() * 2 >= actor.max_hitpoints() {
+        return None;
+    }
+    let bite = actor.find_action("bite")?;
+    let reach = bite.reach_tiles()?;
+    let my_team = actor.team();
+    let target_id = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|&tid| {
+            encounter.actors.get(&tid).is_some_and(|t| {
+                tid != actor_id
+                    && t.team() != my_team
+                    && t.is_combat_active()
+                    && actor.footprint_gap_to(t) <= reach
+            })
+        })
+        .min_by_key(|tid| encounter.actors[tid].effective_hitpoints())?;
+    let aei = ActionExecutionInfo::new(bite, actor_id, Some(vec![target_id]), None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
 /// Shove an adjacent enemy prone when at least one ally is also adjacent
 /// to the same target. Knocking the target prone gives those allies
 /// advantage on their next melee swing — high leverage in a team fight.
@@ -5860,8 +5927,22 @@ fn best_attack_against(
         }
     };
 
-    // Best by (score asc, reach desc).
-    let mut best: Option<(u8, isize, &(dyn Action + Send + Sync))> = None;
+    // Best by (matchup score asc, reach desc, expected damage desc).
+    //
+    // The third key is the one that was missing. Ranking stopped at
+    // reach, so two neutral, equally-reaching melee weapons were
+    // separated by nothing but their order in the actor's action list —
+    // a Knight swung whichever of its two weapons happened to be pushed
+    // first, and a Beast Barbarian's claws, which land three swings a
+    // turn to a greataxe's two, could never be picked at all. Actions
+    // that decline to estimate (`expected_damage` → `None`) sort as 0.0,
+    // which is below any real weapon and leaves their relative order
+    // exactly as it was.
+    //
+    // Reach still outranks damage, and deliberately: a swing that cannot
+    // reach is worth nothing, and the picker is choosing among options
+    // for *this* turn from *this* tile.
+    let mut best: Option<(u8, isize, f32, &(dyn Action + Send + Sync))> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
@@ -5894,15 +5975,18 @@ fn best_attack_against(
         if !aei.validate(encounter) {
             continue;
         }
+        let damage = action.expected_damage(encounter, actor_id).unwrap_or(0.0);
         let pick = match &best {
             None => true,
-            Some((bs, br, _)) => score < *bs || (score == *bs && reach > *br),
+            Some((bs, br, bd, _)) => {
+                (score, -reach, -damage) < (*bs, -*br, -*bd)
+            }
         };
         if pick {
-            best = Some((score, reach, action));
+            best = Some((score, reach, damage, action));
         }
     }
-    best.map(|(_, r, a)| (r, a))
+    best.map(|(_, r, _, a)| (r, a))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward
@@ -7585,6 +7669,100 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// The bite rung is the exception to the damage picker, and it is
+    /// only an exception while the heal is live.
+    ///
+    /// A healthy Beast Barbarian should swing the greataxe — 1d12 beats
+    /// 1d8 and the bite would heal nothing. Take it below half and the
+    /// bite becomes the better trade. Spend the once-per-turn mark and
+    /// it stops being one again, mid-turn, without the barbarian's hit
+    /// points changing at all.
+    #[test]
+    fn the_beast_bite_is_only_reached_for_once_the_rage_is_losing() {
+        use crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG;
+        use crate::actors::creatures::barbarians::BITE_BEAST_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = empty_arena();
+        let barb = e
+            .instantiate_creature(
+                &BITE_BEAST_BARBARIAN_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&barb)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+
+        assert!(
+            try_beast_bite_when_bloodied(&e, barb).is_none(),
+            "an unhurt barbarian has nothing to gain from the smaller die"
+        );
+
+        // Down to just under half.
+        let max = e.actors[&barb].max_hitpoints();
+        e.actors.get_mut(&barb).unwrap().take_damage(max / 2 + 1);
+        assert!(
+            e.actors[&barb].hitpoints() * 2 < max,
+            "fixture should be below half"
+        );
+        let aei = try_beast_bite_when_bloodied(&e, barb)
+            .expect("below half, the bite's heal is worth the smaller die");
+        assert_eq!(aei.action().name(), "bite");
+
+        // The heal is once per turn; past the mark the bite is simply
+        // the worse weapon again.
+        e.actors
+            .get_mut(&barb)
+            .unwrap()
+            .mark_once_per_turn_used(FORM_OF_THE_BEAST_BITE_TAG);
+        assert!(
+            try_beast_bite_when_bloodied(&e, barb).is_none(),
+            "the rung stands down once the heal is spent"
+        );
+    }
+
+    /// A greataxe out-damages a bite and loses to claws. Both halves
+    /// matter: the first is why the bite needs a rung of its own, the
+    /// second is what `expected_damage` was added to see.
+    #[test]
+    fn the_attack_picker_ranks_beast_forms_by_what_a_whole_turn_lands() {
+        use crate::actors::creatures::barbarians::{
+            BITE_BEAST_BARBARIAN_TEMPLATE, CLAW_BEAST_BARBARIAN_TEMPLATE,
+        };
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let pick = |template: &'static crate::actors::actor_template::CreatureTemplate| -> String {
+            let mut e = empty_arena();
+            let barb = e
+                .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&barb)
+                .unwrap()
+                .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+            let actor = e.actors[&barb].clone();
+            best_attack_against(barb, &actor, &e, ogre)
+                .map(|(_, a)| a.name().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+
+        // 1d8+4 twice (17) against 1d12+4 twice (21).
+        assert_eq!(pick(&BITE_BEAST_BARBARIAN_TEMPLATE), "greataxe");
+        // 1d6+4 three times (22.5) against 1d12+4 twice (21).
+        assert_eq!(pick(&CLAW_BEAST_BARBARIAN_TEMPLATE), "claws");
     }
 
     #[test]
@@ -10003,10 +10181,13 @@ mod tests {
         };
         use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
         use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
+        use crate::actors::creatures::barbarians::{
+            CLAW_BEAST_BARBARIAN_TEMPLATE, TAIL_BEAST_BARBARIAN_TEMPLATE,
+        };
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 22] = [
+        let cases: [(&CreatureTemplate, &str); 25] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -10076,6 +10257,22 @@ mod tests {
             // declared: it proves the shot reached the ranged lane of
             // the on-hit table rather than sitting on the string.
             (&ARCANE_ARCHER_FIGHTER_TEMPLATE, "banishing arrow banish"),
+            // The claws and the tail are reached for by the ordinary
+            // attack picker rather than by a rung of their own, so
+            // seeing each in the log is also the check that a swing
+            // gated on `Raging` survives a picker that scores candidates
+            // before the rage is up. The claws in particular are the
+            // check on `expected_damage`: they lose to the greataxe on
+            // the die and win on the third swing, and before the picker
+            // could see that they were unreachable.
+            (&CLAW_BEAST_BARBARIAN_TEMPLATE, "claws"),
+            (&CLAW_BEAST_BARBARIAN_TEMPLATE, "additional claw"),
+            (&TAIL_BEAST_BARBARIAN_TEMPLATE, "tail"),
+            // Not the bite: it is deliberately the worse swing until the
+            // barbarian is below half hit points, and a 76-HP body with
+            // Rage halving every physical hit does not get there against
+            // one ogre. Its rung is pinned directly by
+            // `the_beast_bite_is_only_reached_for_once_the_rage_is_losing`.
         ];
 
         for (template, marker) in cases {

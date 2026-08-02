@@ -620,6 +620,16 @@ impl Action for SimpleWeapon {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
     }
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::weapon_expected_damage(
+            encounter,
+            caster_id,
+            self.damage_dice,
+            self.damage_ability,
+            self.cost_resource,
+            0,
+        )
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

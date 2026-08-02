@@ -839,3 +839,117 @@ pub static ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> =
             crate::actions::class_features::ANCESTRAL_PROTECTORS_TAG,
         )
     });
+
+/// Bite Beast Barbarian — **Path of the Beast** (TCE), Form of the
+/// Beast: Bite.
+///
+/// The Path of the Beast is one subclass with three weapons, and RAW
+/// re-picks between them on every rage. It ships here as three
+/// templates for the same reason the seven totem spirits do: a template
+/// is this engine's unit of "a build", and the seven totems are seven
+/// templates rather than one Totem Warrior with a spirit field. See
+/// `FORM_OF_THE_BEAST_BITE_TAG` for the full reasoning.
+///
+/// The Bite is the sustain form. 1d8 piercing, and once per turn a
+/// landed bite on a barbarian below half their hit points heals them
+/// for their proficiency bonus — the only self-heal anywhere on the
+/// barbarian chassis. Every other barbarian on the roster survives by
+/// not taking the damage (Rage halves it, Danger Sense dodges it,
+/// Relentless Rage refuses the last of it); this one takes it and then
+/// gets some of it back, and only once it is already losing. That gate
+/// is what keeps it from being a flat damage-per-turn buff: an unhurt
+/// bite barbarian heals nothing at all.
+///
+/// It pairs with Relentless Rage in a way none of the other forms do.
+/// Relentless Rage is what keeps a barbarian at 1 HP standing; the bite
+/// is what walks them back off it, and both are live in exactly the
+/// same window.
+///
+/// RAW features not shipped, shared across all three forms:
+/// **Bestial Soul** (lv6 — the natural weapons count as magical, plus a
+/// swim / climb / jump utility rider), **Infectious Fury** (lv10 — a
+/// WIS save on a natural-weapon hit, forcing the target to swing at its
+/// own ally or take 2d12 psychic), and **Call the Hunt** (lv14 — a
+/// party-wide damage rider bought with the barbarian's own hit points).
+///
+/// Glyph 'J' — for **J**aws. 'B' is the baseline barbarian and 'T' the
+/// Totem chassis. Distinct from every other barbarian glyph (Wolf 'W',
+/// Eagle 'A', Tiger 'I', Elk 'E', Wolverine 'V', Panther 'P', Sea Storm
+/// 'H', Desert Storm 'R', Tundra Storm 'N', Berserker 'Z', Zealot 'X',
+/// Ancestral Guardian 'G') and from its two siblings (Claws 'C', Tail
+/// 'L').
+pub static BITE_BEAST_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Bite Beast Barbarian",
+        'J',
+        crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG,
+        &[&*crate::actions::class_attacks::BEAST_BITE],
+    )
+});
+
+/// Claw Beast Barbarian — **Path of the Beast** (TCE), Form of the
+/// Beast: Claws.
+///
+/// 1d6 slashing, and RAW's "one additional attack with them as part of
+/// the Attack action" — which stacks on top of Extra Attack rather than
+/// replacing it, so the level-9 chassis swings three times a turn.
+///
+/// The die is smaller than the greataxe it replaces (1d6 against 1d12),
+/// and that is the trade: the claws are worth taking precisely when
+/// something multiplies per-swing value rather than per-die value.
+/// Reckless Attack is the obvious one — advantage on three swings beats
+/// advantage on two — but so is every flat per-hit rider the barbarian
+/// can pick up, and so is a target whose AC is low enough that the
+/// third swing lands as often as the first.
+///
+/// The extra swing is suppressed inside a Multiattack expansion, for
+/// the same reason Extra Attack is: the wrapper already encodes the
+/// per-Action swing count, and double-counting it would silently double
+/// the turn's damage budget.
+///
+/// See `BITE_BEAST_BARBARIAN_TEMPLATE` for the shared RAW omissions and
+/// for why the three forms ship as three templates.
+///
+/// Glyph 'C' — for **C**laws.
+pub static CLAW_BEAST_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Claw Beast Barbarian",
+        'C',
+        crate::actions::class_features::FORM_OF_THE_BEAST_CLAWS_TAG,
+        &[&*crate::actions::class_attacks::BEAST_CLAWS],
+    )
+});
+
+/// Tail Beast Barbarian — **Path of the Beast** (TCE), Form of the
+/// Beast: Tail.
+///
+/// 1d8 piercing at 10 ft, and the only reach weapon on the barbarian
+/// chassis. Reach is the one thing the class has never had an answer
+/// for: a barbarian is a melee body with a bonus-action Dash at best,
+/// and a caster who steps back five feet costs them their whole turn.
+/// The tail swings from a tile further out — which on this grid also
+/// widens the ring the barbarian threatens for opportunity attacks, so
+/// the caster who steps back eats one on the way.
+///
+/// Against the Bite (sustain) and the Claws (volume), the tail is the
+/// positional form: it is the worst of the three in a straight
+/// toe-to-toe exchange and the only one that changes which exchanges
+/// happen at all.
+///
+/// RAW's other tail clause — a reaction adding 1d8 to AC against an
+/// attack that would otherwise hit — isn't shipped; see
+/// `FORM_OF_THE_BEAST_TAIL_TAG` for why the engine's reactive-AC lane
+/// can't express it.
+///
+/// See `BITE_BEAST_BARBARIAN_TEMPLATE` for the shared RAW omissions and
+/// for why the three forms ship as three templates.
+///
+/// Glyph 'L' — for tai**L**.
+pub static TAIL_BEAST_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Tail Beast Barbarian",
+        'L',
+        crate::actions::class_features::FORM_OF_THE_BEAST_TAIL_TAG,
+        &[&*crate::actions::class_attacks::BEAST_TAIL],
+    )
+});

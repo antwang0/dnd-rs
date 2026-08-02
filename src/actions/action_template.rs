@@ -592,6 +592,44 @@ pub enum TargetingSchema {
     Custom,
 }
 
+/// The shared body of `Action::expected_damage` for a weapon swing:
+/// average damage on one swing, times the number of swings the action
+/// actually makes.
+///
+/// Every weapon chassis in the engine — `SimpleWeapon`, `RogueWeapon`,
+/// `BeastNaturalWeapon` — resolves its swing the same way and chains
+/// Extra Attack through the same helper, so they estimate through one
+/// function rather than three copies that can drift on which swings
+/// they counted.
+///
+/// `extra_swings` is for the forms that chain beyond Extra Attack (the
+/// Beast Barbarian's claws add one), and `cost_resource` is what gates
+/// the Extra Attack multiplier: RAW hangs it off the Attack action, so a
+/// bonus-action bow shot or a reaction strike swings once however many
+/// attacks the actor's Action buys.
+pub fn weapon_expected_damage(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    dice: crate::engine::dice::Dice,
+    damage_ability: Option<AbilityScoreType>,
+    cost_resource: Resource,
+    extra_swings: u32,
+) -> Option<f32> {
+    let caster = encounter.actors.get(&caster_id)?;
+    let per_swing = dice.average_roll()
+        + damage_ability
+            .map(|a| caster.ability_modifier(a) as f32)
+            .unwrap_or(0.0);
+    let extra_attack =
+        u32::from(cost_resource == Resource::Action && caster.has_extra_attack());
+    let swings = 1 + extra_attack + extra_swings;
+    // A damage modifier deep enough to zero a swing (a Strength penalty
+    // on a small die) shouldn't make the weapon read as *negative* and
+    // sort below an unannotated action; the floor is what keeps the hint
+    // monotone in the die size.
+    Some((per_swing * swings as f32).max(0.0))
+}
+
 pub trait Action {
     fn name(&self) -> &str;
 
@@ -664,6 +702,40 @@ pub trait Action {
     /// or those whose typing depends on runtime data.
     fn damage_types(&self) -> Vec<DamageType> {
         Vec::new()
+    }
+
+    /// Roughly how much damage one *use* of this action lands on a
+    /// single target, if the action can say. `None` means "no estimate"
+    /// and is the default.
+    ///
+    /// Read by the AI's attack picker (`best_attack_against`), which
+    /// used to rank candidate swings by damage-type matchup and reach
+    /// and then stop — so two melee weapons that were neutral against
+    /// the target and had the same reach were separated by nothing but
+    /// their order in the actor's action list. A Knight swung whichever
+    /// of its two weapons happened to be pushed first. A Beast
+    /// Barbarian's claws, which land three swings a turn to a
+    /// greataxe's two, were never picked at all.
+    ///
+    /// "One use" means the whole Action, chained swings included, which
+    /// is the only unit the picker can compare: Extra Attack multiplies
+    /// most weapons by two and the Beast Barbarian's claws by three, and
+    /// a per-swing number would hide exactly that difference. Riders
+    /// that depend on the target (Sneak Attack's eligibility, a smite
+    /// prime, Colossus Slayer's wounded-target gate) are deliberately
+    /// left out: they apply to whichever weapon is chosen, so including
+    /// them would move every estimate by the same amount and change no
+    /// comparison.
+    ///
+    /// An estimate, and only ever an estimate. It does not model
+    /// accuracy, crits, resistance (the matchup score already outranks
+    /// it) or anything the die does after it is rolled. Actions that
+    /// can't put a number on themselves return `None` and fall back to
+    /// the picker's earlier tie-breaks, so the hint is strictly
+    /// additive — an unannotated action is ranked exactly as it was
+    /// before this existed.
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        None
     }
 
     /// The 5e school of magic this action belongs to, or `None` for
