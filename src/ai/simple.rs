@@ -5822,10 +5822,20 @@ fn try_attack_focus_fire(
     //     (HP + temp HP + Arcane Ward), not raw HP — the question here
     //     is "who drops soonest", and a target behind an absorption pool
     //     is further from dropping than their HP bar suggests.
+    //   - Cover ascending: among targets equally close to dropping,
+    //     shoot the one that isn't behind something. Identical enemies
+    //     at full HP tie on the key above constantly — three goblins,
+    //     three 7-HP bars — and before this the tie went to whichever
+    //     had the lower id, which is to say to nothing at all. A low
+    //     wall or an intervening body is +2 AC and two of them are +5,
+    //     which is a bigger swing than most of what the AI does deliberate
+    //     over. Ranked below HP rather than above it: cover makes a
+    //     target harder to hit, it does not make a nearly-dead one worth
+    //     less than a healthy one.
     //   - Reach descending: prefer the longest-reach action when tied
     //     (so a longbow gets used over a one-tile melee on a far target,
     //     etc.).
-    let mut best: Option<(u8, u32, isize, ActionExecutionInfo)> = None;
+    let mut best: Option<(u8, u32, i32, isize, ActionExecutionInfo)> = None;
     for target_id in ids {
         let Some(target) = encounter.actors.get(&target_id) else {
             continue;
@@ -5852,18 +5862,19 @@ fn try_attack_focus_fire(
         let mode = encounter.peek_attack_mode(actor_id, target_id, is_melee);
         let mode_pri = mode_priority(mode);
         let hp = target.effective_hitpoints();
+        let cover = encounter.cover_ac_bonus(actor_id, target_id);
         let pick = match &best {
             None => true,
-            Some((bm, bh, br, _)) => {
-                (mode_pri, hp, std::cmp::Reverse(reach))
-                    < (*bm, *bh, std::cmp::Reverse(*br))
+            Some((bm, bh, bc, br, _)) => {
+                (mode_pri, hp, cover, std::cmp::Reverse(reach))
+                    < (*bm, *bh, *bc, std::cmp::Reverse(*br))
             }
         };
         if pick {
-            best = Some((mode_pri, hp, reach, aei));
+            best = Some((mode_pri, hp, cover, reach, aei));
         }
     }
-    best.map(|(_, _, _, aei)| aei)
+    best.map(|(_, _, _, _, aei)| aei)
 }
 
 /// Among the actor's SingleActor *harmful* actions, the longest-reach
@@ -7741,6 +7752,72 @@ mod tests {
         assert!(
             try_beast_bite_when_bloodied(&e, barb).is_none(),
             "the rung stands down once the heal is spent"
+        );
+    }
+
+    /// Two identical enemies at identical HP: shoot the one that isn't
+    /// behind a wall.
+    ///
+    /// This tie happens constantly — a pack of the same monster at full
+    /// HP ties on every key above cover — and before cover joined the
+    /// sort key it was broken by actor id, which is to say by nothing.
+    #[test]
+    fn focus_fire_shoots_around_cover_when_the_targets_are_otherwise_equal() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        // `empty_arena` is generator output, so it already has walls and
+        // a scatter of its own. Pave it: the fixture is about one low
+        // wall, and any second obstruction on either line would make the
+        // two goblins tie on cover as well.
+        for y in 0..20 {
+            for x in 0..30 {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+            }
+        }
+        let archer = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+            .unwrap();
+        // Two goblins the same distance out, on separate rows so each
+        // has its own line back to the archer.
+        let sheltered = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+        let exposed = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 1)
+            .unwrap();
+        // Goblin HP is rolled, so level the two by hand — the whole
+        // point of the fixture is that cover is the only thing left to
+        // separate them.
+        let floor = e.actors[&sheltered]
+            .hitpoints()
+            .min(e.actors[&exposed].hitpoints());
+        for id in [sheltered, exposed] {
+            let excess = e.actors[&id].hitpoints() - floor;
+            if excess > 0 {
+                e.actors.get_mut(&id).unwrap().take_damage(excess);
+            }
+        }
+        assert_eq!(
+            e.actors[&sheltered].effective_hitpoints(),
+            e.actors[&exposed].effective_hitpoints(),
+            "fixture depends on the two being equally close to dropping"
+        );
+        // The sheltered one is the lower id, so before cover entered the
+        // key it won the tie.
+        assert!(sheltered < exposed);
+
+        assert!(e.set_terrain_at(Coordinate::new(7, 4), TerrainType::LowWall));
+        assert_eq!(e.cover_ac_bonus(archer, sheltered), 2);
+        assert_eq!(e.cover_ac_bonus(archer, exposed), 0);
+
+        let aei = try_attack_focus_fire(&e, archer).expect("the ranger should find a shot");
+        assert_eq!(
+            aei.target_ids().map(|t| t.to_vec()),
+            Some(vec![exposed]),
+            "the shot should go to the goblin with nothing in front of it"
         );
     }
 

@@ -4325,6 +4325,26 @@ impl EncounterInstance {
         self.terrain.get(idx)
     }
 
+    /// Retype one tile. Returns false — and changes nothing — for a
+    /// coordinate off the map.
+    ///
+    /// The write counterpart to `terrain_at`. The generator has always
+    /// been the only thing that writes the map, which was fine while the
+    /// map was scenery and is the reason this didn't exist; but the
+    /// terrain layer now carries rules (a movement surcharge, a cover
+    /// bonus) that effects can plausibly want to place, and there was no
+    /// door into it from outside this module. This is that door.
+    pub fn set_terrain_at(&mut self, coord: Coordinate, terrain_type: TerrainType) -> bool {
+        let Ok(idx) = self.idx(coord) else {
+            return false;
+        };
+        let Some(tile) = self.terrain.get_mut(idx) else {
+            return false;
+        };
+        tile.terrain_type = terrain_type;
+        true
+    }
+
     /// True if a `size`-wide footprint anchored at `coord` would sit
     /// entirely on passable tiles that are either empty or already this
     /// actor's own. Takes the size explicitly rather than reading it off
