@@ -33630,9 +33630,10 @@ mod tests {
             before + 3,
             "Inspired adds +3 to attack rolls"
         );
-        assert!(
-            !e.actors[&b].feature_available(BARDIC_INSPIRATION_TAG),
-            "feature is consumed on cast"
+        assert_eq!(
+            e.actors[&b].feature_charges_remaining(BARDIC_INSPIRATION_TAG),
+            2,
+            "one die out of the bard's pool of three"
         );
     }
 
@@ -64539,17 +64540,23 @@ mod tests {
         let bard = e
             .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        assert!(e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG));
-        e.actors
-            .get_mut(&bard)
-            .unwrap()
-            .spend_feature(BARDIC_INSPIRATION_TAG);
+        let pool = e.actors[&bard].feature_charges_remaining(BARDIC_INSPIRATION_TAG);
+        assert!(pool > 1, "the bard hands out a pool, not a single die");
+        // Drain it to empty — the refresh has to hand back all of it,
+        // not just the one charge the set-based lane used to hold.
+        for _ in 0..pool {
+            e.actors
+                .get_mut(&bard)
+                .unwrap()
+                .spend_feature(BARDIC_INSPIRATION_TAG);
+        }
         assert!(!e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG));
         let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
         e.actors.get_mut(&bard).unwrap().short_rest(&mut roller);
-        assert!(
-            e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG),
-            "Font of Inspiration must refresh Bardic Inspiration on short rest"
+        assert_eq!(
+            e.actors[&bard].feature_charges_remaining(BARDIC_INSPIRATION_TAG),
+            pool,
+            "Font of Inspiration must refresh the whole pool on a short rest"
         );
     }
 

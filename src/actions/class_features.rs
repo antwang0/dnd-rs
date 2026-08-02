@@ -323,25 +323,41 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
 ///
 /// The charge lane used to be a `HashSet<&'static str>` — a tag was
 /// either spent or it wasn't — and half a dozen doc comments in this
-/// file apologize for it. Psionic Strike says so outright: "the
+/// file apologized for it. Psionic Strike said so outright: "the
 /// engine's per-rest charge lane is binary — one `features_remaining`
 /// entry per tag, not a counter — so a pool-accurate Psionic Strike
 /// would fire once per short rest rather than the four-plus times RAW
-/// allows". The set is now a count, and this table is where a feature
+/// allows". The set is a count now, and this table is where a feature
 /// says how big its pool is.
 ///
-/// **Existing features deliberately stay at one.** Widening a pool
-/// changes what a chassis can do in a fight, and a template balanced
-/// around one Action Surge is not the same template with two. The
-/// table exists so that a feature whose pool is *load-bearing* can
-/// have one, and Arcane Shot is the first: the archer's whole subclass
-/// is a menu of six options sharing one pool, and a pool of one would
-/// make five of the six unreachable in any given fight.
+/// **A feature has to earn a row here.** Widening a pool changes what a
+/// chassis can do in a fight, and a template balanced around one Action
+/// Surge is not the same template with two. Two questions have to answer
+/// yes: is RAW's number exact for the level this chassis is built at,
+/// and is a second charge something the holder could actually spend
+/// inside one fight? The second is what keeps the minute-long self-buffs
+/// off the table — Starry Form, Bladesong and Giant's Might all have
+/// RAW pools of two or more, and all three would spend the second charge
+/// refreshing a timer that had eight rounds left on it.
 pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // 5e Arcane Archer Fighter (XGE, subclass level 3): "You can use
     // this feature twice. You regain all expended uses of it when you
     // finish a short or long rest." RAW to the number.
     (ARCANE_SHOT_TAG, 2),
+    // 5e Bard **Bardic Inspiration**: uses equal to the bard's Charisma
+    // modifier. Every bard template on the roster carries CHA 16, so
+    // three is not a compromise here — it is the number. The bard is
+    // the class whose whole character is the pool, and a bard with one
+    // die to hand out for the whole fight was the collapse that cost
+    // the most.
+    (BARDIC_INSPIRATION_TAG, 3),
+    // 5e Circle of the Moon Druid **Combat Wild Shape**: two uses per
+    // short rest, and RAW is explicit about the count in a way most
+    // pools are not. Two is also what makes the Moon druid's second
+    // half work — the form ends when its temp HP drains, and a druid
+    // who could only take it once was a druid who spent the rest of
+    // the fight as a caster who had given away its concentration.
+    (COMBAT_WILD_SHAPE_TAG, 2),
 ];
 
 /// How many charges `tag` starts a rest with. One unless
@@ -2884,17 +2900,16 @@ pub const GATHERED_SWARM_TAG: &str = "ranger.gathered_swarm";
 ///
 /// RAW spends one Psionic Energy die from the subclass pool and adds the
 /// holder's INT modifier to the rolled die. We ship the die alone, with
-/// neither the pool cost nor the flat INT bump, for two reasons that
-/// pull the same way. The engine's per-rest charge lane is binary — one
-/// `features_remaining` entry per tag, not a counter — so a
-/// pool-accurate Psionic Strike would fire once per short rest rather
-/// than the four-plus times RAW allows, which is a worse approximation
-/// than "free but once per turn". And the pool's other consumer here,
-/// `PROTECTIVE_FIELD_TAG`, is the feature whose whole character is
-/// deciding *when* to spend; letting the offensive rider compete for the
-/// same single charge would mean the defensive half essentially never
-/// fires. Splitting them — strike free, field charged — keeps both
-/// features legible at the cost of RAW's shared-resource tension. The
+/// neither the pool cost nor the flat INT bump. The charge lane can
+/// count now — `FEATURE_CHARGES` would happily give the pool its RAW
+/// depth — so the reason is no longer the engine's; it is that the
+/// pool's other consumer, `PROTECTIVE_FIELD_TAG`, is the feature whose
+/// whole character is deciding *when* to spend, and a shared pool that
+/// the offensive rider drains automatically on every hit is a pool the
+/// defensive half never sees. RAW's tension is real and interesting at
+/// a table where a player chooses; here the strike has no chooser.
+/// Splitting them — strike free and once per turn, field charged —
+/// keeps both features legible. The
 /// flat +INT is dropped alongside the pool cost because the shared
 /// `ONCE_PER_TURN_WEAPON_DIE_RIDERS` cohort is the "one die, one damage
 /// type, one target gate" corner of the rider space and has no flat-
@@ -4106,13 +4121,9 @@ pub static EMPTY_BODY: LazyLock<EmptyBody> = LazyLock::new(|| EmptyBody {});
 /// `WILD_SHAPE` bonus action below and the `WILD_HEAL` slot-to-hit-
 /// points conversion that only works while in form.
 ///
-/// One charge per short rest. RAW gives the druid two Wild Shape uses
-/// per short rest; the engine's per-tag charge model is one-per-tag, so
-/// the collapse to a single use is the same one every other multi-use
-/// feature already makes (Stunning Strike's ki pool, Bardic
-/// Inspiration's CHA-mod pool, the Battle Master's superiority dice).
-/// Registered in `SHORT_REST_FEATURES` so the rest cadence is RAW-exact
-/// even though the count isn't.
+/// Two charges per short rest, which is RAW exactly — see
+/// `FEATURE_CHARGES`. Registered in `SHORT_REST_FEATURES` so both the
+/// cadence and the count come back the way the PHB says they do.
 pub const COMBAT_WILD_SHAPE_TAG: &str = "druid.combat_wild_shape";
 
 /// Beast-form hit points, granted as temp HP on transformation.
@@ -4762,9 +4773,12 @@ impl Action for StillnessOfMind {
 
 pub static STILLNESS_OF_MIND: LazyLock<StillnessOfMind> = LazyLock::new(|| StillnessOfMind {});
 
-/// Class-feature tag for the Bard's Bardic Inspiration (RAW: a pool of
-/// CHA-mod uses per long rest — we collapse to a single big use to keep
-/// the once-per-rest pattern uniform).
+/// Class-feature tag for the Bard's Bardic Inspiration. RAW is a pool of
+/// CHA-mod uses, and `FEATURE_CHARGES` sizes it at three — the modifier
+/// every bard template on the roster actually has. Refreshes on a short
+/// rest from level 5 (Font of Inspiration) and on a long rest before
+/// that; `ActorInstance::short_rest` reads `FONT_OF_INSPIRATION_TAG` to
+/// tell the two apart.
 pub const BARDIC_INSPIRATION_TAG: &str = "bard.bardic_inspiration";
 
 /// Bardic Inspiration — Bard bonus action, single ally. Grants the
@@ -12607,10 +12621,13 @@ pub static HALO_OF_SPORES: LazyLock<HaloOfSpores> = LazyLock::new(|| HaloOfSpore
 
 /// Tag for the Circle of Stars Druid's **Starry Form** (subclass level
 /// 2). RAW spends a use of Wild Shape, of which the circle has two per
-/// short rest; the engine's per-tag charge model collapses that to one
-/// and rides `SHORT_REST_FEATURES`, so the cadence stays RAW's even
-/// though the count does not. The same collapse Bladesong makes, for
-/// the same reason.
+/// short rest; this is one, riding `SHORT_REST_FEATURES`, so the cadence
+/// stays RAW's even though the count does not. Left at one deliberately
+/// rather than sized up through `FEATURE_CHARGES` — the constellation
+/// runs ten rounds, which outlasts most fights here, so a second charge
+/// would rarely buy a second transformation and would mostly just
+/// dissolve the choice below. The same call Bladesong and Giant's Might
+/// make, for the same reason.
 ///
 /// One tag for all three shapes rather than three tags, which is what
 /// makes the choice a choice: a druid gets one constellation per short
@@ -13152,9 +13169,11 @@ pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst
 });
 
 /// Tag for the Bladesinging Wizard's **Bladesong** (subclass level 2).
-/// RAW grants two uses per short rest; the engine's per-tag charge model
-/// collapses that to one, and the tag rides `SHORT_REST_FEATURES` so the
-/// cadence stays RAW's.
+/// RAW grants two uses per short rest; this is one, riding
+/// `SHORT_REST_FEATURES` so the cadence stays RAW's. A minute-long
+/// self-buff has little use for a second charge inside one fight, which
+/// is the same reason Starry Form and Giant's Might stay at one where
+/// `FEATURE_CHARGES` would happily give them RAW's number.
 pub const BLADESONG_TAG: &str = "wizard.bladesong";
 
 /// Bladesong — Bladesinging Wizard bonus action (subclass level 2). For
@@ -13448,9 +13467,11 @@ pub static KENSEIS_SHOT: LazyLock<KenseisShotAction> = LazyLock::new(|| KenseisS
 
 /// Per-rest charge for the Rune Knight Fighter's **Giant's Might**
 /// (subclass level 3). RAW hands out proficiency-bonus uses per long
-/// rest; the engine's feature set holds one charge per tag, so this is
-/// one use that comes back on a short rest — the same collapse every
-/// other multi-use fighter charge on this chassis takes.
+/// rest; this is one use that comes back on a short rest instead. Left
+/// at one deliberately rather than sized up through `FEATURE_CHARGES`:
+/// the buff runs a minute, which is longer than most fights here, so a
+/// second charge would almost never be spent on anything the first had
+/// not already bought.
 pub const GIANTS_MIGHT_TAG: &str = "fighter.giants_might";
 
 /// Once-per-turn ledger key for Giant's Might's damage rider. Separate
@@ -13716,9 +13737,12 @@ pub static DIVINE_STRIKE_PSYCHIC: LazyLock<PrimeStrike> = LazyLock::new(|| Prime
 /// No action of its own — the charge is spent automatically at the
 /// attack-roll site by the `MISSED_ATTACK_BOOSTS` cohort, the same way
 /// Indomitable's is spent by the failed-save cohort. RAW sizes the
-/// Psionic Energy pool by proficiency bonus; the engine's feature set
-/// holds one charge per tag, refreshed on a short rest, which is where
-/// every other multi-use charge here has landed.
+/// Psionic Energy pool by proficiency bonus; this is one charge,
+/// refreshed on a short rest. Left there rather than sized up through
+/// `FEATURE_CHARGES` because the cohort spends automatically on the
+/// first eligible miss — a deeper pool would drain itself on whichever
+/// misses happened to come first rather than on the ones that mattered,
+/// which is a worse feature than a single charge the rogue can feel.
 pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 
 /// Passive tag for the Thief Rogue's **Fast Hands** (subclass level 3):
@@ -14143,6 +14167,54 @@ mod tests {
         assert!(
             orphans.is_empty(),
             "registered for a rest but on no instantiable template: {:?}",
+            orphans
+        );
+    }
+
+    /// Every row of `FEATURE_CHARGES` names a tag some instantiable
+    /// template actually carries, names it once, and asks for a pool
+    /// deeper than the one it would have had anyway.
+    ///
+    /// The same failure mode `every_per_rest_tag_is_carried_by_something_instantiable`
+    /// exists for, one lane over: a tag is a `&'static str`, and a
+    /// misspelled row here silently sizes nothing. A duplicate row is
+    /// worse than useless — `feature_charges` takes the first match, so
+    /// the second would be a number that looks authoritative and is
+    /// never read. And a row asking for one charge is a row that changes
+    /// nothing, which is a claim about a feature that isn't true.
+    #[test]
+    fn every_charge_pool_names_a_real_feature_and_deepens_it() {
+        use crate::actors::creatures::pc_template_families;
+        use crate::engine::encounter::EncounterInstance;
+
+        let names: Set<&str> = FEATURE_CHARGES.iter().map(|(tag, _)| *tag).collect();
+        assert_eq!(
+            names.len(),
+            FEATURE_CHARGES.len(),
+            "FEATURE_CHARGES lists some tag more than once; only the first is read"
+        );
+        for (tag, count) in FEATURE_CHARGES {
+            assert!(
+                *count > 1,
+                "{} asks for {} charges, which is what it would get without a row",
+                tag,
+                count
+            );
+        }
+        let carried: Set<&str> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_family, templates)| templates)
+            .chain(EncounterInstance::template_pool())
+            .flat_map(|t| t.features.iter().copied())
+            .collect();
+        let orphans: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|tag| !carried.contains(tag))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "given a charge pool but on no instantiable template: {:?}",
             orphans
         );
     }
