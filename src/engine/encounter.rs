@@ -4587,6 +4587,78 @@ impl EncounterInstance {
         }
     }
 
+    /// The attack `actor_id` would hold if it took the Ready action:
+    /// the longest-reaching single-target harmful attack it carries
+    /// that costs nothing but the swing, with ties going to the earlier
+    /// entry in its action list.
+    ///
+    /// 5e lets the readier choose and we can't ask — the prompt
+    /// resolves one action name per line and has nowhere to put a
+    /// second. Longest reach is the choice that matches what readying
+    /// an attack is *for*: the hold fires the moment a target crosses
+    /// into range, so the longest weapon is both the one that fires
+    /// soonest and the one a player holding a bow and a sword would
+    /// raise. With one attack the selection collapses to "your attack".
+    ///
+    /// **The slot filter is load-bearing, not tidiness.** Like the
+    /// opportunity-attack dispatcher, the readied swing runs the
+    /// action's `side_effects` directly and pays only the reaction —
+    /// it never goes through `execute`, so no cost is ever charged.
+    /// A caster's spell list is full of single-target harmful attacks
+    /// with reach, and the *longest*-reaching of them is invariably the
+    /// most expensive: without this filter a lich would ready
+    /// Disintegrate and fire a level-6 slot's worth of damage, for
+    /// free, every round for the rest of the fight. So the candidate
+    /// has to be something whose whole price is the action taking it —
+    /// a weapon, a monster attack, a cantrip.
+    ///
+    /// Lives on the encounter rather than on `ActorInstance` because
+    /// resolving a cost needs one: `Action::cost` takes the board.
+    ///
+    /// Deliberately narrower than `first_melee_weapon_action`, which
+    /// answers a different question (what swings on an opportunity
+    /// attack) and is therefore capped at melee reach rather than
+    /// sorted by it.
+    pub fn best_readyable_attack(
+        &self,
+        actor_id: usize,
+    ) -> Option<&'static (dyn crate::actions::action_template::Action + Send + Sync)> {
+        use crate::actions::action_template::TargetingSchema;
+        use crate::engine::side_effects::{Resource, spell_slot_level};
+        let actor = self.actors.get(&actor_id)?;
+        actor
+            .actions
+            .iter()
+            .filter(|act| {
+                act.is_harmful()
+                    && act.deals_damage()
+                    && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                    && act.reach_tiles().is_some()
+            })
+            .filter(|act| {
+                // Cost resolved with no target, which is all the shape
+                // check needs: every cost lane that varies with the
+                // target varies in movement, and none of them conjures
+                // a spell slot that wasn't already declared.
+                let costs = act.cost(self, actor_id, None, None, None);
+                spell_slot_level(&costs).is_none()
+                    && !costs.iter().any(|c| {
+                        matches!(c, Resource::Reaction | Resource::LegendaryAction)
+                    })
+            })
+            .fold(None, |best: Option<&&'static (dyn crate::actions::action_template::Action + Send + Sync)>, act| {
+                match best {
+                    Some(current)
+                        if current.reach_tiles().unwrap_or(0) >= act.reach_tiles().unwrap_or(0) =>
+                    {
+                        Some(current)
+                    }
+                    _ => Some(act),
+                }
+            })
+            .copied()
+    }
+
     /// Fire every readied attack the mover has just walked into.
     ///
     /// The mirror image of `dispatch_opportunity_attacks`, off the same
@@ -4641,7 +4713,7 @@ impl EncounterInstance {
                 if a.linked_by(Condition::Charmed) == Some(mover_id) {
                     return None;
                 }
-                let attack = a.best_readyable_attack()?;
+                let attack = self.best_readyable_attack(*id)?;
                 let reach = attack.reach_tiles()?;
                 Some((
                     *id,
@@ -35101,8 +35173,8 @@ mod tests {
         let mover = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 4), 1, 0)
             .unwrap();
-        let reach = e.actors[&readier]
-            .best_readyable_attack()
+        let reach = e
+            .best_readyable_attack(readier)
             .and_then(|a| a.reach_tiles())
             .expect("a veteran should have something to ready");
         e.actors
@@ -35132,6 +35204,118 @@ mod tests {
         );
         assert!(!e.actors[&readier].has_condition(Condition::Readied));
         assert!(!e.actors[&readier].can_consume_resource(Resource::Reaction));
+    }
+
+    /// The same guarantee for the opportunity-attack lane, which pays
+    /// nothing either: an OA runs `side_effects` and consumes only the
+    /// reaction. `first_melee_weapon_action` picks the *first* matching
+    /// entry rather than the longest-reaching one, and templates happen
+    /// to list their weapons before their spells — so the exposure has
+    /// never fired. "Happen to" is the problem: a template that listed
+    /// a touch-range Inflict Wounds first would hand out a free level-1
+    /// slot on every opportunity attack for the rest of the fight, and
+    /// nothing would say so.
+    #[test]
+    fn an_opportunity_attack_is_never_something_the_reactor_would_pay_for() {
+        use crate::engine::side_effects::spell_slot_level;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mut spot = 2isize;
+        for (family, templates) in crate::actors::creatures::pc_template_families() {
+            for template in templates {
+                // Fresh board whenever the row fills up. Reset *before*
+                // placing, so the id below always belongs to the
+                // encounter the assertions read.
+                if spot > 18 {
+                    e = ei_with_terrain(20, 20, &[]);
+                    spot = 2;
+                }
+                let Ok(id) = e.instantiate_creature(template, Coordinate::new(spot, 2), 0, 0)
+                else {
+                    continue;
+                };
+                spot += 2;
+                let Some(attack) = e.actors[&id].first_melee_weapon_action() else {
+                    continue;
+                };
+                assert!(
+                    spell_slot_level(&attack.cost(&e, id, None, None, None)).is_none(),
+                    "{} ({}) would opportunity-attack with {}, which costs a spell slot",
+                    template.name,
+                    family,
+                    attack.name()
+                );
+            }
+        }
+    }
+
+    /// A readied swing can never be a slot spell.
+    ///
+    /// The dispatcher runs the chosen action's `side_effects` directly
+    /// and pays only the reaction — it never goes through `execute`, so
+    /// no cost is charged. A caster's list is full of single-target
+    /// harmful attacks with reach, and the longest-reaching of them is
+    /// invariably the most expensive: without the filter a lich would
+    /// hold Disintegrate and fire a level-6 slot's worth of damage, for
+    /// free, every round for the rest of the fight.
+    ///
+    /// Swept over every caster the game has rather than checked on one,
+    /// because "which action has the longest reach" is decided by each
+    /// template's own spell list and changes every time one gains a
+    /// spell.
+    #[test]
+    fn a_readied_swing_is_never_something_the_readier_would_have_to_pay_for() {
+        use crate::engine::side_effects::{Resource, spell_slot_level};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mut spot = 2isize;
+        let mut casters_seen = 0;
+        for (family, templates) in crate::actors::creatures::pc_template_families() {
+            for template in templates {
+                // Fresh board whenever the row fills up. Reset *before*
+                // placing, so the id below always belongs to the
+                // encounter the assertions read.
+                if spot > 18 {
+                    e = ei_with_terrain(20, 20, &[]);
+                    spot = 2;
+                }
+                let Ok(id) = e.instantiate_creature(template, Coordinate::new(spot, 2), 0, 0)
+                else {
+                    continue;
+                };
+                spot += 2;
+                let Some(attack) = e.best_readyable_attack(id) else {
+                    continue;
+                };
+                let costs = attack.cost(&e, id, None, None, None);
+                assert!(
+                    spell_slot_level(&costs).is_none(),
+                    "{} ({}) would ready {}, which costs a spell slot",
+                    template.name,
+                    family,
+                    attack.name()
+                );
+                assert!(
+                    !costs.iter().any(|c| matches!(
+                        c,
+                        Resource::Reaction | Resource::LegendaryAction
+                    )),
+                    "{} ({}) would ready {}, which is not an action it could take",
+                    template.name,
+                    family,
+                    attack.name()
+                );
+                if template
+                    .actions
+                    .iter()
+                    .any(|a| spell_slot_level(&a.cost(&e, id, None, None, None)).is_some())
+                {
+                    casters_seen += 1;
+                }
+            }
+        }
+        assert!(
+            casters_seen > 0,
+            "the sweep should have covered templates that carry slot spells"
+        );
     }
 
     /// Readying is not free and it is not repeatable. It costs the
@@ -35175,7 +35359,7 @@ mod tests {
         let commoner = e
             .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
             .unwrap();
-        if e.actors[&commoner].best_readyable_attack().is_none() {
+        if e.best_readyable_attack(commoner).is_none() {
             assert!(!READY.validate_input(&e, commoner, None, None, None));
         }
     }

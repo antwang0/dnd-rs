@@ -575,7 +575,7 @@ impl Action for Ready {
         // spend it with without a reaction — a creature that has
         // already reacted this round would be buying a promise it
         // cannot keep.
-        actor.best_readyable_attack().is_some()
+        encounter.best_readyable_attack(caster_id).is_some()
             && actor.can_consume_resource(Resource::Reaction)
             && !actor.has_condition(crate::conditions::Condition::Readied)
     }

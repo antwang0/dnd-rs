@@ -5882,8 +5882,8 @@ fn should_ready_instead_of_dodging(encounter: &EncounterInstance, actor_id: usiz
     let Some(actor) = encounter.actors.get(&actor_id) else {
         return false;
     };
-    let Some(reach) = actor
-        .best_readyable_attack()
+    let Some(reach) = encounter
+        .best_readyable_attack(actor_id)
         .and_then(|a| a.reach_tiles())
     else {
         return false;
@@ -5959,8 +5959,8 @@ mod tests {
         let veteran = e
             .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
             .unwrap();
-        let reach = e.actors[&veteran]
-            .best_readyable_attack()
+        let reach = e
+            .best_readyable_attack(veteran)
             .and_then(|a| a.reach_tiles())
             .expect("a veteran has something to hold");
 
