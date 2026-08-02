@@ -2449,6 +2449,25 @@ pub struct CreatureTemplate {
     /// LegendaryAction resource tokens at the start of the creature's
     /// turn and the AI spends them between other actors' turns.
     pub legendary_actions_per_round: u32,
+    /// 5e **Lair Actions** — the effects the *place* takes, on its own
+    /// initiative, while this creature is alive inside it. Empty for
+    /// every creature that doesn't have a lair, which is almost all of
+    /// them.
+    ///
+    /// A list of effects rather than a list of `Action`s, and that is
+    /// the whole design. Everything else in the engine that does
+    /// something to the board is an `Action`, because an actor chose it
+    /// and chose what to aim it at — the trait is built around a caster,
+    /// a cost, a targeting schema, and a validation pass over the
+    /// arguments somebody supplied. A lair action has none of that.
+    /// Nobody spends anything for it, nobody aims it, and it fires
+    /// whether or not the creature whose lair it is could act; it is the
+    /// cave that acts. So each entry is a name and a function, and it
+    /// picks its own targets off the board.
+    ///
+    /// See `engine::lair_actions` for the entries and
+    /// `EncounterInstance::dispatch_lair_actions` for when they fire.
+    pub lair_actions: &'static [crate::engine::lair_actions::LairAction],
     /// 5e Extra Attack — when this creature takes the Attack action, it
     /// can make two attacks instead of one. True for Fighters, Paladins,
     /// Rangers, Barbarians, Monks (level 5+), and monsters with
@@ -3276,6 +3295,7 @@ impl CreatureTemplate {
             has_magic_resistance: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
+            lair_actions: &[],
             has_extra_attack: false,
             brutal_critical_dice: 0,
             crit_threshold: 20,
@@ -3705,6 +3725,14 @@ pub struct ActorInstance {
     /// counterpart: the list of conditions whose install emits a
     /// `SetConditionLink` alongside the `ApplyCondition`.
     condition_links: HashMap<Condition, usize>,
+    /// The lair's repertoire, copied off the template. Empty for
+    /// everything that isn't the resident of somewhere.
+    lair_actions: &'static [crate::engine::lair_actions::LairAction],
+    /// Index into `lair_actions` of whatever the lair did last round, so
+    /// the next round can avoid it — RAW: "the [creature] can't use the
+    /// same lair action two rounds in a row." `None` before the first
+    /// one fires.
+    last_lair_action: Option<usize>,
     /// 5e Exhaustion, as its six cumulative tiers rather than a flag.
     ///
     /// The number and `Condition::Exhausted` are two views of one
@@ -4005,6 +4033,8 @@ impl ActorInstance {
             regen_suppressed: false,
             mirror_images: 0,
             condition_links: HashMap::new(),
+            lair_actions: ct.lair_actions,
+            last_lair_action: None,
             exhaustion: 0,
             indomitable_pending: false,
             legendary_resistance_remaining: ct.legendary_resistances,
@@ -4741,6 +4771,23 @@ impl ActorInstance {
 
     pub fn legendary_actions_per_round(&self) -> u32 {
         self.legendary_actions_per_round
+    }
+
+    /// The lair's repertoire. Empty for a creature with no lair, which
+    /// is how `dispatch_lair_actions` tells the two apart.
+    pub fn lair_actions(&self) -> &'static [crate::engine::lair_actions::LairAction] {
+        self.lair_actions
+    }
+
+    /// Index of the lair action taken last round, if any. Read by the
+    /// dispatcher to honor RAW's "not the same one two rounds running".
+    pub fn last_lair_action(&self) -> Option<usize> {
+        self.last_lair_action
+    }
+
+    /// Record which lair action just fired.
+    pub fn set_last_lair_action(&mut self, index: usize) {
+        self.last_lair_action = Some(index);
     }
 
     pub fn has_extra_attack(&self) -> bool {

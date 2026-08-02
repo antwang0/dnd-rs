@@ -123,6 +123,9 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 3,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        // 5e lair actions — the phylactery's home answers to it once
+        // a round. See `engine::lair_actions`.
+        lair_actions: crate::engine::lair_actions::LICH_LAIR,
         ..CreatureTemplate::defaults()
     }
 });

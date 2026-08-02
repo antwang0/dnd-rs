@@ -7286,6 +7286,17 @@ mod tests {
                     idle_streak = 0;
                 }
             }
+            // Three of the creatures placed above have lairs (Lich,
+            // Adult Red Dragon, Beholder), and a lair acts on its own
+            // schedule rather than through the AI — so nothing else in
+            // this driver would notice if the dispatcher stopped firing.
+            // The line is the proof it ran inside a live encounter, on
+            // a board the AI was moving underneath it.
+            assert!(
+                e.messages().iter().any(|m| m.contains("[lair]")),
+                "seed {}: a lair should have acted at some point",
+                seed
+            );
         }
     }
 

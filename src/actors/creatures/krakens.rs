@@ -127,6 +127,9 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Legendary Actions — 3 per round. The kraken spends them
         // between other actors' turns for extra tentacle swings.
         legendary_actions_per_round: 3,
+        // 5e lair actions — the water around it is part of the fight.
+        // See `engine::lair_actions`.
+        lair_actions: crate::engine::lair_actions::KRAKEN_LAIR,
         has_extra_attack: true,
         ..CreatureTemplate::defaults()
     }

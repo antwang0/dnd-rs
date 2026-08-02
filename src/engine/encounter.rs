@@ -1436,6 +1436,13 @@ pub struct EncounterInstance {
     /// panel and so future round-aware effects (e.g. Bless ending after
     /// N rounds) can read the absolute round.
     round: u32,
+    /// The round whose lair action has already fired, so it fires once
+    /// per round however the dispatcher is reached. Two callers reach
+    /// it — the initiative wrap, and the first turn to open in a round
+    /// — and neither alone is enough: the wrap misses round one
+    /// entirely (nothing has wrapped yet), and the turn hook misses a
+    /// round in which the encounter ends before anyone is prompted.
+    lair_acted_round: Option<u32>,
     terrain: Vec<TerrainInfo>,
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
@@ -5637,6 +5644,7 @@ impl EncounterInstance {
             width: terrain_params.width,
             height: terrain_params.height,
             round: 1,
+            lair_acted_round: None,
             terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
@@ -7067,7 +7075,93 @@ impl EncounterInstance {
                 self.log(format!("{}'s reflexes settle back to one turn a round.", name));
             }
             self.round_end();
+            // The new round opens with whatever the place has to say.
+            // After `round_end` rather than before, so the lair acts on
+            // a board that has already paid out its timers and swept its
+            // dead — a lair action that catches a creature the round
+            // just killed would be resolving against a corpse.
+            self.dispatch_lair_actions();
         }
+    }
+
+    /// 5e **lair actions**: fire one, once per round, on behalf of one
+    /// creature that has a lair.
+    ///
+    /// RAW puts these on initiative count 20, losing ties. We put them
+    /// at the top of the round, which is the same place for every
+    /// purpose the engine can observe: nothing in the initiative order
+    /// is allowed to interleave with them either way, and "count 20" is
+    /// a scheduling convention for a table that reads its initiative
+    /// list aloud.
+    ///
+    /// **One resident.** A lair belongs to a creature, and two creatures
+    /// with lairs on the same board is a situation the rules don't
+    /// describe — so the lowest-id combat-active resident acts and the
+    /// rest are guests in someone else's cave. Deliberately *not* "each
+    /// of them in turn": three legendary residents firing three lair
+    /// actions a round would be three times the rules' budget for the
+    /// same rules text.
+    ///
+    /// **Not twice running.** RAW: "the creature can't use the same lair
+    /// action two rounds in a row." Honored by excluding last round's
+    /// index from the draw, which is also why a one-entry lair simply
+    /// repeats — there is nothing else for it to do.
+    ///
+    /// The resident's own state gates nothing but life: a lair action
+    /// fires while its resident is stunned, paralyzed, or unconscious,
+    /// because the lair is what is acting. Death ends it — `Legendary
+    /// Actions` are the creature's, lair actions are the place's, and
+    /// the place stops answering when nobody is left to answer to.
+    fn dispatch_lair_actions(&mut self) {
+        if self.lair_acted_round == Some(self.round) {
+            return;
+        }
+        self.lair_acted_round = Some(self.round);
+        let mut residents: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.is_combat_active() && !a.lair_actions().is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+        residents.sort_unstable();
+        let Some(&resident_id) = residents.first() else {
+            return;
+        };
+        let (repertoire, last) = match self.actors.get(&resident_id) {
+            Some(a) => (a.lair_actions(), a.last_lair_action()),
+            None => return,
+        };
+        // Draw from everything except last round's pick. A one-entry
+        // lair has nothing else to offer and repeats.
+        let eligible: Vec<usize> = (0..repertoire.len())
+            .filter(|i| repertoire.len() == 1 || Some(*i) != last)
+            .collect();
+        let Some(&index) = eligible.get(self.roll_index(eligible.len())) else {
+            return;
+        };
+        let entry = &repertoire[index];
+        let resident_name = self.actor_name(resident_id);
+        self.log(format!(
+            "[lair] {}'s lair stirs: {}.",
+            resident_name, entry.name
+        ));
+        if let Some(a) = self.actors.get_mut(&resident_id) {
+            a.set_last_lair_action(index);
+        }
+        (entry.fire)(self, resident_id);
+        self.cleanup_dead_actors();
+    }
+
+    /// A uniformly random index into a collection of `len` items, drawn
+    /// off the encounter's seeded roller so a replay of the same seed
+    /// makes the same choice. Returns 0 for an empty collection, which
+    /// every caller then fails to index — the same shape as asking a
+    /// `Vec` for `[0]`.
+    fn roll_index(&mut self, len: usize) -> usize {
+        if len <= 1 {
+            return 0;
+        }
+        (self.roll(&Dice::new(1, len as u32)) as usize).saturating_sub(1)
     }
 
     /// Open the current initiative slot's turn if it hasn't been opened
@@ -7090,6 +7184,12 @@ impl EncounterInstance {
         if self.turn_started_for == Some(curr_id) {
             return;
         }
+        // The lair acts before anything in the round does. Reached from
+        // here as well as from the initiative wrap because round one
+        // never wraps into itself — without this call a dragon's cave
+        // would sit silent through the whole opening round. The round
+        // guard inside makes the second caller free.
+        self.dispatch_lair_actions();
         self.start_turn_for(curr_id);
     }
 
@@ -34684,6 +34784,143 @@ mod tests {
         // The ladder has a top: nothing stacks past the rung that kills.
         a.gain_exhaustion(3);
         assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
+    }
+
+    /// The lair acts once a round, on the resident's behalf, and never
+    /// takes the same action two rounds running.
+    ///
+    /// The repeat rule is the reason the pick is a draw rather than a
+    /// cycle: RAW forbids the immediate repeat and says nothing else,
+    /// so the lair stays unpredictable while the one guarantee the
+    /// rules make holds. Swept over enough rounds that a violation
+    /// can't hide behind a lucky seed.
+    #[test]
+    fn a_lair_acts_once_a_round_and_never_twice_the_same_way_running() {
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let dragon = e
+            .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Somebody for the lair to act against, kept far enough away
+        // that the dragon isn't simply killing them turn one.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&dragon].lair_actions().is_empty(),
+            "the adult red dragon should have a lair"
+        );
+
+        let mut seen: Vec<usize> = Vec::new();
+        for round in 1..=8u32 {
+            e.round = round;
+            e.dispatch_lair_actions();
+            let index = e.actors[&dragon]
+                .last_lair_action()
+                .expect("the lair should have acted");
+            if let Some(&previous) = seen.last() {
+                assert_ne!(
+                    index, previous,
+                    "round {} repeated the lair action from round {}",
+                    round,
+                    round - 1
+                );
+            }
+            seen.push(index);
+            // A second call inside the same round is a no-op — the
+            // guard is what makes the two dispatch sites safe.
+            e.dispatch_lair_actions();
+            assert_eq!(e.actors[&dragon].last_lair_action(), Some(index));
+        }
+        assert!(
+            seen.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+            "eight rounds should not all draw the same effect: {:?}",
+            seen
+        );
+    }
+
+    /// The lich's tether is the one lair action that reaches a single
+    /// creature and pays the resident for it: what it drains, the lich
+    /// drinks. Pinned because the two halves are one effect and a
+    /// refactor that kept only the damage would look entirely correct.
+    #[test]
+    fn the_lich_lair_drinks_what_its_tether_drains() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::liches::LICH_TEMPLATE;
+        use crate::engine::lair_actions::LICH_LAIR;
+        let tether = LICH_LAIR
+            .iter()
+            .find(|entry| entry.name.contains("cord"))
+            .expect("the lich lair should carry its tether");
+        // Sweep seeds: the victim gets a save, and one seed that rolls a
+        // pass would otherwise read as the effect being broken.
+        let mut landed = 0;
+        for seed in 0..12u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let lich = e
+                .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                .unwrap();
+            // Wound the lich so a heal has room to show.
+            e.actors.get_mut(&lich).unwrap().take_damage(40);
+            let lich_before = e.actors[&lich].hitpoints();
+            let victim_before = e.actors[&victim].hitpoints();
+            (tether.fire)(&mut e, lich);
+            let drained = victim_before - e.actors[&victim].hitpoints();
+            if drained == 0 {
+                continue;
+            }
+            landed += 1;
+            assert_eq!(
+                e.actors[&lich].hitpoints() - lich_before,
+                drained,
+                "the lich should drink exactly what the cord drained (seed {})",
+                seed
+            );
+        }
+        assert!(landed > 0, "no seed in the sweep landed the tether");
+    }
+
+    /// A lair belongs to a creature, and it stops answering when that
+    /// creature does. Nothing else about the resident's state matters —
+    /// a paralyzed dragon's cave still shakes, because the cave is what
+    /// is acting.
+    #[test]
+    fn a_lair_answers_to_the_living_and_to_nothing_else() {
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let dragon = e
+            .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&dragon)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Permanent);
+        e.round = 2;
+        e.dispatch_lair_actions();
+        assert!(
+            e.actors[&dragon].last_lair_action().is_some(),
+            "a paralyzed resident does not silence its lair"
+        );
+
+        // Kill the dragon and the lair goes quiet. Checked by the
+        // absence of a new log line rather than by the memory field,
+        // which survives on the corpse.
+        e.actors.get_mut(&dragon).unwrap().take_damage(u32::MAX);
+        e.cleanup_dead_actors();
+        e.round = 3;
+        let before = e.messages().len();
+        e.dispatch_lair_actions();
+        assert!(
+            !e.messages()[before..].iter().any(|m| m.contains("[lair]")),
+            "a dead resident's lair should stop acting"
+        );
     }
 
     /// A source that hands out exhaustion hands out a *level*, and a
