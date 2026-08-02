@@ -817,11 +817,10 @@ const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
     },
     FailedSaveRerollSource {
         label: "fanatical focus",
-        // `spend_feature` already returns true iff the tag was
-        // present (HashSet::remove semantics), so the previous
-        // check-then-spend body collapses to the one-line call —
-        // sibling of the `spend_feature(source.tag)` call in the
-        // add-die cohort's loop body.
+        // `spend_feature` already returns true iff a charge was there
+        // to take, so the previous check-then-spend body collapses to
+        // the one-line call — sibling of the `spend_feature(source.tag)`
+        // call in the add-die cohort's loop body.
         consume: |a| a.spend_feature(crate::actions::class_features::FANATICAL_FOCUS_TAG),
     },
 ];
@@ -3641,7 +3640,16 @@ impl EncounterInstance {
         // returns true. A missed reroll falls through to the shared
         // Legendary Resistance gate below so a boss-tier paladin
         // still gets LR as a third layer.
-        if !outcome.passed() {
+        // A reroll replaces the d20 and nothing else, so the best it
+        // can produce is `20 + modifier + extra`. Against a DC above
+        // that, the reroll is a formality with a charge attached — the
+        // same judgement the add-die cohort above and
+        // `fire_missed_attack_boost` on the attack lane both make. A
+        // fighter who has been hit by something they cannot save
+        // against at all should still be holding Indomitable when they
+        // meet something they can.
+        let reroll_could_pass = 20 + modifier + extra >= dc;
+        if !outcome.passed() && reroll_could_pass {
             for source in FAILED_SAVE_REROLL_SOURCES {
                 let Some(actor) = self.actors.get_mut(&actor_id) else { break; };
                 if !(source.consume)(actor) {
@@ -32167,13 +32175,27 @@ mod tests {
         let id = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        e.actors.get_mut(&id).unwrap().mark_indomitable_pending();
-        assert!(e.actors[&id].indomitable_pending());
-        // DC 40 — impossible to pass even with a 20 + every modifier,
-        // so the reroll path runs deterministically.
-        let _ = e.roll_save(id, AbilityScoreType::Dexterity, 40);
-        // The marker is consumed either way (no infinite rerolls).
-        assert!(!e.actors[&id].indomitable_pending());
+        // `modifier + 20` is the highest DC a reroll can still clear,
+        // so the initial roll fails on all but a natural 20 and the
+        // reroll is worth firing. DC 40, which this fixture used to
+        // use, is out of reach of any d20 — and the cohort no longer
+        // spends a charge on a save it cannot rescue.
+        let dc = e.actors[&id].save_modifier(AbilityScoreType::Dexterity) + 20;
+        let mut fired = false;
+        for seed in 0u64..32 {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            e.actors.get_mut(&id).unwrap().mark_indomitable_pending();
+            let _ = e.roll_save(id, AbilityScoreType::Dexterity, dc);
+            // The marker is consumed either way (no infinite rerolls).
+            if !e.actors[&id].indomitable_pending() {
+                fired = true;
+                break;
+            }
+        }
+        assert!(
+            fired,
+            "32 seeds should have produced at least one failure the reroll could answer"
+        );
     }
 
     /// Spike Growth applies Spiked to enemies in the burst and
@@ -62291,14 +62313,24 @@ mod tests {
             e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
             "Fanatical Focus charge starts full",
         );
-        // Fail the save. DC 100 is unreachable — both the initial
-        // roll AND the Fanatical Focus reroll fail, so the outcome
-        // stays Fail. But the charge burns on trigger regardless of
-        // the reroll's own pass/fail.
-        let _outcome = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // `modifier + 20` is the highest DC a reroll can still clear —
+        // the initial roll fails on nearly every face and the reroll is
+        // worth firing. The charge burns on trigger regardless of the
+        // reroll's own pass/fail; what it must not do is burn against a
+        // DC 100, which is what this fixture used to assert.
+        let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 20;
+        let mut spent = false;
+        for seed in 0u64..32 {
+            e.roller = FastRandRoller::with_seed(seed);
+            let _outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if !e.actors[&id].feature_available(FANATICAL_FOCUS_TAG) {
+                spent = true;
+                break;
+            }
+        }
         assert!(
-            !e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
-            "Fanatical Focus tag spent after the first failed save",
+            spent,
+            "Fanatical Focus should have fired on one of 32 rescuable failed saves",
         );
     }
 
@@ -62312,15 +62344,21 @@ mod tests {
         use crate::actions::class_features::FANATICAL_FOCUS_TAG;
         use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
         use crate::engine::dice::FastRandRoller;
-        use crate::engine::types::AbilityScoreType;
 
         let mut e = ei_with_terrain(15, 15, &[]);
         e.roller = FastRandRoller::with_seed(7);
         let id = e
             .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Burn the charge on an unreachable-DC save.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // Burn the charge directly — driving it off a save means
+        // picking a DC the reroll can reach and a seed that fails
+        // against it, which is
+        // `fanatical_focus_auto_fires_on_failed_save_and_spends_charge`'s
+        // job. This test is about the refresh.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .spend_feature(FANATICAL_FOCUS_TAG);
         assert!(!e.actors[&id].feature_available(FANATICAL_FOCUS_TAG));
         // Short rest — the tag is on `SHORT_REST_FEATURES` so the
         // charge refills.
@@ -62383,13 +62421,25 @@ mod tests {
         }
         assert!(e.actors[&id].feature_available(FANATICAL_FOCUS_TAG));
         assert!(e.actors[&id].indomitable_pending());
-        // Fail the save at DC 100 (both initial roll and reroll
-        // fail). Indomitable (first in the cohort) burns; the
-        // paladin's Fanatical Focus charge stays untouched.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // Fail a save the reroll could in principle answer — `modifier
+        // + 20`. Indomitable (first in the cohort) burns; the paladin's
+        // Fanatical Focus charge stays untouched, because the cohort
+        // stops after one reroll. DC 100, the old fixture, is a save
+        // neither source now fires on at all.
+        let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 20;
+        let mut fired = false;
+        for seed in 0u64..32 {
+            e.roller = FastRandRoller::with_seed(seed);
+            e.actors.get_mut(&id).unwrap().mark_indomitable_pending();
+            let _ = e.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if !e.actors[&id].indomitable_pending() {
+                fired = true;
+                break;
+            }
+        }
         assert!(
-            !e.actors[&id].indomitable_pending(),
-            "Indomitable's pre-primed latch spent first"
+            fired,
+            "Indomitable's pre-primed latch should have spent first on one of 32 seeds"
         );
         assert!(
             e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
@@ -63638,6 +63688,44 @@ mod tests {
         assert!(
             spent,
             "32 seeds should have produced at least one rescuable failure"
+        );
+    }
+
+    /// A failed save no reroll could rescue leaves Indomitable and
+    /// Fanatical Focus where they are.
+    ///
+    /// The reroll cohort's version of
+    /// `a_hopeless_save_does_not_burn_the_add_die_charge`. A reroll
+    /// replaces the d20 and nothing else, so a DC above `20 + modifier`
+    /// is one no fresh face can reach — and a fighter who spent
+    /// Indomitable on it would meet the next Hold Person without it.
+    #[test]
+    fn a_hopeless_save_does_not_burn_a_reroll_charge() {
+        use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().grant_feature_for_test(
+            crate::actions::class_features::INDOMITABLE_TAG,
+        );
+        for seed in 0u64..8 {
+            e.roller = FastRandRoller::with_seed(seed);
+            e.actors.get_mut(&id).unwrap().mark_indomitable_pending();
+            let outcome = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+            assert!(!outcome.passed(), "DC 100 must fail");
+        }
+        assert!(
+            e.actors[&id].indomitable_pending(),
+            "Indomitable's latch should survive a save it could not have rescued"
+        );
+        assert!(
+            e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "and so should Fanatical Focus"
         );
     }
 
