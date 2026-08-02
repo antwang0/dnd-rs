@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -38,6 +38,7 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // drow's existing Magic Resistance (drow are notoriously
         // anti-enchantment in the SRD).
         has_fey_ancestry: true,
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

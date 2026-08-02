@@ -12,7 +12,7 @@ use crate::actions::spells::{
     SHATTER, SILENCE, STONESKIN, THUNDERWAVE, WALL_OF_FIRE, WALL_OF_STONE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -120,6 +120,7 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // DEX save) and the paladin's Aura of Protection (+CHA to
         // every save when adjacent).
         has_diamond_soul: true,
+        skills: HashSet::from([Skill::Acrobatics, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -13,6 +13,48 @@ use crate::{
     },
 };
 
+/// The 5e contest a shove or a grapple opens with: "a Strength
+/// (Athletics) check contested by…". One option, so `best_check_option`
+/// has nothing to choose between — the slice shape exists so both sides
+/// of `roll_contest` speak the same language.
+const ATHLETICS_CONTEST: &[(
+    crate::engine::types::AbilityScoreType,
+    crate::engine::types::Skill,
+)] = &[(
+    crate::engine::types::AbilityScoreType::Strength,
+    crate::engine::types::Skill::Athletics,
+)];
+
+/// The defending half of that sentence: "…contested by the target's
+/// Strength (Athletics) or Dexterity (Acrobatics) check (the target
+/// chooses the ability to use)." The target's choice is resolved by
+/// `best_check_option`, which compares the two pairings *including
+/// proficiency* — so an acrobatic rogue answers with Acrobatics even
+/// when their raw Strength modifier is the larger of the two.
+///
+/// Athletics is listed first so a defender equally good at both answers
+/// with the same skill the challenger used, which is the version of the
+/// tie a table would narrate.
+/// Escape DC for a hold with nobody on the other end of it — an ooze's
+/// adhesive, a spell's tentacles, a grappler who has since left the
+/// board. 8 + a typical grappler's Strength modifier + proficiency, the
+/// number the contest would average to.
+const UNANCHORED_ESCAPE_DC: i32 = 13;
+
+const GRAPPLE_DEFENSE_CONTEST: &[(
+    crate::engine::types::AbilityScoreType,
+    crate::engine::types::Skill,
+)] = &[
+    (
+        crate::engine::types::AbilityScoreType::Strength,
+        crate::engine::types::Skill::Athletics,
+    ),
+    (
+        crate::engine::types::AbilityScoreType::Dexterity,
+        crate::engine::types::Skill::Acrobatics,
+    ),
+];
+
 pub struct Move {}
 
 impl Action for Move {
@@ -622,34 +664,30 @@ impl Action for Shove {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::engine::dice::Dice;
-        use crate::engine::types::AbilityScoreType;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let caster_name = caster.name().to_string();
-        let caster_str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let caster_loc = caster.location();
-        let Some(target) = encounter.actors.get(&target_id) else {
+        if !encounter.actors.contains_key(&target_id) {
             return Vec::new();
-        };
-        let target_name = target.name().to_string();
-        let target_str_mod = target.ability_modifier(AbilityScoreType::Strength);
-        let target_dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
-        let target_best = target_str_mod.max(target_dex_mod);
-
-        // Contested check: d20 + STR vs d20 + max(STR, DEX). Attacker wins ties.
-        let d20 = Dice::new(1, 20);
-        let atk_roll = encounter.roll(&d20) as i32 + caster_str_mod;
-        let def_roll = encounter.roll(&d20) as i32 + target_best;
-        encounter.log(format!(
-            "  shove: {} rolls {} vs {} rolls {}",
-            caster_name, atk_roll, target_name, def_roll
-        ));
-        if atk_roll < def_roll {
+        }
+        // 5e Shove: "a Strength (Athletics) check contested by the
+        // target's Strength (Athletics) or Dexterity (Acrobatics) check."
+        // Attacker wins ties. Both halves route through the engine's
+        // contest chokepoint, so the skills the rule names are actually
+        // rolled — with proficiency, condition modes, and one-shot
+        // riders — instead of the bare `d20 + ability modifier` this
+        // used to open-code.
+        if !encounter.roll_contest(
+            "shove",
+            caster_id,
+            ATHLETICS_CONTEST,
+            target_id,
+            GRAPPLE_DEFENSE_CONTEST,
+        ) {
             encounter.log("  shove: target resists");
             return Vec::new();
         }
@@ -721,33 +759,22 @@ impl Action for Grapple {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::engine::dice::Dice;
-        use crate::engine::types::AbilityScoreType;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
+        if !encounter.actors.contains_key(&caster_id)
+            || !encounter.actors.contains_key(&target_id)
+        {
             return Vec::new();
-        };
-        let caster_name = caster.name().to_string();
-        let caster_str_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return Vec::new();
-        };
-        let target_name = target.name().to_string();
-        let target_str_mod = target.ability_modifier(AbilityScoreType::Strength);
-        let target_dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
-        let target_best = target_str_mod.max(target_dex_mod);
-
-        // Contested check: d20 + STR vs d20 + max(STR, DEX). Attacker wins ties.
-        let d20 = Dice::new(1, 20);
-        let atk_roll = encounter.roll(&d20) as i32 + caster_str_mod;
-        let def_roll = encounter.roll(&d20) as i32 + target_best;
-        encounter.log(format!(
-            "  grapple: {} rolls {} vs {} rolls {}",
-            caster_name, atk_roll, target_name, def_roll
-        ));
-        if atk_roll < def_roll {
+        }
+        // Same contest as Shove, same chokepoint — see the note there.
+        if !encounter.roll_contest(
+            "grapple",
+            caster_id,
+            ATHLETICS_CONTEST,
+            target_id,
+            GRAPPLE_DEFENSE_CONTEST,
+        ) {
             encounter.log("  grapple: target slips free");
             return Vec::new();
         }
@@ -755,21 +782,35 @@ impl Action for Grapple {
         // Grappled until the grappler releases or is incapacitated. We
         // don't yet model release as an action — for now we use a long
         // Rounds timer (10 rounds = 1 minute) so it has a definite
-        // expiration. Concentration-style auto-release would be a follow-up.
-        vec![Box::new(crate::engine::side_effects::ApplyCondition {
-            actor_id: target_id,
-            condition: crate::conditions::Condition::Grappled,
-            timer: crate::conditions::ConditionTimer::Rounds(10),
-        })]
+        // expiration.
+        //
+        // The back-link is what makes the escape a contest rather than a
+        // flat DC: `GrappleEscape` reads it to find whose Athletics the
+        // captive is straining against, and `release_broken_grapples`
+        // reads it to end the hold when RAW says it ends (the grappler
+        // is incapacitated, or stops existing).
+        crate::engine::side_effects::install_condition_with_link(
+            crate::conditions::Condition::Grappled,
+            target_id,
+            caster_id,
+            crate::conditions::ConditionTimer::Rounds(10),
+        )
     }
 }
 
 pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
 
 /// 5e Grapple Escape — a grappled creature uses its Action to attempt to
-/// break free. The actor rolls d20 + max(STR mod, DEX mod) vs DC 13
-/// (approximation of 8 + typical grappler STR mod + prof bonus). On
-/// success the Grappled (or Adhered / EarthenGrasped) condition is removed.
+/// break free: "a Strength (Athletics) or Dexterity (Acrobatics) check
+/// contested by the grappler's Strength (Athletics) check."
+///
+/// Two shapes, picked by whether the hold names a grappler. A `Grappled`
+/// installed by the Grapple action carries a back-link, so the escape is
+/// the RAW contest against that creature. Everything else that pins a
+/// target — the Roper's tendril, Evard's Black Tentacles, Maximilian's
+/// Earthen Grasp, an ooze's Adhered — installs the flag with nobody on
+/// the other end of it, and those keep the flat DC: there is no
+/// grappler's Athletics to roll.
 pub struct GrappleEscape {}
 
 impl Action for GrappleEscape {
@@ -816,13 +857,9 @@ impl Action for GrappleEscape {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::conditions::Condition;
-        use crate::engine::types::AbilityScoreType;
         let Some(actor) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = actor.ability_modifier(AbilityScoreType::Strength);
-        let dex_mod = actor.ability_modifier(AbilityScoreType::Dexterity);
-        let best_mod = str_mod.max(dex_mod);
         // Snapshot which grapple-like conditions are active before we
         // mutably borrow `encounter` for the roll and log calls.
         let active_conditions: Vec<Condition> =
@@ -830,15 +867,41 @@ impl Action for GrappleEscape {
                 .into_iter()
                 .filter(|c| actor.has_condition(*c))
                 .collect();
-        // Drop the immutable borrow of `actor` before rolling.
-        let roll = encounter.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
-        let total = roll + best_mod;
-        let dc = 13;
-        encounter.log(format!(
-            "  escape grapple: 1d20({}){:+} = {} vs DC {}",
-            roll, best_mod, total, dc
-        ));
-        if total >= dc {
+        // A linked `Grappled` names the creature holding on, and that
+        // turns the escape into the contest RAW asks for. The captive
+        // gets the choice of ability (`GRAPPLE_DEFENSE_CONTEST` on the
+        // challenging side here — the roles are reversed from Grapple's,
+        // because it is the captive straining now).
+        let grappler = actor.linked_by(Condition::Grappled);
+        let broke_free = match grappler {
+            Some(grappler_id) if encounter.actors.contains_key(&grappler_id) => encounter
+                .roll_contest(
+                    "escape grapple",
+                    caster_id,
+                    GRAPPLE_DEFENSE_CONTEST,
+                    grappler_id,
+                    ATHLETICS_CONTEST,
+                ),
+            // No grappler on the other end (a spell or a monster ability
+            // installed the flag directly, or the grappler is gone):
+            // fall back to the flat DC, still rolled as a real check so
+            // proficiency and roll mode apply.
+            _ => {
+                let (ability, skill) = encounter
+                    .best_check_option(caster_id, GRAPPLE_DEFENSE_CONTEST)
+                    .unwrap_or((
+                        crate::engine::types::AbilityScoreType::Strength,
+                        crate::engine::types::Skill::Athletics,
+                    ));
+                let total = encounter.roll_ability_check(caster_id, ability, Some(skill));
+                encounter.log(format!(
+                    "  escape grapple: {} vs DC {}",
+                    total, UNANCHORED_ESCAPE_DC
+                ));
+                total >= UNANCHORED_ESCAPE_DC
+            }
+        };
+        if broke_free {
             encounter.log("  broke free!".to_string());
             let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
                 Vec::new();
@@ -918,7 +981,7 @@ impl Action for Hide {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::engine::types::AbilityScoreType;
+        use crate::engine::types::{AbilityScoreType, Skill};
         // Find the highest passive Perception among active enemies, via
         // `ActorInstance::passive_perception` (which folds in Perception
         // skill proficiency where applicable).
@@ -936,9 +999,22 @@ impl Action for Hide {
             .map(|(_, a)| a.passive_perception())
             .max()
             .unwrap_or(10);
-        let save = encounter.roll_save(caster_id, AbilityScoreType::Dexterity, dc);
-        if !save.passed() {
-            encounter.log("  hide: stealth fails");
+        // 5e Hide is a Dexterity (Stealth) *check* against the best
+        // passive Perception watching. It used to roll a Dexterity
+        // *save*, which is a different number on the same die: the save
+        // lane collects save proficiency, Aura of Protection, Bless, and
+        // the save-mode cohorts, and collects none of the Stealth
+        // proficiency the action is named after. A rogue who is
+        // proficient in Stealth got nothing for it — while `Search`, on
+        // the other side of the same contest, was already adding that
+        // very proficiency into the DC it compared against.
+        let roll = encounter.roll_ability_check(
+            caster_id,
+            AbilityScoreType::Dexterity,
+            Some(Skill::Stealth),
+        );
+        if roll < dc {
+            encounter.log(format!("  hide: stealth {} fails vs DC {}", roll, dc));
             return Vec::new();
         }
         encounter.log("  hide: succeeds");

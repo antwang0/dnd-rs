@@ -2,7 +2,7 @@ use crate::actions::class_features::BLOOD_FRENZY_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SAHUAGIN_BITE, SAHUAGIN_CLAWS, SAHUAGIN_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -42,6 +42,7 @@ pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Blood Frenzy passive: advantage on melee attacks vs wounded
         // targets. Read by `compute_attack_mode`'s gate.
         features: HashSet::from([BLOOD_FRENZY_TAG]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

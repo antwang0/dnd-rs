@@ -13,9 +13,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
 use crate::actions::spells::{BOOMING_BLADE, FIRE_BOLT, MAGIC_MISSILE, MISTY_STEP, SHIELD};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size,
-};
+use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -121,6 +119,7 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // that ships Survivor (lv18) here — a level-5 build wouldn't
         // RAW-legally hold two styles, but a level-10+ Champion would.
         has_dueling_style: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -260,6 +259,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // damage-side style buys more damage per swing than +1 AC would
         // buy in AC on a chain-mail chassis.
         has_dueling_style: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

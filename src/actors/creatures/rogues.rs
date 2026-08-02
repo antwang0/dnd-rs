@@ -10,7 +10,7 @@ use crate::actions::spells::{
     TASHAS_HIDEOUS_LAUGHTER,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -105,6 +105,7 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Blindsense's 10-ft envelope covers the crit / advantage
         // trigger window.
         has_blindsense: true,
+        skills: HashSet::from([Skill::Acrobatics, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

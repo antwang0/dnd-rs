@@ -14,7 +14,7 @@ use crate::actions::spells::{
     SEARING_SMITE, SHIELD_OF_FAITH, STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -198,6 +198,7 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // site so Cause Fear / Wrathful Smite / dragon-fear all bounce
         // off the aura bubble.
         has_aura_of_courage: true,
+        skills: HashSet::from([Skill::Athletics]),
         ..CreatureTemplate::defaults()
     }
 });

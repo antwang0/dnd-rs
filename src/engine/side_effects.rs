@@ -1382,6 +1382,14 @@ impl ApplicableSideEffect for StabilizeActor {
 ///   expanded crit range, and their heal-on-kill all key off the one
 ///   creature they cursed rather than off the condition being present at
 ///   all.
+/// * **Grappled** — the grappler, which is what turns 5e's two clauses
+///   about *them* into rules the engine can enforce: the escape is a
+///   contest against that specific creature's Athletics, and the hold
+///   ends the moment they are incapacitated or leave the board (see
+///   `EncounterInstance::release_broken_grapples`). A `Grappled` with
+///   no link — the Roper's tendril, Evard's tentacles, the spells that
+///   install the flag directly — keeps the flat-DC escape, so the link
+///   is an upgrade where it exists rather than a requirement.
 ///
 /// One list, read by `condition_link_side_effect`. Every consumer of the
 /// link reads it back through `ActorInstance::linked_by`, which returns
@@ -1400,6 +1408,7 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::HexbladeCursed,
     crate::conditions::Condition::AncestrallyHaunted,
     crate::conditions::Condition::Inspired,
+    crate::conditions::Condition::Grappled,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

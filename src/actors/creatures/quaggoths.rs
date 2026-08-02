@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{QUAGGOTH_CLAW, QUAGGOTH_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
-use std::collections::HashMap;
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Quaggoth — CR 2 medium humanoid. The bear-thrall race of the
@@ -75,6 +75,7 @@ pub static QUAGGOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: HashMap::from([
             (DamageType::Poison, DamageModifier::Resistance),
         ]),
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

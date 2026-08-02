@@ -8,7 +8,7 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -94,6 +94,7 @@ fn subclass_barbarian_template(
         // for twice as many rounds) and Tiger Totem (the +10 ft
         // speed bump holds for the doubled window).
         has_persistent_rage: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 }
@@ -192,6 +193,7 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fury / totem spirits / Reckless Attack) — more rage rounds
         // means more turns where those riders fire.
         has_persistent_rage: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

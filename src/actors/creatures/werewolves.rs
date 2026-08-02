@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREWOLF_BITE, WEREWOLF_MULTIATTACK};
 use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -41,6 +41,7 @@ pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // doesn't include silver weapons so full immunity would make
         // werewolves untouchable).
         damage_modifiers: non_magical_physical_resistances([]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

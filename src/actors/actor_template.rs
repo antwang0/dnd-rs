@@ -1707,20 +1707,24 @@ const CONDITION_AC_BONUSES: &[ConditionAcBonus] = &[
     },
 ];
 
-/// One row in the `CONDITION_SAVE_BONUSES` cohort — a single condition
-/// whose presence contributes a flat saving-throw delta to the holder.
-/// Sibling to `ConditionAcBonus { source, bonus }` on the "single-
-/// condition source + signed magnitude" cohort lane — same declarative
-/// row shape, different affected axis (save roll here vs. AC there) and
-/// different unit (integer save points vs. integer AC points). The
-/// delta is signed for the same reason `ConditionAcBonus.bonus` is
-/// signed: a hypothetical save-debuff row (a future "Cursed → -1 saves"
-/// entry) would sit on the same table as the +1 / +3 buff rows without
+/// One row in the `CONDITION_SAVE_BONUSES` / `CONDITION_CHECK_BONUSES`
+/// cohorts — a single condition whose presence contributes a flat d20-
+/// roll delta to the holder. Sibling to `ConditionAcBonus { source,
+/// bonus }` on the "single-condition source + signed magnitude" cohort
+/// lane — same declarative row shape, different affected axis (a rolled
+/// d20 total here vs. a static AC there).
+///
+/// The row shape is deliberately not save-specific — it was named for
+/// its first cohort, and the check lane needs exactly the same two
+/// fields, so the two cohorts share one row type rather than declaring
+/// a second identical struct. The delta is signed for the same reason
+/// `ConditionAcBonus.bonus` is signed: a save-debuff row (Unsettling
+/// Words' −4) sits on the same table as the +1 / +3 buff rows without
 /// a separate cohort. Bless / Bane deliberately don't ride this cohort
 /// — their d4 die lives on `bless_bane_attack_die` and their +N / -N
 /// flat lives on `save_bonus_buff`, so including them here would
 /// double-count.
-struct ConditionSaveBonus {
+struct ConditionRollBonus {
     /// Source condition whose presence gates the row. Every save-bump
     /// buff currently uses a plain single-condition gate, so this is a
     /// bare `Condition` matching the `ConditionAcBonus.source` shape.
@@ -1778,12 +1782,12 @@ struct ConditionSaveBonus {
 /// the caster, a hypothetical Bard Song of Rest save aura, etc.) lands
 /// as a fresh one-line row here rather than another inline if-branch
 /// in `condition_save_bonus`.
-const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
-    ConditionSaveBonus {
+const CONDITION_SAVE_BONUSES: &[ConditionRollBonus] = &[
+    ConditionRollBonus {
         source: Condition::Inspired,
         bonus: 3,
     },
-    ConditionSaveBonus {
+    ConditionRollBonus {
         source: Condition::WardingBonded,
         bonus: 1,
     },
@@ -1796,20 +1800,40 @@ const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
     // `CONSUMED_ON_SAVE` on the first save the holder rolls, so the
     // penalty is one save deep rather than a standing debuff for the
     // life of the timer.
-    ConditionSaveBonus {
+    ConditionRollBonus {
         source: Condition::Unsettled,
         bonus: -4,
     },
 ];
 
+/// Flat ability-check bonuses contributed by active conditions — the
+/// check-lane sibling of `CONDITION_SAVE_BONUSES`, read by
+/// `condition_check_bonus` and spent by the engine's `CONSUMED_ON_CHECK`
+/// cohort.
+///
+/// One row, and it is the whole reason two 5e effects were inert. RAW
+/// spends a Bardic Inspiration die on "one ability check, attack roll,
+/// or saving throw" — the attack and save lanes each had a cohort for
+/// it and the check lane had none, so a die was worth two-thirds of
+/// what the rules say. Guidance fared worse: it installs the same
+/// `Inspired` condition and its RAW effect is *only* on ability checks,
+/// so before this cohort existed a cast of it could not change a single
+/// number in the game.
+const CONDITION_CHECK_BONUSES: &[ConditionRollBonus] = &[
+    ConditionRollBonus {
+        source: Condition::Inspired,
+        bonus: 3,
+    },
+];
+
 /// One row in the `CONDITION_ATTACK_BONUSES` cohort — a single condition
 /// whose presence contributes a flat attack-roll delta to the holder.
-/// Sibling to `ConditionSaveBonus { source, bonus }` and
+/// Sibling to `ConditionRollBonus { source, bonus }` and
 /// `ConditionAcBonus { source, bonus }` on the "single-condition source +
 /// signed magnitude" cohort lane — same declarative row shape, different
 /// affected axis (attack roll here vs. save roll / AC there) and same
 /// unit (integer to-hit points, same scale as save / AC integers). The
-/// delta is signed for the same reason `ConditionSaveBonus.bonus` and
+/// delta is signed for the same reason `ConditionRollBonus.bonus` and
 /// `ConditionAcBonus.bonus` are signed: a hypothetical to-hit-debuff
 /// row (a future "Blessed-by-the-Enemy → -1 attacks" entry) would sit
 /// on the same table as the +3 / +4 / +10 buff rows without a separate
@@ -1830,7 +1854,7 @@ const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
 struct ConditionAttackBonus {
     /// Source condition whose presence gates the row. Every attack-bump
     /// buff on this cohort currently uses a plain single-condition
-    /// gate, matching the `ConditionSaveBonus.source` /
+    /// gate, matching the `ConditionRollBonus.source` /
     /// `ConditionAcBonus.source` shape. A future compound-gate to-hit
     /// buff (a hypothetical "+2 attacks while Raging and Reckless") would
     /// either widen this row to a `flag` closure or land as a sibling
@@ -6311,7 +6335,7 @@ impl ActorInstance {
     /// so this lane is condition-only flat bonuses (Bardic
     /// Inspiration: +3 d6-average; Warding Bond: +1 to saves while
     /// bonded). Walks the shared `CONDITION_SAVE_BONUSES` cohort —
-    /// each row is a `ConditionSaveBonus { source, bonus }`; every
+    /// each row is a `ConditionRollBonus { source, bonus }`; every
     /// held source contributes its signed `bonus` to the sum, so
     /// vertical stacking (Inspired + WardingBonded → +4 saves) folds
     /// through the same walk as horizontal stacking on the sibling
@@ -6327,6 +6351,19 @@ impl ActorInstance {
     /// points here vs. AC points there).
     pub fn condition_save_bonus(&self) -> i32 {
         CONDITION_SAVE_BONUSES
+            .iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| row.bonus)
+            .sum()
+    }
+
+    /// Flat ability-check delta from active conditions — the check-lane
+    /// sibling of `condition_save_bonus`, walking
+    /// `CONDITION_CHECK_BONUSES` with the identical shape. Read by
+    /// `EncounterInstance::roll_ability_check`, which then burns the
+    /// one-shot rows through `CONSUMED_ON_CHECK`.
+    pub fn condition_check_bonus(&self) -> i32 {
+        CONDITION_CHECK_BONUSES
             .iter()
             .filter(|row| self.has_condition(row.source))
             .map(|row| row.bonus)

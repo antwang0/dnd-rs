@@ -10,7 +10,7 @@ use crate::actions::spells::{
     LESSER_RESTORATION, LIGHTNING_ARROW, SPIKE_GROWTH, ZEPHYR_STRIKE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -216,6 +216,7 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // +5 ft always-on, half a step further than Fast Movement's
         // +10 but sibling on the same lane.
         features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG]),
+        skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -11,7 +11,7 @@ use crate::actions::spells::{
     SUGGESTION, VICIOUS_MOCKERY,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -224,6 +224,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // charges refresh together.
             FONT_OF_INSPIRATION_TAG,
         ]),
+        skills: HashSet::from([Skill::Acrobatics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

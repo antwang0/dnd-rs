@@ -497,3 +497,72 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
             ),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::types::Skill;
+
+    /// The four skills the engine actually rolls, and the templates that
+    /// have to claim them for the lanes reading each one to have any
+    /// content behind it.
+    ///
+    /// This is a data-coverage sweep rather than a behavior test, and it
+    /// exists because the failure it guards against is silent. Every one
+    /// of these skills feeds a rule — Perception the passive score and
+    /// the Search action, Stealth the Hide action and the DC Search
+    /// compares against, Athletics and Acrobatics both halves of every
+    /// shove, grapple, and escape. A skill nothing claims makes its rule
+    /// a coin flip that nobody is ever better at, which reads exactly
+    /// like the rule working.
+    const ENGINE_READ_SKILLS: &[Skill] = &[
+        Skill::Perception,
+        Skill::Stealth,
+        Skill::Athletics,
+        Skill::Acrobatics,
+    ];
+
+    #[test]
+    fn every_skill_the_engine_rolls_is_claimed_by_some_template() {
+        let families = super::pc_template_families();
+        for skill in ENGINE_READ_SKILLS {
+            let claimed = families
+                .iter()
+                .flat_map(|(_, templates)| templates.iter())
+                .any(|t| t.skills.contains(skill));
+            assert!(
+                claimed,
+                "{:?} is read by the engine but no player template is proficient in it",
+                skill
+            );
+        }
+    }
+
+    /// A subclass template clones its family's base wholesale, so the
+    /// skill picks land on every build in the family rather than only on
+    /// the bare chassis. Pinned because the propagation is implicit —
+    /// it rides `..BASE.clone()` in each subclass literal, and a
+    /// subclass that spelled its fields out by hand would quietly drop
+    /// them.
+    #[test]
+    fn subclass_templates_inherit_their_familys_skills() {
+        for (family, templates) in super::pc_template_families() {
+            let Some(base) = templates.first() else {
+                continue;
+            };
+            if base.skills.is_empty() {
+                continue;
+            }
+            for template in &templates[1..] {
+                for skill in &base.skills {
+                    assert!(
+                        template.skills.contains(skill),
+                        "{} ({}) dropped {:?} from the family baseline",
+                        template.name,
+                        family,
+                        skill
+                    );
+                }
+            }
+        }
+    }
+}

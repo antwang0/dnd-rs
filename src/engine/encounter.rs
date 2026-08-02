@@ -680,14 +680,76 @@ const BLANKET_SAVE_ADVANTAGE_CONDITIONS: &[Condition] = &[
     Condition::Foreseen,
 ];
 
-/// Conditions that flip the roll mode on **Strength** saves only, and
-/// which way. Read by `compute_save_mode` inside its single STR gate.
+/// Conditions whose presence combines a blanket **disadvantage** into
+/// the actor's *ability check* mode. Sibling of
+/// `BLANKET_SAVE_DISADVANTAGE_CONDITIONS` one lane over — same row
+/// shape, different roll.
 ///
-/// Sibling to the two blanket tables above, one ability narrower. The
+/// The two lists are deliberately not the same list. RAW splits these
+/// clauses per condition — Poisoned reaches checks and attacks but not
+/// saves, Blessed reaches saves but not checks — so a single shared
+/// cohort would over-apply roughly half its rows on one of the two
+/// lanes.
+const BLANKET_CHECK_DISADVANTAGE_CONDITIONS: &[Condition] = &[
+    // 5e Poisoned: "disadvantage on attack rolls and ability checks."
+    Condition::Poisoned,
+    // 5e Frightened: "disadvantage on ability checks and attack rolls
+    // while the source of its fear is within line of sight." We don't
+    // track LOS-to-the-fear-source, so the clause is unconditional —
+    // the same simplification the attack lane already makes.
+    Condition::Frightened,
+    // 5e Feeblemind: INT and CHA drop to 1. The save lane scopes the
+    // penalty to the three mental abilities; a check is asked for by
+    // ability here too, so the scoping lives in `compute_check_mode`
+    // rather than on this blanket row — see the mental-ability gate
+    // there. Kept off this table for that reason.
+];
+
+/// Conditions whose presence combines a blanket **advantage** into the
+/// actor's ability-check mode. Sibling to
+/// `BLANKET_CHECK_DISADVANTAGE_CONDITIONS`.
+const BLANKET_CHECK_ADVANTAGE_CONDITIONS: &[Condition] = &[
+    // 5e Foresight: "advantage on attack rolls, ability checks, and
+    // saving throws". The attack and save lanes already read the
+    // condition; this is the third clause finally being honored.
+    Condition::Foreseen,
+    // 5e Wild Magic Sorcerer **Tides of Chaos**: "advantage on one
+    // attack roll, ability check, or saving throw". Spent by
+    // `CONSUMED_ON_CHECK` when a check actually collects it, the same
+    // way `CONSUMED_ON_ATTACK` burns it on the attack lane.
+    Condition::TidesOfChaos,
+];
+
+/// One-shot riders a *check* spends when it collects them — the
+/// ability-check sibling of `CONSUMED_ON_ATTACK` / `CONSUMED_ON_SAVE`.
+///
+/// RAW spends a Bardic Inspiration die on one "ability check, attack
+/// roll, or saving throw", so all three lanes have to burn it or one
+/// die pays twice. The check lane is also the *only* lane Guidance was
+/// ever supposed to reach — it maps onto `Inspired` here, and until
+/// checks became real rolls a cast of Guidance could not affect
+/// anything at all.
+const CONSUMED_ON_CHECK: &[Condition] = &[
+    Condition::Inspired,
+    // Tides of Chaos grants its advantage to exactly one roll; the
+    // check lane burns it for the same reason the attack lane does.
+    Condition::TidesOfChaos,
+];
+
+/// Conditions that flip the roll mode on **Strength** checks and
+/// **Strength** saves, and which way. Read by `compute_save_mode` and
+/// `compute_check_mode` inside their single STR gates.
+///
+/// Sibling to the blanket tables above, one ability narrower. The
 /// membership is really one idea seen from four angles: RAW gives
-/// advantage on STR saves to a creature that is angrier or bigger than
-/// it was, and disadvantage to one that is smaller.
-const STRENGTH_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
+/// advantage on STR checks and saves to a creature that is angrier or
+/// bigger than it was, and disadvantage to one that is smaller.
+///
+/// Every row's RAW text names checks and saves in the same breath
+/// ("advantage on Strength checks and Strength saving throws"), which
+/// is why one table serves both callers rather than two tables that
+/// would have to be kept in step by hand.
+const STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     // 5e Barbarian Rage: advantage on STR checks and saves while raging.
     (Condition::Raging, RollMode::Advantage),
     // 5e Enlarge (the growth half of Enlarge / Reduce): "the target has
@@ -2981,7 +3043,7 @@ impl EncounterInstance {
         // and brought three more; a fourth "you are bigger / smaller than
         // you were" effect lands as one row.
         if matches!(ability, AbilityScoreType::Strength) {
-            for (condition, effect) in STRENGTH_SAVE_MODE_CONDITIONS {
+            for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
                     mode = mode.combine(*effect);
                 }
@@ -3881,13 +3943,87 @@ impl EncounterInstance {
     /// Use this for skill-based mechanics where the holder rolls (e.g.
     /// an Athletics shove contest, a Stealth check vs a passive perception
     /// DC, an Investigation roll). Logs the breakdown.
+    /// Advantage / disadvantage state of an ability check `actor_id` is
+    /// about to roll. The check-lane sibling of `compute_save_mode`, and
+    /// the reason `roll_ability_check` is a real d20 roll rather than a
+    /// flat one.
+    ///
+    /// Every clause 5e writes as "…on ability checks" now lands here:
+    /// the blanket cohorts (`BLANKET_CHECK_{DIS,}ADVANTAGE_CONDITIONS`),
+    /// the shared Strength table the save lane also reads, Feeblemind's
+    /// mental-ability scoping, and exhaustion's first tier — which is
+    /// *only* a check penalty and had nowhere to live before this
+    /// function existed.
+    pub fn compute_check_mode(
+        &self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> RollMode {
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+        let mut mode = RollMode::Normal;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        for c in BLANKET_CHECK_DISADVANTAGE_CONDITIONS {
+            if actor.has_condition(*c) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        for c in BLANKET_CHECK_ADVANTAGE_CONDITIONS {
+            if actor.has_condition(*c) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+        }
+        if matches!(ability, AbilityScoreType::Strength) {
+            for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
+                if actor.has_condition(*condition) {
+                    mode = mode.combine(*effect);
+                }
+            }
+        }
+        // 5e Feeblemind: INT and CHA effectively drop to 1, so checks
+        // rolled off the mental abilities suffer. Same scoping the save
+        // lane applies, for the same reason — a feebleminded creature
+        // can still shove someone over.
+        if actor.has_condition(Condition::Feebled)
+            && matches!(
+                ability,
+                AbilityScoreType::Intelligence
+                    | AbilityScoreType::Wisdom
+                    | AbilityScoreType::Charisma
+            )
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        mode
+    }
+
+    /// Roll one ability check: `1d20 + ability modifier + proficiency
+    /// (if `skill` is one the actor is proficient in) + one-shot rider`,
+    /// under the mode `compute_check_mode` derives.
+    ///
+    /// This used to be a bare `1d20 + modifier`. Nothing that 5e says
+    /// about ability checks reached it — not Poisoned's disadvantage,
+    /// not Rage's advantage on Strength checks, not exhaustion, not
+    /// Bardic Inspiration, not Guidance (whose *only* RAW effect is on
+    /// this roll), not Lucky, not Portent. It also had one caller, so
+    /// the gap was invisible: the four contests in the game each rolled
+    /// their own naked d20 beside it and skipped the skill proficiency
+    /// they are named after.
+    ///
+    /// Routed through `roll_d20_lucky` so Portent substitution and the
+    /// Lucky nat-1 reroll cover checks the way RAW says they do — both
+    /// features name "attack roll, saving throw, or ability check" and
+    /// were two-thirds implemented.
     pub fn roll_ability_check(
         &mut self,
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         skill: Option<crate::engine::types::Skill>,
     ) -> i32 {
-        let raw = self.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
+        let mode = self.compute_check_mode(actor_id, ability);
+        let raw = self.roll_d20_lucky(actor_id, mode) as i32;
         let Some(actor) = self.actors.get(&actor_id) else {
             return raw;
         };
@@ -3899,22 +4035,124 @@ impl EncounterInstance {
         } else {
             0
         };
-        let modifier = actor.ability_modifier(ability) + prof;
+        // One-shot check riders (Bardic Inspiration's / Guidance's +3).
+        // The magnitude is folded in by `condition_check_bonus`; what's
+        // captured here is which rider this roll is spending, so the
+        // clear below the log burns exactly those. Mirror image of the
+        // attack and save lanes.
+        let rider_bonus = actor.condition_check_bonus();
+        let spent_riders: Vec<Condition> = CONSUMED_ON_CHECK
+            .iter()
+            .copied()
+            .filter(|&c| actor.has_condition(c))
+            .collect();
+        let modifier = actor.ability_modifier(ability) + prof + rider_bonus;
         let total = raw + modifier;
         let label = match &skill {
             Some(s) => format!(" ({:?})", s),
             None => String::new(),
         };
         self.log(format!(
-            "  {} {:?}{} check: 1d20({}){:+} = {}",
+            "  {} {:?}{} check: 1d20({}){:+} = {}{}",
             actor.name(),
             ability,
             label,
             raw,
             modifier,
             total,
+            mode.log_suffix(),
         ));
+        if !spent_riders.is_empty()
+            && let Some(a) = self.actors.get_mut(&actor_id)
+        {
+            for c in &spent_riders {
+                a.remove_condition(*c);
+            }
+        }
         total
+    }
+
+    /// The best `(ability, skill)` pairing `actor_id` has among
+    /// `options`, judged by the static bonus each would contribute.
+    ///
+    /// 5e lets the defender in a contest choose which of the offered
+    /// skills to answer with ("Strength (Athletics) or Dexterity
+    /// (Acrobatics), the target's choice"), and a defender picks the one
+    /// they are best at. Proficiency is part of that comparison, which
+    /// is why this can't just compare ability modifiers: a rogue with
+    /// +2 DEX and Acrobatics proficiency answers a shove better than the
+    /// same rogue's +3 STR without Athletics.
+    ///
+    /// Ties resolve to the earlier row, so a caller lists its preferred
+    /// option first. Returns `None` only for an empty list or a missing
+    /// actor.
+    pub fn best_check_option(
+        &self,
+        actor_id: usize,
+        options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
+    ) -> Option<(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)> {
+        let actor = self.actors.get(&actor_id)?;
+        options
+            .iter()
+            .max_by_key(|(ability, skill)| {
+                let prof = if actor.has_skill(skill.clone()) {
+                    actor.proficiency_bonus()
+                } else {
+                    0
+                };
+                actor.ability_modifier(*ability) + prof
+            })
+            .cloned()
+    }
+
+    /// Resolve one 5e contested ability check: both sides roll through
+    /// `roll_ability_check`, each with the best pairing they hold out of
+    /// the options offered them, and the challenger wins ties (RAW: "if
+    /// the contest results in a tie, the situation remains the same as
+    /// it was before").
+    ///
+    /// **The** contest chokepoint. Shove, Grapple, and Escape each used
+    /// to open-code `roll(&Dice::new(1,20)) + ability_modifier(...)`
+    /// beside each other, which meant three copies of a rule that was
+    /// wrong in the same three ways every time: no Athletics or
+    /// Acrobatics proficiency (the skills the rules name explicitly), no
+    /// advantage or disadvantage from anything, and no path for a rider
+    /// like Guidance or Bardic Inspiration to reach a roll RAW says it
+    /// covers. Routing all of them here fixes the rule once.
+    ///
+    /// Returns true when the challenger wins.
+    pub fn roll_contest(
+        &mut self,
+        label: &str,
+        challenger_id: usize,
+        challenger_options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
+        defender_id: usize,
+        defender_options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
+    ) -> bool {
+        let Some((c_ability, c_skill)) =
+            self.best_check_option(challenger_id, challenger_options)
+        else {
+            return false;
+        };
+        let Some((d_ability, d_skill)) = self.best_check_option(defender_id, defender_options)
+        else {
+            return false;
+        };
+        let challenger_name = self.actor_name(challenger_id);
+        let defender_name = self.actor_name(defender_id);
+        let challenger_roll = self.roll_ability_check(challenger_id, c_ability, Some(c_skill));
+        let defender_roll = self.roll_ability_check(defender_id, d_ability, Some(d_skill));
+        let won = challenger_roll >= defender_roll;
+        self.log(format!(
+            "  {}: {} {} vs {} {} \u{2014} {}",
+            label,
+            challenger_name,
+            challenger_roll,
+            defender_name,
+            defender_roll,
+            if won { "wins" } else { "loses" }
+        ));
+        won
     }
 
     /// Actor ids sorted ascending. Use when iteration order matters for
@@ -9166,6 +9404,46 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e: "the grapple ends if the grappler is incapacitated." Lift
+    /// `actor_id`'s `Grappled` when the creature named by its back-link
+    /// can no longer hold on — gone from the board, out of the fight, or
+    /// under any condition that blocks their action economy.
+    ///
+    /// A `Grappled` with no back-link is left alone. Those come from
+    /// spells and monster abilities that pin a target with something
+    /// other than a pair of hands (Evard's tentacles, an ooze's
+    /// adhesive, Earthen Grasp's fist), and RAW ends each of those on
+    /// its own terms — a concentration drop, a timer, an escape check —
+    /// not on anybody's condition.
+    fn release_broken_grapples(&mut self, actor_id: usize) {
+        let Some(grappler_id) = self
+            .actors
+            .get(&actor_id)
+            .and_then(|a| a.linked_by(Condition::Grappled))
+        else {
+            return;
+        };
+        let still_holding = self.actors.get(&grappler_id).is_some_and(|g| {
+            g.is_combat_active()
+                && !g
+                    .conditions()
+                    .keys()
+                    .any(|c| c.blocks_action_economy())
+        });
+        if still_holding {
+            return;
+        }
+        let name = self.actor_name(actor_id);
+        let grappler_name = self.actor_name(grappler_id);
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.remove_condition(Condition::Grappled);
+        }
+        self.log(format!(
+            "  {} can no longer hold on \u{2014} {} slips out of the grapple.",
+            grappler_name, name
+        ));
+    }
+
     /// 5e repeated saves: at the end of each turn, targets of certain
     /// hold / control spells get to repeat the saving throw. On a pass
     /// the condition is removed and the caster's concentration (if
@@ -9305,6 +9583,14 @@ impl EncounterInstance {
             // drops. Runs after DoTs so the damage for this round has
             // already landed; matches RAW timing.
             self.apply_round_end_saves(id);
+            // 5e: "the grapple ends if the grappler is incapacitated."
+            // Checked here rather than at the moment the grappler goes
+            // down, because the ways to become incapacitated are many
+            // (Stunned, Paralyzed, Unconscious, Hold Person, a hundred
+            // spells) and the ways to stop being incapacitated are just
+            // as many — a round-end sweep catches all of them without
+            // any of them having to know grapples exist.
+            self.release_broken_grapples(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).
@@ -33606,6 +33892,246 @@ mod tests {
             total,
             mod_str
         );
+    }
+
+    /// Every clause 5e writes as "…on ability checks" reaches the check
+    /// lane, and only the check lane. Poisoned is the debuff half, Rage
+    /// the buff half, and Rage is scoped to Strength — a raging
+    /// barbarian's Wisdom check is an ordinary roll.
+    #[test]
+    fn check_mode_reads_the_check_clauses_and_scopes_the_strength_ones() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_check_mode(g, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_check_mode(g, AbilityScoreType::Wisdom),
+            RollMode::Disadvantage,
+            "poisoned imposes disadvantage on ability checks"
+        );
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .remove_condition(Condition::Poisoned);
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_check_mode(g, AbilityScoreType::Strength),
+            RollMode::Advantage,
+            "rage grants advantage on Strength checks"
+        );
+        assert_eq!(
+            e.compute_check_mode(g, AbilityScoreType::Wisdom),
+            RollMode::Normal,
+            "rage says nothing about a Wisdom check"
+        );
+    }
+
+    /// A Bardic Inspiration / Guidance die is worth +3 on an ability
+    /// check and is spent by it. The spend is the load-bearing half:
+    /// without it the same die would pay for a check *and* the swing
+    /// after it, which is exactly the bug the attack and save lanes
+    /// already guard against.
+    ///
+    /// Guidance had no other lane at all — it installs `Inspired` and
+    /// its whole RAW effect is on ability checks, so before the check
+    /// lane existed a cast of it could not change a number in the game.
+    #[test]
+    fn an_inspiration_die_lands_on_a_check_and_is_spent_by_it() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Inspired, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&g].condition_check_bonus(), 3);
+        let mod_wis = e.actors[&g].ability_modifier(AbilityScoreType::Wisdom);
+        let total = e.roll_ability_check(g, AbilityScoreType::Wisdom, None);
+        assert!(
+            total > mod_wis + 3 && total <= mod_wis + 3 + 20,
+            "check total {} should carry the +3 die (mod {})",
+            total,
+            mod_wis
+        );
+        assert!(
+            !e.actors[&g].has_condition(Condition::Inspired),
+            "the check should have spent the die"
+        );
+    }
+
+    /// The defender in a contest answers with whichever pairing they are
+    /// actually best at, and proficiency counts toward that comparison
+    /// rather than the ability modifier alone.
+    ///
+    /// Two creatures at opposite ends of the STR/DEX axis pin both
+    /// branches: an ogre answers a shove by bracing (Athletics), a
+    /// goblin by twisting away (Acrobatics).
+    #[test]
+    fn a_contest_defender_answers_with_their_better_skill() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::types::Skill;
+        const OPTIONS: &[(AbilityScoreType, Skill)] = &[
+            (AbilityScoreType::Strength, Skill::Athletics),
+            (AbilityScoreType::Dexterity, Skill::Acrobatics),
+        ];
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.best_check_option(ogre, OPTIONS).map(|(a, _)| a),
+            Some(AbilityScoreType::Strength)
+        );
+        assert_eq!(
+            e.best_check_option(goblin, OPTIONS).map(|(a, _)| a),
+            Some(AbilityScoreType::Dexterity)
+        );
+        // Proficiency is a term in the comparison, not just the ability
+        // modifier. The ogre is the case that proves it: offered its own
+        // Strength without a skill against its (much worse) Dexterity
+        // *with* a proficiency it holds, the bonus has to be able to
+        // move the answer. Nothing in the game gives an ogre Acrobatics,
+        // so the pin is on the arithmetic — the chosen pairing's total
+        // is the maximum available.
+        let best = e.best_check_option(ogre, OPTIONS).unwrap();
+        let actor = &e.actors[&ogre];
+        let score = |(ability, skill): &(AbilityScoreType, Skill)| {
+            actor.ability_modifier(*ability)
+                + if actor.has_skill(skill.clone()) {
+                    actor.proficiency_bonus()
+                } else {
+                    0
+                }
+        };
+        assert_eq!(
+            score(&best),
+            OPTIONS.iter().map(score).max().unwrap(),
+            "the chosen pairing should be the highest-scoring one on offer"
+        );
+    }
+
+    /// The Hide action rolls the Stealth check it is named after, and a
+    /// creature proficient in Stealth collects the bonus. It used to
+    /// roll a Dexterity *saving throw*, which reads off an entirely
+    /// different set of modifiers and never once touched Stealth — while
+    /// `Search`, standing on the other side of the same contest, was
+    /// already folding that very proficiency into the DC.
+    #[test]
+    fn hiding_collects_the_stealth_proficiency_it_is_named_after() {
+        use crate::actions::default_actions::HIDE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::Skill;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&goblin].has_skill(Skill::Stealth),
+            "the MM goblin is proficient in Stealth"
+        );
+        let before = e.messages().len();
+        let effects = HIDE.side_effects(&mut e, goblin, None, None, None);
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        // The roll itself is a die, so the pin is on which roll it is:
+        // the check lane names its skill in the log, and the save lane
+        // has no skill to name.
+        let logged: Vec<&String> = e.messages()[before..].iter().collect();
+        assert!(
+            logged.iter().any(|m| m.contains("(Stealth) check")),
+            "hide should roll a Stealth check, got {:?}",
+            logged
+        );
+        // And the roll carries the proficiency: floor and ceiling of the
+        // band a proficient goblin's Stealth check can land in.
+        let actor = &e.actors[&goblin];
+        let expected = actor.ability_modifier(AbilityScoreType::Dexterity)
+            + actor.proficiency_bonus();
+        let total = e.roll_ability_check(
+            goblin,
+            AbilityScoreType::Dexterity,
+            Some(Skill::Stealth),
+        );
+        assert!(
+            total > expected && total <= expected + 20,
+            "stealth check {} outside the proficient band around {}",
+            total,
+            expected
+        );
+    }
+
+    /// A grapple names its grappler, and the hold ends the moment that
+    /// creature can no longer hold on. Stunning them is the cheapest
+    /// way to say "incapacitated" — RAW ends the grapple outright.
+    #[test]
+    fn a_grapple_ends_when_the_grappler_is_incapacitated() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        for effect in crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            goblin,
+            ogre,
+            ConditionTimer::Rounds(10),
+        ) {
+            effect.apply(&mut e);
+        }
+        assert_eq!(e.actors[&goblin].linked_by(Condition::Grappled), Some(ogre));
+        // Grappler still standing and free: the hold survives the sweep.
+        e.release_broken_grapples(goblin);
+        assert!(e.actors[&goblin].has_condition(Condition::Grappled));
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        e.release_broken_grapples(goblin);
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Grappled),
+            "a stunned grappler cannot keep holding on"
+        );
+    }
+
+    /// An unlinked hold — an ooze's adhesive, a spell's tentacles — has
+    /// nobody to be incapacitated, so the sweep leaves it alone. Its
+    /// timer and its escape check are what end it.
+    #[test]
+    fn an_unlinked_hold_survives_the_grapple_sweep() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Grappled, ConditionTimer::Rounds(10));
+        e.release_broken_grapples(goblin);
+        assert!(e.actors[&goblin].has_condition(Condition::Grappled));
     }
 
     /// Couatl template has the bite + sleep gaze action pair and the

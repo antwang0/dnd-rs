@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BANDIT_CAPTAIN_MULTI, HEAVY_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -40,6 +40,7 @@ pub static BANDIT_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
             AbilityScoreType::Wisdom,
         ]),
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Athletics]),
         ..CreatureTemplate::defaults()
     }
 });
