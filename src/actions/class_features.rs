@@ -12941,6 +12941,21 @@ pub static SHADOW_ARROW: LazyLock<ExclusivePrime> = LazyLock::new(|| ExclusivePr
 /// charge is doing the limiting work either way.
 pub const CURVING_SHOT_TAG: &str = "fighter.curving_shot";
 
+/// Passive tag for the Arcane Archer Fighter's **Ever-Ready Shot**
+/// (subclass level 15, XGE): "when you roll initiative and have no uses
+/// of Arcane Shot remaining, you regain one use of it."
+///
+/// No action of its own — `EncounterInstance::refill_ever_ready_shot`
+/// fires it from the roll-initiative walk in `initialize`, alongside
+/// the Thief's Reflexes extra turn slot, which is the engine's only
+/// other feature triggered by those words.
+///
+/// Worth noting for what it needed: "have no uses remaining" was not a
+/// state the engine could describe until the charge lane became a
+/// count. In a set, a spent tag was gone, and an archer who had emptied
+/// the pool looked exactly like one who never carried the feature.
+pub const EVER_READY_SHOT_TAG: &str = "fighter.ever_ready_shot";
+
 /// Every Arcane Shot action, in the order a template should carry them.
 /// Mirrors `ARCANE_SHOTS` (the condition family) one-for-one —
 /// `every_exclusive_prime_is_in_its_own_family` pins the two against

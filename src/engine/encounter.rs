@@ -10587,25 +10587,62 @@ impl EncounterInstance {
             }
         }
         self.initiative_tracker.initialize_actors(&self.actors);
-        // Extra slots are inserted after the base queue is sorted, in
-        // actor-id order, so a table with two Thieves in it lays out the
-        // same way on every run of the same seed.
+        // Features whose RAW trigger is the words "when you roll
+        // initiative". Walked in actor-id order, after the base queue is
+        // sorted, so a table with two Thieves in it lays out the same
+        // way on every run of the same seed.
         for id in self.sorted_actor_ids() {
             let Some(actor) = self.actors.get(&id) else {
                 continue;
             };
-            if !actor.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG) {
-                continue;
+            if actor.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG) {
+                let (name, init, dex) = (
+                    actor.name().to_string(),
+                    actor.initiative().expect("Expected initiative"),
+                    actor.initiative_mod(),
+                );
+                self.grant_extra_turn_slot(id, name, init, dex);
             }
-            let (name, init, dex) = (
-                actor.name().to_string(),
-                actor.initiative().expect("Expected initiative"),
-                actor.initiative_mod(),
-            );
-            self.grant_extra_turn_slot(id, name, init, dex);
+            self.refill_ever_ready_shot(id);
         }
         self.initialized = true;
         Ok(())
+    }
+
+    /// 5e Arcane Archer Fighter **Ever-Ready Shot** (subclass level 15):
+    /// "when you roll initiative and have no uses of Arcane Shot
+    /// remaining, you regain one use of it."
+    ///
+    /// The one feature in the engine that could not have existed before
+    /// the charge lane learned to count, because "no uses remaining" and
+    /// "does not have the feature" were the same state in a set: a
+    /// spent tag was simply gone, and there was nothing to tell the
+    /// difference between an archer who had emptied the pool and one who
+    /// never had it. `features_max` keeps the shape of the pool and
+    /// `features_remaining` keeps what is in it, so the question RAW
+    /// asks is now answerable.
+    ///
+    /// Fires only on the empty pool, per RAW — an archer walking into a
+    /// fight with one of two charges left does not get topped up.
+    /// Test-only door onto `refill_ever_ready_shot`. The real trigger
+    /// is inside `initialize`, which a fixture-built encounter has
+    /// already run and will refuse to run twice.
+    #[cfg(test)]
+    pub fn refill_ever_ready_shot_for_test(&mut self, actor_id: usize) {
+        self.refill_ever_ready_shot(actor_id);
+    }
+
+    fn refill_ever_ready_shot(&mut self, actor_id: usize) {
+        use crate::actions::class_features::{ARCANE_SHOT_TAG, EVER_READY_SHOT_TAG};
+        let refilled = self.actors.get_mut(&actor_id).is_some_and(|actor| {
+            actor.has_passive_feature(EVER_READY_SHOT_TAG)
+                && actor.feature_charges_remaining(ARCANE_SHOT_TAG) == 0
+                && actor.restore_feature_charge(ARCANE_SHOT_TAG)
+        });
+        if refilled {
+            let name = self.actor_name(actor_id);
+            self.log(format!("{} always has one arrow left.", name));
+        }
     }
 
     /// 5e Thief Rogue **Thief's Reflexes** (subclass level 17): "you can
@@ -75889,6 +75926,51 @@ mod tests {
                 log
             );
         }
+    }
+
+    /// Ever-Ready Shot hands back exactly one charge to an archer who
+    /// rolled initiative with an empty pool, and nothing to one who
+    /// still had something on the string.
+    ///
+    /// The second half is the part that needed a counting charge lane:
+    /// "no uses remaining" is only distinguishable from "one of two
+    /// left" if the pool has a size and a level. A set could not have
+    /// told those apart, and would have topped the archer up either way
+    /// — or, just as wrong, never.
+    #[test]
+    fn ever_ready_shot_refills_only_an_empty_quiver() {
+        use crate::actions::class_features::ARCANE_SHOT_TAG;
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+
+        // Spend `drain` charges before initiative, then read the pool
+        // back on the other side of it.
+        let after_initiative = |drain: u32| -> u32 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let archer = e
+                .instantiate_creature(
+                    &ARCANE_ARCHER_FIGHTER_TEMPLATE,
+                    Coordinate::new(5, 5),
+                    0,
+                    0,
+                )
+                .unwrap();
+            for _ in 0..drain {
+                e.actors.get_mut(&archer).unwrap().spend_feature(ARCANE_SHOT_TAG);
+            }
+            // `ei_with_terrain` has already initialized; a second call
+            // is refused, so drive the hook directly — it is the same
+            // function the roll-initiative walk calls.
+            e.refill_ever_ready_shot_for_test(archer);
+            e.actors[&archer].feature_charges_remaining(ARCANE_SHOT_TAG)
+        };
+
+        assert_eq!(after_initiative(0), 2, "a full quiver is left alone");
+        assert_eq!(after_initiative(1), 1, "and so is a half-spent one");
+        assert_eq!(
+            after_initiative(2),
+            1,
+            "an empty one gets exactly one arrow back, not the whole pool"
+        );
     }
 
     /// The Arcane Shot pool is two charges deep, drains one at a time,

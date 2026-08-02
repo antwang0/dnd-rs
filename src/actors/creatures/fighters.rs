@@ -833,18 +833,23 @@ pub static RUNE_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 /// melee still has a scimitar and a reason to trip somebody with it —
 /// but the arcane shots are the reason to field this template.
 ///
+/// **Ever-Ready Shot** (lv15) hands a charge back at initiative to an
+/// archer who walked in empty — the engine's roll-initiative walk in
+/// `EncounterInstance::initialize` is where it fires, next to the
+/// Thief's second turn slot.
+///
 /// Left out: **Magic Arrow** (lv7) makes the archer's arrows magical for
 /// overcoming resistance, and the engine's damage pipeline has no
 /// non-magical-physical carve-out for it to matter against;
-/// **Ever-Ready Shot** (lv15) hands back a charge on initiative, which
-/// needs a roll-initiative hook the encounter loop does not expose;
 /// **Arcane Archer Lore** is a skill ribbon.
 ///
 /// Glyph 'A' — for **A**rcane Archer. Distinct from baseline Fighter
 /// 'F', Champion 'C', Samurai 'S', Eldritch Knight 'E', Psi Warrior 'P',
 /// Cavalier 'V' and Rune Knight 'R'.
 pub static ARCANE_ARCHER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    use crate::actions::class_features::{ARCANE_SHOT_ACTIONS, ARCANE_SHOT_TAG, CURVING_SHOT_TAG};
+    use crate::actions::class_features::{
+        ARCANE_SHOT_ACTIONS, ARCANE_SHOT_TAG, CURVING_SHOT_TAG, EVER_READY_SHOT_TAG,
+    };
     use crate::actions::monster_attacks::LONGBOW;
     // The bow goes on ahead of the inherited scimitar so the action list
     // reads primary-first, which is also the order the prompt's
@@ -857,6 +862,7 @@ pub static ARCANE_ARCHER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     let mut features = FIGHTER_TEMPLATE.features.clone();
     features.insert(ARCANE_SHOT_TAG);
     features.insert(CURVING_SHOT_TAG);
+    features.insert(EVER_READY_SHOT_TAG);
     CreatureTemplate {
         name: "Arcane Archer",
         glyph: 'A',
