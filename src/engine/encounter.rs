@@ -3565,15 +3565,25 @@ impl EncounterInstance {
         // pushes past most mid-DC saves.
         if !outcome.passed() {
             let mut boosted_pass: Option<SaveOutcome> = None;
+            // How far under the DC the save landed. A source whose die
+            // cannot reach that far is skipped rather than spent — the
+            // same judgement `fire_missed_attack_boost` makes on the
+            // attack lane, for the same reason: RAW permits adding the
+            // die to a save it has no chance of rescuing, but nobody
+            // holding the charge would, and here the engine is holding
+            // it for them.
+            let shortfall = dc - total;
             for source in FAILED_SAVE_ADD_DIE_SOURCES {
+                if shortfall > source.dice.max_roll() as i32 {
+                    continue;
+                }
                 let Some(actor) = self.actors.get_mut(&actor_id) else { break; };
-                // `spend_feature` returns true iff the per-rest charge
-                // was actually consumed (HashSet::remove semantics), so
-                // no separate `feature_available` check is needed —
-                // an unspent tag on the actor is exactly the pass-gate
-                // case here. Pre-cleanup this ran through a per-row
-                // `consume` closure that open-coded the same
-                // check-then-spend body per row.
+                // `spend_feature` returns true iff a charge was actually
+                // there to take, so no separate `feature_available`
+                // check is needed — an unspent tag on the actor is
+                // exactly the pass-gate case here. Pre-cleanup this ran
+                // through a per-row `consume` closure that open-coded
+                // the same check-then-spend body per row.
                 if !actor.spend_feature(source.tag) {
                     continue;
                 }
@@ -63427,13 +63437,30 @@ mod tests {
             e.actors[&id].feature_available(DARK_ONES_OWN_LUCK_TAG),
             "DOOL charge starts full"
         );
-        // Force the save to fail: DC 100 is unreachable on any d20 +
-        // modifier + 1d10 bonus envelope, so DOOL fires (spending the
-        // charge) but doesn't pass.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // A DC of `modifier + 11` fails on any d20 face of 10 or less
+        // and is within a d10's reach from every one of them — the
+        // shortfall is `11 - raw`, which tops out at 10 on a natural 1.
+        // The old fixture used DC 100, which does force a failure but
+        // is a failure the boost cannot touch, and the cohort no longer
+        // spends a charge on one of those.
+        let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 11;
+        let mut spent = false;
+        for seed in 0u64..32 {
+            e.roller = FastRandRoller::with_seed(seed);
+            let outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if !e.actors[&id].feature_available(DARK_ONES_OWN_LUCK_TAG) {
+                spent = true;
+                break;
+            }
+            assert!(
+                outcome.passed(),
+                "seed {}: the save failed inside the boost's reach, so the charge should have gone",
+                seed
+            );
+        }
         assert!(
-            !e.actors[&id].feature_available(DARK_ONES_OWN_LUCK_TAG),
-            "DOOL tag spent after first failed save"
+            spent,
+            "32 seeds should have produced at least one rescuable failure"
         );
     }
 
@@ -63468,15 +63495,20 @@ mod tests {
         use crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG;
         use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
         use crate::engine::dice::FastRandRoller;
-        use crate::engine::types::AbilityScoreType;
 
         let mut e = ei_with_terrain(15, 15, &[]);
         e.roller = FastRandRoller::with_seed(11);
         let id = e
             .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Burn the charge.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // Burn the charge directly. Rolling for it would mean picking a
+        // DC the boost can reach and then a seed that fails against it,
+        // which is `dark_ones_own_luck_spends_charge_on_failed_save`'s
+        // job — this test is about the refresh.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .spend_feature(DARK_ONES_OWN_LUCK_TAG);
         assert!(!e.actors[&id].feature_available(DARK_ONES_OWN_LUCK_TAG));
         let mut roller = FastRandRoller::with_seed(0);
         e.actors.get_mut(&id).unwrap().short_rest(&mut roller);
@@ -63508,7 +63540,11 @@ mod tests {
             let id = e
                 .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            let dc = 15;
+            // Every failure against this DC is inside the 1d10's
+            // reach — see `dark_ones_own_luck_spends_charge_on_failed_save`
+            // for why `modifier + 11` is the number — so "the save
+            // failed" and "the charge stayed" cannot both be true.
+            let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 11;
             let outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
             let charge_left = e.actors[&id].feature_available(DARK_ONES_OWN_LUCK_TAG);
             // Invariant: if the outer save passed AND the charge is
@@ -63580,14 +63616,76 @@ mod tests {
             e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
             "FBTG charge starts full"
         );
-        // Force the save to fail: DC 100 is unreachable on any d20 +
-        // modifier + 2d4 bonus envelope, so FBTG fires (spending the
-        // charge) but doesn't pass.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // The boost is 2d4, so a DC of `modifier + 9` fails on any face
+        // of 8 or less and is inside the boost's reach from every one of
+        // them. DC 100 forces a failure too, but one the boost cannot
+        // touch — and the cohort no longer spends a charge on those.
+        let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 9;
+        let mut spent = false;
+        for seed in 0u64..32 {
+            e.roller = FastRandRoller::with_seed(seed);
+            let outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if !e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG) {
+                spent = true;
+                break;
+            }
+            assert!(
+                outcome.passed(),
+                "seed {}: the save failed inside the boost's reach, so the charge should have gone",
+                seed
+            );
+        }
         assert!(
-            !e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
-            "FBTG tag spent after first failed save"
+            spent,
+            "32 seeds should have produced at least one rescuable failure"
         );
+    }
+
+    /// A failed save the boost could never rescue leaves the charge
+    /// alone.
+    ///
+    /// The attack lane's twin is
+    /// `a_hopeless_miss_does_not_burn_the_rescue_charge`, and the
+    /// reasoning is the same: RAW lets the holder add the die to a roll
+    /// with no chance, but the holder is a person looking at the gap and
+    /// the engine is deciding for them. DC 100 is the fixture three of
+    /// these tests used to use precisely because nothing could reach it
+    /// — which is exactly the case that should now cost nothing.
+    #[test]
+    fn a_hopeless_save_does_not_burn_the_add_die_charge() {
+        use crate::actions::class_features::{DARK_ONES_OWN_LUCK_TAG, FAVORED_BY_THE_GODS_TAG};
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        for (template, tag, label) in [
+            (
+                &*FIEND_WARLOCK_TEMPLATE,
+                DARK_ONES_OWN_LUCK_TAG,
+                "dark one's own luck",
+            ),
+            (
+                &*DIVINE_SOUL_SORCERER_TEMPLATE,
+                FAVORED_BY_THE_GODS_TAG,
+                "favored by the gods",
+            ),
+        ] {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let id = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            for seed in 0u64..8 {
+                e.roller = FastRandRoller::with_seed(seed);
+                let outcome = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+                assert!(!outcome.passed(), "DC 100 must fail");
+            }
+            assert!(
+                e.actors[&id].feature_available(tag),
+                "{} should still be held after eight unreachable saves",
+                label
+            );
+        }
     }
 
     /// FBTG doesn't fire on a passing save — the tag stays untouched.
@@ -63621,15 +63719,19 @@ mod tests {
         use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
         use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
         use crate::engine::dice::FastRandRoller;
-        use crate::engine::types::AbilityScoreType;
 
         let mut e = ei_with_terrain(15, 15, &[]);
         e.roller = FastRandRoller::with_seed(11);
         let id = e
             .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Burn the charge.
-        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        // Burn the charge directly — picking a DC the boost can reach
+        // and a seed that fails against it is
+        // `favored_by_the_gods_spends_charge_on_failed_save`'s job.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .spend_feature(FAVORED_BY_THE_GODS_TAG);
         assert!(!e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG));
         let mut roller = FastRandRoller::with_seed(0);
         e.actors.get_mut(&id).unwrap().short_rest(&mut roller);
@@ -63658,7 +63760,9 @@ mod tests {
             let id = e
                 .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            let dc = 15;
+            // Inside the 2d4's reach from every failing face — see
+            // `favored_by_the_gods_spends_charge_on_failed_save`.
+            let dc = e.actors[&id].save_modifier(AbilityScoreType::Wisdom) + 9;
             let outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
             let charge_left = e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG);
             let charge_burnt = !charge_left;
@@ -66975,22 +67079,31 @@ mod tests {
         // template still ships the tag (pre-condition for the cohort
         // to fire the tag-based branch).
         assert!(e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG));
-        // A high-DC WIS save on a low-WIS caster forces a fail with
-        // high probability; the cohort's boost consumes the charge.
-        // The concrete pass/fail outcome depends on the die roll, but
-        // the FBTG charge should be consumed after any failing initial
-        // roll — verify by rolling many saves at a DC so high the
-        // initial roll always fails.
-        let dc = 40;
-        let _ = e.roll_save_with_extra_mode(
-            sorcerer,
-            crate::engine::types::AbilityScoreType::Wisdom,
-            dc,
-            RollMode::Normal,
-        );
+        // The boost is 2d4, so a DC of `modifier + 9` fails on any face
+        // of 8 or less and is inside the boost's reach from every one of
+        // them. The old fixture used DC 40, which forces a failure the
+        // boost cannot touch — and the cohort no longer spends a charge
+        // on one of those, so the DC has to be one the feature would
+        // actually answer.
+        use crate::engine::types::AbilityScoreType;
+        let dc = e.actors[&sorcerer].save_modifier(AbilityScoreType::Wisdom) + 9;
+        let mut spent = false;
+        for seed in 0u64..32 {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let _ = e.roll_save_with_extra_mode(
+                sorcerer,
+                AbilityScoreType::Wisdom,
+                dc,
+                RollMode::Normal,
+            );
+            if !e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG) {
+                spent = true;
+                break;
+            }
+        }
         assert!(
-            !e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG),
-            "cohort's tag-based spend should consume the Favored by the Gods charge on a failed save"
+            spent,
+            "cohort's tag-based spend should consume the Favored by the Gods charge on a rescuable failed save"
         );
     }
 
@@ -75892,6 +76005,52 @@ mod tests {
             20,
             "but RAW says weapon attacks, so the spell lane is untouched"
         );
+    }
+
+    /// A missed-attack charge is not spent on a miss it could never
+    /// rescue.
+    ///
+    /// The die is a d8, so a swing that came up more than eight short
+    /// of the AC is out of its reach no matter what it rolls. RAW
+    /// permits the spend — the holder adds the die and finds out — but
+    /// the engine is choosing on the holder's behalf, and nobody at a
+    /// table burns a once-per-rest charge to miss by less.
+    ///
+    /// The fixture is an archer with an AC-1 target (every shot hits,
+    /// so the gate never comes up) versus an AC-40 one (every shot
+    /// misses by miles). The first leaves the charge alone because
+    /// there was no miss; the second leaves it alone because there was
+    /// no point.
+    #[test]
+    fn a_hopeless_miss_does_not_burn_the_rescue_charge() {
+        use crate::actions::class_features::CURVING_SHOT_TAG;
+        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        for seed in 0..12u64 {
+            let mut e = ei_with_terrain_seeded(20, 15, &[], seed);
+            let archer = e
+                .instantiate_creature(
+                    &ARCANE_ARCHER_FIGHTER_TEMPLATE,
+                    Coordinate::new(2, 7),
+                    0,
+                    0,
+                )
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 7), 1, 0)
+                .unwrap();
+            // Out of reach of anything a d8 could bridge.
+            e.actors.get_mut(&ogre).unwrap().set_base_ac(40);
+            let longbow = e.actors[&archer].find_action("longbow").unwrap();
+            for eff in longbow.side_effects(&mut e, archer, Some(&vec![ogre]), None, None) {
+                eff.apply(&mut e);
+            }
+            assert!(
+                e.actors[&archer].feature_available(CURVING_SHOT_TAG),
+                "seed {}: a d8 cannot bridge a gap this wide, so it should not have been rolled",
+                seed
+            );
+        }
     }
 
     /// Curving Shot rescues a bow shot that missed, once per rest.

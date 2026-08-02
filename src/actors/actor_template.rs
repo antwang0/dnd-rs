@@ -4709,6 +4709,20 @@ impl ActorInstance {
         self.has_savage_attacks = value;
     }
 
+    /// Test-only setter for the base armor class. The item / condition
+    /// / style lanes still stack on top through `armor_class`, so this
+    /// moves the floor rather than pinning the total.
+    ///
+    /// For tests that need a swing to certainly hit or certainly miss
+    /// regardless of the die — the bestiary tops out around AC 22, which
+    /// is not far enough above a competent attacker's bonus to make
+    /// "misses by more than a d8 could cover" a fact rather than a
+    /// tendency.
+    #[cfg(test)]
+    pub fn set_base_ac(&mut self, value: u32) {
+        self.base_ac = value;
+    }
+
     /// Test-only setter for the Dwarven Resilience flag.
     #[cfg(test)]
     pub fn set_dwarven_resilience(&mut self, value: bool) {

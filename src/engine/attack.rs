@@ -1353,7 +1353,7 @@ pub fn resolve_attack_outcome_with_rider(
     // after the Seeking Spell reroll so a caster holding both spends the
     // free reroll before the charge.
     if !hit && !is_nat_one {
-        let boost = fire_missed_attack_boost(encounter, &p);
+        let boost = fire_missed_attack_boost(encounter, &p, target_ac - attack_total);
         if boost > 0 {
             attack_total += boost;
             hit = attack_total >= target_ac;
@@ -2782,9 +2782,23 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
 /// Called only on a miss that wasn't a natural 1 — a nat 1 misses no
 /// matter what the total says, so spending a charge on it would burn the
 /// charge for nothing.
-fn fire_missed_attack_boost(encounter: &mut EncounterInstance, p: &AttackParams) -> i32 {
+///
+/// `shortfall` is how far under the AC the swing landed. A source whose
+/// die cannot reach that far is skipped rather than spent: RAW lets the
+/// holder add the die to a roll it has no chance of rescuing, but the
+/// holder is a person who can see the gap, and the engine is deciding on
+/// their behalf. Burning a once-per-rest charge to turn a miss by
+/// eleven into a miss by four is not a decision anyone at a table
+/// makes. Skipping leaves the charge for the next swing, which is what
+/// the feature is for.
+fn fire_missed_attack_boost(
+    encounter: &mut EncounterInstance,
+    p: &AttackParams,
+    shortfall: i32,
+) -> i32 {
     let Some(source) = MISSED_ATTACK_BOOSTS.iter().find(|source| {
         (source.eligible)(p)
+            && shortfall <= source.dice.max_roll() as i32
             && encounter
                 .actors
                 .get(&p.caster_id)
