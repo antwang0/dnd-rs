@@ -29611,52 +29611,61 @@ mod tests {
         assert_eq!(e.actors[&caster].location(), dest);
     }
 
-    /// Wall of Fire: every enemy in the burst takes the rolled fire
-    /// damage and is left Burning for follow-up DOT.
+    /// Wall of Fire is a place, not an event: the sheet of flame stays
+    /// on the board, burns whoever was standing in it when it appeared,
+    /// and burns them again every turn they spend in it.
     #[test]
-    fn wall_of_fire_damages_and_burns_enemies() {
+    fn wall_of_fire_stands_on_the_board_and_keeps_burning() {
         use crate::actions::spells::WALL_OF_FIRE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
-        use crate::conditions::Condition;
 
         let mut e = ei_with_terrain(30, 30, &[]);
         let caster = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
+        // An ogre has enough hit points to survive two 5d8 rolls, so
+        // the second charge is observable rather than a corpse.
         let foe = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
             .unwrap();
         let foe_hp = e.actors[&foe].hitpoints();
-        let effects = WALL_OF_FIRE.side_effects(
+        for ef in WALL_OF_FIRE.side_effects(
             &mut e,
             caster,
             None,
             Some(&vec![Coordinate::new(10, 10)]),
             None,
-        );
-        for ef in effects {
+        ) {
             ef.apply(&mut e);
         }
-        // Hit dropped HP (or killed); either way, hp <= original.
-        let after_hp = e.actors.get(&foe).map(|a| a.hitpoints()).unwrap_or(0);
-        assert!(after_hp < foe_hp, "wall of fire didn't damage foe");
-        // Burning is applied to anyone left standing in the burst.
-        if let Some(a) = e.actors.get(&foe)
-            && a.is_combat_active()
-        {
-            assert!(a.has_condition(Condition::Burning));
-        }
+        assert_eq!(e.zones().len(), 1, "the wall is standing ground");
+        assert!(e.tile_is_hazardous(Coordinate::new(10, 10)));
+        let after_cast = e.actors[&foe].hitpoints();
+        assert!(after_cast < foe_hp, "the wall burns who it appears around");
+        // "…or ends its turn there." A turn spent in the flames costs
+        // again.
+        e.start_turn_for(foe);
+        assert!(
+            e.actors.get(&foe).map(|a| a.hitpoints()).unwrap_or(0) < after_cast,
+            "a turn started in the wall is charged again"
+        );
+        // And the concentration anchor still reaches it.
+        e.drop_concentration(caster);
+        assert!(e.zones().is_empty());
     }
 
-    /// Wall of Fire is enemy-only: allies inside the burst aren't burned
-    /// (5e RAW: caster picks which side of the wall heats up).
+    /// A zone is friend-or-foe blind, and the wall spells are no
+    /// exception — the party walks around its own wall of fire. Pinned
+    /// because the old one-shot install deliberately spared allies, and
+    /// the layer's whole placement discipline (and the AI's, which
+    /// prices harmful ground into both pathing and burst placement)
+    /// rests on the area not checking allegiance.
     #[test]
-    fn wall_of_fire_spares_allies() {
+    fn a_wall_of_fire_does_not_check_whose_side_you_are_on() {
         use crate::actions::spells::WALL_OF_FIRE;
-        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-        use crate::conditions::Condition;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
         let mut e = ei_with_terrain(30, 30, &[]);
         let caster = e
@@ -29666,18 +29675,56 @@ mod tests {
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 1)
             .unwrap();
         let ally_hp = e.actors[&ally].hitpoints();
-        let effects = WALL_OF_FIRE.side_effects(
+        for ef in WALL_OF_FIRE.side_effects(
             &mut e,
             caster,
             None,
             Some(&vec![Coordinate::new(10, 10)]),
             None,
-        );
-        for ef in effects {
+        ) {
             ef.apply(&mut e);
         }
-        assert_eq!(e.actors[&ally].hitpoints(), ally_hp, "ally took friendly fire");
-        assert!(!e.actors[&ally].has_condition(Condition::Burning));
+        assert!(
+            e.actors[&ally].hitpoints() < ally_hp,
+            "a wall of fire dropped on your own fighter burns your own fighter"
+        );
+    }
+
+    /// Blade Barrier and Wall of Thorns are places too, and the thorns
+    /// are bad ground on top of being a hazard.
+    #[test]
+    fn the_other_two_wall_spells_are_standing_ground() {
+        use crate::actions::spells::{BLADE_BARRIER, WALL_OF_THORNS};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 6), 0, 0)
+            .unwrap();
+        let blades = Coordinate::new(12, 12);
+        let thorns = Coordinate::new(30, 30);
+        for ef in BLADE_BARRIER.side_effects(&mut e, cleric, None, Some(&vec![blades]), None) {
+            ef.apply(&mut e);
+        }
+        for ef in WALL_OF_THORNS.side_effects(&mut e, druid, None, Some(&vec![thorns]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 2);
+        assert!(e.tile_is_hazardous(blades));
+        assert!(e.tile_is_hazardous(thorns));
+        // "For every 1 foot a creature moves through the wall, it must
+        // spend 4 feet of movement" — bad ground, which the blades are
+        // not.
+        assert_eq!(e.zone_movement_multiplier(thorns), 2.0);
+        assert_eq!(e.zone_movement_multiplier(blades), 1.0);
+        // Each is anchored to its own caster's concentration.
+        e.drop_concentration(cleric);
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.tile_is_hazardous(thorns));
     }
 
     /// Sanctuary: applies the Sanctuary buff to the target ally.

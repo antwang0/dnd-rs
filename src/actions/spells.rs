@@ -9385,16 +9385,41 @@ impl Action for DimensionDoor {
 
 pub static DIMENSION_DOOR: LazyLock<DimensionDoor> = LazyLock::new(|| DimensionDoor {});
 
-/// Wall of Fire — level-4 evocation, concentration. The caster picks a
-/// tile within 120 ft; every enemy whose footprint touches the chosen
-/// point (radius 2 — approximates the 20-ft wall length) takes 5d8 fire
-/// damage with no save and gains the Burning condition (DOT: 1d4 fire
-/// per round-end until expiry). Friendly creatures inside the burst are
-/// skipped — Wall of Fire RAW lets the caster pick which side of the
-/// wall burns, so we model the "caster's allies face the cool side"
-/// clause by using `enemy_burst_targets`. Concentration: dropping it
-/// before the timer expires clears the Burning ride immediately.
+/// Wall of Fire — level-4 evocation, concentration (druid / sorcerer /
+/// wizard). A sheet of flame anchored on a tile within 120 ft.
+///
+/// Both RAW clauses, which are the same sentence the zone layer was
+/// built for:
+///
+///   - "When the wall appears, each creature within its area must make
+///     a Dexterity saving throw. On a failed save, a creature takes 5d8
+///     fire damage, or half as much damage on a successful save."
+///   - "…when a creature enters the wall's space for the first time on
+///     a turn or ends its turn there."
+///
+/// The wall used to be an event. It rolled 5d8 once against whoever
+/// happened to be standing on the anchor tile, lit them on fire for
+/// three rounds, and then existed only as a concentration mark — a
+/// fourth-level slot that a creature could walk straight through the
+/// round after it was cast, because there was nothing there to walk
+/// through. Held on the layer it is a wall: standing ground that costs
+/// 5d8 to cross and keeps costing it.
+///
+/// The old model spared the caster's allies (RAW does let the caster
+/// pick which side of the wall burns). A zone is friend-or-foe blind by
+/// design — see the module docs — and this one is no exception: a wall
+/// of fire the party has to walk around is a wall, and the AI already
+/// prices a harmful area into both its pathing and its placement, so it
+/// declines to drop one on its own line rather than being exempted
+/// from it.
 pub struct WallOfFire {}
+
+impl WallOfFire {
+    /// A 60-ft wall approximated as a 2-tile Chebyshev area around the
+    /// anchor — the same footprint the one-shot burst used, kept so the
+    /// spell's reach on the board doesn't change under the rewrite.
+    const RADIUS: isize = 2;
+}
 
 impl Action for WallOfFire {
     fn school(&self) -> Option<SpellSchool> {
@@ -9407,7 +9432,9 @@ impl Action for WallOfFire {
         vec!["wof", "firewall"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft = 48 tiles.
@@ -9429,6 +9456,16 @@ impl Action for WallOfFire {
     ) -> Vec<Resource> {
         action_and_slot(4)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -9440,34 +9477,41 @@ impl Action for WallOfFire {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let raw = encounter.roll_empowered_sum(caster_id, 5, 8);
-        encounter.log(format!(
-            "  wall of fire: 5d8({}) = {} fire (enemies only)",
-            raw, raw
-        ));
-        // Enemy-only AoE: friendly walkers don't get caught. Each enemy
-        // takes the rolled damage and starts Burning for 3 rounds —
-        // matches RAW's "spend a turn near the wall = sustained DOT" feel.
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut tagged: Vec<(usize, Condition)> = Vec::new();
-        for id in encounter.enemy_burst_targets(caster_id, point, 2) {
-            effects.push(Box::new(DealDamage {
-                actor_id: id,
-                amount: raw,
-                damage_type: DamageType::Fire,
-            }));
-            effects.push(Box::new(ApplyCondition {
-                actor_id: id,
-                condition: Condition::Burning,
-                timer: ConditionTimer::Rounds(3),
-            }));
-            tagged.push((id, Condition::Burning));
-        }
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Wall of Fire", tagged),
-        }));
-        effects
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "wall of fire",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(5, 8),
+                        DamageType::Fire,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                    motion: ZoneMotion::Fixed,
+                },
+                // "When the wall appears, each creature within its area
+                // must make a Dexterity saving throw."
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Wall of Fire"),
+            }),
+        ]
     }
 }
 
@@ -16625,16 +16669,39 @@ impl Action for GuardianOfFaith {
 
 pub static GUARDIAN_OF_FAITH: LazyLock<GuardianOfFaith> = LazyLock::new(|| GuardianOfFaith {});
 
-/// Blade Barrier — level-6 evocation, concentration. A vertical wall of
-/// whirling, razor-sharp blades springs into existence at a tile within
-/// 90 ft. Every enemy whose footprint touches the burst makes a DEX save
-/// vs the caster's spell DC: fail = full 6d10 slashing, pass = half. The
-/// wall lingers (10 minutes RAW) — we collapse to the cast-time install
-/// and use concentration as the sustainment anchor. Allies are spared via
-/// the enemy_burst_targets partition (the wall is a vertical surface; in
-/// RAW the caster chooses its orientation so allies stand on the safe
-/// side).
+/// Blade Barrier — level-6 evocation, concentration (cleric). A vertical
+/// wall of whirling, razor-sharp blades at a tile within 90 ft.
+///
+/// "When a creature enters the wall's area for the first time on a turn
+/// or starts its turn there, it must make a Dexterity saving throw. On
+/// a failed save, the creature takes 6d10 slashing damage. On a
+/// successful save, the creature takes half as much damage."
+///
+/// That is the whole spell, and it is a place — which is what the
+/// one-shot install could not be. A blade barrier that rolled 6d10 at
+/// cast time and then held nothing was a sixth-level slot spent on a
+/// worse Flame Strike; held on the layer, it is the thing a cleric
+/// spends a sixth-level slot for, a line nobody can cross for free and
+/// which keeps costing for as long as the cleric concentrates.
+///
+/// Friend-or-foe blind, like every zone. RAW does let the caster choose
+/// the barrier's orientation, and the blades are only dangerous *in*
+/// the wall — a party that walks into its own barrier has walked into a
+/// wall of knives.
+///
+/// Not modeled: RAW's three-quarters cover for a creature on the far
+/// side. The engine's cover walk reads the terrain layer, not the zone
+/// layer, and a cover clause that only some areas carry wants the
+/// terrain-mutation lane rather than a fifth `ZoneEffect` field.
 pub struct BladeBarrier {}
+
+impl BladeBarrier {
+    /// 100-ft-long wall ≈ a 4-tile Chebyshev area around the anchor —
+    /// wide rather than linear so the cast picker has a single tile to
+    /// aim at, which is the same simplification every wall in the
+    /// engine takes.
+    const RADIUS: isize = 4;
+}
 
 impl Action for BladeBarrier {
     fn school(&self) -> Option<SpellSchool> {
@@ -16647,10 +16714,9 @@ impl Action for BladeBarrier {
         vec!["bb", "blades", "barrier"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 100ft long, 20ft high wall ≈ 4-tile Chebyshev burst (we treat
-        // the wall as a wide damage zone rather than a literal line so
-        // the cast picker has a single tile to aim at).
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 90 ft = 36 tiles.
@@ -16672,6 +16738,16 @@ impl Action for BladeBarrier {
     ) -> Vec<Resource> {
         action_and_slot(6)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -16686,26 +16762,36 @@ impl Action for BladeBarrier {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.best_spell_save_dc([
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]);
-        let (mut effects, _) = enemy_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(6, 10),
-            DamageType::Slashing,
-            "blade barrier",
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Blade Barrier"),
-        }));
-        effects
+        let dc =
+            caster.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]);
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "blade barrier",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(6, 10),
+                        DamageType::Slashing,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                    motion: ZoneMotion::Fixed,
+                },
+                // RAW's trigger is entering or starting a turn there —
+                // the blades spring up *around* whoever is standing in
+                // the line, and don't cut until somebody moves.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Blade Barrier"),
+            }),
+        ]
     }
 }
 
@@ -21347,19 +21433,37 @@ impl Action for Tsunami {
 
 pub static TSUNAMI: LazyLock<Tsunami> = LazyLock::new(|| Tsunami {});
 
-/// Wall of Thorns — level-6 druid conjuration, concentration. The druid
-/// conjures a wall of bristling thorns at a tile within 120 ft (48
-/// tiles). Every enemy whose footprint touches the 3-tile (15-ft)
-/// burst takes 7d8 piercing on a failed DEX save (half on success). RAW
-/// the wall persists and damages any creature that ends a turn within
-/// 10 ft of it; we collapse the sustained damage zone into the on-cast
-/// burst (consistent with the rest of the engine's wall / sphere
-/// spells) since the engine doesn't model persistent damage terrain
-/// outside `Spiked`. Concentration-bound on the caster — re-casts drop
-/// the prior install cleanly. Enemy-only burst since RAW lets the
-/// druid choose the wall's orientation so allies stand on the safe
-/// side.
+/// Wall of Thorns — level-6 conjuration, concentration (druid). A wall
+/// of tough, pliable, tangled brush bristling with needle-sharp thorns,
+/// conjured at a tile within 120 ft.
+///
+/// Both RAW clauses:
+///
+///   - "When the wall appears, each creature within its area must make
+///     a Dexterity saving throw. On a failed save, a creature takes 7d8
+///     piercing damage, or half as much damage on a successful save."
+///   - "A creature can move through the wall, albeit slowly and
+///     painfully. For every 1 foot a creature moves through the wall,
+///     it must spend 4 feet of movement." — the thorns are difficult
+///     ground, which the layer expresses as the standard doubling
+///     rather than the quadrupling RAW writes; the zone layer's
+///     movement surcharge is a property, not a dial, and it composes
+///     with terrain by `max` for exactly that reason.
+///
+/// The thorns used to be a burst that pricked once and vanished, which
+/// left a sixth-level slot buying one 7d8 save — strictly worse than
+/// the Blade Barrier next to it. Held on the layer they are what the
+/// name says: bad ground that costs to cross and costs again to stand
+/// in, and which the AI's pathing already knows to route around.
+///
+/// Friend-or-foe blind, like every zone: a wall of thorns the party
+/// walks into is a wall of thorns.
 pub struct WallOfThorns {}
+
+impl WallOfThorns {
+    /// 60-ft-long wall ≈ a 3-tile Chebyshev area around the anchor.
+    const RADIUS: isize = 3;
+}
 
 impl Action for WallOfThorns {
     fn school(&self) -> Option<SpellSchool> {
@@ -21372,10 +21476,9 @@ impl Action for WallOfThorns {
         vec!["wot", "thorns", "wall-thorns"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 60ft long, 10ft thick wall ≈ 3-tile Chebyshev burst (treat the
-        // wall as a damage zone since the engine doesn't model linear
-        // walls as terrain modifications).
-        TargetingSchema::Burst { radius: 3 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft RAW = 48 tiles.
@@ -21397,6 +21500,16 @@ impl Action for WallOfThorns {
     ) -> Vec<Resource> {
         action_and_slot(6)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -21412,22 +21525,35 @@ impl Action for WallOfThorns {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let (mut effects, _) = enemy_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            3,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(7, 8),
-            DamageType::Piercing,
-            "wall of thorns",
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Wall of Thorns"),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "wall of thorns",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    // `clinging` is difficult ground plus a contact
+                    // clause — the two sentences the spell is.
+                    effect: ZoneEffect::clinging(ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(7, 8),
+                        DamageType::Piercing,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                    motion: ZoneMotion::Fixed,
+                },
+                // "When the wall appears, each creature within its area
+                // must make a Dexterity saving throw."
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Wall of Thorns"),
+            }),
+        ]
     }
 }
 
