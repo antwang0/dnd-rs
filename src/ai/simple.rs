@@ -9741,6 +9741,35 @@ mod tests {
         }
     }
 
+    /// The round trip: the AI picks an area-control spell, the engine
+    /// executes it, and a persistent area is on the board afterwards.
+    ///
+    /// Worth pinning as one test rather than as two halves. The picker
+    /// tests above stop at "it chose something off the registry", and
+    /// the zone tests in `engine::encounter` start at "a zone exists" —
+    /// between them sits validation, cost, and the `InstallZone` side
+    /// effect, which is exactly where a control spell goes quietly
+    /// unreachable without anything failing.
+    #[test]
+    fn an_ai_chosen_control_spell_actually_lands_an_area_on_the_board() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let (mut e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 3);
+        assert!(e.zones().is_empty());
+        let aei = try_area_control(&e, wiz).expect("three clustered hostiles");
+        let name = aei.action().name().to_string();
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            !e.zones().is_empty(),
+            "{} was chosen but left nothing on the map",
+            name
+        );
+        let zone = &e.zones()[0];
+        assert_eq!(zone.owner_id, wiz);
+        assert!(zone.rounds_remaining > 0);
+    }
+
     /// The ordering that makes the rung reachable at all. Both
     /// `try_area_control` and `try_foresight` want the caster's one
     /// concentration, and Foresight fires on turn one and holds for the

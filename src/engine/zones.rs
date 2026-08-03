@@ -1,10 +1,11 @@
 //! Persistent magical areas — the "zone" layer.
 //!
 //! 5e is full of spells whose effect is a *place* rather than a target:
-//! Web, Fog Cloud, Grease, Cloud of Daggers, Moonbeam, Sleet Storm. What
-//! they all say is some variation of one sentence — "when a creature
-//! enters the area for the first time on a turn or starts its turn
-//! there, it …" — plus, for some, a standing clause on the ground
+//! Web, Fog Cloud, Grease, Darkness, Silence, Spike Growth, Moonbeam,
+//! Cloudkill, Sickening Radiance, Hunger of Hadar, and a dozen more.
+//! What they all say is some variation of one sentence — "when a
+//! creature enters the area for the first time on a turn or starts its
+//! turn there, it …" — plus, for many, a standing clause on the ground
 //! itself ("the area is difficult terrain", "the area is heavily
 //! obscured").
 //!
@@ -49,8 +50,10 @@
 //! around `origin`, the same measure every burst in the engine already
 //! uses. Walls and lines would each need their own geometry and their
 //! own answer for "which tiles does a 4-tile line through a doorway
-//! cover"; a burst reuses `footprint_chebyshev` and is the shape all
-//! four spells this lands with actually have.
+//! cover"; a burst reuses `footprint_chebyshev`, and every spell on the
+//! layer today is a sphere, a cube, or a square. Wall of Fire and Blade
+//! Barrier are the ones this shuts out, and they stay one-shot bursts
+//! until somebody wants the geometry enough to write it.
 //!
 //! **It doesn't move.** RAW lets a Moonbeam be walked around the board
 //! for an action. Nothing here forbids adding that later — `origin` is
@@ -60,7 +63,13 @@
 //! **It is friend-or-foe blind.** A web catches the wizard who cast it.
 //! That is RAW, it is what makes placement a decision, and the AI is
 //! taught to respect it (`SimpleAi` prices a harmful zone into its
-//! pathing) rather than the zone being taught to respect the AI.
+//! pathing, and its burst-placement picker refuses a spot that catches
+//! its own side) rather than the zone being taught to respect the AI.
+//!
+//! **It carries one damage roll.** Hunger of Hadar wants two, on
+//! different terms — automatic cold and saved-against acid — and gets
+//! them by going down as two coincident zones rather than by widening
+//! the contact shape for the one spell in 5e that asks.
 
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
@@ -414,6 +423,88 @@ mod tests {
         ));
         assert!(effect.is_harmful());
         assert!(effect.difficult);
+    }
+
+    /// The two save polarities are not interchangeable, and a spell
+    /// that picks the wrong one is either twice as strong or half as
+    /// strong as it reads. Pinned because the difference is one bool.
+    #[test]
+    fn a_save_either_halves_the_damage_or_negates_it() {
+        let half = ZoneContact::save_for_half(
+            AbilityScoreType::Constitution,
+            15,
+            Dice::new(5, 8),
+            DamageType::Poison,
+        );
+        assert!(half.save.is_some_and(|s| s.half_on_success));
+        let negates = ZoneContact::save_or_take(
+            AbilityScoreType::Dexterity,
+            15,
+            Dice::new(2, 6),
+            DamageType::Acid,
+        );
+        assert!(negates.save.is_some_and(|s| !s.half_on_success));
+    }
+
+    /// Black Tentacles' clause: one save standing between a creature
+    /// and both a hit and a hold.
+    #[test]
+    fn one_save_can_gate_both_damage_and_a_condition() {
+        let contact = ZoneContact::save_or_suffer(
+            AbilityScoreType::Dexterity,
+            15,
+            Dice::new(3, 6),
+            DamageType::Bludgeoning,
+            Condition::Restrained,
+            ConditionTimer::Rounds(10),
+        );
+        assert!(contact.damage.is_some());
+        assert!(contact.condition.is_some());
+        assert!(contact.save.is_some_and(|s| !s.half_on_success));
+        assert!(contact.is_harmful());
+    }
+
+    /// A clause whose only effect is to break concentration still
+    /// counts as harmful — the AI has to route around sleet even
+    /// though nothing in it deals damage or holds anyone.
+    #[test]
+    fn breaking_concentration_alone_makes_a_clause_harmful() {
+        let bare = ZoneContact {
+            save: Some(ZoneSave {
+                ability: AbilityScoreType::Dexterity,
+                dc: 15,
+                half_on_success: false,
+            }),
+            damage: None,
+            condition: None,
+            breaks_concentration: true,
+        };
+        assert!(bare.is_harmful());
+        // And the chainable form composes onto a real clause without
+        // disturbing it.
+        let sleet = ZoneContact::save_or(
+            AbilityScoreType::Dexterity,
+            15,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+        )
+        .also_breaking_concentration();
+        assert!(sleet.breaks_concentration);
+        assert_eq!(sleet.condition, Some((Condition::Prone, ConditionTimer::Permanent)));
+    }
+
+    /// Thorny ground is harmful on the strength of the per-step clause
+    /// alone, with no contact clause at all — which is the only way the
+    /// AI's hazard check sees Spike Growth.
+    #[test]
+    fn per_step_damage_alone_makes_a_zone_harmful() {
+        let effect = ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing);
+        assert!(effect.contact.is_none());
+        assert!(effect.difficult);
+        assert!(effect.is_harmful());
+        // Bad ground with nothing else on it is not.
+        assert!(!ZoneEffect::ROUGH.is_harmful());
+        assert!(ZoneEffect::ROUGH.difficult);
     }
 
     #[test]

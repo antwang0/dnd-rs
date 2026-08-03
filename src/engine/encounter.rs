@@ -4816,6 +4816,18 @@ impl EncounterInstance {
                 .apply(self);
             }
         }
+        // Damage can drop the creature the rest of this clause was
+        // aimed at. Nothing below applies to somebody who is already
+        // on the floor — a corpse has no concentration to lose and
+        // cannot be restrained — and rolling for it would put saves in
+        // the log that nobody made.
+        if !self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.is_combat_active())
+        {
+            return;
+        }
         // The concentration clause is its own roll, and it is asked
         // whether or not the first save landed — a wizard who kept its
         // feet in the sleet has said nothing yet about keeping its
