@@ -223,6 +223,28 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''''. Arms of the Astral Self — the Astral Self Monk's
+        //         bonus-action summon. Same rung and the same argument
+        //         as Rage, Form of Dread and Giant's Might: a
+        //         bonus-action posture worth more the earlier it is up.
+        //         Gated at Bladesong's wider approach band rather than
+        //         the melee-ish one its neighbours use, because the
+        //         monk is the one closing the distance and the arms are
+        //         what it wants to arrive holding — a summon paid for
+        //         on the contact turn has spent the bonus action Flurry
+        //         of Blows wanted, on a round the monk could have swung
+        //         twice. The action's own `!has_condition` gate makes
+        //         this a no-op for the rest of the minute, so the cost
+        //         is one bonus action per fight.
+        if let Some(aei) = try_self_action_when_enemy_within(
+            encounter,
+            actor_id,
+            BLADESONG_ENGAGE_GAP,
+            "arms of the astral self",
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
         //      beside Rage because it is the same kind of decision: a
         //      once-per-rest, bonus-action, whole-fight defensive
@@ -10369,7 +10391,8 @@ mod tests {
             ARCANE_ARCHER_FIGHTER_TEMPLATE, RUNE_KNIGHT_FIGHTER_TEMPLATE,
         };
         use crate::actors::creatures::monks::{
-            KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
+            ASTRAL_SELF_MONK_TEMPLATE, KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE,
+            SUN_SOUL_MONK_TEMPLATE,
         };
         use crate::actors::creatures::rogues::{
             PHANTOM_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE,
@@ -10386,7 +10409,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 25] = [
+        let cases: [(&CreatureTemplate, &str); 28] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -10467,6 +10490,19 @@ mod tests {
             (&CLAW_BEAST_BARBARIAN_TEMPLATE, "claws"),
             (&CLAW_BEAST_BARBARIAN_TEMPLATE, "additional claw"),
             (&TAIL_BEAST_BARBARIAN_TEMPLATE, "tail"),
+            // The summon, the swing it unlocks, and the die that only
+            // lands while it is up — three separate facts, and the
+            // middle one is the interesting one: `ASTRAL_ARMS_STRIKE`
+            // is reached for by the ordinary attack picker, so seeing
+            // it proves a `SimpleWeapon` gated on a self-condition
+            // survives a picker that scores candidates on a turn the
+            // condition may not be up yet.
+            (&ASTRAL_SELF_MONK_TEMPLATE, "arms of the astral self"),
+            (&ASTRAL_SELF_MONK_TEMPLATE, "astral arms"),
+            (&ASTRAL_SELF_MONK_TEMPLATE, "empowered arms"),
+            // Not Deflect Energy: the ogre swings a greatclub, and the
+            // clamp's whole point is that it answers everything except
+            // a physical melee swing. Its row is pinned engine-side.
             // Not the bite: it is deliberately the worse swing until the
             // barbarian is below half hit points, and a 76-HP body with
             // Rage halving every physical hit does not get there against

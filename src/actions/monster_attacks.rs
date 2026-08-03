@@ -455,6 +455,28 @@ pub struct SimpleWeapon {
     /// means no long-range penalty (melee weapons). Longbow: 12 tiles
     /// (30ft normal), reach 20 tiles (50ft max). Shortbow: 8 tiles, reach 12.
     pub normal_range: Option<isize>,
+    /// Self-condition the wielder must be holding for the swing to
+    /// validate, or `None` for the ordinary weapon that is simply
+    /// always there.
+    ///
+    /// Exists for weapons that are not objects: the Way of the Astral
+    /// Self Monk's spectral arms are summoned by a bonus action and go
+    /// away again, and while they are up they are a different weapon
+    /// from the monk's fists in all four of the ways `SimpleWeapon`
+    /// already describes — ability, damage type, dice, reach. Modeling
+    /// that as a second weapon which refuses to validate without its
+    /// form is strictly less machinery than four runtime overrides
+    /// layered onto the first one, and it puts the arms on the same
+    /// footing as every other weapon: the AI's attack picker ranks it,
+    /// Extra Attack chains it, the prompt parser names it.
+    ///
+    /// The gate is checked in `custom_validate_input`, so it applies
+    /// everywhere validation does — the AI's picker, the human prompt,
+    /// and the re-check `execute` makes between enqueue and resolution.
+    /// A form that lapses mid-turn therefore cancels the swing it was
+    /// going to pay for rather than resolving on arms that are no
+    /// longer there.
+    pub requires_condition: Option<Condition>,
 }
 
 impl SimpleWeapon {
@@ -514,6 +536,7 @@ impl SimpleWeapon {
             requires_los: false,
             cost_resource: Resource::Action,
             normal_range: None,
+            requires_condition: None,
         }
     }
 
@@ -552,6 +575,7 @@ impl SimpleWeapon {
             requires_los: false,
             cost_resource: Resource::Action,
             normal_range: None,
+            requires_condition: None,
         }
     }
 
@@ -587,6 +611,35 @@ impl SimpleWeapon {
             requires_los: true,
             cost_resource: Resource::Action,
             normal_range: Some(normal_range),
+            requires_condition: None,
+        }
+    }
+
+    /// Const builder that gates an already-constructed weapon on a
+    /// self-condition — `SimpleWeapon::reach_melee(...).gated_on(
+    /// Condition::AstralArms)`.
+    ///
+    /// A builder rather than a fifth constructor because the gate is
+    /// orthogonal to every shape above it: a summoned weapon could be
+    /// melee, reach-melee, flat-damage or ranged, and pairing the gate
+    /// with each of those would be four near-identical constructors to
+    /// keep in step. Written out field-by-field rather than with
+    /// functional-record-update syntax, which `const fn` does not
+    /// accept.
+    pub const fn gated_on(self, condition: Condition) -> Self {
+        Self {
+            display_name: self.display_name,
+            aliases: self.aliases,
+            attack_ability: self.attack_ability,
+            damage_ability: self.damage_ability,
+            damage_dice: self.damage_dice,
+            damage_type: self.damage_type,
+            reach: self.reach,
+            is_melee: self.is_melee,
+            requires_los: self.requires_los,
+            cost_resource: self.cost_resource,
+            normal_range: self.normal_range,
+            requires_condition: Some(condition),
         }
     }
 }
@@ -619,6 +672,26 @@ impl Action for SimpleWeapon {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
+    }
+    /// A weapon that has to be summoned before it can be swung — see
+    /// `requires_condition`. Ungated weapons (every one but the Astral
+    /// Self Monk's arms) short-circuit to `true` without touching the
+    /// actor map.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(required) = self.requires_condition else {
+            return true;
+        };
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(required))
     }
     fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
         crate::actions::action_template::weapon_expected_damage(
@@ -1563,6 +1636,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     requires_los: true,
     cost_resource: Resource::BonusAction,
     normal_range: Some(8),
+    requires_condition: None,
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -5147,6 +5221,46 @@ pub static RADIANT_SUN_BOLT: SimpleWeapon = SimpleWeapon::ranged(
     12,
     12,
 );
+
+/// Arms of the Astral Self — Way of the Astral Self Monk (subclass
+/// level 3, TCE). Spectral arms of ki settle over the monk's own, and
+/// for as long as they hold the monk's unarmed strike changes in four
+/// ways at once: Wisdom to hit and to damage instead of Dexterity,
+/// force instead of bludgeoning, and 10 ft of reach instead of 5.
+///
+/// All four of those are things a `SimpleWeapon` already says, which
+/// is why this is one — the subclass needed no new attack machinery,
+/// only a way for a weapon to be absent until it is summoned. That is
+/// `gated_on`, and it is the whole engine cost of the feature.
+///
+/// The reach is the half that changes how the monk is played. Every
+/// other monk on the roster has to be standing in contact to do
+/// anything at all, on a d8 hit die with no armour; this one hits from
+/// a tile back, which is the difference between taking an opportunity
+/// attack on the way out and not being adjacent to take one. The
+/// Wisdom swap is what makes the reach affordable — the Astral Self
+/// chassis puts its 16 in WIS and its 14 in DEX, so the arms are
+/// strictly the better swing while they are up and the ordinary
+/// martial-arts fist is the fallback for the round they are not.
+///
+/// Force is the rarest-resisted damage type in the bestiary, which
+/// means the arms also quietly solve the skeleton / zombie /
+/// elemental matchups that a bludgeoning fist is bad at. RAW's
+/// remaining lv3 clause — Wisdom in place of Strength on Strength
+/// checks and saves — has no surface here: the engine rolls no ability
+/// checks, and a save-ability substitution would be a lane of its own
+/// for one subclass.
+pub static ASTRAL_ARMS_STRIKE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "astral arms",
+    &["arms", "aas"],
+    AbilityScoreType::Wisdom,
+    Dice::new(1, 8),
+    DamageType::Force,
+    // 10 ft on the 2.5 ft grid — one tile past `MELEE_REACH`, the same
+    // envelope the Ogre's greatclub swings in.
+    2,
+)
+.gated_on(Condition::AstralArms);
 
 /// Tarrasque Bite — STR-based 4d12+10 piercing, 10ft reach. The
 /// signature one-shot of the apex 5e creature. Hit modifier scales off

@@ -2680,6 +2680,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // ledger being keyed by plain tag rather than by rider identity.
     ANCESTRAL_PROTECTORS_TAG,
     HAND_OF_HARM_TAG,
+    EMPOWERED_ARMS_TAG,
     // Also not a damage rider: Form of Dread uses the ledger to enforce
     // RAW's "once on each of your turns" on its fear rider, which keeps
     // the form itself alive across the trigger where
@@ -3912,6 +3913,136 @@ pub static WHOLENESS_OF_BODY: LazyLock<WholenessOfBody> = LazyLock::new(|| Whole
 /// sickens, and the RAW subclass is built on the pair being the same
 /// gesture.
 pub const HAND_OF_HARM_TAG: &str = "monk.hand_of_harm";
+
+/// 5e Way of the Astral Self Monk **Empowered Arms** (subclass level
+/// 11, TCE) feature tag: "once on each of your turns when you hit a
+/// creature with the Arms of the Astral Self, you can deal extra damage
+/// equal to your martial arts die."
+///
+/// A row on `engine::attack::ONCE_PER_TURN_WEAPON_DIE_RIDERS` and a key
+/// on the shared `ONCE_PER_TURN_RIDER_TAGS` ledger, next to Deft Strike
+/// and Hand of Harm — the third monk subclass to buy its damage on that
+/// cohort, and the first row on it whose gate is a *condition* rather
+/// than the tag alone. RAW fires only on the arms, so the row carries
+/// `caster_gate: Some(|a| a.has_condition(Condition::AstralArms))`: a
+/// monk whose arms have lapsed punches for the ordinary die.
+///
+/// While the arms *are* up the gate is total rather than exact — RAW
+/// scopes the rider to the arms and the engine scopes it to any weapon
+/// swing made while they are summoned. On this chassis the two are the
+/// same set: the Astral Self monk carries no weapon, and its two
+/// attacks are the arms and the fist the arms replace.
+pub const EMPOWERED_ARMS_TAG: &str = "monk.empowered_arms";
+
+/// 5e Way of the Astral Self Monk **Body of the Astral Self: Deflect
+/// Energy** (subclass level 11, TCE) feature tag: "when you take acid,
+/// cold, fire, force, lightning, necrotic, poison, psychic, radiant, or
+/// thunder damage, you can use your reaction to reduce it by 1d10 + your
+/// Wisdom modifier."
+///
+/// A row on `engine::attack::REACTIVE_DAMAGE_CLAMPS`, and the second
+/// there with a damage-type filter after the Nature Cleric's Dampen
+/// Elements — but a far wider one. Dampen Elements names five types;
+/// this names ten, every type in the game that is not bludgeoning,
+/// piercing or slashing. Which is the point of it on this chassis:
+/// Deflect Missiles, sitting one row above on the same monk, already
+/// covers the physical half of the incoming damage the RAW subclass
+/// leaves alone, so an Astral Self monk holding a reaction has an
+/// answer to almost anything.
+///
+/// Uncharged (`tag: None` on the row) because RAW puts no per-rest cap
+/// on it — the reaction is the whole limit, and the reaction economy is
+/// something the engine already tracks. The tag exists only as the
+/// passive-feature flag the row's `flag` closure reads.
+pub const DEFLECT_ENERGY_TAG: &str = "monk.deflect_energy";
+
+/// Arms of the Astral Self — Way of the Astral Self Monk lv3 subclass
+/// action. Bonus action, at will: spectral arms settle over the monk's
+/// own for a minute, and `ASTRAL_ARMS_STRIKE` — which refuses to
+/// validate without them — becomes the monk's best attack.
+///
+/// At-will because RAW prices it in ki and this engine has no ki, the
+/// same collapse Flurry of Blows, Patient Defense, Step of the Wind,
+/// Deft Strike and both of Mercy's hands already make on this chassis.
+/// A bonus action, because that is RAW's cost and because it is the
+/// scarce thing here: summoning the arms means not flurrying, which is
+/// the trade the subclass is built on. The ten-round window means the
+/// monk pays that once and swings with the arms for the rest of the
+/// fight — an opening-round tempo cost, not a per-round tax.
+///
+/// The `!has_condition` gate is what stops the AI re-summoning arms it
+/// is already wearing. Without it the picker would spend every bonus
+/// action of the fight on a no-op refresh, because the rung sits above
+/// Flurry of Blows and the action would keep validating.
+pub struct ArmsOfTheAstralSelf {}
+
+impl Action for ArmsOfTheAstralSelf {
+    fn name(&self) -> &str {
+        "arms of the astral self"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        // Not "arms": `ASTRAL_ARMS_STRIKE` claims it, and alias
+        // collisions resolve by list order rather than erroring — the
+        // monk would have had two of its own actions fighting over one
+        // token, and the one that lost would be unreachable from the
+        // prompt.
+        vec!["astral self", "summon arms", "aotas"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::AstralArms))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log(
+            "  arms of the astral self: spectral arms settle over the monk's own.".to_string(),
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::AstralArms,
+            // 10 rounds = 1 minute RAW, the same window Bladesong,
+            // Starry Form and Rage run on.
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static ARMS_OF_THE_ASTRAL_SELF: LazyLock<ArmsOfTheAstralSelf> =
+    LazyLock::new(|| ArmsOfTheAstralSelf {});
 
 /// Conditions **Physician's Touch** (Way of Mercy Monk lv6) lifts when
 /// Hand of Healing lands. RAW's list exactly: "blinded, deafened,

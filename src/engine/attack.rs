@@ -410,6 +410,9 @@ struct ReactiveDamageClamp {
 ///     weapon attacks only, self.
 ///   - **Parry** (Fighter Battle Master maneuver): 1d8 + DEX, melee
 ///     attacks only, self, burns a `PARRY_TAG` charge.
+///   - **Deflect Energy** (Astral Self Monk lv11, TCE): 1d10 + WIS, any
+///     attack, self, but only against the ten non-physical damage
+///     types. The widest of the two type-filtered rows.
 ///   - **Interception** (Fighting Style, XGtE): 1d10 + proficiency, any
 ///     attack, adjacent ally.
 ///   - **Warding Maneuver** (Cavalier Fighter lv7, XGtE): halve, any
@@ -417,8 +420,8 @@ struct ReactiveDamageClamp {
 ///     `WARDING_MANEUVER_TAG` charge.
 ///   - **Dampen Elements** (Nature Domain Cleric lv6): halve, but only
 ///     acid / cold / fire / lightning / thunder damage; self *or* an ally
-///     within 30 ft, burns a `DAMPEN_ELEMENTS_TAG` charge. The only row
-///     with a damage-type filter.
+///     within 30 ft, burns a `DAMPEN_ELEMENTS_TAG` charge — the narrow
+///     half of the damage-type-filtered pair.
 ///   - **Protective Field** (Psi Warrior Fighter lv3, TCE): 1d8 + INT,
 ///     any attack, self *or* an ally within 30 ft, burns a
 ///     `PROTECTIVE_FIELD_TAG` charge.
@@ -462,6 +465,48 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         formula: ClampFormula::RollMinus {
             dice: Dice::new(1, 8),
             bonus: |a| a.ability_modifier(AbilityScoreType::Dexterity),
+        },
+    },
+    // 5e Way of the Astral Self Monk **Body of the Astral Self: Deflect
+    // Energy** (subclass level 11, TCE). Uncharged, so it sits with the
+    // free clamps above the two charge-gated rows rather than below
+    // them: there is no scarce resource here to save for a bigger hit.
+    //
+    // Placed after Parry and before Interception for the reason the
+    // header gives — `RollMinus` rows are ordered among themselves by
+    // nothing observable, but every self-scoped row belongs above the
+    // ally-scoped ones so an ally only ever clamps what survived the
+    // target's own defenses.
+    ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::DEFLECT_ENERGY_TAG),
+        // Reaction-limited only — RAW puts no per-rest cap on it, and
+        // the reaction economy is the whole gate. See
+        // `DEFLECT_ENERGY_TAG`.
+        tag: None,
+        label: "deflect energy",
+        // RAW's list verbatim: every damage type in the game except
+        // bludgeoning, piercing and slashing. The widest filter on the
+        // cohort, and deliberately complementary to Deflect Missiles
+        // three rows up — between them an Astral Self monk with a
+        // reaction in hand has an answer to any single attack that
+        // isn't a physical melee swing.
+        damage_types: Some(&[
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Force,
+            DamageType::Lightning,
+            DamageType::Necrotic,
+            DamageType::Poison,
+            DamageType::Psychic,
+            DamageType::Radiant,
+            DamageType::Thunder,
+        ]),
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 10),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Wisdom),
         },
     },
     ReactiveDamageClamp {
@@ -2291,6 +2336,19 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// shrugs off the flag, which is what RAW asks for and what a
     /// hand-rolled install here would have had to remember.
     pub installs: Option<RiderCondition>,
+    /// Extra caster-side precondition beyond holding `tag`, or `None`
+    /// for the rows that fire whenever their holder swings.
+    ///
+    /// The Astral Self Monk's Empowered Arms is the first row with one:
+    /// RAW scopes the extra die to hits made with the Arms of the
+    /// Astral Self, and the arms are a condition the monk turns on
+    /// rather than a feature they carry — a tag-only gate would keep
+    /// paying the rider on a monk whose arms had lapsed.
+    ///
+    /// Named and shaped to match `OnHitConditionMark::holder_gate` one
+    /// cohort over, which grew the same column for the same reason
+    /// (Ancestral Protectors' "while raging" clause).
+    pub caster_gate: Option<fn(&ActorInstance) -> bool>,
 }
 
 /// A condition an `OncePerTurnWeaponRiderSpec` lays on its target, and
@@ -2341,7 +2399,9 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
         return false;
     }
     let caster_ok = encounter.actors.get(&p.caster_id).is_some_and(|a| {
-        a.has_passive_feature(spec.tag) && !a.once_per_turn_used(spec.tag)
+        a.has_passive_feature(spec.tag)
+            && !a.once_per_turn_used(spec.tag)
+            && spec.caster_gate.is_none_or(|gate| gate(a))
     });
     if !caster_ok {
         return false;
@@ -2446,6 +2506,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "colossus slayer",
         target_gate: |t| t.is_wounded(),
         installs: None,
+        caster_gate: None,
     },
     // 5e Way of the Kensei Monk **Deft Strike** (subclass level 6):
     // "when you hit a target with a kensei weapon, you can spend 1 ki
@@ -2462,6 +2523,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "deft strike",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
@@ -2470,6 +2532,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "dreadful strikes",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
@@ -2478,6 +2541,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "psychic blades",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PLANAR_WARRIOR_TAG,
@@ -2486,6 +2550,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "planar warrior",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::SLAYERS_PREY_TAG,
@@ -2494,6 +2559,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "slayer's prey",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::GATHERED_SWARM_TAG,
@@ -2502,6 +2568,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "gathered swarm",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSIONIC_STRIKE_TAG,
@@ -2510,6 +2577,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "psionic strike",
         target_gate: |_| true,
         installs: None,
+        caster_gate: None,
     },
     // 5e Way of Mercy Monk **Hand of Harm** (subclass lv3) with
     // **Physician's Touch** (lv6) folded in: the monk's hand carries
@@ -2543,6 +2611,33 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
             // the engine already makes.
             timer: crate::conditions::ConditionTimer::Rounds(1),
         }),
+        caster_gate: None,
+    },
+    // 5e Way of the Astral Self Monk **Empowered Arms** (subclass level
+    // 11, TCE): "once on each of your turns when you hit a creature
+    // with the Arms of the Astral Self, you can deal extra damage equal
+    // to your martial arts die."
+    //
+    // Force, matching the arms themselves rather than the swing —
+    // `|_| DamageType::Force` rather than `|p| p.damage_type` — which
+    // costs nothing while the arms are up (they are the only Force
+    // weapon on the chassis) and is the honest reading of a rider whose
+    // whole text is about the arms.
+    //
+    // The third monk row on this cohort after Deft Strike and Hand of
+    // Harm, and the only one anywhere on it that gates on a condition:
+    // the arms are summoned, and a monk who has not spent the bonus
+    // action or whose minute has run out punches for the plain die.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::EMPOWERED_ARMS_TAG,
+        // The martial arts die at the level this chassis targets, the
+        // same 1d8 `ASTRAL_ARMS_STRIKE` and `MONK_UNARMED_STRIKE` roll.
+        dice: Dice::new(1, 8),
+        damage_type: |_| DamageType::Force,
+        label: "empowered arms",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: Some(|a| a.has_condition(crate::conditions::Condition::AstralArms)),
     },
 ];
 

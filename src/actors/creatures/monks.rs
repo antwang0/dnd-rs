@@ -667,3 +667,96 @@ pub static MERCY_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// Way of the Astral Self Monk — Monastic Tradition **Way of the
+/// Astral Self** (TCE), and the eighth monk on a roster where every
+/// previous one has answered the same question by adding something to
+/// the punch. Open Hand heals after it. Long Death feeds on the kill.
+/// Kensei picks up a bow. Sun Soul throws light. Mercy poisons. This
+/// one changes the punch.
+///
+/// **Arms of the Astral Self** (lv3) is a bonus action that summons
+/// spectral arms for a minute, and while they hold, `ASTRAL_ARMS_STRIKE`
+/// replaces the fist: Wisdom to hit and to damage, force instead of
+/// bludgeoning, and 10 ft of reach instead of 5.
+///
+/// The reach is the half that changes the fight. Every other monk here
+/// has a d8 hit die, no armour, and no way to threaten anything it is
+/// not standing next to; this one threatens from a tile back, which is
+/// the difference between eating an opportunity attack on the way out
+/// and never being adjacent to provoke one. It also means the arms
+/// reach *over* an ally in a doorway, and reach a large creature whose
+/// own reach is 2 without standing inside it.
+///
+/// The Wisdom swap is what pays for the reach. The stat line is the
+/// baseline monk's with DEX and WIS traded — 14 DEX, 16 WIS — which
+/// leaves the unarmored AC where it was (10 + 2 + 3 = 15, the same
+/// number by a different route) and makes the arms strictly the better
+/// swing while they are up. That is deliberate: the fist stays on the
+/// action list as the round-one fallback and the answer to a Dispel
+/// Magic, and it is a little worse than the arms rather than
+/// unplayable.
+///
+/// Force is the third clause and the quietest. It is the rarest-
+/// resisted damage type in the bestiary — the skeletons and zombies
+/// and elementals that shrug off a bludgeoning fist take it in full —
+/// so the arms are also the answer to the matchups the chassis was
+/// worst at.
+///
+/// **Empowered Arms** (lv11) adds the martial arts die once per turn
+/// while the arms are up, on the `ONCE_PER_TURN_WEAPON_DIE_RIDERS`
+/// cohort next to Deft Strike and Hand of Harm — and it is the first
+/// row there gated on a condition rather than a tag, which is what
+/// keeps the die honest on a monk whose minute has run out.
+///
+/// **Body of the Astral Self: Deflect Energy** (lv11) is a reaction
+/// that takes 1d10 + WIS off any acid, cold, fire, force, lightning,
+/// necrotic, poison, psychic, radiant or thunder damage. It rides
+/// `REACTIVE_DAMAGE_CLAMPS` directly above Interception, and its real
+/// value is the pairing: Deflect Missiles, three rows up on the same
+/// monk, already covers ranged physical damage, so between the two the
+/// only thing an Astral Self monk holding a reaction cannot blunt is a
+/// melee weapon swing.
+///
+/// Left out: **Visage of the Astral Self** (lv6) grants Astral Sight
+/// and advantage on Insight and Intimidation checks — a darkvision
+/// ribbon and two skills, and the engine rolls no skill checks. RAW's
+/// lv3 Strength-check-and-save substitution has the same problem for
+/// its check half, and its save half would be a substitution lane of
+/// its own for one subclass. **Awakened Astral Self** (lv17) grants
+/// +2 AC and a third arm strike per Attack action; both are levels
+/// past what this chassis targets, and the third strike is the
+/// Flurry of Blows the template already carries by another name.
+///
+/// Glyph 'A' — free on the monk family, where 'M', 'O', 'W', 'E', 'K',
+/// 'U' and 'Y' are taken.
+pub static ASTRAL_SELF_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        ARMS_OF_THE_ASTRAL_SELF, DEFLECT_ENERGY_TAG, EMPOWERED_ARMS_TAG,
+    };
+    use crate::actions::monster_attacks::ASTRAL_ARMS_STRIKE;
+    // Two actions and two tags. The arms are summoned by one action and
+    // swung by another, which is the shape the Stars Druid's Starry
+    // Form and Starry Bolt already use; the two lv11 features are
+    // passive rows on engine cohorts and have nothing to pick.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*ARMS_OF_THE_ASTRAL_SELF);
+    actions.push(&ASTRAL_ARMS_STRIKE);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(EMPOWERED_ARMS_TAG);
+    features.insert(DEFLECT_ENERGY_TAG);
+    CreatureTemplate {
+        name: "Astral Self Monk",
+        glyph: 'A',
+        // The baseline monk's DEX and WIS, swapped. Unarmored Defense
+        // reads 10 + DEX + WIS either way, so the AC 15 inherited from
+        // the chassis is still the right number — but the arms are
+        // anchored on Wisdom, and a 14 there would have made the
+        // subclass's whole feature worse than the fist it replaces.
+        dexterity: 14,
+        wisdom: 16,
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});

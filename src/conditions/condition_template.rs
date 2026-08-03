@@ -1878,6 +1878,25 @@ pub enum Condition {
     /// spellcaster shrugs the arrow's necrotic drain off entirely, which
     /// is the trade the shot makes for how hard it hits a multiattacker.
     Enfeebled,
+    /// 5e Way of the Astral Self Monk **Arms of the Astral Self**
+    /// (subclass level 3, TCE). Spectral arms of ki settle over the
+    /// monk's own, and for as long as they hold the monk punches with
+    /// something that is not quite a fist: Wisdom to hit and to damage,
+    /// force instead of bludgeoning, and five more feet of reach.
+    ///
+    /// The condition stores none of that. It is the gate that
+    /// `ASTRAL_ARMS_STRIKE` — a `SimpleWeapon` carrying all four
+    /// differences as ordinary weapon data — reads through
+    /// `SimpleWeapon::requires_condition`, which is the same shape the
+    /// Stars Druid's `StarryFormArcher` uses to gate `STARRY_BOLT`: the
+    /// form is a condition, the thing the form lets you do is an action
+    /// that refuses to validate without it.
+    ///
+    /// Also read on the caster side of `ONCE_PER_TURN_WEAPON_DIE_RIDERS`
+    /// by Empowered Arms (lv11), which is why that cohort grew a
+    /// `caster_gate`: the extra martial-arts die is a property of the
+    /// arms being up, not of the monk carrying the feature.
+    AstralArms,
 }
 
 impl Condition {
@@ -2044,6 +2063,7 @@ impl Condition {
             Condition::ArcaneShotGrasping => "grasping arrow nocked",
             Condition::ArcaneShotShadow => "shadow arrow nocked",
             Condition::Enfeebled => "enfeebled",
+            Condition::AstralArms => "arms of the astral self",
             Condition::TransmutedSpelling => "primed with transmuted spell",
             Condition::CunningStrikePoison => "primed with cunning poison",
             Condition::CunningStrikeTrip => "primed with cunning trip",
@@ -2149,6 +2169,14 @@ impl Condition {
                 | Condition::StarryFormArcher
                 | Condition::StarryFormChalice
                 | Condition::StarryFormDragon
+                // 5e Way of the Astral Self Monk Arms of the Astral
+                // Self. A ten-round self-buff on the same envelope as
+                // the Starry Forms above it, and rather more worth a
+                // Dispel Magic than they are: stripping the arms does
+                // not just take a button away, it takes the monk's best
+                // attack off the board entirely and drops them back to
+                // a weaker punch at half the reach.
+                | Condition::AstralArms
                 | Condition::FormOfDread
                 | Condition::HolyAuraed
                 | Condition::Foreseen

@@ -31434,6 +31434,265 @@ mod tests {
         }
     }
 
+    /// The Astral Self Monk's arms are absent until they are summoned:
+    /// `ASTRAL_ARMS_STRIKE` refuses to validate before the bonus action
+    /// is spent and validates afterwards, which is the whole of
+    /// `SimpleWeapon::requires_condition`.
+    #[test]
+    fn the_astral_arms_do_not_exist_until_they_are_summoned() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::ARMS_OF_THE_ASTRAL_SELF;
+        use crate::actions::monster_attacks::ASTRAL_ARMS_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let tv = vec![g];
+        assert!(
+            !ASTRAL_ARMS_STRIKE.custom_validate_input(&e, m, Some(&tv), None, None),
+            "the arms are not there before the monk summons them"
+        );
+        assert!(ARMS_OF_THE_ASTRAL_SELF.custom_validate_input(&e, m, None, None, None));
+        for ef in ARMS_OF_THE_ASTRAL_SELF.side_effects(&mut e, m, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&m].has_condition(Condition::AstralArms));
+        assert!(
+            ASTRAL_ARMS_STRIKE.custom_validate_input(&e, m, Some(&tv), None, None),
+            "the arms swing once they are up"
+        );
+        // Bonus action, and no re-summoning a form already worn — the
+        // gate that stops the AI spending every bonus action of the
+        // fight refreshing a condition it is already holding.
+        assert_eq!(
+            ARMS_OF_THE_ASTRAL_SELF.cost(&e, m, None, None, None),
+            vec![crate::engine::side_effects::Resource::BonusAction]
+        );
+        assert!(!ARMS_OF_THE_ASTRAL_SELF.custom_validate_input(&e, m, None, None, None));
+    }
+
+    /// The arms reach a tile further than the fist they replace. Pinned
+    /// against the ordinary monk strike at the exact gap that separates
+    /// them, because the reach is the half of the subclass that changes
+    /// how the chassis is played.
+    #[test]
+    fn the_astral_arms_reach_a_tile_past_the_monks_fist() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{ASTRAL_ARMS_STRIKE, MONK_UNARMED_STRIKE};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+        assert_eq!(MONK_UNARMED_STRIKE.reach_tiles(), Some(1));
+        assert_eq!(ASTRAL_ARMS_STRIKE.reach_tiles(), Some(2));
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let m = e
+            .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&m)
+            .unwrap()
+            .add_condition(Condition::AstralArms, ConditionTimer::Rounds(10));
+        // Both are Medium and so occupy a 2x2 block on the 2.5 ft grid;
+        // `footprint_distance` measures the gap between footprints, so
+        // an origin four tiles away is a gap of two — one past the
+        // fist's reach and exactly on the arms'.
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        assert_eq!(e.footprint_distance(m, g), Some(2));
+        let tv = vec![g];
+        assert!(
+            !MONK_UNARMED_STRIKE.validate_input(&e, m, Some(&tv), None, None),
+            "the fist cannot reach a gap of two"
+        );
+        assert!(
+            ASTRAL_ARMS_STRIKE.validate_input(&e, m, Some(&tv), None, None),
+            "the arms can"
+        );
+    }
+
+    /// Empowered Arms is gated on the arms being up, not merely on the
+    /// monk carrying the feature — the first `caster_gate` on the shared
+    /// once-per-turn rider cohort, and the reason that column exists.
+    #[test]
+    fn empowered_arms_only_pays_while_the_arms_are_up() {
+        use crate::actions::class_features::EMPOWERED_ARMS_TAG;
+        use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::attack::{
+            AttackParams, ONCE_PER_TURN_WEAPON_DIE_RIDERS, try_fire_once_per_turn_weapon_die_rider,
+        };
+        let spec = ONCE_PER_TURN_WEAPON_DIE_RIDERS
+            .iter()
+            .find(|s| s.tag == EMPOWERED_ARMS_TAG)
+            .expect("empowered arms should be a row on the shared rider cohort");
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let m = e
+            .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let params = AttackParams {
+            caster_id: m,
+            target_id: ogre,
+            action_name: "astral arms",
+            attack_bonus: 5,
+            damage_dice: Dice::new(1, 8),
+            damage_bonus: 3,
+            damage_type: DamageType::Force,
+            is_melee: true,
+            long_range: None,
+            is_spell: false,
+        };
+        let mut effects = Vec::new();
+        assert!(
+            !try_fire_once_per_turn_weapon_die_rider(&mut e, &mut effects, &params, false, spec),
+            "a monk whose arms have lapsed punches for the plain die"
+        );
+        assert!(effects.is_empty());
+        e.actors
+            .get_mut(&m)
+            .unwrap()
+            .add_condition(Condition::AstralArms, ConditionTimer::Rounds(10));
+        assert!(
+            try_fire_once_per_turn_weapon_die_rider(&mut e, &mut effects, &params, false, spec),
+            "with the arms up the first hit of the turn carries the die"
+        );
+        assert_eq!(effects.len(), 1);
+        assert!(
+            !try_fire_once_per_turn_weapon_die_rider(&mut e, &mut effects, &params, false, spec),
+            "and only the first"
+        );
+        assert_eq!(effects.len(), 1);
+    }
+
+    /// Deflect Energy answers the ten non-physical damage types and
+    /// nothing else. The negative half is the load-bearing one: a
+    /// greatclub to the head is exactly what the RAW clause leaves the
+    /// monk to take, and it is what Deflect Missiles one row above
+    /// already covers at range.
+    #[test]
+    fn deflect_energy_blunts_everything_but_a_physical_blow() {
+        use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        use crate::engine::side_effects::Resource;
+        for dt in [
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Force,
+            DamageType::Lightning,
+            DamageType::Necrotic,
+            DamageType::Poison,
+            DamageType::Psychic,
+            DamageType::Radiant,
+            DamageType::Thunder,
+        ] {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+                .unwrap();
+            let m = e
+                .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let reduced = apply_reactive_damage_clamps(&mut e, ogre, m, 30, true, false, dt);
+            assert!(reduced < 30, "{:?} should be blunted", dt);
+            assert!(
+                !e.actors[&m].can_consume_resource(Resource::Reaction),
+                "{:?}: deflecting spends the reaction", dt
+            );
+        }
+        for dt in [
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ] {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+                .unwrap();
+            let m = e
+                .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // A melee, non-spell swing, so Deflect Missiles — which the
+            // monk chassis also carries, on the ranged-weapon lane —
+            // stays out of the way. The point is that Deflect Energy
+            // alone declines a physical blow.
+            assert_eq!(
+                apply_reactive_damage_clamps(&mut e, ogre, m, 30, true, false, dt),
+                30,
+                "{:?} should pass through untouched", dt
+            );
+            assert!(
+                e.actors[&m].can_consume_resource(Resource::Reaction),
+                "{:?}: and should not cost the reaction", dt
+            );
+        }
+    }
+
+    /// Template drift pin. The three Astral Self tells ship on the
+    /// Astral Self monk and nowhere else on the family, and the
+    /// subclass still inherits the whole baseline monk kit through its
+    /// `..MONK_TEMPLATE.clone()` tail — including the fist the arms are
+    /// the fallback for.
+    #[test]
+    fn the_astral_self_monk_ships_its_kit_and_keeps_the_chassis() {
+        use crate::actions::class_features::{
+            DEFLECT_ENERGY_TAG, EMPOWERED_ARMS_TAG, STUNNING_STRIKE_TAG,
+        };
+        use crate::actors::creatures::monks::{
+            ASTRAL_SELF_MONK_TEMPLATE, KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE, MONK_TEMPLATE,
+            SUN_SOUL_MONK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let m = e
+            .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for tag in [EMPOWERED_ARMS_TAG, DEFLECT_ENERGY_TAG] {
+            assert!(e.actors[&m].has_passive_feature(tag), "missing {}", tag);
+        }
+        // The chassis, not just the subclass: Stunning Strike, Evasion,
+        // Deflect Missiles, Extra Attack and the fist all survive the
+        // clone tail.
+        assert!(e.actors[&m].has_passive_feature(STUNNING_STRIKE_TAG));
+        assert!(e.actors[&m].has_deflect_missiles());
+        assert!(e.actors[&m].has_extra_attack());
+        for name in ["martial arts", "astral arms", "arms of the astral self"] {
+            assert!(
+                e.actors[&m].find_action(name).is_some(),
+                "the monk should carry {}",
+                name
+            );
+        }
+        // The DEX/WIS swap leaves Unarmored Defense where it was — the
+        // arms get their anchor without the chassis losing armour.
+        assert_eq!(
+            ASTRAL_SELF_MONK_TEMPLATE.ac, MONK_TEMPLATE.ac,
+            "the stat swap should be AC-neutral"
+        );
+        for t in [
+            &*MONK_TEMPLATE,
+            &*KENSEI_MONK_TEMPLATE,
+            &*SUN_SOUL_MONK_TEMPLATE,
+            &*MERCY_MONK_TEMPLATE,
+        ] {
+            for tag in [EMPOWERED_ARMS_TAG, DEFLECT_ENERGY_TAG] {
+                assert!(
+                    !t.features.contains(tag),
+                    "{} should not carry {}",
+                    t.name,
+                    tag
+                );
+            }
+        }
+    }
+
     /// Hand of Healing mends and cures in the same touch, and the cure
     /// takes the heaviest affliction on the list rather than the first
     /// one the target happens to be holding.
@@ -64879,20 +65138,21 @@ mod tests {
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
             ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG, DIVINE_FURY_TAG,
-            DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG,
-            GIANTS_MIGHT_RIDER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
-            HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
-            SNEAK_ATTACK_TAG,
+            DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG,
+            GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG, ONCE_PER_TURN_RIDER_TAGS,
+            PLANAR_WARRIOR_TAG, HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG,
+            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            15,
+            16,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&EMPOWERED_ARMS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&HAND_OF_HARM_TAG));
