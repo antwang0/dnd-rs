@@ -5629,12 +5629,21 @@ fn best_burst_placement(
 /// already holding something declines every concentration entry, so a
 /// control spell can never displace a control spell.
 ///
-/// Grease is the one entry that costs none, and the flag exists for it.
-/// RAW it is laid down and walked away from — a level-1 slot that keeps
-/// tripping people for a minute while the caster concentrates on
-/// something else entirely — and folding it into a blanket "not while
-/// concentrating" gate would have made the cheapest control spell in
-/// the game the only one a caster can't combine with anything.
+/// The spike fields are deliberately *not* here, despite being area
+/// denial. What earns a spell this rung is taking hostiles out of the
+/// fight — a Web holds them, a Hypnotic Pattern charms them — and
+/// thorns do neither; they tax a creature that chooses to move. On a
+/// rung that outranks single-target lockdown, that trade is the wrong
+/// way round, and Spike Growth was displacing Hold Person. They stay
+/// reachable through the ordinary AoE picker.
+///
+/// Grease is the one entry that costs no concentration, and the flag
+/// exists for it. RAW it is laid down and walked away from — a level-1
+/// slot that keeps tripping people for a minute while the caster
+/// concentrates on something else entirely — and folding it into a
+/// blanket "not while concentrating" gate would have made the cheapest
+/// control spell in the game the only one a caster can't combine with
+/// anything.
 const AREA_CONTROL_SPELLS: &[(&str, bool)] = &[
     ("web", true),
     ("hypnotic pattern", true),

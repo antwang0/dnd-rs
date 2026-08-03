@@ -381,22 +381,11 @@ impl ApplicableSideEffect for MoveActor {
             // top of the next iteration, the same as an opportunity
             // attack that does.
             ei.touch_zones(self.actor_id);
-            // 5e Spike Growth: a Spiked actor takes 2d4 piercing per 5ft
-            // (one tile in our grid) of movement. The damage rolls through
-            // the standard pipeline so resistance / immunity is honored.
-            // We resolve mid-loop so a creature with low HP can be downed
-            // by spike damage and stop the walk via the is_combat_active
-            // check at the top of the next iteration.
-            apply_per_step_self_rider(
-                ei,
-                self.actor_id,
-                Condition::Spiked,
-                crate::engine::dice::Dice::new(2, 4),
-                DamageType::Piercing,
-                "spike growth",
-                "as they step through",
-                false,
-            );
+            // …and the tile-billed trigger, which is a different
+            // sentence: Spike Growth charges for every 5 ft travelled,
+            // so it is asked on every step rather than once per
+            // crossing.
+            ei.charge_zone_movement(self.actor_id);
             // 5e Booming Blade: the mark fires the *first* time the marked
             // creature moves voluntarily, dealing the rider damage and
             // burning off the mark (single-shot). We trip on any walked

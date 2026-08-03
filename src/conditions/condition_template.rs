@@ -244,13 +244,6 @@ pub enum Condition {
     /// area-buff rather than a single-target buff. Lasts for the spell's
     /// duration (1 hour RAW; we cap to a long Rounds timer).
     Daylit,
-    /// Spike Growth (5e level-2 transmutation, concentration). The target
-    /// is standing in spiked terrain — any movement they make this turn
-    /// will deal 2d4 piercing damage per 5ft moved. We approximate by
-    /// tagging the holder with the condition; the damage rider lives on
-    /// the `MoveActor` apply path which reads this flag and bills the
-    /// caster's spike damage once per step.
-    Spiked,
     /// Raging (5e Barbarian feature). +2 melee damage on STR-based attacks,
     /// resistance to bludgeoning / piercing / slashing damage (we use the
     /// generic `DamageResistant` model in parallel), and advantage on STR
@@ -1464,21 +1457,6 @@ pub enum Condition {
     /// with a `Rounds(100)` timer so it lasts for any plausible encounter.
     /// Joins `is_dispellable_buff` so Dispel Magic can rip the buff cleanly.
     Footloose,
-    /// Darkened (5e Darkness spell, level-2 evocation). The holder is
-    /// inside a 15-foot magical-darkness sphere: they cannot see, and
-    /// nothing outside the sphere can see them. We approximate by
-    /// blanket-imposing disadvantage on the holder's attacks (joins
-    /// `imposes_attacker_disadvantage` — they're swinging blind) AND
-    /// imposing disadvantage on attackers targeting the holder (joins
-    /// `imposes_disadvantage_to_attackers` — the darkness shields them
-    /// too). Collapses the "you can't see / they can't see you" envelope
-    /// from RAW into a symmetric attack-mode penalty, mirroring how
-    /// `Blinded` handles a single-target sight loss. Distinct from
-    /// `Blinded` so cleanse pickers / dispel sweeps target just the
-    /// Darkness install. Concentration-bound on the caster; dropping
-    /// concentration ends the sphere and strips the flag from every
-    /// target caught in the initial burst.
-    Darkened,
     /// Otherworldly-Guised (5e Tasha's Otherworldly Guise, level-6
     /// transmutation, concentration). The caster shifts into a
     /// celestial-style form: they gain +2 AC (read by
@@ -1961,7 +1939,6 @@ impl Condition {
             Condition::Sanctuary => "sanctified",
             Condition::FireShielded => "fire shielded",
             Condition::Daylit => "lit by daylight",
-            Condition::Spiked => "in spiked growth",
             Condition::Raging => "raging",
             Condition::Polymorphed => "polymorphed",
             Condition::Globed => "globed in invulnerability",
@@ -2102,7 +2079,6 @@ impl Condition {
             Condition::OtherworldlyGuised => "guised in otherworldly form",
             Condition::Silenced => "silenced",
             Condition::Footloose => "moving freely",
-            Condition::Darkened => "shrouded in darkness",
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::TrueSighted => "true-sighted",
@@ -2438,7 +2414,6 @@ impl Condition {
                 | Condition::EarthenGrasped
                 | Condition::Disarmed
                 | Condition::WaterSphered
-                | Condition::Darkened
                 | Condition::PowerWordPained
         )
     }
@@ -2517,7 +2492,6 @@ impl Condition {
                 | Condition::Foreseen
                 | Condition::Untracked
                 | Condition::Displaced
-                | Condition::Darkened
                 | Condition::MoilShrouded
         )
     }

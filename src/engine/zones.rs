@@ -28,7 +28,7 @@
 //!
 //! ## What a zone can do
 //!
-//! Three clauses, each independently optional, which between them cover
+//! Four clauses, each independently optional, which between them cover
 //! every stationary-area spell the engine has reason to model:
 //!
 //!   - **`obscures`** — heavy obscurement. Blocks sight into, out of,
@@ -39,6 +39,9 @@
 //!   - **`contact`** — the "enters for the first time on a turn or
 //!     starts its turn there" clause: an optional save, optional
 //!     damage, optional condition.
+//!   - **`per_step_damage`** — the one trigger 5e bills by the tile
+//!     rather than by the turn: Spike Growth's "2d4 piercing for every
+//!     5 feet it travels".
 //!
 //! ## What a zone deliberately isn't
 //!
@@ -153,6 +156,29 @@ impl ZoneContact {
         }
     }
 
+    /// A save that negates both a hit and a hold: Evard's Black
+    /// Tentacles, whose Dexterity save is the difference between
+    /// nothing at all and 3d6 plus being pinned.
+    pub const fn save_or_suffer(
+        ability: AbilityScoreType,
+        dc: i32,
+        dice: Dice,
+        damage_type: DamageType,
+        condition: Condition,
+        timer: ConditionTimer,
+    ) -> Self {
+        Self {
+            save: Some(ZoneSave {
+                ability,
+                dc,
+                half_on_success: false,
+            }),
+            damage: Some((dice, damage_type)),
+            condition: Some((condition, timer)),
+            breaks_concentration: false,
+        }
+    }
+
     /// Unavoidable damage on contact: Cloud of Daggers, which offers no
     /// save at all.
     pub const fn damage(dice: Dice, damage_type: DamageType) -> Self {
@@ -184,6 +210,15 @@ pub struct ZoneEffect {
     /// 5e **difficult terrain**: each tile costs double.
     pub difficult: bool,
     pub contact: Option<ZoneContact>,
+    /// 5e Spike Growth: "when a creature moves into or within the area,
+    /// it takes 2d4 piercing damage for every 5 feet it travels."
+    ///
+    /// A third trigger, and the only one in 5e that is charged by the
+    /// *tile* rather than by the turn — which is why it can't be folded
+    /// into `contact`. Contact fires once however far you walk;
+    /// this fires once per step, and the difference is the whole spell:
+    /// the thorns punish crossing the patch, not being on it.
+    pub per_step_damage: Option<(Dice, DamageType)>,
 }
 
 impl ZoneEffect {
@@ -192,6 +227,7 @@ impl ZoneEffect {
         obscures: true,
         difficult: false,
         contact: None,
+        per_step_damage: None,
     };
 
     /// A zone whose only clause is the bad ground (Entangle, whose
@@ -201,6 +237,7 @@ impl ZoneEffect {
         obscures: false,
         difficult: true,
         contact: None,
+        per_step_damage: None,
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
@@ -210,6 +247,18 @@ impl ZoneEffect {
             obscures: false,
             difficult: true,
             contact: Some(contact),
+            per_step_damage: None,
+        }
+    }
+
+    /// Ground that charges by the tile: Spike Growth's thorns, which
+    /// are difficult terrain *and* bill 2d4 for every 5 ft crossed.
+    pub const fn thorny(dice: Dice, damage_type: DamageType) -> Self {
+        Self {
+            obscures: false,
+            difficult: true,
+            contact: None,
+            per_step_damage: Some((dice, damage_type)),
         }
     }
 
@@ -221,6 +270,7 @@ impl ZoneEffect {
             obscures: true,
             difficult: false,
             contact: Some(contact),
+            per_step_damage: None,
         }
     }
 
@@ -231,6 +281,7 @@ impl ZoneEffect {
             obscures: false,
             difficult: false,
             contact: Some(contact),
+            per_step_damage: None,
         }
     }
 
@@ -238,7 +289,7 @@ impl ZoneEffect {
     /// Obscurement doesn't count: it is as much a hiding place as a
     /// handicap, and the AI treats it as free ground.
     pub fn is_harmful(&self) -> bool {
-        self.contact.is_some_and(|c| c.is_harmful())
+        self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some()
     }
 }
 

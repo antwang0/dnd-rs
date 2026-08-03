@@ -4692,6 +4692,53 @@ impl EncounterInstance {
         }
     }
 
+    /// Bill every zone that charges by the tile for one step of
+    /// `actor_id`'s walk.
+    ///
+    /// The third and rarest of the zone triggers, and the only one that
+    /// isn't governed by the once-per-turn ledger — Spike Growth's
+    /// "2d4 piercing for every 5 feet it travels" means every 5 feet,
+    /// and a creature that crosses six tiles of thorns pays six times.
+    /// Called after the step has landed, so the question is whether the
+    /// tile just entered is thorny.
+    pub fn charge_zone_movement(&mut self, actor_id: usize) {
+        if self.zones.iter().all(|z| z.effect.per_step_damage.is_none()) {
+            return;
+        }
+        // Footprint coverage, not the anchor tile — the same question
+        // `touch_zones` asks, so a Large creature with one corner in
+        // the thorns is in the thorns for both triggers.
+        let due: Vec<(&'static str, crate::engine::dice::Dice, DamageType)> = self
+            .zones
+            .iter()
+            .filter_map(|z| {
+                let (dice, dt) = z.effect.per_step_damage?;
+                self.actor_in_zone(actor_id, z).then_some((z.name, dice, dt))
+            })
+            .collect();
+        for (name, dice, damage_type) in due {
+            if !self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.is_combat_active())
+            {
+                return;
+            }
+            let amount = self.roll(&dice);
+            let actor_name = self.actor_name(actor_id);
+            self.log(format!(
+                "  {}: {} takes {} {} crossing it.",
+                name, actor_name, amount, damage_type
+            ));
+            crate::engine::side_effects::DealDamage {
+                actor_id,
+                amount,
+                damage_type,
+            }
+            .apply(self);
+        }
+    }
+
     /// Fire one named zone's contact clause at one creature, if the
     /// creature is standing in it and hasn't already paid this turn.
     ///
@@ -32937,7 +32984,6 @@ mod tests {
         use crate::actions::spells::SPIKE_GROWTH;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        use crate::conditions::Condition;
         let mut e = ei_with_terrain(15, 15, &[]);
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -32955,34 +33001,58 @@ mod tests {
         for ef in effects {
             ef.apply(&mut e);
         }
-        assert!(e.actors[&goblin].has_condition(Condition::Spiked));
+        // The thorns are ground, not a tag: nobody picks up a
+        // condition, and standing still in them costs nothing.
+        assert_eq!(e.zones().len(), 1);
+        assert_eq!(e.actors[&goblin].hitpoints(), e.actors[&goblin].max_hitpoints());
         assert!(e.actors[&wiz].is_concentrating());
     }
 
-    /// Spiked + move: walking over spike growth deals 2d4 piercing per
-    /// step. We move a step and check HP decreased.
+    /// Spike Growth bills by the tile, and only for the tiles that are
+    /// actually thorny: crossing the patch costs a roll per step, and
+    /// walking on past it costs nothing.
     #[test]
-    fn moving_while_spiked_deals_damage() {
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        use crate::conditions::{Condition, ConditionTimer};
+    fn crossing_spike_growth_costs_a_roll_a_tile_and_leaving_it_costs_nothing() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
-        let mut e = ei_with_terrain(15, 15, &[]);
-        let gob = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 10), 0, 0)
             .unwrap();
-        e.actors
-            .get_mut(&gob)
-            .unwrap()
-            .add_condition(Condition::Spiked, ConditionTimer::Permanent);
-        let before = e.actors[&gob].hitpoints();
+        e.install_zone(test_zone(
+            Coordinate::new(8, 10),
+            1,
+            ZoneEffect::thorny(
+                crate::engine::dice::Dice::new(2, 4),
+                DamageType::Piercing,
+            ),
+        ));
+        let before = e.actors[&ogre].hitpoints();
+        // Three tiles, all of them thorny.
         MoveActor {
-            actor_id: gob,
-            path: vec![Coordinate::new(6, 5)],
+            actor_id: ogre,
+            path: (5..=7).map(|x| Coordinate::new(x, 10)).collect(),
         }
         .apply(&mut e);
-        let after = e.actors.get(&gob).map(|a| a.hitpoints()).unwrap_or(0);
-        // Spike damage is 2d4 piercing; min 2, max 8. HP must have dropped.
-        assert!(after < before, "spike damage should chip HP ({} → {})", before, after);
+        let crossed = e.actors[&ogre].hitpoints();
+        assert!(
+            before - crossed >= 6,
+            "three thorny tiles is three 2d4 rolls, not one ({} → {})",
+            before,
+            crossed
+        );
+        // Out the far side onto clean ground — the old model kept
+        // billing here, because the thorns were stuck to the walker.
+        MoveActor {
+            actor_id: ogre,
+            path: (12..=15).map(|x| Coordinate::new(x, 10)).collect(),
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&ogre].hitpoints(),
+            crossed,
+            "clean ground is free"
+        );
     }
 
     /// Telekinesis: pulls the failed-save target and lifts them, also
@@ -37144,48 +37214,41 @@ mod tests {
         );
     }
 
-    /// Spike Stones — level-4 druid AoE that tags every enemy in a 4-tile
-    /// radius burst with `Spiked` and anchors concentration. The Spiked
-    /// rider runs on `MoveActor::apply` (existing Spike Growth path).
+    /// Spike Stones lays the same thorny ground its smaller sibling
+    /// does, over a wider patch, and charges by the tile for it —
+    /// friend and foe alike, since the stones are the ground.
     #[test]
-    fn spike_stones_tags_enemies_only_and_starts_concentration() {
+    fn spike_stones_lays_thorny_ground_and_bills_by_the_tile() {
         use crate::actions::spells::SPIKE_STONES;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        let mut e = ei_with_terrain(20, 20, &[]);
-        let d = e
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let druid = e
             .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let ally = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 20), 1, 0)
             .unwrap();
-        let enemy1 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 11), 1, 0)
-            .unwrap();
-        let enemy2 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 1)
-            .unwrap();
-        let tl = vec![Coordinate::new(9, 10)];
-        let effects = SPIKE_STONES.side_effects(&mut e, d, None, Some(&tl), None);
-        for ef in effects {
+        let centre = Coordinate::new(20, 20);
+        for ef in SPIKE_STONES.side_effects(&mut e, druid, None, Some(&vec![centre]), None) {
             ef.apply(&mut e);
         }
+        assert_eq!(e.zones().len(), 1);
+        assert_eq!(e.zone_movement_multiplier(centre), 2.0);
+        assert!(e.actors[&druid].is_concentrating());
+        let before = e.actors[&ogre].hitpoints();
+        MoveActor {
+            actor_id: ogre,
+            path: (17..=19).map(|x| Coordinate::new(x, 20)).collect(),
+        }
+        .apply(&mut e);
         assert!(
-            e.actors[&enemy1].has_condition(Condition::Spiked),
-            "enemy1 in burst should be Spiked"
+            e.actors[&ogre].hitpoints() < before,
+            "walking into the stones should cost the walker"
         );
-        assert!(
-            e.actors[&enemy2].has_condition(Condition::Spiked),
-            "enemy2 in burst should be Spiked"
-        );
-        assert!(
-            !e.actors[&ally].has_condition(Condition::Spiked),
-            "ally in burst must NOT be Spiked"
-        );
-        assert!(
-            e.actors[&d].is_concentrating(),
-            "spike stones anchors concentration on the caster"
-        );
+        e.drop_concentration(druid);
+        assert!(e.zones().is_empty());
     }
 
     /// Mind Flayer's Mind Blast — burst, INT save halves, fail also
@@ -41395,61 +41458,66 @@ mod tests {
         assert!(Condition::Sphered.blocks_reactions());
     }
 
-    /// Black Tentacles: enemy-only DEX-save burst that lays bludgeoning
-    /// damage on every target and Restrains failed-save targets.
-    /// Verifies allies in the burst are spared and the caster picks up
-    /// a Black Tentacles concentration mark.
+    /// Black Tentacles fills a square of ground: difficult terrain, a
+    /// Dexterity save that negates *both* the 3d6 and the hold, and a
+    /// fresh save for anyone who walks in afterwards. Friend or foe —
+    /// tentacles do not check tabards, and the placement is the
+    /// wizard's problem.
     #[test]
-    fn black_tentacles_spares_allies_and_installs_restrained() {
+    fn black_tentacles_grabs_at_the_square_and_at_who_walks_into_it() {
         use crate::actions::spells::EVARDS_BLACK_TENTACLES;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-        let mut saw_restrained = false;
+        use crate::engine::side_effects::MoveActor;
+        let mut grabbed_on_arrival = false;
+        let mut grabbed_walking_in = false;
         for seed in 0..40u64 {
-            let mut e = ei_with_terrain(20, 20, &[]);
-            for _ in 0..seed {
-                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
-            }
+            let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
             let wiz = e
                 .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            let ally = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
-                .unwrap();
-            let enemy = e
+            let standing = e
                 .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
                 .unwrap();
-            let ally_hp_before = e.actors[&ally].hitpoints();
+            let approaching = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 10), 1, 1)
+                .unwrap();
             let origin = Coordinate::new(10, 10);
             for ef in
                 EVARDS_BLACK_TENTACLES.side_effects(&mut e, wiz, None, Some(&vec![origin]), None)
             {
                 ef.apply(&mut e);
             }
-            assert_eq!(
-                e.actors[&ally].hitpoints(),
-                ally_hp_before,
-                "ally in burst should be spared by black tentacles"
-            );
-            assert!(
-                !e.actors[&ally].has_condition(Condition::Restrained),
-                "ally should not be restrained by black tentacles"
-            );
-            assert!(
-                e.actors[&wiz].is_concentrating(),
-                "caster should concentrate on Black Tentacles"
-            );
+            assert_eq!(e.zone_movement_multiplier(origin), 2.0);
+            assert!(e.actors[&wiz].is_concentrating());
             if e.actors
-                .get(&enemy)
+                .get(&standing)
                 .is_some_and(|a| a.has_condition(Condition::Restrained))
             {
-                saw_restrained = true;
+                grabbed_on_arrival = true;
+            }
+            MoveActor {
+                actor_id: approaching,
+                path: (12..=15).rev().map(|x| Coordinate::new(x, 10)).collect(),
+            }
+            .apply(&mut e);
+            if e.actors
+                .get(&approaching)
+                .is_some_and(|a| a.has_condition(Condition::Restrained))
+            {
+                grabbed_walking_in = true;
+            }
+            if grabbed_on_arrival && grabbed_walking_in {
                 break;
             }
         }
         assert!(
-            saw_restrained,
-            "Black Tentacles should restrain failed-save enemies across seeds"
+            grabbed_on_arrival,
+            "the tentacles should catch a creature they erupt underneath"
+        );
+        assert!(
+            grabbed_walking_in,
+            "and go on catching creatures that walk into the square"
         );
     }
 
@@ -56344,87 +56412,55 @@ mod tests {
         );
     }
 
-    /// Darkened actors swing with disadvantage AND attackers targeting
-    /// them get disadvantage too. Mirrors `Blinded`'s symmetric
-    /// envelope but distinct so cleanse / dispel sweeps can target just
-    /// the Darkness install.
+    /// Darkness lays a sphere of heavy obscurement rather than marking
+    /// whoever stood in it. The attack-mode consequence is the same
+    /// symmetric envelope the old `Darkened` condition hand-rolled —
+    /// nobody in the dark can see out and nobody outside can see in —
+    /// but it now follows the ground: a creature that steps clear can
+    /// see again, and one that steps in cannot.
     #[test]
-    fn darkened_actor_swings_and_is_attacked_at_disadvantage() {
-        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        use crate::engine::encounter::RollMode;
-        let mut e = ei_with_terrain(15, 15, &[]);
-        let attacker = e
-            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let target = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-            .unwrap();
-        // Baseline: a non-Darkened attacker rolls normally.
-        assert_eq!(
-            e.compute_attack_mode(attacker, target, true),
-            RollMode::Normal,
-            "baseline attack mode is Normal"
-        );
-        // Attacker-side Darkened → disadvantage on swings.
-        e.actors
-            .get_mut(&attacker)
-            .unwrap()
-            .add_condition(Condition::Darkened, crate::conditions::ConditionTimer::Rounds(10));
-        assert_eq!(
-            e.compute_attack_mode(attacker, target, true),
-            RollMode::Disadvantage,
-            "Darkened attacker swings with disadvantage"
-        );
-        // Clear and test target-side Darkened.
-        e.actors
-            .get_mut(&attacker)
-            .unwrap()
-            .remove_condition(Condition::Darkened);
-        e.actors
-            .get_mut(&target)
-            .unwrap()
-            .add_condition(Condition::Darkened, crate::conditions::ConditionTimer::Rounds(10));
-        assert_eq!(
-            e.compute_attack_mode(attacker, target, true),
-            RollMode::Disadvantage,
-            "attacks against a Darkened target also have disadvantage"
-        );
-    }
-
-    /// Darkness: concentration-bound burst installs the `Darkened`
-    /// condition on every actor caught in the radius. Dropping
-    /// concentration strips the install from every caught target.
-    #[test]
-    fn darkness_installs_darkened_under_concentration() {
+    fn darkness_lays_a_sphere_nobody_sees_through() {
         use crate::actions::spells::DARKNESS;
-        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        let mut e = ei_with_terrain(15, 15, &[]);
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let enemy = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 16), 1, 0)
             .unwrap();
-        let pt = vec![Coordinate::new(6, 6)];
-        let effs = DARKNESS.side_effects(&mut e, wiz, None, Some(&pt), None);
-        for ef in effs {
+        assert!(e.viewer_can_see(wiz, enemy));
+        let pt = vec![Coordinate::new(16, 16)];
+        for ef in DARKNESS.side_effects(&mut e, wiz, None, Some(&pt), None) {
             ef.apply(&mut e);
         }
-        assert!(
-            e.actors[&enemy].has_condition(Condition::Darkened),
-            "Darkness installs Darkened on a burst target"
+        // Nobody picks up a condition; the dark is on the map.
+        assert!(e.actors[&enemy].conditions().is_empty());
+        assert!(e.tile_is_obscured(Coordinate::new(16, 16)));
+        assert!(!e.viewer_can_see(wiz, enemy));
+        assert!(!e.viewer_can_see(enemy, wiz));
+        // Blind both ways means the two clauses cancel at the attack
+        // roll — 5e's unseen-attacker rule.
+        assert_eq!(
+            e.compute_attack_mode(wiz, enemy, false),
+            RollMode::Normal
         );
-        assert!(
-            e.actors[&wiz].is_concentrating(),
-            "Darkness is concentration-bound"
-        );
+        assert!(e.actors[&wiz].is_concentrating());
+        // Walking clear of the sphere restores sight, which the old
+        // condition-stamped model could not do. Somewhere the wizard's
+        // line of sight doesn't have to cross the dark to reach.
+        MoveActor {
+            actor_id: enemy,
+            path: vec![Coordinate::new(2, 25)],
+        }
+        .apply(&mut e);
+        assert!(e.viewer_can_see(wiz, enemy));
+        // …and dropping the caster's grip takes the dark off the board.
         e.drop_concentration(wiz);
-        assert!(
-            !e.actors[&enemy].has_condition(Condition::Darkened),
-            "Dropping concentration strips Darkened from caught targets"
-        );
+        assert!(e.zones().is_empty());
     }
 
     #[test]

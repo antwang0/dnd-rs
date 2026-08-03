@@ -10164,16 +10164,41 @@ impl Action for WallOfForce {
 
 pub static WALL_OF_FORCE: LazyLock<WallOfForce> = LazyLock::new(|| WallOfForce {});
 
-/// Spike Growth — level-2 transmutation, concentration, action. Plants
-/// spikes across a 20-ft radius (we use radius-3 in our 2.5ft grid).
-/// Enemies in the area get the `Spiked` condition; whenever they move,
-/// the `MoveActor` side-effect rolls 2d4 piercing damage per step
-/// against them (the rider lives in side_effects.rs to keep the damage
-/// roll consistent across every motion source — walks, Pulls, etc.).
-/// Concentration: ending the spell clears Spiked from every target.
+/// Spike Growth — level-2 transmutation, concentration (druid /
+/// ranger). Hard spikes and thorns cover a 20-ft radius of ground
+/// within 150 ft.
+///
+/// "The ground in the area is difficult terrain. When a creature moves
+/// into or within the area, it takes 2d4 piercing damage for every 5
+/// feet it travels."
+///
+/// The only 5e area that bills by the *tile* rather than by the turn,
+/// which is why the zone layer carries a `per_step_damage` clause
+/// distinct from `contact`: crossing six tiles of thorns costs six
+/// rolls, where crossing six tiles of web costs one save.
+///
+/// The old model got the billing right and the geometry wrong. It
+/// stamped a `Spiked` condition on the enemies standing in the burst at
+/// cast time and charged them 2d4 per step *wherever they went* — so a
+/// creature that fled the thorns kept bleeding on clean ground for the
+/// rest of the fight, and a creature that walked into them afterwards
+/// paid nothing. Its own comment said as much: "we don't model 'actors
+/// entering the area get Spiked' (would need a positional re-check
+/// tick)." The thorns are the ground; that is the re-check.
+///
+/// It catches allies now, for the reason every other zone does.
 pub struct SpikeGrowth {}
 
+impl SpikeGrowth {
+    /// 20-ft radius, held at 3 tiles — the radius the spell shipped
+    /// with, and one the AI's placement picker can reasonably clear.
+    const RADIUS: isize = 3;
+}
+
 impl Action for SpikeGrowth {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn name(&self) -> &str {
         "spike growth"
     }
@@ -10181,7 +10206,9 @@ impl Action for SpikeGrowth {
         vec!["spikes", "spike"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 3 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft = 60 tiles.
@@ -10206,9 +10233,19 @@ impl Action for SpikeGrowth {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -10217,27 +10254,27 @@ impl Action for SpikeGrowth {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const RADIUS: isize = 3;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut applied: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Spiked,
-                timer: ConditionTimer::Permanent,
-            }));
-            applied.push((tid, Condition::Spiked));
-        }
-        // Always start concentration: even with no current targets the
-        // spike field exists and could catch a creature that walks in
-        // later. We don't model "actors entering the area get Spiked"
-        // (would need a positional re-check tick), but the concentration
-        // marker keeps the slot in use.
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Spike Growth", applied),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "spike growth",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // Nothing to charge on arrival: the thorns bill
+                // movement, and standing still in them is free.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Spike Growth"),
+            }),
+        ]
     }
 }
 
@@ -13697,35 +13734,47 @@ impl Action for HeroesFeast {
 
 pub static HEROES_FEAST: LazyLock<HeroesFeast> = LazyLock::new(|| HeroesFeast {});
 
-/// Spike Stones — 5e level-3 druid transmutation, concentration. Stones
-/// in a 20ft square sprout sharp spikes. Every enemy whose footprint
-/// touches the burst is tagged with `Spiked` for 10 rounds — the per-
-/// step piercing damage rider lives on `MoveActor::apply` and reads the
-/// condition. Acts like a slower, larger-area Spike Growth, traded for
-/// the higher slot cost. Concentration: dropping it pulls the tags.
+/// Spike Stones — level-3 transmutation, concentration (druid). Stones
+/// across a 20-ft square sprout jagged spikes.
+///
+/// The larger, slower sibling of Spike Growth: a wider patch bought
+/// with a higher slot, on the same tile-billed clause. It rides the
+/// same `per_step_damage` lane, so the two spells differ in exactly the
+/// two numbers a player would expect — radius and slot — rather than in
+/// how they work.
+///
+/// Same correction as its sibling: the field is ground now, not a tag
+/// on whoever stood there when it was cast, so it stops charging the
+/// creature that leaves and starts charging the one that walks in.
 pub struct SpikeStones {}
 
+impl SpikeStones {
+    /// 20-ft square = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
+
 impl Action for SpikeStones {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn name(&self) -> &str {
         "spike stones"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["ss", "spike-stones"]
+        vec!["spikestones", "stones"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 20ft square ≈ 4-tile radius (we use Chebyshev burst so this is
-        // a 9×9 region; close enough to the 4-square RAW footprint).
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 60ft to the burst origin = 24 tiles.
-        Some(24)
+        Some(48)
     }
     fn requires_los(&self) -> bool {
         true
     }
     fn deals_damage(&self) -> bool {
-        // Damage lands via the per-step Spiked rider, not at cast time.
         false
     }
     fn cost(
@@ -13736,11 +13785,21 @@ impl Action for SpikeStones {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(4)
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -13749,36 +13808,25 @@ impl Action for SpikeStones {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        // Enemy-only burst — we don't want allies stepping into the
-        // spike field to also bleed (RAW: it's terrain that hits
-        // anyone, but the AI's targeting works better as enemy-only).
-        let enemies = encounter.enemy_burst_targets(caster_id, point, 4);
-        if enemies.is_empty() {
-            encounter.log("  spike stones: no enemies in the area".to_string());
-        } else {
-            encounter.log(format!(
-                "  spike stones: {} enemies tagged with spiked",
-                enemies.len()
-            ));
-        }
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut concentration_targets: Vec<(usize, Condition)> = Vec::new();
-        for id in enemies {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: id,
-                condition: Condition::Spiked,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            concentration_targets.push((id, Condition::Spiked));
-        }
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions(
-                "Spike Stones",
-                concentration_targets,
-            ),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "spike stones",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Spike Stones"),
+            }),
+        ]
     }
 }
 
@@ -16526,15 +16574,28 @@ impl Action for WindWall {
 
 pub static WIND_WALL: LazyLock<WindWall> = LazyLock::new(|| WindWall {});
 
-/// Evard's Black Tentacles — level-4 conjuration, concentration. A
-/// writhing mass of tentacles fills a 20-foot square (we model as a
-/// 2-tile-radius burst centered on the caster's chosen tile). Every
-/// enemy whose footprint touches the burst makes a DEX save vs the
-/// caster's spell DC; on fail, they take 3d6 bludgeoning AND are
-/// Restrained for the spell's duration. On save, they take half and
-/// avoid the Restrained rider. Concentration-bound on the caster;
-/// dropping concentration releases every restrained victim.
+/// Evard's Black Tentacles — level-4 conjuration, concentration
+/// (warlock / wizard). Writhing black tentacles fill a 20-ft square of
+/// ground within 90 ft.
+///
+/// "The ground in the area is difficult terrain. When a creature enters
+/// the area for the first time on a turn or starts its turn there, it
+/// must succeed on a Dexterity saving throw or take 3d6 bludgeoning
+/// damage and be restrained by the tentacles."
+///
+/// The save negates *both* halves — no damage and no hold on a pass —
+/// which is why this is `save_or_suffer` rather than the half-on-save
+/// shape Cloudkill and Moonbeam use. Getting that wrong in the
+/// friendlier direction is what the old one-shot burst did: it dealt
+/// half on a success, and it dealt it once, to whoever happened to be
+/// standing there. A level-4 slot that fills a square with grabbing
+/// tentacles should be paid for by everyone who walks into the square.
 pub struct EvardsBlackTentacles {}
+
+impl EvardsBlackTentacles {
+    /// 20-ft square ≈ a 2-tile Chebyshev burst.
+    const RADIUS: isize = 2;
+}
 
 impl Action for EvardsBlackTentacles {
     fn school(&self) -> Option<SpellSchool> {
@@ -16547,8 +16608,9 @@ impl Action for EvardsBlackTentacles {
         vec!["tentacles", "evards", "ebt"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 20ft square ≈ 2-tile Chebyshev burst (≈10ft radius).
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 90 ft = 36 tiles.
@@ -16570,6 +16632,16 @@ impl Action for EvardsBlackTentacles {
     ) -> Vec<Resource> {
         action_and_slot(4)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -16589,28 +16661,36 @@ impl Action for EvardsBlackTentacles {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        // Failed-save targets take 3d6 bludgeoning AND pick up Restrained
-        // for the duration; pass = half damage and no rider. The
-        // concentration mark captures the restrained ids so dropping
-        // concentration releases them cleanly. 10 rounds = 1 minute RAW.
-        // Same recipe Caustic Brew / Wall of Light / Psychic Scream
-        // route through — concentration_burst_with_rider keeps the
-        // three-step burst/rider/anchor shape in one chokepoint.
-        concentration_burst_with_rider(
-            encounter,
-            caster_id,
-            point,
-            2,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(3, 6),
-            DamageType::Bludgeoning,
-            "black tentacles",
-            "Black Tentacles",
-            Condition::Restrained,
-            ConditionTimer::Rounds(10),
-            SaveDamagePolicy::HalfOnSave,
-        )
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "black tentacles",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::clinging(ZoneContact::save_or_suffer(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(3, 6),
+                        DamageType::Bludgeoning,
+                        Condition::Restrained,
+                        ConditionTimer::Rounds(10),
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // The tentacles erupt around whoever is standing there,
+                // and RAW's "enters the area" covers the square
+                // appearing underneath a creature as squarely as it
+                // covers the creature walking in.
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Black Tentacles"),
+            }),
+        ]
     }
 }
 
@@ -26427,24 +26507,33 @@ impl Action for RaiseDead {
 
 pub static RAISE_DEAD: LazyLock<RaiseDead> = LazyLock::new(|| RaiseDead {});
 
-/// Darkness — level-2 evocation, concentration. Pick a tile within range;
-/// a 15ft (6-tile) sphere of magical darkness drops over the area. Every
-/// actor caught in the burst — friend or foe — gains the `Darkened`
-/// condition: they swing blind (attacker disadvantage on their attacks
-/// via `imposes_attacker_disadvantage`) and attackers targeting them
-/// swing blind too (target-side disadvantage via
-/// `imposes_disadvantage_to_attackers`). RAW: the darkness blocks
-/// sight even for darkvision — we collapse to a symmetric attack-mode
-/// penalty mirroring how `Blinded` handles single-target sight loss.
+/// Darkness — level-2 evocation, concentration (sorcerer / warlock /
+/// wizard). A 15-ft-radius sphere of magical darkness spreads from a
+/// point within 60 ft.
 ///
-/// Concentration-bound on the caster so re-cast / damage-drop cleanly
-/// strips the install via the standard concentration cleanup. Distinct
-/// from `Blinded` so cleanse pickers and dispel sweeps can target just
-/// the Darkness install. Non-discriminating zone — the caster's own
-/// allies caught in the burst eat the same blind / blind-on-attackers
-/// envelope, so the tactical use is shielding a melee-heavy frontline
-/// against ranged casters or blanket-blinding a tight enemy cluster.
+/// "The darkness spreads around corners. A creature with darkvision
+/// can't see through this darkness, and nonmagical light can't
+/// illuminate it."
+///
+/// Heavy obscurement, on the zone layer — the same clause Fog Cloud
+/// carries, which is exactly right: RAW they differ only in flavour and
+/// in the sentence about darkvision, and the engine's obscurement gate
+/// already declines to let darkvision help. Blindsight and truesight
+/// still get through, which is also RAW and is what makes the spell a
+/// Devil's-Sight warlock's signature rather than a coin flip.
+///
+/// It replaces a `Darkened` condition stamped on whoever stood in the
+/// burst at cast time — a shroud that followed its victims out of the
+/// dark and never touched anyone who walked in. Symmetric and
+/// friend-or-foe blind, so the tactical use is unchanged: blanket a
+/// tight enemy cluster, or shield a melee frontline from ranged fire,
+/// and accept that your own side is in it too.
 pub struct Darkness {}
+
+impl Darkness {
+    /// 15-ft radius = 6 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 6;
+}
 
 impl Action for Darkness {
     fn school(&self) -> Option<SpellSchool> {
@@ -26457,8 +26546,9 @@ impl Action for Darkness {
         vec!["dark", "shroud"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 15 ft radius = 6 tile-gaps.
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -26485,9 +26575,19 @@ impl Action for Darkness {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -26496,30 +26596,25 @@ impl Action for Darkness {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let radius = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
-        };
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Darkened,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conditions.push((tid, Condition::Darkened));
-        }
-        // Concentration-bound — registering every install on the
-        // concentration so dropping it (damage / re-cast) strips the
-        // darkness from every caught target in one sweep.
-        if !conditions.is_empty() {
-            effects.push(Box::new(StartConcentration {
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "darkness",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::OBSCURING,
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData::with_conditions("Darkness", conditions),
-            }));
-        }
-        effects
+                data: ConcentrationData::new("Darkness"),
+            }),
+        ]
     }
 }
 
