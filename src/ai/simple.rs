@@ -740,7 +740,7 @@ impl Controller for SimpleAi {
         //           `MELEE_ADJACENT_PRIMES` table above but a separate
         //           rung, because Sweeping Attack's two-enemy gate sits
         //           between them and the order is load-bearing.
-        if let Some(aei) = try_self_action_when_enemy_within(encounter, actor_id, 0, "precision attack")
+        if let Some(aei) = try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "precision attack")
         {
             return ControllerDecision::Act(aei);
         }
@@ -3148,8 +3148,8 @@ fn try_foresight(
 
 /// True if any combat-active hostile actor's footprint sits within
 /// `max_gap` tiles of `actor_id`'s footprint. Shared helper for
-/// proximity-gated self-buff heuristics (Rage at gap 12, Divine Smite
-/// at gap 0). Returns false when `actor_id` is missing.
+/// proximity-gated self-buff heuristics (Rage at gap 12, Reckless
+/// Attack at `MELEE_REACH`). Returns false when `actor_id` is missing.
 fn any_enemy_within(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -3227,13 +3227,20 @@ fn try_self_action(
 /// None` prelude followed by a `try_self_action` delegation.
 ///
 /// The `max_gap` parameter distinguishes the two shipping cadences:
-///   - **gap 0** — footprint-adjacent: bonus-action primes whose next
-///     swing has to connect this turn (Trip / Menacing / Disarming /
-///     Pushing / Goading / Precision Attack; Divine Smite / Divine
-///     Strike; Frenzy / War Priest).
+///   - **`MELEE_REACH`** — in reach of a swing: bonus-action primes
+///     whose next swing has to connect this turn (Trip / Menacing /
+///     Disarming / Pushing / Goading / Precision Attack; Divine Smite /
+///     Divine Strike; Frenzy / War Priest / Reckless Attack).
 ///   - **gap 24** — spell-window: free-cost / prime actions whose
 ///     payoff can be spent across the next few turns (Arcane Recovery,
 ///     Natural Recovery, Guided Strike's +10 accuracy prime).
+///
+/// `MELEE_REACH` and not gap 0, which is what half this cohort used to
+/// pass. Gap 0 means two footprints actually touching, and the AI never
+/// closes that far: a 5 ft weapon reaches a gap of 1, so the attack
+/// picker fires — and the approach stops — one tile short of the
+/// distance those gates were asking for. Every prime on the stricter
+/// number was therefore dead. See `try_divine_smite`.
 ///
 /// Adding a future once-per-rest self-target picker drops in as a
 /// one-line delegation instead of the three-line `any_enemy_within +
@@ -3624,7 +3631,7 @@ fn try_reckless_attack(
     }
     // Only fire when an enemy is footprint-adjacent so the advantage
     // is consumed this turn (Helped clears on the next attack).
-    if !any_enemy_within(encounter, actor_id, 0) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_self_action(encounter, actor_id, "reckless attack")
@@ -3653,7 +3660,7 @@ fn try_frenzy(
     }
     // Only fire when an enemy is footprint-adjacent so the granted
     // Action gets spent on a melee swing this turn.
-    if !any_enemy_within(encounter, actor_id, 0) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_self_action(encounter, actor_id, "frenzy")
@@ -3763,7 +3770,7 @@ fn try_war_priest(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "war priest")
+    try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "war priest")
 }
 
 /// War Domain Cleric Guided Strike — bonus-action Channel Divinity
@@ -3810,14 +3817,30 @@ fn try_invoke_duplicity(
 }
 
 /// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
-/// rider on the next melee hit. Fires only when an enemy is footprint-
-/// adjacent so the prime doesn't tick out without a target to land on.
-/// Validation handles the "already primed" and "no level-1 slot" gates.
+/// rider on the next melee hit. Fires only when an enemy is inside the
+/// paladin's own reach, so the prime doesn't tick out without a target
+/// to land on. Validation handles the "already primed" and "no level-1
+/// slot" gates.
+///
+/// The gate is `MELEE_REACH` and was gap 0, and the difference is the
+/// whole feature. Gap 0 is two footprints touching; a 5 ft weapon
+/// reaches a gap of 1, so the paladin's own attack picker fires — and
+/// its approach stops — one tile short of what this gate was asking
+/// for. Across twelve seeds of an AI paladin duelling an ogre and
+/// swinging a greatsword every round, the smite was never once cast.
+/// Its four siblings on the same lane (Reckless Attack, Frenzy,
+/// Precision Attack, War Priest) were dead the same way; the rest of
+/// the cohort had already been moved onto `MELEE_ADJACENT_PRIMES`,
+/// which asks the right question.
+///
+/// Reaching one tile further does not risk a wasted prime: the swing
+/// that cashes it validates at exactly this distance, which is the
+/// point.
 fn try_divine_smite(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    try_self_action_when_enemy_within(encounter, actor_id, 0, "divine smite")
+    try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "divine smite")
 }
 
 /// Shared "pick the highest-HP hostile within `range_tiles` and queue
@@ -10769,6 +10792,63 @@ mod tests {
         assert!(
             try_arcane_shot(&e, archer).is_none(),
             "a nocked archer should not nock again and throw the first charge away"
+        );
+    }
+
+    /// The bonus-action primes that have to be cashed by a swing this
+    /// turn are gated on the same distance the swing itself needs, and
+    /// not on a tighter one.
+    ///
+    /// This is a regression pin with a specific failure behind it. Five
+    /// of these gates asked for a footprint gap of 0 — two bodies
+    /// actually touching — while every melee weapon in the game reaches
+    /// a gap of 1. The AI's approach stops the moment it can attack, so
+    /// gap 0 was a distance the AI never stood at, and a paladin
+    /// swinging a greatsword at an ogre every round for twelve seeds
+    /// never once cast Divine Smite.
+    ///
+    /// The fixture is the exact geometry the bug lived at: one tile of
+    /// separation, a legal swing, and a prime that has to agree.
+    #[test]
+    fn the_swing_primes_fire_at_the_distance_the_swing_lands_at() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::actor_template::CreatureTemplate;
+
+        let primed = |template: &'static CreatureTemplate,
+                      picker: &dyn Fn(&EncounterInstance, usize) -> Option<ActionExecutionInfo>|
+         -> bool {
+            let mut e = empty_arena();
+            let pc = e
+                .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+                .unwrap();
+            // One tile of footprint gap: what `MELEE_REACH` covers, and
+            // where the AI's approach actually stops.
+            assert_eq!(e.footprint_distance(pc, z), Some(1));
+            assert!(
+                best_attack_against(pc, &e.actors[&pc], &e, z).is_some(),
+                "the fixture has to be a distance the actor can already swing from"
+            );
+            picker(&e, pc).is_some()
+        };
+
+        assert!(
+            primed(&PALADIN_TEMPLATE, &try_divine_smite),
+            "a paladin in reach of an enemy should prime the smite"
+        );
+        assert!(
+            primed(&BARBARIAN_TEMPLATE, &try_reckless_attack),
+            "a barbarian in reach of an enemy should attack recklessly"
+        );
+        assert!(
+            primed(&FIGHTER_TEMPLATE, &|e, id| {
+                try_self_action_when_enemy_within(e, id, MELEE_REACH, "precision attack")
+            }),
+            "a fighter in reach of an enemy should be able to prime precision"
         );
     }
 
