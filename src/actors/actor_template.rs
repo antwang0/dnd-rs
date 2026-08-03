@@ -6315,6 +6315,35 @@ impl ActorInstance {
         base_reach
     }
 
+    /// How far this actor can actually reach with an action that
+    /// declares `base_reach` — the declared reach plus whatever the
+    /// active reach-extending primes add.
+    ///
+    /// The two contributing lanes are disjoint by construction:
+    /// `extra_melee_reach` refuses anything past a 2-tile envelope and
+    /// `extra_spell_reach` refuses anything inside one, so the sum is
+    /// always exactly one of them or zero. Summing rather than
+    /// branching keeps the caller from having to know which lane an
+    /// action belongs to, which is the whole reason this exists.
+    ///
+    /// It exists because the formula had two homes and they drifted.
+    /// `Action::validate_input` added both bonuses; the AI's attack
+    /// picker compared `dist > reach` against the *declared* reach and
+    /// dropped every candidate the primes had just made legal. The
+    /// visible consequence was that a Battle Master's Lunging Attack
+    /// could never be cashed: the AI's own picker primes it when an
+    /// enemy stands at exactly the gap the lunge opens, and then
+    /// refused to consider a single weapon against that enemy — so the
+    /// prime was spent, every time, on a swing that never happened.
+    /// Distant Spell had the same shape on the ranged lane.
+    ///
+    /// One formula, two callers, and a new reach-extending prime lands
+    /// as a row inside one of the two helpers rather than as an edit in
+    /// both places that have to agree.
+    pub fn extra_reach(&self, base_reach: isize) -> isize {
+        self.extra_melee_reach(base_reach) + self.extra_spell_reach(base_reach)
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
         let action_blocked = self.is_incapacitated();
         match resource {

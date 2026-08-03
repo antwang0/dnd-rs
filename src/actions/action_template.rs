@@ -872,7 +872,7 @@ pub trait Action {
                 let bonus = encounter
                     .actors
                     .get(&caster_id)
-                    .map(|a| a.extra_melee_reach(reach) + a.extra_spell_reach(reach))
+                    .map(|a| a.extra_reach(reach))
                     .unwrap_or(0);
                 if dist > reach + bonus {
                     return false;

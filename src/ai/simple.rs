@@ -6087,9 +6087,22 @@ fn best_attack_against(
         if !action.deals_damage() {
             continue;
         }
-        let Some(reach) = action.reach_tiles() else {
+        let Some(declared) = action.reach_tiles() else {
             continue;
         };
+        // The reach a prime has actually bought, not the one the action
+        // was declared with — `validate_input` adds the same bonus, and
+        // comparing against the declared number here dropped every
+        // candidate the prime had just made legal. A Battle Master who
+        // spent a bonus action on Lunging Attack could not cash it: the
+        // rung above primes on an enemy at exactly the gap the lunge
+        // opens, and this loop then refused to consider a weapon
+        // against that enemy at all.
+        //
+        // It is also the right sort key. A lunge-extended swing really
+        // does reach further than an unextended one, and reach is the
+        // second key below.
+        let reach = declared + actor.extra_reach(declared);
         if dist > reach {
             continue;
         }
@@ -10757,6 +10770,51 @@ mod tests {
             try_arcane_shot(&e, archer).is_none(),
             "a nocked archer should not nock again and throw the first charge away"
         );
+    }
+
+    /// A prime that buys reach has to be visible to the picker that
+    /// spends it. The AI primes Lunging Attack when an enemy stands at
+    /// exactly the gap the lunge opens — and, before `extra_reach` had
+    /// one home, then compared the enemy's distance against the
+    /// *declared* reach of every weapon and found none of them legal.
+    /// The prime was spent every time on a swing that never happened.
+    #[test]
+    fn a_lunging_fighter_can_reach_what_the_lunge_bought() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = empty_arena();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let z = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        // Two tiles of footprint gap — one past the scimitar's reach,
+        // exactly on the lunge's, and exactly where `try_lunging_attack`
+        // decides to spend the bonus action.
+        assert_eq!(e.footprint_distance(f, z), Some(2));
+        assert!(
+            best_attack_against(f, &e.actors[&f], &e, z).is_none(),
+            "unprimed, a gap of two is out of reach"
+        );
+        assert!(
+            try_lunging_attack(&e, f).is_some(),
+            "and it is the gap the AI primes the lunge at"
+        );
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::LungingAttacking, ConditionTimer::Rounds(2));
+        let picked = best_attack_against(f, &e.actors[&f], &e, z);
+        assert!(
+            picked.is_some(),
+            "primed, the picker should see the swing the engine already validates"
+        );
+        // And the swing really is legal — the picker and the action's
+        // own validator now agree, which is the invariant that broke.
+        let sword = e.actors[&f].find_action(picked.unwrap().1.name()).unwrap();
+        let aei = ActionExecutionInfo::new(sword, f, Some(vec![z]), None, None);
+        assert!(aei.validate(&e));
     }
 
     /// The Glamour bard's two ways to spend one pool are separated by

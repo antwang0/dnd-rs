@@ -1528,6 +1528,14 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::AncestrallyHaunted,
     crate::conditions::Condition::Inspired,
     crate::conditions::Condition::Grappled,
+    // 5e Sanctuary. The link is the ward's caster, and it is what lets
+    // the attacker's save be rolled against that caster's own spell save
+    // DC rather than against a fixed number standing in for one. A
+    // Sanctuary from a magic item leaves the link unset on purpose — an
+    // item's ward is the item's, not the drinker's — and the save site
+    // falls back to the item DC there. See
+    // `EncounterInstance::sanctuary_save_blocks`.
+    crate::conditions::Condition::Sanctuary,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

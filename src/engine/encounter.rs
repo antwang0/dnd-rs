@@ -9582,23 +9582,46 @@ impl EncounterInstance {
     /// and returns a miss). On pass, the spell is breached and the buff
     /// drops so it can't keep firing for the rest of the round.
     ///
-    /// The save DC is a fixed 14 — comparable to a level-1 cleric's WIS-
-    /// based spell save DC (8 + 2 prof + 4 WIS mod). We don't currently
-    /// track the original caster's DC alongside the condition, so a
-    /// uniform mid-DC is a clean approximation.
+    /// The DC is the warding caster's own spell save DC, found through
+    /// the `Sanctuary` back-link the spell installs alongside the flag.
+    /// RAW is explicit that it is the caster's — "must first make a
+    /// Wisdom saving throw against your spell save DC" — and the doc on
+    /// the spell has always said so; the save site simply had no way to
+    /// reach the caster until `Sanctuary` joined `LINKED_CONDITIONS`.
+    /// A fixed 14 stood in, which under-priced a high-level cleric's
+    /// ward and over-priced a first-level one's.
+    ///
+    /// `ITEM_SANCTUARY_DC` is the fallback, and it is not a
+    /// stand-in — it is the right answer for the two sources that
+    /// deliberately leave the link unset. A potion of sanctuary and a
+    /// sanctuary scroll carry a ward of their own making, and pricing
+    /// it off whoever happened to drink or read it would let a fighter
+    /// with no spellcasting at all put up a DC 11 ward with the same
+    /// consumable a cleric turns into a DC 17 one.
     pub fn sanctuary_save_blocks(&mut self, attacker_id: usize, target_id: usize) -> bool {
-        let warded = self
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| a.has_condition(Condition::Sanctuary));
-        if !warded {
+        /// 5e potion / scroll DC baseline — comparable to a level-1
+        /// cleric's WIS-based spell save DC (8 + 2 prof + 4 WIS mod),
+        /// which is the tier the consumable sits at.
+        const ITEM_SANCTUARY_DC: i32 = 14;
+        let Some(warded_actor) = self.actors.get(&target_id) else {
+            return false;
+        };
+        if !warded_actor.has_condition(Condition::Sanctuary) {
             return false;
         }
-        const SANCTUARY_DC: i32 = 14;
+        let dc = warded_actor
+            .linked_by(Condition::Sanctuary)
+            .and_then(|caster_id| self.actors.get(&caster_id))
+            .map(|caster| {
+                caster.best_spell_save_dc(
+                    crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+                )
+            })
+            .unwrap_or(ITEM_SANCTUARY_DC);
         let save = self.roll_save(
             attacker_id,
             crate::engine::types::AbilityScoreType::Wisdom,
-            SANCTUARY_DC,
+            dc,
         );
         if save.passed() {
             // 5e: "if the attacker makes a successful save, the spell is
@@ -29601,6 +29624,82 @@ mod tests {
         }
         assert!(blocked > 0, "sanctuary never blocked across 100 saves");
         assert!(breached > 0, "sanctuary never breached across 100 saves");
+    }
+
+    /// The ward is priced off the caster who put it up, not off a
+    /// constant. Two casters with different Wisdom scores warding the
+    /// same fighter produce different DCs, and a ward with no caster
+    /// behind it — the potion and the scroll — falls back to the item
+    /// tier.
+    #[test]
+    fn the_sanctuary_dc_belongs_to_whoever_cast_it() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SANCTUARY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let warded = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        for ef in SANCTUARY.side_effects(&mut e, cleric, Some(&vec![warded]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&warded].linked_by(Condition::Sanctuary),
+            Some(cleric),
+            "the cast should leave the caster's name on the ward"
+        );
+        // The cleric's own DC, and demonstrably not the old constant —
+        // this chassis prices its ward at 12, two below the 14 the save
+        // site used to assume for everyone. The direction is the point:
+        // the constant was not a neutral approximation, it was a flat
+        // buff to every low-level warder and a flat nerf to every
+        // high-level one.
+        let cleric_dc = e.actors[&cleric]
+            .best_spell_save_dc(crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES);
+        assert_eq!(
+            cleric_dc,
+            e.actors[&cleric].spell_save_dc(AbilityScoreType::Wisdom),
+            "a cleric's best casting ability should be Wisdom"
+        );
+        assert_ne!(
+            cleric_dc, 14,
+            "the fixture is only meaningful if the caster's DC differs from the old constant"
+        );
+        let log_before = e.messages().len();
+        e.sanctuary_save_blocks(goblin, warded);
+        assert!(
+            e.messages()[log_before..]
+                .iter()
+                .any(|m| m.contains(&format!("DC {}", cleric_dc))),
+            "the attacker should have saved against the cleric's DC"
+        );
+
+        // No link — the potion / scroll case — falls back to the item
+        // tier rather than to whoever happens to be holding the flag.
+        e.actors
+            .get_mut(&warded)
+            .unwrap()
+            .add_condition(Condition::Sanctuary, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&warded].linked_by(Condition::Sanctuary), None);
+        let log_before = e.messages().len();
+        e.sanctuary_save_blocks(goblin, warded);
+        assert!(
+            e.messages()[log_before..]
+                .iter()
+                .any(|m| m.contains("DC 14")),
+            "an unlinked ward should price at the item DC"
+        );
     }
 
     /// Daylight: every ally inside the burst gets the Daylit buff.

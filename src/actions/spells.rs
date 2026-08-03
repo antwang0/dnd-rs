@@ -9804,7 +9804,7 @@ impl Action for Sanctuary {
     fn side_effects(
         &self,
         _encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -9814,11 +9814,19 @@ impl Action for Sanctuary {
         };
         // 10-round duration approximates 1 minute. The ward drops as soon
         // as the holder takes a hostile action (engine hook below).
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Sanctuary,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        //
+        // Installed with its back-link so `sanctuary_save_blocks` can
+        // find the caster and roll the attacker's save against *their*
+        // spell DC. Before the link existed the save site had no way to
+        // reach the caster and used a fixed 14, which under-priced every
+        // ward a high-level caster put up and over-priced the ones a
+        // low-level one did.
+        install_condition_with_link(
+            Condition::Sanctuary,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 

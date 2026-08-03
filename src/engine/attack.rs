@@ -398,11 +398,33 @@ struct ReactiveDamageClamp {
 /// different reactors or across a multiclass with two flags and a
 /// reaction still in hand.
 ///
-/// Order is the order damage flows through the clamps. It's observable:
-/// halving before subtracting yields less final damage than the reverse,
-/// so `Halve` rows come first (RAW leaves the ordering to the table, and
-/// this is the target-favorable reading). Ally-scoped rows come last so
-/// the ally clamps whatever survived the target's own defenses.
+/// Order is the order damage flows through the clamps, and it is
+/// observable in two ways: halving before subtracting leaves less
+/// damage than the reverse, and a row that fires spends a reaction the
+/// rows below it can no longer use. RAW leaves the ordering to the
+/// table; the rule here is the target-favorable one.
+///
+/// Three principles set it, in this priority:
+///
+///   1. **Self before ally.** The four `Holder` rows precede every row
+///      that can reach a bystander, so an ally only ever spends a
+///      reaction on damage the target's own defenses could not absorb.
+///   2. **Free before charged**, within each of those two blocks, so a
+///      scarce charge is only spent on what the free clamps left. The
+///      one exception is Parry, which sits ahead of the free Deflect
+///      Energy — see below.
+///   3. **Halve before subtract**, to break what the first two leave
+///      tied: Uncanny Dodge opens the self block, and among the three
+///      charged ally-reaching rows the two halving ones precede the
+///      subtractive Protective Field.
+///
+/// Parry's exception costs nothing, because the three self-scoped
+/// subtractive rows cannot co-occur at all: Parry is melee-weapon-only,
+/// Deflect Missiles is ranged-weapon-only, and Deflect Energy declines
+/// every physical damage type. No single swing reaches more than one of
+/// them. And the ordering between any two rows that genuinely could
+/// both fire is only ever read by a multiclass, since each row spends
+/// its own reactor's reaction and one actor has one to spend.
 ///
 /// Entries:
 ///   - **Uncanny Dodge** (Rogue lv5): halve, any attack, self.
@@ -426,13 +448,11 @@ struct ReactiveDamageClamp {
 ///     any attack, self *or* an ally within 30 ft, burns a
 ///     `PROTECTIVE_FIELD_TAG` charge.
 ///
-/// The two charge-gated rows come last, so a scarce charge is only spent
-/// on damage the free clamps above couldn't already absorb. Warding
-/// Maneuver precedes Protective Field because it halves what remains
-/// while the field subtracts a fixed amount — halving the larger number
-/// first leaves less damage than the reverse, and both rows belong to
-/// different subclasses, so the ordering only ever matters to a
-/// multiclass.
+/// Within the ally-reaching block, Warding Maneuver and Dampen Elements
+/// precede Protective Field because they halve what remains while the
+/// field subtracts a fixed amount, and halving the larger number first
+/// leaves less damage than the reverse. All three belong to different
+/// subclasses, so that ordering too is only ever read by a multiclass.
 const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
     ReactiveDamageClamp {
         flag: |a| a.has_uncanny_dodge(),
