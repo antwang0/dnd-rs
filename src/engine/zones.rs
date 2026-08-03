@@ -503,8 +503,9 @@ mod tests {
         assert!(effect.difficult);
         assert!(effect.is_harmful());
         // Bad ground with nothing else on it is not.
-        assert!(!ZoneEffect::ROUGH.is_harmful());
-        assert!(ZoneEffect::ROUGH.difficult);
+        let rough = ZoneEffect::ROUGH;
+        assert!(!rough.is_harmful());
+        assert!(rough.difficult);
     }
 
     #[test]
