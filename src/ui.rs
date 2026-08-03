@@ -374,6 +374,35 @@ pub fn render_sideinfo(
             initiative_lines.push(Line::from(spans));
         }
     }
+    // Persistent areas ride under the initiative queue, because they
+    // are the other thing on the board with a turn counter on it. The
+    // map already shows *where* they are; what the map cannot show is
+    // how long they last, which is exactly the number a player needs to
+    // decide whether waiting one more round is cheaper than crossing.
+    if !encounter.zones().is_empty() {
+        initiative_lines.push(Line::from(""));
+        for zone in encounter.zones() {
+            let glyph = zone_glyph(encounter, zone.origin).unwrap_or('·');
+            initiative_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    glyph.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    zone.name.to_string(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    format!(" {} — {}r", zone.origin, zone.rounds_remaining),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+        }
+    }
     // The seed rides the panel title because it is the one number a
     // player wants *after* the fight rather than during it — to replay a
     // good encounter, or to hand over with a bug report. Every encounter
@@ -723,6 +752,39 @@ mod tests {
         assert!(
             panel.contains("seed 4"),
             "the seed should be readable off the panel:\n{}",
+            panel
+        );
+    }
+
+    /// A persistent area is listed with the rounds it has left. The map
+    /// shows where the web is; only the panel can say how much longer
+    /// waiting it out would cost.
+    #[test]
+    fn the_initiative_panel_counts_down_a_persistent_area() {
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        assert!(!rendered_panel(&e).contains("web"));
+        e.install_zone(Zone {
+            id: 0,
+            name: "web",
+            owner_id: 0,
+            origin: Coordinate::new(4, 4),
+            radius: 2,
+            effect: ZoneEffect::clinging(ZoneContact::save_or(
+                AbilityScoreType::Dexterity,
+                13,
+                crate::conditions::Condition::Restrained,
+                crate::conditions::ConditionTimer::Rounds(10),
+            )),
+            rounds_remaining: 7,
+            concentration: true,
+        });
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("web") && panel.contains("7r"),
+            "the panel should name the area and its remaining rounds:\n{}",
             panel
         );
     }
