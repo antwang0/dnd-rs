@@ -155,6 +155,24 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a''''. Walls — cut the line an unscreened enemy is closing
+        //         down. A wall is self-preservation, so it belongs with
+        //         the self-preservation rungs (the kite, the blink, the
+        //         Disengage) rather than down among the attacks: by the
+        //         time the enemy has arrived there is nothing left to
+        //         wall. Under the heals above, because an ally bleeding
+        //         out is more urgent than a wall one round early; over
+        //         the buffs below, because +3 AC does not answer a hill
+        //         giant and a wall does.
+        //
+        //         The lane's own six-tile window is what keeps it from
+        //         eating the fight: outside it — and while the caster is
+        //         holding any concentration spell at all — it declines,
+        //         and every rung below gets its turn back.
+        if let Some(aei) = try_wall_off_approach(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b. Mage Armor — self-only AC boost. Casts once per combat
         //     since the condition lasts ~100 rounds; gated by "don't
         //     re-cast" via the condition check. Bonus action, so it
@@ -1104,18 +1122,6 @@ impl Controller for SimpleAi {
 
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 5a''''. Walls — cut the line an enemy is closing down. Below
-        //         the AoE picker rather than above it because a burst
-        //         that catches two enemies is worth more right now than
-        //         a wall that inconveniences one, and both want the same
-        //         action. Above the damage lane below because a wall is
-        //         the only answer a squishy caster has to something that
-        //         is going to reach them next turn — the alternative is
-        //         to keep casting and then be hit.
-        if let Some(aei) = try_wall_off_approach(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -5650,25 +5656,37 @@ const WALL_STANDOFF: isize = 2;
 ///     a concentration spell (both walls are concentration, so casting
 ///     one would drop whatever is up — and everything the AI puts up
 ///     above this rung it put up on purpose);
-///   - some hostile is closing but hasn't arrived: further than melee
-///     reach, closer than `MAX_THREAT_GAP`. A wall does nothing about
-///     a creature already swinging at you, and nothing yet about one
-///     on the far side of the room;
-///   - no ally of the caster's is nearer that hostile than the caster
-///     is. A wall raised across a line an ally is standing on cuts the
-///     ally off from their own side, and the AI has no way to ask them
-///     whether they wanted that.
+///   - `MIN_THREATS` hostiles or more are closing and about to arrive:
+///     further than melee reach, no further than `MAX_THREAT_GAP`. Both
+///     halves matter. A wall does nothing about a creature already
+///     swinging at you and nothing *yet* about one across the room, and
+///     one creature closing is a fight the caster wins by casting at
+///     it — it takes a line to be worth a level-5 slot and the whole
+///     concentration budget spent on empty floor;
+///   - none of those hostiles has an ally of the caster's nearer to it
+///     than the caster is. A wall raised across a line an ally is
+///     standing on cuts the ally off from their own side, and the AI
+///     has no way to ask them whether they wanted that. A caster behind
+///     a front line therefore never walls, which is right: the front
+///     line is the wall.
 ///
-/// The nearest qualifying threat wins, ties by lowest id, which is the
-/// same deterministic tie-break every other picker uses.
+/// The wall is aimed at the nearest qualifying threat, ties by lowest
+/// id, which is the same deterministic tie-break every other picker
+/// uses.
 fn try_wall_off_approach(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-    /// Beyond this the threat is somebody else's problem this turn.
-    const MAX_THREAT_GAP: isize = 12;
+    /// Six tiles — fifteen feet, which is inside one move for anything
+    /// that walks. Closer than this and the wall is being raised in the
+    /// creature's face; further and the caster has another round to
+    /// spend on something that kills it instead.
+    const MAX_THREAT_GAP: isize = 6;
+
+    /// How many of them it takes before the floor is worth the slot.
+    const MIN_THREATS: usize = 2;
 
     let actor = encounter.actors.get(&actor_id)?;
     if actor.is_concentrating() {
@@ -5695,6 +5713,7 @@ fn try_wall_off_approach(
     };
 
     let mut threat: Option<(isize, Coordinate)> = None;
+    let mut closing = 0usize;
     for tid in encounter.sorted_actor_ids() {
         let Some(t) = encounter.actors.get(&tid) else {
             continue;
@@ -5726,9 +5745,19 @@ fn try_wall_off_approach(
         if ally_is_closer {
             continue;
         }
+        closing += 1;
         if threat.as_ref().is_none_or(|(best, _)| gap < *best) {
             threat = Some((gap, t.location()));
         }
+    }
+    // One hostile closing is a fight the caster wins by casting at it;
+    // it takes a line to be worth a level-5 slot and the whole
+    // concentration budget spent on empty floor. The count is what
+    // keeps this rung — which sits above the entire buff and
+    // area-control stack — from taking the opening play away from every
+    // caster in every skirmish.
+    if closing < MIN_THREATS {
+        return None;
     }
     let (_, threat_at) = threat?;
 
@@ -10647,8 +10676,11 @@ mod tests {
         let wizard = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
             .unwrap();
-        // Six tiles out: past melee reach, inside the lane's window.
-        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+        // Two of them, four tiles out: past melee reach, inside the
+        // lane's window, and enough of a line to be worth the slot.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 12), 1, 1)
             .unwrap();
         e.actors
             .get_mut(&wizard)
@@ -10659,16 +10691,30 @@ mod tests {
         for ef in aei.execute(&mut e) {
             ef.apply(&mut e);
         }
-        assert_eq!(e.conjured_terrain().len(), 1);
-        // Two tiles along the line, standing across it.
-        let anchor = Coordinate::new(6, 10);
+        let patch = &e.conjured_terrain()[0];
         assert!(
             matches!(
-                e.terrain_at(anchor).map(|t| t.terrain_type),
-                Some(TerrainType::ForceWall) | Some(TerrainType::Wall)
+                patch.terrain_type,
+                TerrainType::ForceWall | TerrainType::Wall
             ),
-            "the wall stands between the wizard and the goblin"
+            "the wall is made of something solid"
         );
+        assert!(
+            !patch.restore.is_empty(),
+            "and it took real tiles off the map"
+        );
+        // Every tile it took is between the wizard and the goblins
+        // rather than behind them: two tiles along the approach, and
+        // the wall runs across it from there.
+        let wizard_at = e.actors[&wizard].location();
+        for (tile, _) in &patch.restore {
+            assert!(
+                tile.chebyshev_to(wizard_at) <= super::WALL_STANDOFF + 3,
+                "{} is not part of a wall raised two tiles from {}",
+                tile,
+                wizard_at
+            );
+        }
     }
 
     /// The two gates that keep the lane from firing on its own side or
@@ -10678,6 +10724,22 @@ mod tests {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        // One of them is not a line: no wall.
+        let mut lone = empty_arena();
+        let alone_wiz = lone
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        lone.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        lone.actors
+            .get_mut(&alone_wiz)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        assert!(
+            super::try_wall_off_approach(&lone, alone_wiz).is_none(),
+            "one goblin is a target, not a wall"
+        );
 
         // Nobody closing: no wall.
         let mut alone = empty_arena();
@@ -10701,7 +10763,10 @@ mod tests {
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 10), 0, 1)
             .unwrap();
         screened
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+            .unwrap();
+        screened
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 12), 1, 1)
             .unwrap();
         screened
             .actors
@@ -10905,6 +10970,89 @@ mod tests {
                 marker
             );
         }
+    }
+
+    /// The wall lane is reached for in a live fight.
+    ///
+    /// Same reasoning as the subclass sweep above: the lane tests drive
+    /// `try_wall_off_approach` directly, which proves the rule but not
+    /// that anything ever gets past the twenty-odd rungs above it. A
+    /// wall spell the AI never raises is an invisible regression —
+    /// every mechanical test still passes and no player sees the
+    /// feature.
+    ///
+    /// Two unscreened casters with a line of ogres one move out is
+    /// exactly the shape the lane's window describes, and the assertion
+    /// is that the wall goes onto the map, not merely that the action
+    /// was selected.
+    ///
+    /// The zone movers are not checked here. They ride on Cloudkill,
+    /// Moonbeam, Dawn, Flaming Sphere and Incendiary Cloud, and which
+    /// of those an AI caster reaches for is a question about the
+    /// damage picker's scoring rather than about the mover — a fixture
+    /// tuned until one of them comes out would be pinning the picker
+    /// and calling it the map layer. `move_zone` and the five spells'
+    /// own reposition branches are pinned directly, engine-side.
+    #[test]
+    fn a_live_fight_raises_a_wall() {
+        assert!(
+            two_casters_against_three_ogres_at(9).contains("rises across"),
+            "a caster with a line of ogres one move away should raise a wall"
+        );
+    }
+
+    /// Drive a whole AI-vs-AI fight and hand back its log. `ogre_x` is
+    /// how far down the board the melee line starts, which is the only
+    /// thing the two callers differ on.
+    ///
+    /// Runs eight seeds and concatenates, because a single seed's fight
+    /// turns on a handful of rolls and the question here is whether the
+    /// AI reaches for a thing at all, not whether it reaches for it
+    /// every time.
+    fn two_casters_against_three_ogres_at(ogre_x: isize) -> String {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut log = String::new();
+        for seed in 0..8u64 {
+            let tp = TerrainGenParams {
+                width: 30,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            let _ = e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 9), 0, 0);
+            let _ = e.instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(3, 11), 0, 1);
+            for (i, y) in [8isize, 11, 14].into_iter().enumerate() {
+                let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(ogre_x, y), 1, i);
+            }
+            let ai = SimpleAi;
+            let mut steps = 0usize;
+            while steps < 20_000 && !e.is_complete() {
+                steps += 1;
+                e.process_stack();
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            log.push_str(&e.messages().join("\n"));
+            log.push('\n');
+        }
+        log
     }
 
     /// The Arcane Shot pick reads the target, not the roster.

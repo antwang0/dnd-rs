@@ -65,12 +65,20 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// A coordinate that does not name a tile on the map.
+///
+/// Covers both ways of being off it — the negative half-plane, and past
+/// the far edge — because a row-major index cannot tell them apart on
+/// its own and the caller does not care which it was. The name used to
+/// be `NegativeAbsCoord`, which described the only half
+/// `EncounterInstance::idx` used to check; the other half wrapped
+/// silently onto the next row.
 #[derive(Debug, Clone)]
-pub struct NegativeAbsCoord {
+pub struct OffMapCoord {
     coord: Coordinate,
 }
 
-impl NegativeAbsCoord {
+impl OffMapCoord {
     pub fn new(coord: Coordinate) -> Self {
         Self { coord }
     }
@@ -79,17 +87,13 @@ impl NegativeAbsCoord {
     }
 }
 
-impl fmt::Display for NegativeAbsCoord {
+impl fmt::Display for OffMapCoord {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Got absolute coordinate with negative value: {}",
-            self.coord
-        )
+        write!(f, "Coordinate is not on the map: {}", self.coord)
     }
 }
 
-impl std::error::Error for NegativeAbsCoord {}
+impl std::error::Error for OffMapCoord {}
 
 #[derive(Debug, Clone)]
 pub enum ActionError {

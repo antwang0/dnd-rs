@@ -243,7 +243,7 @@ use crate::actions::action_template::ActionExecutionInfo;
 use crate::actors::actor_template::{ActorInstance, CreatureTemplate, DeathSaveOutcome};
 use crate::conditions::Condition;
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
-use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
+use crate::engine::errors::{NoLegalPosition, OffMapCoord};
 use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
@@ -4382,22 +4382,29 @@ impl EncounterInstance {
         self.actors.get_mut(&actor_id)
     }
 
-    pub fn idx(&self, coord: Coordinate) -> Result<usize, NegativeAbsCoord> {
-        if coord.x < 0 || coord.y < 0 {
-            return Err(NegativeAbsCoord::new(coord));
+    /// The row-major index of `coord`, or an error if it is not a tile
+    /// on this map.
+    ///
+    /// The bound on `x` is load-bearing and used not to be there. A
+    /// row-major index has no way to represent "one column past the
+    /// right edge" — the arithmetic produces the index of the *next
+    /// row's first tile*, which is a perfectly valid index into a
+    /// perfectly wrong tile. Every reader built on this (`terrain_at`,
+    /// `actor_id_at`, `set_terrain_at`) silently wrapped, and
+    /// `find_path` indexed its distance vector with the result, where
+    /// the bottom-right corner's overflow is one past the end of the
+    /// vector.
+    pub fn idx(&self, coord: Coordinate) -> Result<usize, OffMapCoord> {
+        if !self.in_bounds(coord) {
+            return Err(OffMapCoord::new(coord));
         }
         Ok(coord.x as usize + coord.y as usize * self.width)
     }
 
     /// True if `coord` names a tile that is actually on the map.
     ///
-    /// Distinct from `idx().is_ok()`, which only rejects the negative
-    /// half-plane: the row-major index of a coordinate one column past
-    /// the right edge is a perfectly valid index belonging to the *next
-    /// row*. Every caller that reaches the map from outside a walk
-    /// between two known-good tiles has to ask this question, and the
-    /// three that already did each spelled the same two comparisons out
-    /// by hand.
+    /// The predicate `idx` is built on, and the one three callers were
+    /// each spelling out as the same pair of comparisons.
     pub fn in_bounds(&self, coord: Coordinate) -> bool {
         coord.x >= 0
             && coord.y >= 0
@@ -11790,6 +11797,34 @@ mod tests {
             e.terrain[idx].terrain_type = TerrainType::Wall;
         }
         e
+    }
+
+    /// A row-major index cannot represent "one column past the right
+    /// edge" — the arithmetic lands on the next row's first tile. The
+    /// bound on `x` is what stops every reader built on `idx` from
+    /// answering a question about a tile nobody asked about, and stops
+    /// `find_path` from indexing one past the end of its distance
+    /// vector at the bottom-right corner.
+    #[test]
+    fn a_coordinate_past_the_edge_of_a_row_is_off_the_map() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        e.set_terrain_at(Coordinate::new(0, 6), TerrainType::Wall);
+        // (10, 5) would wrap to (0, 6) under row-major arithmetic.
+        assert!(!e.in_bounds(Coordinate::new(10, 5)));
+        assert!(e.idx(Coordinate::new(10, 5)).is_err());
+        assert!(
+            e.terrain_at(Coordinate::new(10, 5)).is_none(),
+            "and so it reports no tile rather than the next row's wall"
+        );
+        assert!(!e.set_terrain_at(Coordinate::new(10, 5), TerrainType::Floor));
+        assert_eq!(
+            e.terrain_at(Coordinate::new(0, 6)).map(|t| t.terrain_type),
+            Some(TerrainType::Wall),
+            "the wall on the next row is untouched"
+        );
+        // The far corner is the one that used to index one past the end.
+        assert!(!e.in_bounds(Coordinate::new(10, 9)));
+        assert!(e.in_bounds(Coordinate::new(9, 9)));
     }
 
     #[test]

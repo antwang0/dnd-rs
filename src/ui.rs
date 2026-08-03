@@ -384,10 +384,15 @@ pub fn render_sideinfo(
     // map already shows *where* they are; what the map cannot show is
     // how long they last, which is exactly the number a player needs to
     // decide whether waiting one more round is cheaper than crossing.
-    if !encounter.zones().is_empty() {
+    //
+    // Conjured terrain rides the same block for the same reason. Its
+    // glyph is already on the map — a wall of stone looks exactly like
+    // a wall, which is the point — so the map is the one thing that
+    // *cannot* tell a player that the corridor they are looking at is
+    // going to reopen in four rounds.
+    if !encounter.zones().is_empty() || !encounter.conjured_terrain().is_empty() {
         initiative_lines.push(Line::from(""));
-        for zone in encounter.zones() {
-            let glyph = zone_glyph(encounter, zone.origin).unwrap_or('·');
+        let mut layer_line = |glyph: char, name: &str, detail: String| {
             initiative_lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
@@ -397,15 +402,28 @@ pub fn render_sideinfo(
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(
-                    zone.name.to_string(),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::styled(
-                    format!(" {} — {}r", zone.origin, zone.rounds_remaining),
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Span::styled(name.to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled(detail, Style::default().fg(Color::DarkGray)),
             ]));
+        };
+        for zone in encounter.zones() {
+            let glyph = zone_glyph(encounter, zone.origin).unwrap_or('·');
+            layer_line(
+                glyph,
+                zone.name,
+                format!(" {} — {}r", zone.origin, zone.rounds_remaining),
+            );
+        }
+        for patch in encounter.conjured_terrain() {
+            layer_line(
+                '▚',
+                patch.name,
+                format!(
+                    " {} tiles — {}r",
+                    patch.restore.len(),
+                    patch.rounds_remaining
+                ),
+            );
         }
     }
     // The seed rides the panel title because it is the one number a
@@ -791,6 +809,33 @@ mod tests {
         assert!(
             panel.contains("web") && panel.contains("7r"),
             "the panel should name the area and its remaining rounds:\n{}",
+            panel
+        );
+    }
+
+    /// Conjured terrain is listed too, and the panel is the only thing
+    /// that can list it: a wall of stone draws as a wall, which is the
+    /// point, so nothing on the map says the corridor reopens in four
+    /// rounds.
+    #[test]
+    fn the_initiative_panel_counts_down_a_conjured_wall() {
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        assert!(!rendered_panel(&e).contains("wall of stone"));
+        e.conjure_terrain(ConjuredTerrain::new(
+            "wall of stone",
+            0,
+            TerrainType::Wall,
+            vec![Coordinate::new(4, 4), Coordinate::new(4, 5)],
+            4,
+            true,
+        ));
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("wall of stone") && panel.contains("4r"),
+            "the panel should name the wall and its remaining rounds:\n{}",
             panel
         );
     }
