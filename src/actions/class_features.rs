@@ -56,6 +56,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the charge belongs on the same cadence as its sibling quip on the
     // Lore chassis directly above.
     UNSETTLING_WORDS_TAG,
+    // 5e College of Glamour Bard lv3 — Enthralling Performance. RAW:
+    // "once you use this feature, you can't use it again until you
+    // finish a short or long rest", the same cadence as every other
+    // burst on the `TurnBurst` chassis.
+    ENTHRALLING_PERFORMANCE_TAG,
     BREATH_WEAPON_TAG,
     // 5e Sun Soul Monk **Searing Sunburst**. RAW spends ki, which
     // recovers on a short rest — the same cadence the charge lane
@@ -7019,6 +7024,224 @@ pub const UNSETTLING_WORDS_TAG: &str = "bard.unsettling_words";
 /// carrying a die from an ordinary bard, from Guidance, or from a
 /// potion. Only a die with this bard's name on it comes back.
 pub const UNFAILING_INSPIRATION_TAG: &str = "bard.unfailing_inspiration";
+
+/// Class-feature tag for the College of Glamour Bard's lv3
+/// **Enthralling Performance**. Once per short rest — the cadence every
+/// other Channel-Divinity-shaped burst on the roster runs on, and the
+/// one RAW gives it.
+pub const ENTHRALLING_PERFORMANCE_TAG: &str = "bard.enthralling_performance";
+
+/// Enthralling Performance — College of Glamour Bard lv3 subclass
+/// feature. Action, once per short rest: every hostile in the burst
+/// makes a Wisdom save against the bard's Charisma-anchored DC or is
+/// Charmed for a minute.
+///
+/// A `TurnBurst` literal, which is the whole implementation — the
+/// fourth subclass to land on that chassis after the Cleric's Turn
+/// family, the Oathbreaker's Dreadful Aspect and the Conqueror's
+/// Conquering Presence. The Nature Domain's Charm Animals and Plants is
+/// the closest sibling: same installed condition, same save, same
+/// cadence, and the difference is the `type_filter`. That one charms
+/// beasts and plants; this one charms anything that can hear.
+///
+/// Two divergences from RAW, both in the same direction. The radius is
+/// the chassis's 30 ft rather than RAW's 60 — `resolve_turn_burst` is
+/// fixed at 30 and every row on it is, so widening it for one row would
+/// mean a per-row radius for the benefit of a single subclass. And RAW
+/// gates the performance on a full minute of playing beforehand, which
+/// is a thing that happens before initiative is rolled; the engine has
+/// no pre-combat phase, so the charge is the cost.
+///
+/// The duration is where it lands hardest. RAW's charm runs an hour and
+/// ends early if the bard or their allies harm the target — a clause
+/// that would end it on the round it was cast, since the point of
+/// charming three enemies is that your side then kills them. Ten rounds
+/// with no harm clause is the same collapse every Frighten on this
+/// chassis already makes, and it is what makes the button worth an
+/// Action.
+pub static ENTHRALLING_PERFORMANCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "enthralling performance",
+    aliases: &["ep", "enthrall", "perform"],
+    tag: ENTHRALLING_PERFORMANCE_TAG,
+    dc_ability: AbilityScoreType::Charisma,
+    type_filter: |_| true,
+    installed: Condition::Charmed,
+    // 1 minute — see the duration note above.
+    timer: ConditionTimer::Rounds(10),
+});
+
+/// Temporary hit points one **Mantle of Inspiration** hands each
+/// creature it covers.
+///
+/// RAW scales the grant with bard level on a 5 / 8 / 11 / 14 ladder;
+/// five is the level-3 rung, and the bard chassis here is a level-5
+/// full caster whose own Bardic Inspiration pool is sized off CHA 16.
+/// Pinned as a named const rather than inlined because it is the number
+/// the whole feature is priced around: five temp HP each is a little
+/// under one goblin scimitar, so the mantle buys a party of four
+/// roughly one absorbed hit — worth a bonus action and a die, and not
+/// worth spending the pool on when nobody is being shot at.
+const MANTLE_OF_INSPIRATION_TEMP_HP: u32 = 5;
+
+/// 60 ft on the 2.5 ft grid — the radius Mantle of Inspiration covers,
+/// matching the reach of the Bardic Inspiration die it is spending.
+const MANTLE_OF_INSPIRATION_RADIUS: isize = 24;
+
+/// Mantle of Inspiration — College of Glamour Bard lv3 subclass
+/// feature. Bonus action; spends one Bardic Inspiration use and hands
+/// `MANTLE_OF_INSPIRATION_TEMP_HP` temporary hit points to up to
+/// `CHA modifier` allies within 60 ft.
+///
+/// The bard's signature feature, spent sideways. Bardic Inspiration
+/// puts one die on one ally and waits for them to roll; the mantle
+/// spends the same charge on the whole party at once and does not wait
+/// for anything. That is the trade the College of Glamour is: the pool
+/// is the same size it always was, and every use of it is now a choice
+/// between one big effect later and four small ones now.
+///
+/// Three judgement calls RAW leaves open, made here:
+///
+///   - **Who.** The most wounded eligible allies first, by missing hit
+///     points, ties broken on the lower id. RAW hands the bard the
+///     choice; the most wounded is what a bard choosing on purpose
+///     would choose, and it is how every other ally-facing picker in
+///     the engine already chooses.
+///   - **Not creatures the mantle cannot help.** An ally already
+///     holding at least this much temp HP is skipped: `gain_temp_hp`
+///     keeps the larger pool, so covering them would consume one of
+///     the `CHA modifier` slots to change nothing. Skipping them is
+///     what makes the count RAW's count rather than a count of bodies
+///     that happened to be standing nearby.
+///   - **The bard counts.** RAW's "a number of creatures within 60 feet
+///     of you" does not exclude the caster, and a bard who is the one
+///     being shot at should be able to cover themselves.
+///
+/// Left out: RAW's second clause lets each covered creature immediately
+/// use its reaction to move up to its speed without provoking. The
+/// engine's movement is a per-turn resource, so the nearest thing it
+/// could do is hand out movement that becomes usable on the ally's
+/// *next* turn — which is not the clause. The clause is about getting
+/// out of the way now, and a version that arrives a round late is
+/// further from RAW than not shipping it.
+pub struct MantleOfInspiration {}
+
+impl MantleOfInspiration {
+    /// Ids the mantle would cover right now, most wounded first, capped
+    /// at the bard's Charisma modifier.
+    ///
+    /// Shared by the validator and the resolver so the two cannot
+    /// disagree about whether there is anybody to cover — a validator
+    /// that said yes to an empty cohort would let the AI spend the
+    /// bonus action and the die on nothing at all.
+    fn covered_allies(encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let cap = caster.ability_modifier(AbilityScoreType::Charisma).max(1) as usize;
+        let center = caster.location();
+        let mut candidates: Vec<(u32, usize)> = encounter
+            .ally_burst_targets(caster_id, center, MANTLE_OF_INSPIRATION_RADIUS)
+            .into_iter()
+            .filter_map(|id| {
+                let a = encounter.actors.get(&id)?;
+                // Already better covered than the mantle could manage —
+                // `gain_temp_hp` keeps the larger pool, so this slot
+                // would buy nothing.
+                if a.temp_hp() >= MANTLE_OF_INSPIRATION_TEMP_HP {
+                    return None;
+                }
+                Some((a.max_hitpoints().saturating_sub(a.hitpoints()), id))
+            })
+            .collect();
+        // Most wounded first; `ally_burst_targets` returns sorted ids,
+        // and a stable sort by missing HP therefore leaves the lower id
+        // ahead on a tie.
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.into_iter().take(cap).map(|(_, id)| id).collect()
+    }
+}
+
+impl Action for MantleOfInspiration {
+    fn name(&self) -> &str {
+        "mantle of inspiration"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        // Not "mantle": Crusader's Mantle is a spell on the paladin
+        // list, and alias collisions resolve by list order rather than
+        // erroring.
+        vec!["moi", "mantle of inspo"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        actor.is_combat_active()
+            && actor.feature_available(BARDIC_INSPIRATION_TAG)
+            && !Self::covered_allies(encounter, caster_id).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let covered = Self::covered_allies(encounter, caster_id);
+        if covered.is_empty() {
+            return Vec::new();
+        }
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(BARDIC_INSPIRATION_TAG);
+        }
+        encounter.log(format!(
+            "  mantle of inspiration: {} creature(s) take heart ({} temp HP each).",
+            covered.len(),
+            MANTLE_OF_INSPIRATION_TEMP_HP
+        ));
+        covered
+            .into_iter()
+            .map(|id| {
+                Box::new(GainTempHp {
+                    actor_id: id,
+                    amount: MANTLE_OF_INSPIRATION_TEMP_HP,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static MANTLE_OF_INSPIRATION: LazyLock<MantleOfInspiration> =
+    LazyLock::new(|| MantleOfInspiration {});
 
 /// Unsettling Words — College of Eloquence Bard lv3 subclass feature.
 /// Bonus action; one creature within 60 ft subtracts a Bardic

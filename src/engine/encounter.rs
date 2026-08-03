@@ -34865,6 +34865,209 @@ mod tests {
         );
     }
 
+    /// Mantle of Inspiration covers the wounded first and stops at the
+    /// bard's Charisma modifier, spending one Bardic Inspiration charge
+    /// for all of it.
+    #[test]
+    fn the_mantle_covers_the_most_wounded_and_stops_at_charisma() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{BARDIC_INSPIRATION_TAG, MANTLE_OF_INSPIRATION};
+        use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let b = e
+            .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Four allies in range, on a CHA-16 bard whose modifier is 3 —
+        // so one of the four has to be left out, and it should be the
+        // one that needs it least.
+        let mut allies = Vec::new();
+        for (i, x) in [5usize, 8, 11, 14].into_iter().enumerate() {
+            let f = e
+                .instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(x as isize, 2),
+                    0,
+                    i + 1,
+                )
+                .unwrap();
+            allies.push(f);
+        }
+        // Wound three of them by descending amounts; leave the last
+        // untouched so it is the one the cap drops.
+        for (f, dmg) in allies.iter().zip([9u32, 6, 3, 0]) {
+            if dmg > 0 {
+                e.actors.get_mut(f).unwrap().take_damage(dmg);
+            }
+        }
+        assert!(MANTLE_OF_INSPIRATION.custom_validate_input(&e, b, None, None, None));
+        for ef in MANTLE_OF_INSPIRATION.side_effects(&mut e, b, None, None, None) {
+            ef.apply(&mut e);
+        }
+        for (f, expected) in allies.iter().zip([5u32, 5, 5, 0]) {
+            assert_eq!(
+                e.actors[f].temp_hp(),
+                expected,
+                "the mantle should cover the three most wounded and no more"
+            );
+        }
+        // One charge for the whole mantle, out of the chassis's three.
+        assert_eq!(e.actors[&b].feature_charges_remaining(BARDIC_INSPIRATION_TAG), 2);
+    }
+
+    /// A creature already holding at least as much temp HP as the mantle
+    /// grants does not consume one of its slots. `gain_temp_hp` keeps the
+    /// larger pool, so covering them would spend a slot to change
+    /// nothing — and the slot is the scarce half of the feature.
+    #[test]
+    fn the_mantle_skips_allies_it_could_not_help() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::MANTLE_OF_INSPIRATION;
+        use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let b = e
+            .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let shielded = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let bare = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+            .unwrap();
+        // The shielded fighter is the more wounded of the two, so
+        // without the skip it would win the ordering and take a slot.
+        e.actors.get_mut(&shielded).unwrap().take_damage(20);
+        e.actors.get_mut(&shielded).unwrap().gain_temp_hp(12);
+        for ef in MANTLE_OF_INSPIRATION.side_effects(&mut e, b, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&shielded].temp_hp(),
+            12,
+            "a bigger pool is left alone"
+        );
+        assert_eq!(e.actors[&bare].temp_hp(), 5);
+        assert_eq!(e.actors[&b].temp_hp(), 5, "the bard covers themselves too");
+    }
+
+    /// Out of charges, out of mantle: the feature draws on the bard's
+    /// own Bardic Inspiration pool rather than a lane of its own, which
+    /// is the whole trade the College of Glamour makes.
+    #[test]
+    fn the_mantle_and_the_die_share_one_pool() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{BARDIC_INSPIRATION_TAG, MANTLE_OF_INSPIRATION};
+        use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let b = e
+            .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        assert!(MANTLE_OF_INSPIRATION.custom_validate_input(&e, b, None, None, None));
+        let bard = e.actors.get_mut(&b).unwrap();
+        while bard.feature_available(BARDIC_INSPIRATION_TAG) {
+            bard.spend_feature(BARDIC_INSPIRATION_TAG);
+        }
+        assert!(
+            !MANTLE_OF_INSPIRATION.custom_validate_input(&e, b, None, None, None),
+            "a bard who has handed out every die has no mantle left either"
+        );
+        assert_eq!(e.actors[&f].temp_hp(), 0);
+    }
+
+    /// Enthralling Performance is a `TurnBurst` that installs Charmed on
+    /// anything hostile that fails its Wisdom save — the same chassis as
+    /// the cleric Turn family, with no creature-type filter.
+    #[test]
+    fn enthralling_performance_charms_whoever_fails() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{
+            ENTHRALLING_PERFORMANCE, ENTHRALLING_PERFORMANCE_TAG,
+        };
+        use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut saw_charm = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let b = e
+                .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            assert!(ENTHRALLING_PERFORMANCE.custom_validate_input(&e, b, None, None, None));
+            for ef in ENTHRALLING_PERFORMANCE.side_effects(&mut e, b, None, None, None) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&b].feature_available(ENTHRALLING_PERFORMANCE_TAG),
+                "the performance is once per short rest"
+            );
+            if e.actors[&g].has_condition(Condition::Charmed) {
+                saw_charm = true;
+                // 5e Charmed: "the charmed creature can't attack the
+                // charmer." That is the whole reason the burst is worth
+                // an Action on a chassis with a full spell list.
+                assert!(e.charm_blocks_hostility(g, b));
+                break;
+            }
+        }
+        assert!(
+            saw_charm,
+            "expected at least one goblin in forty seeds to fail the save"
+        );
+    }
+
+    /// Template drift pin: the Glamour bard ships its two subclass
+    /// actions and its one charge lane, and still inherits the whole
+    /// baseline bard kit — including the inspiration pool the mantle
+    /// spends.
+    #[test]
+    fn the_glamour_bard_ships_its_kit_and_keeps_the_chassis() {
+        use crate::actions::class_features::{
+            BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG, ENTHRALLING_PERFORMANCE_TAG,
+        };
+        use crate::actors::creatures::bards::{
+            BARD_TEMPLATE, ELOQUENCE_BARD_TEMPLATE, GLAMOUR_BARD_TEMPLATE, LORE_BARD_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&b].has_passive_feature(ENTHRALLING_PERFORMANCE_TAG));
+        assert!(e.actors[&b].has_passive_feature(CUTTING_WORDS_TAG));
+        assert_eq!(
+            e.actors[&b].feature_charges_remaining(BARDIC_INSPIRATION_TAG),
+            3,
+            "the mantle spends the chassis pool, so the chassis pool has to arrive"
+        );
+        for name in ["mantle of inspiration", "enthralling performance", "bardic inspiration"] {
+            assert!(
+                e.actors[&b].find_action(name).is_some(),
+                "the bard should carry {}",
+                name
+            );
+        }
+        for t in [
+            &*BARD_TEMPLATE,
+            &*LORE_BARD_TEMPLATE,
+            &*ELOQUENCE_BARD_TEMPLATE,
+        ] {
+            assert!(
+                !t.features.contains(ENTHRALLING_PERFORMANCE_TAG),
+                "{} should not carry Enthralling Performance",
+                t.name
+            );
+        }
+    }
+
     /// Unsettling Words is the inverse of the inspiration die on every
     /// axis the engine cares about: it subtracts where Inspired adds,
     /// and it rides the same `CONSUMED_ON_SAVE` cohort, so one save

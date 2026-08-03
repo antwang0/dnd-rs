@@ -592,3 +592,66 @@ pub static ELOQUENCE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         &[UNSETTLING_WORDS_TAG, UNFAILING_INSPIRATION_TAG],
     )
 });
+
+/// College of Glamour Bard — subclass build (XGtE). Six bards on the
+/// roster and five of them spend the Bardic Inspiration pool the way
+/// the base class does: one die, one ally, one roll, later. Valor and
+/// Swords pick up a weapon and keep the pool intact. Lore and Eloquence
+/// spend it backwards, onto an enemy's roll. Glamour is the one that
+/// spends it sideways.
+///
+/// **Mantle of Inspiration** (lv3) turns one use of the pool into five
+/// temporary hit points on each of up to CHA-modifier allies within
+/// 60 ft — three bodies covered at once on this CHA-16 chassis, right
+/// now, with no roll to wait for. That is the subclass in one button:
+/// the pool is the same three charges it always was, and every use of
+/// it is now a choice between one large effect later and several small
+/// ones immediately. A bard whose front line is about to be swung at
+/// wants the mantle; a bard whose fighter is about to swing wants the
+/// die.
+///
+/// **Enthralling Performance** (lv3) is an Action, once per short rest:
+/// every hostile within the burst saves against the bard's
+/// Charisma-anchored DC or is Charmed for a minute. It rides the shared
+/// `TurnBurst` chassis next to the Cleric's Turn family and the two
+/// paladin fear bursts, and it is the only one of them that installs
+/// Charmed on anything that can hear rather than Frightened on a
+/// creature type — a charmed enemy cannot attack the bard at all, where
+/// a frightened one merely swings at disadvantage.
+///
+/// The pair reads as one idea from two directions: the mantle makes the
+/// bard's own side harder to remove from the fight, and the performance
+/// removes the other side from it. Neither costs a spell slot, which is
+/// what lets a Glamour bard open a fight with Enthralling Performance,
+/// spend the bonus action on the mantle, and still be holding every
+/// slot on the table.
+///
+/// Left out: **Mantle of Majesty** (lv6) casts Command for free and then
+/// again as a bonus action every turn for a minute; the engine has no
+/// lane for a repeating slot-free cast, and shipping only the first
+/// cast would be a worse Command than the bard's own list already
+/// carries. **Unbreakable Majesty** (lv14) is a passive Sanctuary that
+/// each attacker saves against once and then is immune to for a day —
+/// the per-attacker immunity ledger is the part the engine has nowhere
+/// to keep, and without it the feature is simply Sanctuary that never
+/// breaks.
+///
+/// Glyph 'G' — free on the bard family, where 'B', 'V', 'S', 'L', 'H'
+/// and 'Q' are taken.
+pub static GLAMOUR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        ENTHRALLING_PERFORMANCE, ENTHRALLING_PERFORMANCE_TAG, MANTLE_OF_INSPIRATION,
+    };
+    // Mantle of Inspiration carries no tag of its own — it draws on
+    // `BARDIC_INSPIRATION_TAG`, which the baseline chassis already
+    // stocks three deep, and that shared pool is the feature. Only the
+    // performance needs a charge lane.
+    subclass_bard_template(
+        "Glamour Bard",
+        'G',
+        false,
+        false,
+        &[&*MANTLE_OF_INSPIRATION, &*ENTHRALLING_PERFORMANCE],
+        &[ENTHRALLING_PERFORMANCE_TAG],
+    )
+});

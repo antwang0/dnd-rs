@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::actions::class_features::{
     ARCANE_ABJURATION, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE,
-    DREADFUL_ASPECT,
+    DREADFUL_ASPECT, ENTHRALLING_PERFORMANCE,
     ORDERS_DEMAND, TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
 };
@@ -595,6 +595,17 @@ impl Controller for SimpleAi {
         //      before it might get wasted to a lucky recharge roll
         //      next turn is always correct.
         if let Some(aei) = try_breath_weapon(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3h⁻. Mantle of Inspiration — the Glamour Bard's other way to
+        //      spend the same pool. Sits directly above Bardic
+        //      Inspiration because the two draw on one another's
+        //      charges and the mantle is the narrower pick: its gate
+        //      wants a party that is already being hurt, and on a turn
+        //      that gate says no the die below is what the bard should
+        //      be handing out instead.
+        if let Some(aei) = try_mantle_of_inspiration(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -4276,6 +4287,18 @@ const TURN_BURST_PICKS: &[TurnBurstPick] = &[
         config: &ORDERS_DEMAND,
         min_targets: 2,
     },
+    // Enthralling Performance is the third unfiltered variant and takes
+    // the same bar as Order's Demand, whose condition it shares. One
+    // charmed enemy is worth less than the Action it costs, because the
+    // Glamour bard has a whole spell list of things to do with an
+    // Action; two is where the burst starts beating any single-target
+    // pick on the list. It sits last because the bard holds no other
+    // row — the order between the unfiltered three is only ever read by
+    // a hypothetical multiclass.
+    TurnBurstPick {
+        config: &ENTHRALLING_PERFORMANCE,
+        min_targets: 2,
+    },
 ];
 
 /// Channel Divinity turn-burst picker — Turn Undead, Turn the Faithless,
@@ -4468,6 +4491,53 @@ fn try_breath_weapon(
         }
     }
     best.map(|(_, _, aei)| aei)
+}
+
+/// College of Glamour Bard Mantle of Inspiration — bonus action that
+/// spends a Bardic Inspiration charge on temp HP for up to CHA-modifier
+/// allies within 60 ft instead of a die for one of them.
+///
+/// The action's own validator owns the charge and the "is there anybody
+/// this could help" question. What the AI adds is *when the trade is
+/// worth it*, and the gate is two facts about the same moment: the
+/// mantle would cover at least two creatures, and at least one of them
+/// has already been hit.
+///
+/// Both halves are load-bearing. Without the breadth check a bard alone
+/// with one wounded ally would spend a charge on five temp HP where the
+/// die is worth more. Without the wounded check the bard opens every
+/// fight with the mantle — the cohort is at its widest on round one,
+/// when the whole party is standing together at full health and
+/// nothing has demonstrated that anyone is going to be hit at all. Five
+/// temp HP handed to four untouched creatures is four charges' worth of
+/// nothing if the fight is decided at range.
+fn try_mantle_of_inspiration(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    const MIN_COVERED: usize = 2;
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("mantle of inspiration")?;
+    let team = actor.team();
+    let center = actor.location();
+    // 24 tiles = 60 ft, the action's own radius. Re-derived rather than
+    // shared because this is the AI's pre-filter, not the authority —
+    // the action's validator is, and it runs on the AEI below.
+    let covered: Vec<usize> = encounter.ally_burst_targets(actor_id, center, 24);
+    if covered.len() < MIN_COVERED {
+        return None;
+    }
+    let anyone_hurt = covered.iter().any(|id| {
+        encounter
+            .actors
+            .get(id)
+            .is_some_and(|a| a.team() == team && a.is_wounded())
+    });
+    if !anyone_hurt {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
 }
 
 /// Bard Bardic Inspiration — bonus action giving an ally a +3 die for
@@ -10686,6 +10756,66 @@ mod tests {
         assert!(
             try_arcane_shot(&e, archer).is_none(),
             "a nocked archer should not nock again and throw the first charge away"
+        );
+    }
+
+    /// The Glamour bard's two ways to spend one pool are separated by
+    /// the AI's gate, not by the action's validator: the mantle wants a
+    /// party that is both wide enough to be worth covering and already
+    /// being hurt, and on any turn that is not true the die below it is
+    /// what the bard hands out instead.
+    ///
+    /// Both halves of the gate get their own fixture, because a
+    /// heuristic missing either one collapses into "always the mantle":
+    /// the cohort is at its widest on round one, when nobody has been
+    /// touched yet.
+    #[test]
+    fn the_glamour_bard_saves_the_mantle_for_a_party_that_needs_it() {
+        use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let pick = |setup: &dyn Fn(&mut EncounterInstance, usize)| -> String {
+            let mut e = empty_arena();
+            let bard = e
+                .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+                .unwrap();
+            setup(&mut e, bard);
+            try_mantle_of_inspiration(&e, bard)
+                .or_else(|| try_bardic_inspiration(&e, bard))
+                .map(|aei| aei.action().name().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+
+        // An ally in range but nobody hurt: the die, every time.
+        assert_eq!(
+            pick(&|e, _b| {
+                e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                    .unwrap();
+            }),
+            "bardic inspiration"
+        );
+
+        // Same party, one wounded fighter: now the mantle.
+        assert_eq!(
+            pick(&|e, _b| {
+                let ally = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+                    .unwrap();
+                e.actors.get_mut(&ally).unwrap().take_damage(9);
+            }),
+            "mantle of inspiration"
+        );
+
+        // A wounded bard standing alone is not two creatures, so the
+        // breadth half of the gate declines and the bard falls through
+        // — to nothing at all here, since there is no ally to inspire.
+        assert_eq!(
+            pick(&|e, b| {
+                e.actors.get_mut(&b).unwrap().take_damage(9);
+            }),
+            "<none>"
         );
     }
 

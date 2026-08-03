@@ -327,6 +327,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*bards::LORE_BARD_TEMPLATE,
                     &*bards::WHISPERS_BARD_TEMPLATE,
                     &*bards::ELOQUENCE_BARD_TEMPLATE,
+                    &*bards::GLAMOUR_BARD_TEMPLATE,
                 ],
             ),
             (
