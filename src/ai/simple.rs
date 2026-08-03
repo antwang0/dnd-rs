@@ -3996,8 +3996,8 @@ fn try_natures_wrath(
 // Wounds use the same pattern; no per-feature plumbing needed.
 
 /// Paladin Smite spells (Searing / Wrathful / Branding / Blinding).
-/// Same trigger as Divine Smite — fire when an enemy is footprint-
-/// adjacent so the bonus-action prime doesn't go to waste. We try
+/// Same trigger as Divine Smite — fire when an enemy is inside the
+/// paladin's reach so the bonus-action prime doesn't go to waste. We try
 /// them in increasing-slot-level order so the paladin spends low slots
 /// before high ones; each spell's own `custom_validate_input` rejects
 /// re-prime if the smite condition is already up. The Smite-spell path
@@ -4007,17 +4007,19 @@ fn try_smite_spell(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    // Melee-flavor smite picker: gate on adjacent-enemy so the prime
-    // is consumed this turn by the paladin's Extra Attack loop. Slot-
-    // cheapest first — preserves higher slots for emergencies. The
-    // order is defined by the central `ALL_SMITE_SPELLS` registry,
-    // so adding a new smite is one entry in spells.rs and the AI picks
-    // it up automatically.
+    // Melee-flavor smite picker: gate on an enemy inside the paladin's
+    // own reach so the prime is consumed this turn by the Extra Attack
+    // loop. `MELEE_REACH`, not gap 0 — the swing that cashes the prime
+    // validates at exactly this distance, and the tighter number asked
+    // for a tile the AI never stands on. Slot-cheapest first —
+    // preserves higher slots for emergencies. The order is defined by
+    // the central `ALL_SMITE_SPELLS` registry, so adding a new smite is
+    // one entry in spells.rs and the AI picks it up automatically.
     try_smite_from_registry(
         encounter,
         actor_id,
         crate::actions::spells::ALL_SMITE_SPELLS,
-        0,
+        MELEE_REACH,
     )
 }
 
@@ -5134,8 +5136,14 @@ fn try_teleport_escape(
     if !has_ranged_attack(encounter, actor_id) || !under_melee_threat(encounter, actor_id) {
         return None;
     }
+    // Two conditions, either of which makes leaving worth an action:
+    // the caster is already hurt, or two hostiles are inside swinging
+    // distance of them. The second used to count only bodies at a gap
+    // of 0 — touching — which the AI's approach never produces, so the
+    // whole clause was dead and a full-health caster with two enemies
+    // on it stood and took the round.
     let pinned = is_low_hp(encounter, actor_id, 0.5)
-        || n_actors_within(encounter, actor_id, 0, false, 2) >= 2;
+        || n_actors_within(encounter, actor_id, MELEE_REACH, false, 2) >= 2;
     if !pinned {
         return None;
     }
@@ -10746,6 +10754,10 @@ mod tests {
         assert!(
             primed(&DRUID_TEMPLATE, &try_shillelagh),
             "a druid in reach of an enemy should prime the club"
+        );
+        assert!(
+            primed(&PALADIN_TEMPLATE, &try_smite_spell),
+            "and should be able to reach the smite spells too, not just the feature"
         );
     }
 
