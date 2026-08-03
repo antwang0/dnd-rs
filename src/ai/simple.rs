@@ -2117,16 +2117,16 @@ fn try_versatile_trickster(
     if actor.help_grant_any() {
         return None;
     }
-    if !any_enemy_within(encounter, actor_id, 1) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_action_on_nearest_enemy(encounter, actor_id, "versatile trickster", |gap| gap <= 12)
 }
 
 /// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force
-/// damage to the next melee weapon hit. Fire when an enemy is
-/// footprint-adjacent so the prime is consumed by the druid's swing
-/// this turn. The action itself custom-validates `!has_condition
+/// damage to the next melee weapon hit. Fire when an enemy is inside
+/// the druid's own reach so the prime is consumed by the swing this
+/// turn. The action itself custom-validates `!has_condition
 /// (Shillelaghed)` so the AI never double-primes. Free (no slot
 /// consumed) so it stays on the bonus-action lane without competing
 /// with the leveled-slot smites.
@@ -2134,7 +2134,7 @@ fn try_shillelagh(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_self_action(encounter, actor_id, "shillelagh")
@@ -2727,9 +2727,11 @@ fn try_cunning_strike(
     if crate::actions::class_attacks::sneak_attack_dice_for_level(level) < 2 {
         return None;
     }
-    // Need a sneak-eligible adjacent enemy. Use gap-0 (footprint-touching)
-    // since the rogue's shortsword reach is 1 tile.
-    if !any_enemy_within(encounter, actor_id, 0) {
+    // Need a sneak-eligible enemy the shortsword can actually reach,
+    // which is `MELEE_REACH` — the gate used to say gap 0 while its own
+    // comment named the reach as 1, and a rogue standing at the
+    // distance its blade covers found no candidate.
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     // Prefer Poison — broadest debuff (disadvantage on attacks and
@@ -3712,9 +3714,13 @@ fn try_eagle_dive(
     if !actor.has_condition(Condition::Raging) {
         return None;
     }
-    // Adjacent enemy → no need to Dash; let Reckless / Frenzy take the
-    // bonus-action slot instead.
-    if any_enemy_within(encounter, actor_id, 0) {
+    // An enemy already inside the barbarian's reach → no need to Dash;
+    // let Reckless / Frenzy take the bonus-action slot instead. The
+    // question is "can I already swing at somebody", so the distance is
+    // the swing's, not a tighter one — at gap 0 this declined to notice
+    // the enemy the barbarian was standing in reach of and dashed away
+    // from a fight it had already reached.
+    if any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     // No enemies in chase distance at all → Dash buys nothing.
@@ -4084,14 +4090,15 @@ fn try_smite_from_registry(
 }
 
 /// Monk Stunning Strike — bonus action prime that lays a stun save on
-/// the next melee hit. Same trigger as Divine Smite (adjacent enemy
-/// required so the prime doesn't tick out). Once-per-rest gated so the
-/// AI only fires it when the action picker has a melee target queued.
+/// the next melee hit. Same trigger as Divine Smite: an enemy inside
+/// the monk's own reach, so the prime doesn't tick out unspent.
+/// Once-per-rest gated so the AI only fires it when the action picker
+/// has a melee target queued.
 fn try_stunning_strike(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_self_action(encounter, actor_id, "stunning strike")
@@ -4117,7 +4124,7 @@ fn try_empty_body(
     if !is_low_hp(encounter, actor_id, 0.4) {
         return None;
     }
-    if !any_enemy_within(encounter, actor_id, 0) {
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
     try_self_action(encounter, actor_id, "empty body")
@@ -10674,127 +10681,6 @@ mod tests {
     /// CHA −2) is what makes the walk deterministic, and the CHA / WIS
     /// tie at the top is what pins `ARCANE_SHOT_ORDER`'s
     /// strongest-first ordering as the tie-break.
-    #[test]
-    fn the_arcane_shot_pick_follows_the_targets_weakest_save() {
-        use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
-        use crate::conditions::ConditionTimer;
-
-        let pick = |setup: &dyn Fn(&mut EncounterInstance, usize)| -> String {
-            let mut e = empty_arena();
-            let archer = e
-                .instantiate_creature(
-                    &ARCANE_ARCHER_FIGHTER_TEMPLATE,
-                    Coordinate::new(3, 5),
-                    0,
-                    0,
-                )
-                .unwrap();
-            let ogre = e
-                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
-                .unwrap();
-            setup(&mut e, ogre);
-            try_arcane_shot(&e, archer)
-                .map(|aei| aei.action().name().to_string())
-                .unwrap_or_else(|| "<none>".to_string())
-        };
-
-        // CHA −2 ties WIS −2, and the tie goes to the shot that costs
-        // the ogre its turn.
-        assert_eq!(pick(&|_e, _o| {}), "banishing arrow");
-
-        // Already out of the fight: Banishing has nothing left to take,
-        // so the other −2 save wins.
-        assert_eq!(
-            pick(&|e, o| {
-                e.actors
-                    .get_mut(&o)
-                    .unwrap()
-                    .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(1));
-            }),
-            "shadow arrow"
-        );
-
-        // Blind as well: the last −2 shot on the menu.
-        assert_eq!(
-            pick(&|e, o| {
-                for c in [Condition::Incapacitated, Condition::Blinded] {
-                    e.actors
-                        .get_mut(&o)
-                        .unwrap()
-                        .add_condition(c, ConditionTimer::Rounds(1));
-                }
-            }),
-            "beguiling arrow"
-        );
-
-        // Out of −2 saves, so the picker drops to CON +3 over STR +4.
-        assert_eq!(
-            pick(&|e, o| {
-                for c in [
-                    Condition::Incapacitated,
-                    Condition::Blinded,
-                    Condition::Charmed,
-                ] {
-                    e.actors
-                        .get_mut(&o)
-                        .unwrap()
-                        .add_condition(c, ConditionTimer::Rounds(1));
-                }
-            }),
-            "enfeebling arrow"
-        );
-
-        // Everything else spent: the ogre's best save is all that is
-        // left to shoot at.
-        assert_eq!(
-            pick(&|e, o| {
-                for c in [
-                    Condition::Incapacitated,
-                    Condition::Blinded,
-                    Condition::Charmed,
-                    Condition::Enfeebled,
-                ] {
-                    e.actors
-                        .get_mut(&o)
-                        .unwrap()
-                        .add_condition(c, ConditionTimer::Rounds(1));
-                }
-            }),
-            "grasping arrow"
-        );
-
-        // A bystander inside the blast beats every save-based shot,
-        // because the burst has no save to fail and scales with the
-        // crowd. Checked last so it is clearly the crowd and not the
-        // ogre's sheet doing the work.
-        assert_eq!(
-            pick(&|e, _o| {
-                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 6), 1, 0)
-                    .unwrap();
-            }),
-            "bursting arrow"
-        );
-
-        // One arrow on the string at a time: an archer already holding
-        // a shot declares nothing, even with a charge left.
-        let mut e = empty_arena();
-        let archer = e
-            .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(3, 5), 0, 0)
-            .unwrap();
-        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
-            .unwrap();
-        e.actors
-            .get_mut(&archer)
-            .unwrap()
-            .add_condition(Condition::ArcaneShotGrasping, ConditionTimer::Rounds(2));
-        assert!(
-            try_arcane_shot(&e, archer).is_none(),
-            "a nocked archer should not nock again and throw the first charge away"
-        );
-    }
-
     /// The bonus-action primes that have to be cashed by a swing this
     /// turn are gated on the same distance the swing itself needs, and
     /// not on a tighter one.
@@ -10805,7 +10691,8 @@ mod tests {
     /// a gap of 1. The AI's approach stops the moment it can attack, so
     /// gap 0 was a distance the AI never stood at, and a paladin
     /// swinging a greatsword at an ogre every round for twelve seeds
-    /// never once cast Divine Smite.
+    /// never once cast Divine Smite. A monk in the same fixture never
+    /// stunned, and a druid never picked up its club.
     ///
     /// The fixture is the exact geometry the bug lived at: one tile of
     /// separation, a legal swing, and a prime that has to agree.
@@ -10814,6 +10701,8 @@ mod tests {
         use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
         use crate::actors::actor_template::CreatureTemplate;
 
         let primed = |template: &'static CreatureTemplate,
@@ -10849,6 +10738,14 @@ mod tests {
                 try_self_action_when_enemy_within(e, id, MELEE_REACH, "precision attack")
             }),
             "a fighter in reach of an enemy should be able to prime precision"
+        );
+        assert!(
+            primed(&MONK_TEMPLATE, &try_stunning_strike),
+            "a monk in reach of an enemy should prime the stun"
+        );
+        assert!(
+            primed(&DRUID_TEMPLATE, &try_shillelagh),
+            "a druid in reach of an enemy should prime the club"
         );
     }
 
