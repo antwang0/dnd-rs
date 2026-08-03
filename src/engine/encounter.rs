@@ -2596,6 +2596,32 @@ impl EncounterInstance {
             mode = mode.combine(RollMode::Disadvantage);
         }
 
+        // 5e heavy obscurement, both ways. "A creature effectively
+        // suffers from the blinded condition when trying to see
+        // something in that area" — so a fog bank between two creatures
+        // is read here exactly as the Blinded condition is read below:
+        // the attacker who can't see disadvantages, the target who
+        // can't see hands out advantage.
+        //
+        // The symmetry is the point. Two creatures inside the same
+        // cloud each get one of each and cancel to Normal, which is
+        // 5e's unseen-attacker rule arriving for free rather than as a
+        // special case. An archer shooting *into* a cloud gets only the
+        // disadvantage; a creature inside shooting *out* at somebody in
+        // the clear gets only that too, because the fog is on its side
+        // of the line either way.
+        //
+        // Read off the zone layer rather than off a condition, because
+        // obscurement is a property of the ground and the two creatures'
+        // positions, and it stops applying the moment either of them
+        // steps clear.
+        if self.obscurement_blinds(attacker_id, target_id) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if self.obscurement_blinds(target_id, attacker_id) {
+            mode = mode.combine(RollMode::Advantage);
+        }
+
         // 5e concealment-piercing snapshot: does the attacker see through
         // the target's illusion / invisibility, and does the target see
         // through the attacker's? Both booleans feed the suppression
@@ -4741,6 +4767,28 @@ impl EncounterInstance {
                     damage_type,
                 }
                 .apply(self);
+            }
+        }
+        // The concentration clause is its own roll, and it is asked
+        // whether or not the first save landed — a wizard who kept its
+        // feet in the sleet has said nothing yet about keeping its
+        // spell. Only ever asked of somebody with a spell to lose.
+        if contact.breaks_concentration
+            && self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.is_concentrating())
+            && let Some(s) = contact.save
+        {
+            let outcome = self.roll_save_against_caster(
+                actor_id,
+                AbilityScoreType::Constitution,
+                s.dc,
+                owner_id,
+            );
+            if !outcome.passed() {
+                self.log(format!("  {}: {} loses their grip.", name, actor_name));
+                self.drop_concentration(actor_id);
             }
         }
         if saved {
@@ -35620,13 +35668,14 @@ mod tests {
         );
     }
 
-    /// Sleet Storm: deals no damage but every enemy in the burst that
-    /// fails a DEX save is knocked Prone. Verify at least one of the
-    /// goblins in the cluster ends up Prone (RNG-dependent on the save
-    /// outcome — we cluster 4 of them so the probability of no fails
-    /// is negligible).
+    /// Sleet Storm lays slick ice: no damage, difficult terrain, and a
+    /// DEX save at the start of every turn spent in it. The storm
+    /// rolling in costs nobody their footing on the spot — RAW's
+    /// triggers are entry and turn-start — so the prone lands on the
+    /// goblins' own turns, which is also when the ice keeps charging
+    /// them for standing there.
     #[test]
-    fn sleet_storm_prones_enemies_in_burst() {
+    fn sleet_storm_ices_the_ground_and_trips_who_starts_a_turn_on_it() {
         use crate::actions::spells::SLEET_STORM;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -35645,15 +35694,31 @@ mod tests {
                 .unwrap()
             })
             .collect();
-        let tl = vec![Coordinate::new(10, 10)];
-        let effs = SLEET_STORM.side_effects(&mut e, druid, None, Some(&tl), None);
+        let centre = Coordinate::new(10, 10);
+        let effs = SLEET_STORM.side_effects(&mut e, druid, None, Some(&vec![centre]), None);
         for ef in effs {
             ef.apply(&mut e);
+        }
+        assert_eq!(e.zone_movement_multiplier(centre), 2.0, "ice is rough going");
+        assert!(
+            goblins
+                .iter()
+                .all(|id| !e.actors[id].has_condition(Condition::Prone)),
+            "the storm arriving doesn't knock anyone down by itself"
+        );
+        for id in &goblins {
+            e.start_turn_for(*id);
         }
         let any_prone = goblins
             .iter()
             .any(|id| e.actors[id].has_condition(Condition::Prone));
-        assert!(any_prone, "sleet storm should prone at least one goblin");
+        assert!(
+            any_prone,
+            "four goblins opening their turns on ice should drop at least one"
+        );
+        // And the druid's grip is what holds it up.
+        e.drop_concentration(druid);
+        assert!(e.zones().is_empty());
     }
 
     /// Reverse Gravity: every creature in the column makes a STR save;
@@ -42915,6 +42980,137 @@ mod tests {
         e.start_turn_for(goblin);
         let halved = before - e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
         assert!(halved < 10, "a passed save should halve the 2d10");
+    }
+
+    /// Heavy obscurement reads as blindness at the attack roll, both
+    /// ways. For an ordinary pair that means it *cancels* — the shooter
+    /// can't see and neither can the target, so the disadvantage and
+    /// the advantage meet at Normal, which is 5e's unseen-attacker rule
+    /// arriving without a special case for it. The edge only appears
+    /// when one side can see through the fog and the other can't.
+    #[test]
+    fn a_fog_bank_blinds_both_ways_and_only_blindsight_breaks_the_tie() {
+        use crate::actors::creatures::bats::BAT_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let bat = e
+            .instantiate_creature(&BAT_TEMPLATE, Coordinate::new(16, 10), 0, 1)
+            .unwrap();
+        let inside = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_attack_mode(archer, inside, false),
+            RollMode::Normal
+        );
+        e.install_zone(test_zone(
+            Coordinate::new(21, 10),
+            3,
+            ZoneEffect::OBSCURING,
+        ));
+        // Neither the archer nor its target can see the other, so both
+        // clauses fire and they cancel.
+        assert_eq!(
+            e.compute_attack_mode(archer, inside, false),
+            RollMode::Normal
+        );
+        assert_eq!(
+            e.compute_attack_mode(inside, archer, false),
+            RollMode::Normal
+        );
+        // The bat's blindsight reaches into the cloud, so only the
+        // target's half of the pair fires: the bat sees, and is not
+        // seen.
+        assert_eq!(
+            e.compute_attack_mode(bat, inside, true),
+            RollMode::Advantage
+        );
+        assert_eq!(
+            e.compute_attack_mode(inside, bat, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    /// Cloudkill is the pair of clauses the old one-shot burst couldn't
+    /// hold at once: it blinds the ground it sits on, and it keeps
+    /// asking for a Constitution save every turn somebody spends in it.
+    #[test]
+    fn cloudkill_blinds_the_ground_and_keeps_charging_for_it() {
+        use crate::actions::spells::CLOUDKILL;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        // A goblin would simply die to 5d8; the test is about the
+        // cloud still being there on the second turn, so it needs
+        // somebody who survives the first.
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 10), 1, 0)
+            .unwrap();
+        let centre = Coordinate::new(16, 10);
+        let full = e.actors[&ogre].hitpoints();
+        for ef in CLOUDKILL.side_effects(&mut e, wiz, None, Some(&vec![centre]), None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.tile_is_obscured(centre));
+        assert!(!e.viewer_can_see(wiz, ogre));
+        // "…each creature in the area when it appears" — the fog is
+        // already poison by the time anyone notices it.
+        let after_cast = e.actors[&ogre].hitpoints();
+        assert!(after_cast < full);
+        e.start_turn_for(ogre);
+        let after_turn = e.actors[&ogre].hitpoints();
+        assert!(
+            after_turn < after_cast,
+            "standing in the cloud costs another save every turn"
+        );
+    }
+
+    /// Stinking Cloud takes a turn off whoever opens one inside it, and
+    /// does it again the next round — the persistence the old
+    /// `UntilStartOfNextTurn` timer was standing in for.
+    #[test]
+    fn stinking_cloud_costs_a_turn_every_turn_it_is_stood_in() {
+        use crate::actions::spells::STINKING_CLOUD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut caught_twice = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 10), 1, 0)
+                .unwrap();
+            let centre = Coordinate::new(16, 10);
+            for ef in STINKING_CLOUD.side_effects(&mut e, wiz, None, Some(&vec![centre]), None) {
+                ef.apply(&mut e);
+            }
+            // The gas rolling in costs nothing until the goblin's turn.
+            assert!(!e.actors[&goblin].has_condition(Condition::Incapacitated));
+            e.start_turn_for(goblin);
+            let first = e.actors[&goblin].has_condition(Condition::Incapacitated);
+            e.start_turn_for(goblin);
+            let second = e.actors[&goblin].has_condition(Condition::Incapacitated);
+            if first && second {
+                caught_twice = true;
+                break;
+            }
+        }
+        assert!(
+            caught_twice,
+            "the cloud should be able to take two turns running off one creature"
+        );
     }
 
     /// Fog Cloud lays a heavy-obscurement zone rather than marking the

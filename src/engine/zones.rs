@@ -93,6 +93,16 @@ pub struct ZoneContact {
     pub save: Option<ZoneSave>,
     pub damage: Option<(Dice, DamageType)>,
     pub condition: Option<(Condition, ConditionTimer)>,
+    /// 5e Sleet Storm: "any creature that enters the area or starts its
+    /// turn there must make a Constitution saving throw or lose
+    /// concentration." A separate roll from `save`, at the same DC,
+    /// because the two clauses ask different abilities of the same
+    /// creature — a wizard keeps its feet on a Dexterity save and keeps
+    /// its spell on a Constitution one, and passing either says nothing
+    /// about the other.
+    ///
+    /// Only ever charged to a creature that has concentration to lose.
+    pub breaks_concentration: bool,
 }
 
 impl ZoneContact {
@@ -112,7 +122,15 @@ impl ZoneContact {
             }),
             damage: None,
             condition: Some((condition, timer)),
+            breaks_concentration: false,
         }
+    }
+
+    /// Chainable: this clause also forces a concentration check at the
+    /// same DC. Sleet Storm's second sentence.
+    pub const fn also_breaking_concentration(mut self) -> Self {
+        self.breaks_concentration = true;
+        self
     }
 
     /// The "save for half" shape: Moonbeam's searing light, and every
@@ -131,6 +149,7 @@ impl ZoneContact {
             }),
             damage: Some((dice, damage_type)),
             condition: None,
+            breaks_concentration: false,
         }
     }
 
@@ -141,13 +160,14 @@ impl ZoneContact {
             save: None,
             damage: Some((dice, damage_type)),
             condition: None,
+            breaks_concentration: false,
         }
     }
 
     /// True if this clause can cost a creature something. Read by the AI
     /// so it can route around a web and stand in a fog cloud.
     pub fn is_harmful(&self) -> bool {
-        self.damage.is_some() || self.condition.is_some()
+        self.damage.is_some() || self.condition.is_some() || self.breaks_concentration
     }
 }
 
@@ -174,12 +194,32 @@ impl ZoneEffect {
         contact: None,
     };
 
+    /// A zone whose only clause is the bad ground (Entangle, whose
+    /// grab is a one-time save at cast time rather than a standing
+    /// property of the square).
+    pub const ROUGH: Self = Self {
+        obscures: false,
+        difficult: true,
+        contact: None,
+    };
+
     /// A zone that is difficult terrain and fires `contact` (Web,
     /// Grease).
     pub const fn clinging(contact: ZoneContact) -> Self {
         Self {
             obscures: false,
             difficult: true,
+            contact: Some(contact),
+        }
+    }
+
+    /// A zone that both blinds and bites: the poison and vapor clouds,
+    /// whose RAW text carries "its area is heavily obscured" alongside
+    /// the save (Cloudkill, Stinking Cloud).
+    pub const fn choking(contact: ZoneContact) -> Self {
+        Self {
+            obscures: true,
+            difficult: false,
             contact: Some(contact),
         }
     }

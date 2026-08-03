@@ -6443,18 +6443,35 @@ impl Action for MassCureWounds {
 
 pub static MASS_CURE_WOUNDS: LazyLock<MassCureWounds> = LazyLock::new(|| MassCureWounds {});
 
-/// Stinking Cloud — level-3 conjuration, concentration. A 20-ft sphere
-/// of yellow vapor at a point; every creature inside makes a CON save
-/// vs the caster's spell DC or becomes Incapacitated until the start
-/// of their next turn (RAW: lose your action and your bonus action).
-/// Re-rolls happen each round as the cloud lingers; we model that as
-/// an `UntilStartOfNextTurn` timer, which gives the failed save a
-/// one-round impact and lets the spell hit again next round if the
-/// caster sustains concentration.
+/// Stinking Cloud — level-3 conjuration, concentration (bard / sorcerer
+/// / wizard). A 20-ft-radius sphere of nauseating yellow gas within 90
+/// ft.
 ///
-/// Unlike Fireball / Cone of Cold this is non-damaging — it doesn't
-/// trigger concentration saves, it just shuts down enemy turns.
+///   - "Its area is heavily obscured."
+///   - "Each creature that is completely within the cloud at the start
+///     of its turn must make a Constitution saving throw against
+///     poison. On a failed save, the creature spends its action that
+///     turn retching and reeling."
+///
+/// Modeled as `Incapacitated` until the start of the creature's next
+/// turn, which is the same round of lost economy RAW's "spends its
+/// action retching" describes and is a condition the engine already
+/// enforces everywhere. The re-roll every round now comes from the zone
+/// firing at each turn start rather than from a one-shot burst plus an
+/// `UntilStartOfNextTurn` timer standing in for persistence.
+///
+/// The obscurement is new, and it is why this is the level-3 sibling of
+/// Fog Cloud rather than a weaker Hypnotic Pattern: a wall of gas that
+/// nobody can see through, taking a turn off whoever stands in it.
 pub struct StinkingCloud {}
+
+impl StinkingCloud {
+    /// 20-ft radius. Held at 2 rather than the 4 the other 20-ft
+    /// spheres use, because this one takes a creature's whole turn and
+    /// blinds the ground it stands on: doubling the radius would make
+    /// one third-level slot the end of most encounters.
+    const RADIUS: isize = 2;
+}
 
 impl Action for StinkingCloud {
     fn school(&self) -> Option<SpellSchool> {
@@ -6467,7 +6484,9 @@ impl Action for StinkingCloud {
         vec!["sc-spell", "stink"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 90 ft = 36 tiles.
@@ -6489,6 +6508,16 @@ impl Action for StinkingCloud {
     ) -> Vec<Resource> {
         action_and_slot(3)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -6504,37 +6533,33 @@ impl Action for StinkingCloud {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        const RADIUS: isize = 2;
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut applied: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Incapacitated,
-                timer: ConditionTimer::UntilStartOfNextTurn,
-            }));
-            applied.push((tid, Condition::Incapacitated));
-        }
-        // Even with no failed saves, we still start concentration so the
-        // cloud lingers — but only when at least one enemy is inside the
-        // burst (otherwise the cast was wasted). Without applied targets
-        // there's nothing to clear on concentration drop, but we'd want
-        // re-rolls each round if we modeled cloud persistence. Today the
-        // engine doesn't tick area effects across rounds; install
-        // concentration only when at least one target was caught so
-        // dropping is a clean no-op when the wind blows over.
-        if !applied.is_empty() {
-            effects.push(Box::new(StartConcentration {
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "stinking cloud",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::choking(ZoneContact::save_or(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Condition::Incapacitated,
+                        ConditionTimer::UntilStartOfNextTurn,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // RAW's trigger is the *start of a turn* inside the
+                // cloud; the gas rolling in around somebody costs them
+                // nothing until their turn comes round.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData::with_conditions("Stinking Cloud", applied),
-            }));
-        }
-        effects
+                data: ConcentrationData::new("Stinking Cloud"),
+            }),
+        ]
     }
 }
 
@@ -9373,14 +9398,34 @@ impl Action for WallOfFire {
 
 pub static WALL_OF_FIRE: LazyLock<WallOfFire> = LazyLock::new(|| WallOfFire {});
 
-/// Cloudkill — level-5 conjuration, concentration. A 20-ft radius (radius
-/// 4 on the 2.5 ft grid) cloud of yellow-green fog drifts where the
-/// caster points. Every creature whose footprint touches the burst makes
-/// a CON save vs the caster's INT-based DC: 5d8 poison on a fail, half on
-/// a success. RAW the cloud also persists and re-damages over time — we
-/// model the immediate hit but skip the per-turn re-damage to keep the
-/// concentration plumbing simple. Poison immunity zeros the damage.
+/// Cloudkill — level-5 conjuration, concentration (sorcerer / wizard). A
+/// 20-ft-radius sphere of poisonous yellow-green fog within 120 ft.
+///
+/// Both RAW clauses:
+///
+///   - "Its area is heavily obscured."
+///   - "Each creature in the area makes a Constitution saving throw,
+///     taking 5d8 poison damage on a failed save or half as much on a
+///     successful one. A creature makes this save when it enters the
+///     area for the first time on a turn or starts its turn there."
+///
+/// The obscurement is the half the old implementation had no way to
+/// express, and it is most of what makes the spell frightening: a wall
+/// of fog that neither side can see through, which happens to be
+/// killing whoever is inside it. The recurring save is the other half —
+/// the cloud used to hit once for 5d8 and then sit on the map as a log
+/// line.
+///
+/// Not modeled: RAW's "the cloud moves 10 feet away from you at the
+/// start of each of your turns." A zone's `origin` is a plain field and
+/// nothing forbids a mover later; today the fog stays where it was
+/// cast.
 pub struct Cloudkill {}
+
+impl Cloudkill {
+    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for Cloudkill {
     fn school(&self) -> Option<SpellSchool> {
@@ -9393,7 +9438,9 @@ impl Action for Cloudkill {
         vec!["ck", "poisoncloud"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft = 48 tiles.
@@ -9415,6 +9462,16 @@ impl Action for Cloudkill {
     ) -> Vec<Resource> {
         action_and_slot(5)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -9430,35 +9487,54 @@ impl Action for Cloudkill {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        let raw = encounter.roll(&Dice::new(5, 8));
-        encounter.log(format!("  cloudkill: 5d8({}) = {} poison area", raw, raw));
-        let mut effects = crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Constitution,
-            dc,
-            raw,
-            DamageType::Poison,
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Cloudkill"),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "cloudkill",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::choking(ZoneContact::save_for_half(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Dice::new(5, 8),
+                        DamageType::Poison,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Cloudkill"),
+            }),
+        ]
     }
 }
 
 pub static CLOUDKILL: LazyLock<Cloudkill> = LazyLock::new(|| Cloudkill {});
 
-/// Insect Plague — level-5 conjuration, concentration. A 20-ft radius
-/// (radius 4) cloud of biting locusts. Every creature in the cloud makes
-/// a CON save vs the caster's WIS-based DC: 4d10 piercing on a fail,
-/// half on a success. Pierces resistance for most undead/oozes — but
-/// since we route through normal damage modifiers, immunity / resistance
-/// applies as usual. Concentration: drop ends the swarm.
+/// Insect Plague — level-5 conjuration, concentration (cleric / druid /
+/// sorcerer). A 20-ft-radius sphere of biting locusts.
+///
+/// "The sphere's area is difficult terrain. When the swarm appears, and
+/// whenever a creature enters the area for the first time on a turn or
+/// starts its turn there, it must make a Constitution saving throw,
+/// taking 4d10 piercing damage on a failed save or half as much on a
+/// successful one."
+///
+/// The swarm used to bite once and then stop being anywhere. Now it is
+/// a place — bad ground that keeps biting — which is the whole
+/// difference between a fifth-level slot and a slightly larger
+/// fireball.
 pub struct InsectPlague {}
+
+impl InsectPlague {
+    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for InsectPlague {
     fn school(&self) -> Option<SpellSchool> {
@@ -9471,7 +9547,9 @@ impl Action for InsectPlague {
         vec!["ip", "locusts"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 300 ft RAW; cap to 96 tiles (240 ft).
@@ -9493,6 +9571,16 @@ impl Action for InsectPlague {
     ) -> Vec<Resource> {
         action_and_slot(5)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -9508,26 +9596,32 @@ impl Action for InsectPlague {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let raw = encounter.roll(&Dice::new(4, 10));
-        encounter.log(format!(
-            "  insect plague: 4d10({}) = {} piercing area",
-            raw, raw
-        ));
-        let mut effects = crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Constitution,
-            dc,
-            raw,
-            DamageType::Piercing,
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Insect Plague"),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "insect plague",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::clinging(ZoneContact::save_for_half(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Dice::new(4, 10),
+                        DamageType::Piercing,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // "When the swarm appears…" — the one damaging area in
+                // the set whose text charges on arrival as well.
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Insect Plague"),
+            }),
+        ]
     }
 }
 
@@ -12177,14 +12271,35 @@ impl Action for CallLightning {
 
 pub static CALL_LIGHTNING: LazyLock<CallLightning> = LazyLock::new(|| CallLightning {});
 
-/// Sleet Storm — 5e druid level-3 conjuration, concentration. Freezing
-/// rain coats a 20-ft cylinder; creatures inside make a DEX save or be
-/// knocked Prone, and concentrating spellcasters in the area must save
-/// on a CON check or drop concentration. We model: enemy-only burst
-/// (caster + allies stay vertical), DEX save vs Prone on fail, plus an
-/// optional concentration-break for any enemy holding concentration. No
-/// damage — the storm is pure crowd-control. 20ft radius = 4 tiles.
+/// Sleet Storm — level-3 conjuration, concentration (druid / sorcerer /
+/// wizard). Freezing rain and sleet fill a 20-ft-radius cylinder within
+/// 150 ft.
+///
+/// Three RAW clauses, all of them on the zone:
+///
+///   - "The ground in the area is covered with slick ice, making it
+///     difficult terrain."
+///   - "When a creature enters the area for the first time on a turn or
+///     starts its turn there, it must make a Dexterity saving throw. On
+///     a failed save, it falls prone."
+///   - "Any creature that starts its turn in the area … must succeed on
+///     a Constitution saving throw or lose concentration."
+///
+/// The concentration clause is a second roll at the same DC and is
+/// asked whether or not the first one landed — keeping your feet in the
+/// sleet says nothing about keeping your spell — which is why it is a
+/// flag on the contact rather than a rider on the failure branch.
+///
+/// It catches allies now. The old implementation partitioned to enemies
+/// on the reasoning that the druid picks the spot; RAW sleet is
+/// weather, and weather does not check tabards. Placement is the
+/// decision.
 pub struct SleetStorm {}
+
+impl SleetStorm {
+    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for SleetStorm {
     fn school(&self) -> Option<SpellSchool> {
@@ -12197,7 +12312,9 @@ impl Action for SleetStorm {
         vec!["sleet", "ss-spell"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft = 60 tiles.
@@ -12219,6 +12336,16 @@ impl Action for SleetStorm {
     ) -> Vec<Resource> {
         action_and_slot(3)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -12234,45 +12361,36 @@ impl Action for SleetStorm {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        const RADIUS: isize = 4;
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut applied: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-            applied.push((tid, Condition::Prone));
-            // Concentration break: any enemy holding concentration must
-            // succeed on a CON save or drop. We piggyback on the engine's
-            // drop_concentration helper rather than re-rolling here — the
-            // CON save uses the same DC as the DEX save (5e RAW: "DC
-            // equal to your spell save DC").
-            if encounter
-                .actors
-                .get(&tid)
-                .is_some_and(|a| a.is_concentrating())
-            {
-                let conc_save =
-                    encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
-                if !conc_save.passed() {
-                    encounter.drop_concentration(tid);
-                }
-            }
-        }
-        if !applied.is_empty() {
-            effects.push(Box::new(StartConcentration {
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "sleet storm",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::clinging(
+                        ZoneContact::save_or(
+                            AbilityScoreType::Dexterity,
+                            dc,
+                            Condition::Prone,
+                            ConditionTimer::Permanent,
+                        )
+                        .also_breaking_concentration(),
+                    ),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // RAW's triggers are entry and turn-start only; the
+                // storm rolls in around whoever is standing there
+                // without knocking them down on the spot.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData::with_conditions("Sleet Storm", applied),
-            }));
-        }
-        effects
+                data: ConcentrationData::new("Sleet Storm"),
+            }),
+        ]
     }
 }
 
@@ -21512,11 +21630,28 @@ impl Action for ShadowBlade {
 
 pub static SHADOW_BLADE: LazyLock<ShadowBlade> = LazyLock::new(|| ShadowBlade {});
 
-/// Entangle — level-1 conjuration, concentration. A 20ft burst of grasping
-/// vines sprouts from a point within 90ft. Every creature in the burst
-/// makes a STR save; on fail, they're Restrained for up to 10 rounds.
-/// Concentration-bound.
+/// Entangle — level-1 conjuration, concentration (druid / ranger).
+/// Grasping weeds and vines sprout from the ground across a 20-ft square
+/// within 90 ft.
+///
+/// "The ground in the area is difficult terrain. A creature in the area
+/// when you cast the spell must succeed on a Strength saving throw or be
+/// restrained by the entangling plants."
+///
+/// The level-1 sibling of Web, and the difference between them is
+/// exactly one sentence of RAW: Web catches whoever walks in for the
+/// whole minute, Entangle's save clause reads "a creature in the area
+/// *when you cast the spell*" and has no entry trigger at all. So the
+/// grab stays where it was — a cast-time sweep of Strength saves — and
+/// what goes on the zone layer is the half Entangle never had: a minute
+/// of bad ground, for a first-level slot, that keeps costing movement
+/// long after the vines have let go.
 pub struct Entangle {}
+
+impl Entangle {
+    /// 20-ft square = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for Entangle {
     fn school(&self) -> Option<SpellSchool> {
@@ -21529,7 +21664,9 @@ impl Action for Entangle {
         vec!["ent", "vines"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(36)
@@ -21579,24 +21716,44 @@ impl Action for Entangle {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         encounter.log("  entangle: grasping vines erupt!");
-        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "entangle",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::ROUGH,
+                rounds_remaining: 10,
+                concentration: true,
+            },
+            // The zone carries no contact clause, so there is nothing
+            // for it to charge on arrival; the sweep below is the
+            // spell's "when you cast" save.
+            catch_present: false,
+        })];
         let mut restrained: Vec<(usize, Condition)> = Vec::new();
-        for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
-            let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
+        for target_id in encounter.neutral_burst_targets(caster_id, point, Self::RADIUS) {
+            let save = encounter.roll_save_against_caster(
+                target_id,
+                AbilityScoreType::Strength,
+                dc,
+                caster_id,
+            );
             if !save.passed() {
                 restrained.push((target_id, Condition::Restrained));
-                effs.push(Box::new(ApplyCondition {
+                effects.push(Box::new(ApplyCondition {
                     actor_id: target_id,
                     condition: Condition::Restrained,
                     timer: ConditionTimer::Rounds(10),
                 }));
             }
         }
-        effs.push(Box::new(StartConcentration {
+        effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::with_conditions("Entangle", restrained),
         }));
-        effs
+        effects
     }
 }
 
