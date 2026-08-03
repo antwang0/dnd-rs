@@ -6221,6 +6221,31 @@ impl ActorInstance {
     /// any-of accessor the engine quietly let a Pit Fiend miss an
     /// invisible mage at disadvantage even though RAW the fiend should
     /// see right through the spell.
+    /// The widest **blindsight** envelope this creature has, converted
+    /// from the template's feet to grid tiles. `0` for a creature
+    /// without the sense.
+    ///
+    /// 5e: "A creature with blindsight can perceive its surroundings
+    /// without relying on sight, within a specific radius." The engine
+    /// carried `SpecialSense::Blindsight(_)` on thirty-odd templates —
+    /// bats, oozes, dragons, animated armor — and read it nowhere, so
+    /// the sense that defines a bat was decoration. It now answers the
+    /// one question in the engine that sight can fail on its own terms:
+    /// whether heavy obscurement stops you seeing (`viewer_can_see`).
+    ///
+    /// Rounded down, so a 10-ft blindsight is 4 tiles on the 2.5-ft
+    /// grid rather than 4.5 of one.
+    pub fn blindsight_tiles(&self) -> isize {
+        self.senses
+            .iter()
+            .filter_map(|s| match s {
+                SpecialSense::Blindsight(feet) => Some((*feet as f32 / 2.5) as isize),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn has_truesight(&self) -> bool {
         self.senses
             .iter()

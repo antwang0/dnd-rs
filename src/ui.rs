@@ -196,6 +196,17 @@ pub fn render_map(
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ));
+            } else if let Some(glyph) = zone_glyph(encounter, coord) {
+                // A persistent magical area draws over bare ground —
+                // above terrain (the fog is what matters about the tile
+                // now) and below actors and loot (a creature standing
+                // in the web is still the thing you need to see).
+                row.push(Span::styled(
+                    glyph.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
             } else {
                 let s = Span::from(
                     match encounter.terrain_at(coord).map(|t| &t.terrain_type) {
@@ -220,6 +231,47 @@ pub fn render_map(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Map")),
         area,
     );
+}
+
+/// The character to draw for a tile under one or more persistent
+/// magical areas, or `None` for a tile under none.
+///
+/// One glyph per kind of clause, ranked by what a player most needs to
+/// know before they step there:
+///
+///   - `☠` — it will hurt you (a cloud of daggers, a moonbeam).
+///   - `≈` — it will hold you (a web, a patch of grease).
+///   - `▚` — you cannot see through it (a fog cloud).
+///
+/// A tile carrying more than one shows the most urgent, which is why
+/// the checks are in that order rather than in the order the zones were
+/// installed: standing in a web inside a fog bank, the knives are still
+/// the news.
+fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> {
+    let mut found: Option<char> = None;
+    for zone in encounter.zones() {
+        if !zone.covers(coord) {
+            continue;
+        }
+        let glyph = if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
+            '☠'
+        } else if zone.effect.is_harmful() || zone.effect.difficult {
+            '≈'
+        } else if zone.effect.obscures {
+            '▚'
+        } else {
+            continue;
+        };
+        let rank = |g: char| match g {
+            '☠' => 2,
+            '≈' => 1,
+            _ => 0,
+        };
+        if found.is_none_or(|f| rank(glyph) > rank(f)) {
+            found = Some(glyph);
+        }
+    }
+    found
 }
 
 fn hp_bar_spans(current: u32, max: u32, width: usize) -> Vec<Span<'static>> {

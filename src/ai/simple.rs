@@ -5624,15 +5624,24 @@ fn best_burst_placement(
 /// expresses that. This mirrors the way `try_hold_person` already sits
 /// above plain attacks on the single-target lane.
 ///
-/// Every entry is concentration, which is what bounds the rung: the
-/// picker declines outright if the caster is already holding
-/// something, so a control spell can never displace a control spell.
-const AREA_CONTROL_SPELLS: &[&str] = &[
-    "web",
-    "hypnotic pattern",
-    "black tentacles",
-    "entangle",
-    "sleet storm",
+/// Each entry carries whether holding it costs the caster's
+/// concentration, because that is what bounds the rung: a caster
+/// already holding something declines every concentration entry, so a
+/// control spell can never displace a control spell.
+///
+/// Grease is the one entry that costs none, and the flag exists for it.
+/// RAW it is laid down and walked away from — a level-1 slot that keeps
+/// tripping people for a minute while the caster concentrates on
+/// something else entirely — and folding it into a blanket "not while
+/// concentrating" gate would have made the cheapest control spell in
+/// the game the only one a caster can't combine with anything.
+const AREA_CONTROL_SPELLS: &[(&str, bool)] = &[
+    ("web", true),
+    ("hypnotic pattern", true),
+    ("black tentacles", true),
+    ("entangle", true),
+    ("sleet storm", true),
+    ("grease", false),
 ];
 
 /// Put a friendly body on the board — Conjure Animals, Conjure
@@ -5711,11 +5720,13 @@ fn try_area_control(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
+    let busy = actor.is_concentrating();
     best_burst_placement(encounter, actor_id, |a| {
-        AREA_CONTROL_SPELLS.contains(&a.name())
+        AREA_CONTROL_SPELLS
+            .iter()
+            .any(|(name, needs_concentration)| {
+                *name == a.name() && !(busy && *needs_concentration)
+            })
     })
 }
 
@@ -9666,10 +9677,12 @@ mod tests {
     }
 
 
-    /// Area control fires on a cluster, declines on a lone target,
-    /// and declines while the caster is already holding a
-    /// concentration — the gate that keeps one control spell from
-    /// displacing another.
+    /// Area control fires on a cluster, declines on a lone target, and
+    /// declines the *concentration* entries while the caster is already
+    /// holding one — the gate that keeps one control spell from
+    /// displacing another. Grease, which costs no concentration, is
+    /// still reachable through that gate, which is the whole reason the
+    /// registry carries a flag instead of a bare name.
     #[test]
     fn area_control_locks_down_a_cluster_and_yields_to_held_concentration() {
         use crate::actors::actor_template::ConcentrationData;
@@ -9690,7 +9703,9 @@ mod tests {
         let (mut e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 3);
         let aei = try_area_control(&e, wiz).expect("three clustered hostiles");
         assert!(
-            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
+            AREA_CONTROL_SPELLS
+                .iter()
+                .any(|(name, _)| *name == aei.action().name()),
             "picked {} which isn't on the control registry",
             aei.action().name()
         );
@@ -9699,10 +9714,22 @@ mod tests {
             .get_mut(&wiz)
             .unwrap()
             .start_concentration(ConcentrationData::new("Foresight"));
-        assert!(
-            try_area_control(&e, wiz).is_none(),
-            "a held concentration blocks the rung"
-        );
+        match try_area_control(&e, wiz) {
+            None => {}
+            Some(aei) => {
+                let name = aei.action().name().to_string();
+                let needs_concentration = AREA_CONTROL_SPELLS
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, c)| *c)
+                    .expect("picked something off the registry");
+                assert!(
+                    !needs_concentration,
+                    "a held concentration must block {}, which wants one of its own",
+                    name
+                );
+            }
+        }
     }
 
     /// The ordering that makes the rung reachable at all. Both
@@ -9732,7 +9759,9 @@ mod tests {
             panic!("expected an action");
         };
         assert!(
-            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
+            AREA_CONTROL_SPELLS
+                .iter()
+                .any(|(name, _)| *name == aei.action().name()),
             "a dense cluster should take the concentration, got {}",
             aei.action().name()
         );
@@ -10699,10 +10728,12 @@ mod tests {
         // Every module-level name list the heuristics consult. A new
         // list belongs here; the cost of forgetting is a heuristic that
         // quietly never fires.
+        let area_control: Vec<&str> =
+            AREA_CONTROL_SPELLS.iter().map(|(name, _)| *name).collect();
         let lists: [(&str, &[&str]); 7] = [
             ("MELEE_ADJACENT_PRIMES", MELEE_ADJACENT_PRIMES),
             ("SELF_TELEPORT_ESCAPES", SELF_TELEPORT_ESCAPES),
-            ("AREA_CONTROL_SPELLS", AREA_CONTROL_SPELLS),
+            ("AREA_CONTROL_SPELLS", &area_control),
             ("HEIGHTENED_LOCKDOWN", HEIGHTENED_LOCKDOWN),
             ("HEIGHTENED_BURST", HEIGHTENED_BURST),
             ("EXTENDABLE", EXTENDABLE),

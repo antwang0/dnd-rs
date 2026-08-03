@@ -247,6 +247,7 @@ use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
+use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
@@ -388,23 +389,6 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         dice: Dice::new(1, 12),
         damage_type: DamageType::Lightning,
         log_verb: "is shocked by witch bolt:",
-    },
-    // 5e Moonbeam — concentration-bound. 2d10 radiant per round as the
-    // pale light sears the creature (CON save for half handled at the
-    // drip site would add complexity; we use the flat DoT model).
-    RoundEndDot {
-        condition: Condition::Moonbeamed,
-        dice: Dice::new(2, 10),
-        damage_type: DamageType::Radiant,
-        log_verb: "is seared by moonbeam:",
-    },
-    // 5e Cloud of Daggers — concentration-bound. 4d4 slashing per round,
-    // no save (RAW: automatic damage on enter / start of turn).
-    RoundEndDot {
-        condition: Condition::CloudOfDaggered,
-        dice: Dice::new(4, 4),
-        damage_type: DamageType::Slashing,
-        log_verb: "is shredded by the cloud of daggers:",
     },
     // 5e Tasha's Caustic Brew — concentration-bound. 2d4 acid per round
     // as the clinging acid eats at the target. Dropping concentration
@@ -1413,6 +1397,80 @@ impl OutcomeTracker {
 /// still public read/write because every consumer (AI, picker UI, action
 /// validation) needs deep access to actor state — narrowing it would
 /// require a much larger accessor surface.
+/// The tiles a straight Bresenham line from `from` to `to` passes
+/// through, **excluding both endpoints**. Empty when the two are the
+/// same tile or adjacent.
+///
+/// One walk, three callers. Line-of-sight asks whether any of these
+/// tiles is a wall, cover asks how many of them obstruct, and the
+/// obscurement gate asks whether any of them is fog — three questions
+/// about the same geometry that used to be three hand-inlined copies of
+/// the same nine lines of Bresenham. Exclusive of the endpoints because
+/// that is what all three want: you are never your own cover, and the
+/// tile you are shooting *at* is not in the way of the shot.
+pub fn tiles_between(
+    from: Coordinate,
+    to: Coordinate,
+) -> impl Iterator<Item = Coordinate> {
+    TilesBetween::new(from, to)
+}
+
+struct TilesBetween {
+    x: isize,
+    y: isize,
+    x1: isize,
+    y1: isize,
+    dx: isize,
+    dy: isize,
+    sx: isize,
+    sy: isize,
+    err: isize,
+    done: bool,
+}
+
+impl TilesBetween {
+    fn new(from: Coordinate, to: Coordinate) -> Self {
+        let dx = (to.x - from.x).abs();
+        let dy = -(to.y - from.y).abs();
+        Self {
+            x: from.x,
+            y: from.y,
+            x1: to.x,
+            y1: to.y,
+            dx,
+            dy,
+            sx: if from.x < to.x { 1 } else { -1 },
+            sy: if from.y < to.y { 1 } else { -1 },
+            err: dx + dy,
+            done: from == to,
+        }
+    }
+}
+
+impl Iterator for TilesBetween {
+    type Item = Coordinate;
+
+    fn next(&mut self) -> Option<Coordinate> {
+        if self.done {
+            return None;
+        }
+        let e2 = 2 * self.err;
+        if e2 >= self.dy {
+            self.err += self.dy;
+            self.x += self.sx;
+        }
+        if e2 <= self.dx {
+            self.err += self.dx;
+            self.y += self.sy;
+        }
+        if self.x == self.x1 && self.y == self.y1 {
+            self.done = true;
+            return None;
+        }
+        Some(Coordinate::new(self.x, self.y))
+    }
+}
+
 pub struct EncounterInstance {
     /// Non-zero while a damage instance is being carried by somebody
     /// other than the creature it was aimed at — see
@@ -1506,6 +1564,20 @@ pub struct EncounterInstance {
     /// actions in a turn must not have their resources reset between
     /// them. Matching ids is what suppresses that.
     turn_started_for: Option<usize>,
+    /// Persistent magical areas — see `crate::engine::zones`. A `Vec`
+    /// rather than a per-tile grid because there are never many (one or
+    /// two in a busy fight) and every question the engine asks of the
+    /// layer is "which zones cover this tile", which a short linear scan
+    /// answers as fast as an index would while keeping each zone's
+    /// identity, owner, and timer in one place.
+    zones: Vec<Zone>,
+    zone_id_next: usize,
+    /// The "for the first time on a turn" ledger: `(zone id, actor id)`
+    /// pairs that have already paid this turn's contact clause. Cleared
+    /// wholesale by `start_turn_for`, which is exactly the RAW window —
+    /// a creature shoved into a web on somebody else's turn triggers it,
+    /// and shoving them back in on that same turn does not.
+    zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
 }
 
 /// One frame of the in-flight spell-cast stack — the resolved identity
@@ -2864,7 +2936,62 @@ impl EncounterInstance {
         if concealed {
             return false;
         }
-        self.actor_has_line_of_sight(viewer_id, subject_id)
+        if !self.actor_has_line_of_sight(viewer_id, subject_id) {
+            return false;
+        }
+        !self.obscurement_blinds(viewer_id, subject_id)
+    }
+
+    /// True if heavy obscurement stands between the two and the viewer
+    /// has no sense that gets around it.
+    ///
+    /// 5e: "A heavily obscured area — such as darkness, opaque fog, or
+    /// dense foliage — blocks vision entirely. A creature effectively
+    /// suffers from the blinded condition when trying to see something
+    /// in that area." Fog is symmetric — it stops the archer outside
+    /// picking a target inside as surely as it stops the target picking
+    /// the archer — so the geometry check (`obscured_between`) includes
+    /// both endpoints as well as the tiles in between.
+    ///
+    /// Two senses get around it, and they are the two RAW says do:
+    ///
+    ///   - **Blindsight** — "can perceive its surroundings without
+    ///     relying on sight." Range-gated: a bat's 60 ft is 24 tiles,
+    ///     and a constrictor's 10 ft is 4, so a fog bank wide enough
+    ///     still hides an archer from the snake.
+    ///   - **Truesight** — which RAW grants blindsight's envelope and
+    ///     more, and which the engine already models as unbounded.
+    ///
+    /// Darkvision deliberately does *not*: RAW it upgrades darkness by
+    /// one step, and a fog cloud is not darkness. A creature with
+    /// darkvision in a fog bank is as blind as one without.
+    fn obscurement_blinds(&self, viewer_id: usize, subject_id: usize) -> bool {
+        // The common case is a board with no fog on it at all, and the
+        // whole walk below is wasted work there.
+        if self.zones.iter().all(|z| !z.effect.obscures) {
+            return false;
+        }
+        let (Some(viewer), Some(subject)) =
+            (self.actors.get(&viewer_id), self.actors.get(&subject_id))
+        else {
+            return false;
+        };
+        if viewer.has_truesight() {
+            return false;
+        }
+        let blindsight = viewer.blindsight_tiles();
+        if blindsight > 0 {
+            let dist = footprint_chebyshev(
+                viewer.location(),
+                get_tiles_from_size(viewer.size()),
+                subject.location(),
+                get_tiles_from_size(subject.size()),
+            );
+            if dist <= blindsight {
+                return false;
+            }
+        }
+        self.obscured_between(viewer.location(), subject.location())
     }
 
     /// True if `viewer` sees through *every* concealment in
@@ -4345,6 +4472,300 @@ impl EncounterInstance {
         true
     }
 
+    /// Every persistent area currently on the board, in install order.
+    pub fn zones(&self) -> &[Zone] {
+        &self.zones
+    }
+
+    /// Place a persistent area and return the id it was given. The id is
+    /// the handle the "first time on a turn" ledger and every teardown
+    /// path key off; callers that only ever tear their zone down through
+    /// concentration can discard it.
+    ///
+    /// Installing does *not* fire the contact clause. Every spell that
+    /// creates one has its own answer for the creatures already standing
+    /// there — Web and Grease save immediately, Cloud of Daggers does
+    /// not — and folding one of those answers in here would make the
+    /// other one impossible to write.
+    pub fn install_zone(&mut self, mut zone: Zone) -> usize {
+        let id = self.zone_id_next;
+        self.zone_id_next += 1;
+        zone.id = id;
+        self.zones.push(zone);
+        id
+    }
+
+    /// Drop a zone by id. Returns true if one was there.
+    pub fn remove_zone(&mut self, zone_id: usize) -> bool {
+        let before = self.zones.len();
+        self.zones.retain(|z| z.id != zone_id);
+        self.zone_contacts_this_turn.retain(|(z, _)| *z != zone_id);
+        self.zones.len() != before
+    }
+
+    /// True if any tile of `actor_id`'s footprint is inside `zone`.
+    ///
+    /// Footprint rather than origin tile, so a Huge creature standing
+    /// with one corner in a web is caught by it — the same rule
+    /// `actors_in_burst` applies to every other area in the engine.
+    fn actor_in_zone(&self, actor_id: usize, zone: &Zone) -> bool {
+        let Some(a) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        footprint_chebyshev(
+            a.location(),
+            get_tiles_from_size(a.size()),
+            zone.origin,
+            1,
+        ) <= zone.radius
+    }
+
+    /// Ids of every zone whose area `actor_id` is standing in.
+    pub fn zones_covering_actor(&self, actor_id: usize) -> Vec<usize> {
+        self.zones
+            .iter()
+            .filter(|z| self.actor_in_zone(actor_id, z))
+            .map(|z| z.id)
+            .collect()
+    }
+
+    /// True if `coord` sits under a heavy-obscurement zone.
+    pub fn tile_is_obscured(&self, coord: Coordinate) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.effect.obscures && z.covers(coord))
+    }
+
+    /// The movement-cost multiplier the zone layer adds at `coord`: 2.0
+    /// under any zone that is difficult terrain, 1.0 otherwise.
+    ///
+    /// Composed with the terrain layer's own multiplier by `max` at the
+    /// pathing site rather than multiplied, because 5e's difficult
+    /// terrain does not stack — "a space is difficult terrain" is a
+    /// property, not a counter, and a web laid over rubble costs 2× and
+    /// not 4×.
+    pub fn zone_movement_multiplier(&self, coord: Coordinate) -> f32 {
+        if self
+            .zones
+            .iter()
+            .any(|z| z.effect.difficult && z.covers(coord))
+        {
+            2.0
+        } else {
+            1.0
+        }
+    }
+
+    /// True if a creature that can be hurt by standing here would be —
+    /// the AI's "is this tile worth walking through" question.
+    pub fn tile_is_hazardous(&self, coord: Coordinate) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.effect.is_harmful() && z.covers(coord))
+    }
+
+    /// True if heavy obscurement stands between (or on top of) the two
+    /// tiles — the geometry half of `viewer_can_see`'s obscurement gate.
+    ///
+    /// Endpoints are included, unlike `has_line_of_sight`'s wall walk,
+    /// and that difference is the rule: a wall you are standing against
+    /// does not blind you, but a fog cloud you are standing *in* does.
+    /// RAW's heavy obscurement "blocks vision entirely", and a creature
+    /// inside the cloud is as blind looking out as one outside is
+    /// looking in.
+    pub fn obscured_between(&self, from: Coordinate, to: Coordinate) -> bool {
+        if self.zones.iter().all(|z| !z.effect.obscures) {
+            return false;
+        }
+        if self.tile_is_obscured(from) || self.tile_is_obscured(to) {
+            return true;
+        }
+        for tile in tiles_between(from, to) {
+            if self.tile_is_obscured(tile) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Expire one round off every zone and sweep the ones that ran out.
+    /// Called from `round_end`, alongside the condition timers it is the
+    /// map-layer sibling of.
+    fn tick_zones(&mut self) {
+        let mut expired: Vec<(usize, String)> = Vec::new();
+        for zone in self.zones.iter_mut() {
+            zone.rounds_remaining = zone.rounds_remaining.saturating_sub(1);
+            if zone.rounds_remaining == 0 {
+                expired.push((zone.id, zone.name.to_string()));
+            }
+        }
+        for (id, name) in expired {
+            self.remove_zone(id);
+            self.log(format!("The {} disperses.", name));
+        }
+    }
+
+    /// Tear down every concentration-held zone `actor_id` is sustaining.
+    /// Called from `drop_concentration`, which is the only thing that
+    /// knows a caster's grip has failed — and which reaches every way it
+    /// can fail (damage, a second concentration spell, death, a lapsed
+    /// timer) at one chokepoint.
+    fn remove_concentration_zones_of(&mut self, actor_id: usize) {
+        let doomed: Vec<(usize, String)> = self
+            .zones
+            .iter()
+            .filter(|z| z.concentration && z.owner_id == actor_id)
+            .map(|z| (z.id, z.name.to_string()))
+            .collect();
+        for (id, name) in doomed {
+            self.remove_zone(id);
+            self.log(format!("The {} thins away to nothing.", name));
+        }
+    }
+
+    /// Fire the contact clause of every zone `actor_id` is standing in
+    /// and hasn't already paid this turn.
+    ///
+    /// The single entry point for both RAW triggers — "enters the area
+    /// for the first time on a turn" (called per step by `MoveActor`)
+    /// and "starts its turn there" (called by `start_turn_for`) — because
+    /// they are the same sentence and differ only in when they are
+    /// asked. The ledger is what makes calling it on every step of a
+    /// six-tile walk through a web cost one save rather than six.
+    pub fn touch_zones(&mut self, actor_id: usize) {
+        if self.zones.is_empty() {
+            return;
+        }
+        if !self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.is_combat_active())
+        {
+            return;
+        }
+        let due: Vec<usize> = self
+            .zones
+            .iter()
+            .filter(|z| z.effect.contact.is_some())
+            .filter(|z| !self.zone_contacts_this_turn.contains(&(z.id, actor_id)))
+            .filter(|z| self.actor_in_zone(actor_id, z))
+            .map(|z| z.id)
+            .collect();
+        for zone_id in due {
+            self.touch_zone(zone_id, actor_id);
+            // A zone that drops the creature ends the walk; the caller's
+            // own liveness check picks that up, but the remaining zones
+            // on this tile must not keep hitting a corpse.
+            if !self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.is_combat_active())
+            {
+                return;
+            }
+        }
+    }
+
+    /// Fire one named zone's contact clause at one creature, if the
+    /// creature is standing in it and hasn't already paid this turn.
+    ///
+    /// The narrow sibling of `touch_zones`, for the caller that already
+    /// knows which zone it means: a spell whose text charges "each
+    /// creature in the area when it appears" is charging for exactly
+    /// the zone it just laid down, and must not also collect for the
+    /// web somebody else spun on the far side of the room.
+    pub fn touch_zone(&mut self, zone_id: usize, actor_id: usize) {
+        if self.zone_contacts_this_turn.contains(&(zone_id, actor_id)) {
+            return;
+        }
+        if !self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.is_combat_active())
+        {
+            return;
+        }
+        let Some(zone) = self.zones.iter().find(|z| z.id == zone_id) else {
+            return;
+        };
+        if zone.effect.contact.is_none() || !self.actor_in_zone(actor_id, zone) {
+            return;
+        }
+        self.zone_contacts_this_turn.insert((zone_id, actor_id));
+        self.apply_zone_contact(zone_id, actor_id);
+    }
+
+    /// Resolve one zone's contact clause against one creature: the save
+    /// (if it has one), then the damage, then the condition.
+    ///
+    /// A successful save negates the condition outright and either
+    /// halves or negates the damage depending on the zone's
+    /// `half_on_success`. A zone with no save applies both unconditionally
+    /// — Cloud of Daggers offers none.
+    fn apply_zone_contact(&mut self, zone_id: usize, actor_id: usize) {
+        let Some(zone) = self.zones.iter().find(|z| z.id == zone_id) else {
+            return;
+        };
+        let Some(contact) = zone.effect.contact else {
+            return;
+        };
+        let (name, owner_id) = (zone.name, zone.owner_id);
+        let actor_name = self.actor_name(actor_id);
+        let saved = match contact.save {
+            Some(s) => {
+                let outcome =
+                    self.roll_save_against_caster(actor_id, s.ability, s.dc, owner_id);
+                outcome.passed()
+            }
+            None => false,
+        };
+        let half_on_success = contact.save.is_some_and(|s| s.half_on_success);
+        if let Some((dice, damage_type)) = contact.damage {
+            let rolled = self.roll(&dice);
+            let amount = if saved {
+                if half_on_success { rolled / 2 } else { 0 }
+            } else {
+                rolled
+            };
+            if amount > 0 {
+                self.log(format!(
+                    "  {}: {} takes {} {}.",
+                    name,
+                    actor_name,
+                    amount,
+                    damage_type
+                ));
+                crate::engine::side_effects::DealDamage {
+                    actor_id,
+                    amount,
+                    damage_type,
+                }
+                .apply(self);
+            }
+        }
+        if saved {
+            return;
+        }
+        if let Some((condition, timer)) = contact.condition {
+            if self.actor_immune_to_condition(actor_id, condition) {
+                self.log(format!(
+                    "  {}: {} is unaffected.",
+                    name, actor_name
+                ));
+                return;
+            }
+            if let Some(a) = self.actors.get_mut(&actor_id) {
+                a.add_condition(condition, timer);
+            }
+            self.log(format!(
+                "  {}: {} is {}.",
+                name,
+                actor_name,
+                condition.name()
+            ));
+        }
+    }
+
     /// True if a `size`-wide footprint anchored at `coord` would sit
     /// entirely on passable tiles that are either empty or already this
     /// actor's own. Takes the size explicitly rather than reading it off
@@ -4444,37 +4865,8 @@ impl EncounterInstance {
     /// the tile they want to attack into. Actors do *not* block LOS — only
     /// walls do (matches 5e's "creatures don't grant cover" default).
     pub fn has_line_of_sight(&self, from: Coordinate, to: Coordinate) -> bool {
-        if from == to {
-            return true;
-        }
-        let mut x0 = from.x;
-        let mut y0 = from.y;
-        let x1 = to.x;
-        let y1 = to.y;
-        let dx = (x1 - x0).abs();
-        let dy = -(y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
-
-        loop {
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x0 += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y0 += sy;
-            }
-            if x0 == x1 && y0 == y1 {
-                return true;
-            }
-            let coord = Coordinate::new(x0, y0);
-            if matches!(self.terrain_at(coord), Some(t) if t.terrain_type == TerrainType::Wall) {
-                return false;
-            }
-        }
+        !tiles_between(from, to)
+            .any(|c| matches!(self.terrain_at(c), Some(t) if t.terrain_type == TerrainType::Wall))
     }
 
     /// 5e cover. Counts the obstructions a straight origin-to-origin
@@ -4518,18 +4910,6 @@ impl EncounterInstance {
         }
         let from = a.location();
         let to = b.location();
-        if from == to {
-            return 0;
-        }
-        let mut x0 = from.x;
-        let mut y0 = from.y;
-        let x1 = to.x;
-        let y1 = to.y;
-        let dx = (x1 - x0).abs();
-        let dy = -(y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
         let mut hits = 0u32;
         let mut last_hit: Option<usize> = None;
         // The two endpoints' own footprints, so the terrain walk below
@@ -4547,20 +4927,7 @@ impl EncounterInstance {
         };
         let a_span = get_tiles_from_size(a.size()) as isize;
         let b_span = get_tiles_from_size(b.size()) as isize;
-        loop {
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x0 += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y0 += sy;
-            }
-            if x0 == x1 && y0 == y1 {
-                break;
-            }
-            let coord = Coordinate::new(x0, y0);
+        for coord in tiles_between(from, to) {
             if let Some(blocker_id) = self.actor_id_at(coord)
                 && blocker_id != attacker_id
                 && blocker_id != target_id
@@ -5694,7 +6061,31 @@ impl EncounterInstance {
     /// actor's footprint; finds the *shortest-step-count* path, ignoring
     /// movement budget (the AI may need several turns to close in). Returns
     /// `None` if already adjacent or no path exists.
+    ///
+    /// Tried twice: once refusing to route through any tile a persistent
+    /// area would hurt the walker on, and — only if that finds nothing —
+    /// once without the refusal. That is the whole of the engine's
+    /// answer to "should I walk through the web", and it is the right
+    /// shape for it: a creature goes around a hazard when going around
+    /// is possible, and walks through it when the alternative is not
+    /// reaching the fight at all. Skipped entirely on a board with no
+    /// harmful area on it, which is nearly every board.
     pub fn step_toward_actor(&self, actor_id: usize, target_id: usize) -> Option<Coordinate> {
+        let hazards = self.zones.iter().any(|z| z.effect.is_harmful());
+        if hazards
+            && let Some(step) = self.step_toward_actor_inner(actor_id, target_id, true)
+        {
+            return Some(step);
+        }
+        self.step_toward_actor_inner(actor_id, target_id, false)
+    }
+
+    fn step_toward_actor_inner(
+        &self,
+        actor_id: usize,
+        target_id: usize,
+        avoid_hazards: bool,
+    ) -> Option<Coordinate> {
         use std::collections::{HashMap, VecDeque};
 
         let actor = self.actors.get(&actor_id)?;
@@ -5734,6 +6125,9 @@ impl EncounterInstance {
                         continue;
                     }
                     if !self.can_move_to(actor_id, next) {
+                        continue;
+                    }
+                    if avoid_hazards && self.tile_is_hazardous(next) {
                         continue;
                     }
                     parent.insert(next, coord);
@@ -5838,12 +6232,19 @@ impl EncounterInstance {
                     } else {
                         diagonal_mft
                     };
+                    // The terrain layer and the zone layer each answer
+                    // "is this tile difficult", and a tile that is
+                    // difficult for both reasons — a web laid over
+                    // rubble — is still just difficult. `max`, not
+                    // product: 5e's difficult terrain is a property of
+                    // the space, not a counter that stacks.
                     let terrain_mult = if ignores_rough {
                         1.0
                     } else {
                         self.terrain_at(next)
                             .map(|t| t.terrain_type.movement_cost())
                             .unwrap_or(1.0)
+                            .max(self.zone_movement_multiplier(next))
                     };
                     let step = (base_step as f32 * terrain_mult) as u32;
                     let next_cost = cost.saturating_add(step);
@@ -5946,6 +6347,9 @@ impl EncounterInstance {
             multiattack_depth: 0,
             cast_stack: Vec::new(),
             turn_started_for: None,
+            zones: Vec::new(),
+            zone_id_next: 0,
+            zone_contacts_this_turn: std::collections::HashSet::new(),
         }
     }
 
@@ -7285,6 +7689,18 @@ impl EncounterInstance {
         // shrinks back before they spend a single tile of the movement
         // they were just handed.
         self.reconcile_footprints();
+        // A new turn is a fresh "first time on a turn" for everybody, so
+        // the ledger is cleared for the whole board rather than for the
+        // actor whose turn is opening. RAW scopes the clause to *a
+        // turn*, not to the holder's own turn: a creature shoved into a
+        // web during somebody else's turn has entered it for the first
+        // time on that turn and saves for it.
+        self.zone_contacts_this_turn.clear();
+        // "…or starts its turn there." Runs after the clear so the
+        // creature standing in the web pays this turn's save, and after
+        // `reconcile_footprints` so a creature that just grew into the
+        // area is caught by it.
+        self.touch_zones(actor_id);
     }
 
     /// 5e Conquest Paladin **Aura of Conquest** (subclass level 7), both
@@ -9745,6 +10161,12 @@ impl EncounterInstance {
             "{}'s concentration on {} ends.",
             actor_name, spell_name
         ));
+        // The map half of the rollback. Conditions come off their
+        // targets below; a concentration-held area comes off the board
+        // here, and the two are the same event seen from either side of
+        // a spell that has both (Web restrains creatures *and* clings to
+        // the floor).
+        self.remove_concentration_zones_of(actor_id);
         for (target_id, condition) in data.conditions {
             // 5e Conjure Animals / Conjure Elemental cleanup: the
             // summoned minion holds the `Conjured` flag, and dropping
@@ -10097,6 +10519,10 @@ impl EncounterInstance {
         // Round-end timers just expired; anything that was holding a
         // creature at a larger size has now let go of it.
         self.reconcile_footprints();
+        // The map layer's own timers, ticked alongside the actors'. Last
+        // rather than first so a zone in its final round still charged
+        // everyone who stood in it this round before it disperses.
+        self.tick_zones();
     }
 
     pub fn set_actor_map(
@@ -10502,6 +10928,10 @@ impl EncounterInstance {
     /// minion that picked something up mid-fight doesn't void the loot
     /// silently — matches the `remove_actor` policy for the same reason.
     pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {
+        // Same reason as `remove_actor`: an actor leaving the board
+        // takes their concentration — and so the areas it was holding
+        // up — with them.
+        self.remove_concentration_zones_of(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -10531,6 +10961,12 @@ impl EncounterInstance {
     /// intentionally skips the burst since the actor isn't truly dying.
     fn remove_actor(&mut self, id: usize) {
         self.trigger_death_burst(id);
+        // A concentration-held area outlives nothing. Swept here rather
+        // than in `drop_concentration`, because death does not route
+        // through it — the actor is lifted straight out of the table —
+        // and a dead wizard's web holding a doorway for the rest of the
+        // fight is the kind of leak the map layer makes very visible.
+        self.remove_concentration_zones_of(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -10917,6 +11353,7 @@ mod tests {
     use crate::engine::terrain::TerrainInfo;
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::AbilityScoreType;
+    use crate::engine::zones::{ZoneContact, ZoneEffect};
 
     /// Builds a tiny encounter with no actors and a hand-crafted terrain
     /// grid so LOS can be tested deterministically (terrain_gen randomness
@@ -27035,54 +27472,64 @@ mod tests {
         assert!(!e.actors[&far_ally].has_condition(Condition::Heroic));
     }
 
+    /// Cloud of Daggers is a place, not a mark. It charges nobody at
+    /// the instant it appears, cuts whatever walks onto its tile, and
+    /// stops the moment the walker leaves — which is the opposite of
+    /// the condition-tagged drip it replaced.
     #[test]
-    fn cloud_of_daggers_damages_enemies_in_burst() {
+    fn cloud_of_daggers_cuts_what_walks_into_it() {
         use crate::actions::spells::CLOUD_OF_DAGGERS;
-        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
 
         let mut e = ei_with_terrain(20, 20, &[]);
         let caster = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let enemy = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 0)
             .unwrap();
-        let ally = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 0, 1)
-            .unwrap_or(usize::MAX);
-        // Ally creation may fail (footprint clash with enemy); rerun
-        // with a safer slot if so.
-        let ally = if ally == usize::MAX {
-            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 8), 0, 1)
-                .unwrap()
-        } else {
-            ally
-        };
-        let enemy_pre = e.actors[&enemy].hitpoints();
-        let ally_pre = e.actors[&ally].hitpoints();
-        let effects = CLOUD_OF_DAGGERS.side_effects(
+        let blades = Coordinate::new(8, 8);
+        for ef in CLOUD_OF_DAGGERS.side_effects(
             &mut e,
             caster,
             None,
-            Some(&vec![Coordinate::new(8, 8)]),
+            Some(&vec![blades]),
             None,
-        );
-        for ef in effects {
+        ) {
             ef.apply(&mut e);
         }
-        let enemy_post =
-            e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0);
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.tile_is_hazardous(blades));
+        // Standing two tiles away costs nothing.
+        let untouched = e.actors[&goblin].hitpoints();
+        // Walk onto the blades: 4d4 with no save, so any roll hurts.
+        MoveActor {
+            actor_id: goblin,
+            path: vec![Coordinate::new(9, 8), blades],
+        }
+        .apply(&mut e);
+        let after_entry = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
         assert!(
-            enemy_post < enemy_pre || !e.actors.contains_key(&enemy),
-            "cloud of daggers should damage enemies inside the burst"
+            after_entry < untouched,
+            "entering the cloud should cost 4d4 slashing"
         );
-        // Allied goblin must be untouched — friendly-fire would be a bug.
-        let ally_post = e.actors[&ally].hitpoints();
+        // Crossing back out on the same turn doesn't pay twice — the
+        // clause is "the first time on a turn".
+        MoveActor {
+            actor_id: goblin,
+            path: vec![Coordinate::new(9, 8), Coordinate::new(10, 8)],
+        }
+        .apply(&mut e);
         assert_eq!(
-            ally_post, ally_pre,
-            "cloud of daggers must not friendly-fire allies"
+            e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0),
+            after_entry,
+            "leaving and re-crossing on one turn is still one toll"
         );
+        // And once the caster's grip goes, so does the cloud.
+        e.drop_concentration(caster);
+        assert!(e.zones().is_empty());
     }
 
     #[test]
@@ -40581,53 +41028,75 @@ mod tests {
         assert!(ee.find_action("earth elemental multiattack").is_some());
     }
 
-    /// Grease: enemy-only DEX-save burst that knocks failed-save targets
-    /// Prone (no damage). Verifies allies in the radius are spared and at
-    /// least one failed-save enemy ends up Prone across seeds.
+    /// Grease lays slick ground rather than resolving once: it is
+    /// difficult terrain, it trips whoever is standing there when it
+    /// appears, and it goes on tripping whoever walks in afterwards —
+    /// friend or foe, with no concentration holding it up.
     #[test]
-    fn grease_knocks_enemies_prone_spares_allies() {
+    fn grease_slicks_the_ground_it_is_poured_on() {
         use crate::actions::spells::GREASE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-        let mut saw_prone = false;
+        use crate::engine::side_effects::MoveActor;
+
+        let origin = Coordinate::new(10, 10);
+        let mut tripped_on_arrival = false;
+        let mut tripped_walking_in = false;
         for seed in 0..40u64 {
-            let mut e = ei_with_terrain(15, 15, &[]);
+            let mut e = ei_with_terrain(20, 20, &[]);
             for _ in 0..seed {
                 let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
             }
             let wiz = e
                 .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            let ally = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            let standing = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, origin, 1, 0)
                 .unwrap();
-            let enemy = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            let approaching = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
                 .unwrap();
-            let ally_hp_before = e.actors[&ally].hitpoints();
-            let origin = Coordinate::new(10, 10);
             for ef in GREASE.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
                 ef.apply(&mut e);
             }
-            // Grease deals no damage — ally HP must be untouched.
-            assert_eq!(
-                e.actors[&ally].hitpoints(),
-                ally_hp_before,
-                "ally in burst should be spared by grease (and take no damage)"
-            );
-            assert!(
-                !e.actors[&ally].has_condition(Condition::Prone),
-                "ally should not be knocked prone by grease"
-            );
+            // The patch is on the map and it is difficult terrain, with
+            // no concentration on the caster holding it there.
+            assert_eq!(e.zones().len(), 1);
+            assert_eq!(e.zone_movement_multiplier(origin), 2.0);
+            assert!(!e.actors[&wiz].is_concentrating());
             if e.actors
-                .get(&enemy)
+                .get(&standing)
                 .is_some_and(|a| a.has_condition(Condition::Prone))
             {
-                saw_prone = true;
+                tripped_on_arrival = true;
+            }
+            MoveActor {
+                actor_id: approaching,
+                path: vec![
+                    Coordinate::new(13, 10),
+                    Coordinate::new(12, 10),
+                    Coordinate::new(11, 10),
+                ],
+            }
+            .apply(&mut e);
+            if e.actors
+                .get(&approaching)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                tripped_walking_in = true;
+            }
+            if tripped_on_arrival && tripped_walking_in {
                 break;
             }
         }
-        assert!(saw_prone, "grease should knock failed-save enemies prone");
+        assert!(
+            tripped_on_arrival,
+            "grease should trip a creature standing where it is poured"
+        );
+        assert!(
+            tripped_walking_in,
+            "grease should go on tripping creatures that walk into it"
+        );
     }
 
     /// Flaming Sphere: enemy-only DEX-save fire burst with concentration
@@ -42121,12 +42590,340 @@ mod tests {
         );
     }
 
-    /// Fog Cloud: lv1 concentration burst that installs Blinded on every
-    /// actor caught in the area. Verifies the lv1 slot cost, the Blinded
-    /// install on an in-burst enemy, and the concentration mark on the
-    /// caster. Drop concentration → Blinded should clear.
+    // ---------------------------------------------------------------
+    // The zone layer (`crate::engine::zones`) — persistent magical
+    // areas. These exercise the layer directly rather than through a
+    // spell, so a rule can be pinned without a caster's save DC, slot
+    // economy, or concentration in the way.
+    // ---------------------------------------------------------------
+
+    /// Build a bare zone with the given effect, 10 rounds, no owner.
+    fn test_zone(origin: Coordinate, radius: isize, effect: ZoneEffect) -> Zone {
+        Zone {
+            id: 0,
+            name: "test area",
+            owner_id: usize::MAX,
+            origin,
+            radius,
+            effect,
+            rounds_remaining: 10,
+            concentration: false,
+        }
+    }
+
+    fn restraining_zone(origin: Coordinate, radius: isize, dc: i32) -> Zone {
+        test_zone(
+            origin,
+            radius,
+            ZoneEffect::clinging(ZoneContact::save_or(
+                AbilityScoreType::Dexterity,
+                dc,
+                Condition::Restrained,
+                crate::conditions::ConditionTimer::Rounds(10),
+            )),
+        )
+    }
+
+    /// The contact clause fires when a creature walks in, and fires
+    /// exactly once however many tiles of the area it crosses. A DC of
+    /// 100 makes the save unwinnable, so the assertion is about *when*
+    /// the rule runs rather than about a die roll.
     #[test]
-    fn fog_cloud_installs_blinded_under_concentration() {
+    fn a_zone_charges_a_walker_once_per_turn_however_far_they_walk() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 1, 0)
+            .unwrap();
+        e.install_zone(restraining_zone(Coordinate::new(10, 10), 3, 100));
+        assert!(!e.actors[&goblin].has_condition(Condition::Restrained));
+        // Six tiles, four of them inside the area — one save.
+        MoveActor {
+            actor_id: goblin,
+            path: (3..=8)
+                .map(|x| Coordinate::new(x, 10))
+                .collect::<Vec<_>>(),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&goblin].has_condition(Condition::Restrained));
+        let saves = e
+            .messages()
+            .iter()
+            .filter(|m| m.contains("test area"))
+            .count();
+        assert_eq!(saves, 1, "one crossing is one save, not one save per tile");
+    }
+
+    /// Leaving and coming back on the same turn is still one save; the
+    /// next turn opens a fresh one.
+    #[test]
+    fn the_first_time_on_a_turn_ledger_resets_when_a_turn_starts() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 10), 1, 0)
+            .unwrap();
+        e.install_zone(restraining_zone(Coordinate::new(10, 10), 1, 100));
+        let inside = Coordinate::new(10, 10);
+        let outside = Coordinate::new(5, 10);
+        let count = |e: &EncounterInstance| {
+            e.messages()
+                .iter()
+                .filter(|m| m.contains("test area"))
+                .count()
+        };
+        MoveActor {
+            actor_id: goblin,
+            path: vec![inside],
+        }
+        .apply(&mut e);
+        assert_eq!(count(&e), 1);
+        MoveActor {
+            actor_id: goblin,
+            path: vec![outside],
+        }
+        .apply(&mut e);
+        MoveActor {
+            actor_id: goblin,
+            path: vec![inside],
+        }
+        .apply(&mut e);
+        assert_eq!(count(&e), 1, "twice into the same web on one turn is one save");
+        // A new turn opening is what clears the ledger — and the same
+        // call is the "starts its turn there" trigger, so the creature
+        // standing in the area pays again immediately.
+        e.start_turn_for(goblin);
+        assert_eq!(count(&e), 2, "starting a turn in the area saves again");
+    }
+
+    /// A zone's difficult-terrain clause composes with the map's own by
+    /// `max`, not by product: webbing over rubble is difficult once.
+    #[test]
+    fn zone_and_terrain_difficulty_do_not_stack() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let tile = Coordinate::new(10, 10);
+        assert_eq!(e.zone_movement_multiplier(tile), 1.0);
+        e.install_zone(restraining_zone(tile, 1, 10));
+        assert_eq!(e.zone_movement_multiplier(tile), 2.0);
+        e.set_terrain_at(tile, TerrainType::DifficultTerrain);
+        // The pathing site takes the max of the two, and both are 2.
+        let combined = e
+            .terrain_at(tile)
+            .map(|t| t.terrain_type.movement_cost())
+            .unwrap_or(1.0)
+            .max(e.zone_movement_multiplier(tile));
+        assert_eq!(combined, 2.0);
+    }
+
+    /// Sticky ground actually costs movement: the same walk is dearer
+    /// with a web over it than without.
+    #[test]
+    fn a_clinging_zone_charges_the_pathfinder() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 10), 1, 0)
+            .unwrap();
+        let dest = Coordinate::new(9, 10);
+        let clean = e.path_cost_to(goblin, dest).expect("reachable");
+        e.install_zone(restraining_zone(Coordinate::new(7, 10), 1, 10));
+        let webbed = e.path_cost_to(goblin, dest).expect("still reachable");
+        assert!(
+            webbed > clean,
+            "walking through webbing should cost more than open floor ({} vs {})",
+            webbed,
+            clean
+        );
+    }
+
+    /// The AI walks around a hazard when it can, and through it when
+    /// the only route runs that way.
+    #[test]
+    fn the_pathfinder_routes_around_a_hazard_unless_it_has_to_cross() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 0, 0)
+            .unwrap();
+        // Blades straddling the straight line between them.
+        e.install_zone(test_zone(
+            Coordinate::new(7, 10),
+            1,
+            ZoneEffect::hazard(ZoneContact::damage(
+                crate::engine::dice::Dice::new(4, 4),
+                DamageType::Slashing,
+            )),
+        ));
+        // The open map gives it room to go around, so no step of the
+        // route it picks may be into the blades.
+        let step = e.step_toward_actor(goblin, target).expect("a route exists");
+        assert!(!e.tile_is_hazardous(step));
+
+        // Wall the map down to a single corridor — two tiles tall,
+        // which is one Medium footprint — and lay the hazard across the
+        // whole of it. The same call now has to take the crossing,
+        // because refusing it would mean refusing to reach the fight.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        for y in 0..20 {
+            if y != 10 && y != 11 {
+                for x in 5..10 {
+                    e.set_terrain_at(Coordinate::new(x, y), TerrainType::Wall);
+                }
+            }
+        }
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(13, 10), 0, 0)
+            .unwrap();
+        e.install_zone(test_zone(
+            Coordinate::new(7, 10),
+            3,
+            ZoneEffect::hazard(ZoneContact::damage(
+                crate::engine::dice::Dice::new(4, 4),
+                DamageType::Slashing,
+            )),
+        ));
+        assert!(
+            e.step_toward_actor(goblin, target).is_some(),
+            "a hazard in the only corridor must not make the target unreachable"
+        );
+    }
+
+    /// Heavy obscurement blinds both ways and is pierced by blindsight
+    /// within its envelope — but not by a creature with no such sense,
+    /// and not beyond the envelope's range.
+    #[test]
+    fn blindsight_sees_through_fog_and_darkvision_does_not() {
+        use crate::actors::creatures::bats::BAT_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(60, 20, &[]);
+        // Goblins have darkvision and nothing else.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        // Bats have 60-ft blindsight = 24 tiles.
+        let bat = e
+            .instantiate_creature(&BAT_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let hidden = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+        let distant = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(50, 10), 1, 0)
+            .unwrap();
+        assert!(e.viewer_can_see(goblin, hidden));
+        e.install_zone(test_zone(
+            Coordinate::new(12, 10),
+            3,
+            ZoneEffect::OBSCURING,
+        ));
+        // Darkvision is no help: fog is not darkness.
+        assert!(!e.viewer_can_see(goblin, hidden));
+        assert!(!e.viewer_can_see(hidden, goblin));
+        // Blindsight is, inside its 24-tile envelope…
+        assert!(e.viewer_can_see(bat, hidden));
+        // …and is not, outside it.
+        assert!(!e.viewer_can_see(bat, distant));
+    }
+
+    /// Zones expire on their own timer, and a concentration-held one
+    /// goes when its owner does.
+    #[test]
+    fn zones_expire_on_their_timer_and_die_with_their_owner() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mut short = restraining_zone(Coordinate::new(5, 5), 1, 10);
+        short.rounds_remaining = 2;
+        e.install_zone(short);
+        e.round_end();
+        assert_eq!(e.zones().len(), 1, "one round left, still on the board");
+        e.round_end();
+        assert!(e.zones().is_empty(), "the timer ran out");
+
+        let owner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let mut held = restraining_zone(Coordinate::new(5, 5), 1, 10);
+        held.owner_id = owner;
+        held.concentration = true;
+        e.install_zone(held);
+        // A zone nobody's concentration holds up survives the same
+        // death, which is what the flag is for.
+        let mut standalone = restraining_zone(Coordinate::new(15, 15), 1, 10);
+        standalone.owner_id = owner;
+        e.install_zone(standalone);
+        e.despawn_actor(owner, "vanishes");
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.zones()[0].covers(Coordinate::new(15, 15)));
+    }
+
+    /// A save-for-half zone halves on a pass and pays in full on a
+    /// fail, and an unavoidable one ignores the question entirely.
+    #[test]
+    fn a_zone_save_can_halve_the_damage_or_negate_the_condition() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        // DC 100 — nobody passes. Full damage lands.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let before = e.actors[&goblin].hitpoints();
+        e.install_zone(test_zone(
+            Coordinate::new(5, 5),
+            0,
+            ZoneEffect::hazard(ZoneContact::save_for_half(
+                AbilityScoreType::Constitution,
+                100,
+                crate::engine::dice::Dice::new(2, 10),
+                DamageType::Radiant,
+            )),
+        ));
+        e.start_turn_for(goblin);
+        let full = before - e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(full >= 2, "a failed 2d10 save should hurt");
+
+        // DC 0 — everyone passes, and half of a 2d10 is strictly less.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let before = e.actors[&goblin].hitpoints();
+        e.install_zone(test_zone(
+            Coordinate::new(5, 5),
+            0,
+            ZoneEffect::hazard(ZoneContact::save_for_half(
+                AbilityScoreType::Constitution,
+                0,
+                crate::engine::dice::Dice::new(2, 10),
+                DamageType::Radiant,
+            )),
+        ));
+        e.start_turn_for(goblin);
+        let halved = before - e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(halved < 10, "a passed save should halve the 2d10");
+    }
+
+    /// Fog Cloud lays a heavy-obscurement zone rather than marking the
+    /// creatures who happened to be standing there. Verifies the lv1
+    /// slot cost, the zone install, that sight through the cloud fails
+    /// both ways while sight clear of it still works, and that dropping
+    /// concentration takes the cloud off the board.
+    #[test]
+    fn fog_cloud_lays_an_obscuring_zone_under_concentration() {
         use crate::actions::spells::FOG_CLOUD;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -42136,29 +42933,44 @@ mod tests {
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
-        // In-burst goblin (3 tiles from center → within 4-tile radius).
-        let g = e
+        // Standing inside the cloud.
+        let inside = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5), 1, 0)
             .unwrap();
-        // Out-of-burst goblin (10 tiles from center → outside the burst).
+        // Well clear of it, on the far side.
         let far = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
             .unwrap();
         let center = Coordinate::new(10, 5);
         let costs = FOG_CLOUD.cost(&e, wiz, None, Some(&vec![center]), None);
         assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+        assert!(e.viewer_can_see(wiz, inside));
         for ef in FOG_CLOUD.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
             ef.apply(&mut e);
         }
-        // In-burst goblin should be Blinded; far goblin untouched.
-        assert!(e.actors[&g].has_condition(Condition::Blinded));
-        assert!(!e.actors[&far].has_condition(Condition::Blinded));
-        // Caster is concentrating on Fog Cloud.
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.tile_is_obscured(center));
+        // The obscurement is a property of the ground, not a mark on
+        // anyone: nobody picks up a condition.
+        assert!(!e.actors[&inside].has_condition(Condition::Blinded));
+        // Sight into the cloud fails, and so does sight out of it —
+        // heavy obscurement is symmetric.
+        assert!(!e.viewer_can_see(wiz, inside));
+        assert!(!e.viewer_can_see(inside, wiz));
+        // The wizard's line to the far goblin runs straight through the
+        // cloud, so that fails too…
+        assert!(!e.viewer_can_see(wiz, far));
+        // …while a line that never touches it is unaffected.
+        let clear = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 20), 1, 0)
+            .unwrap();
+        assert!(e.viewer_can_see(wiz, clear));
         assert!(e.actors[&wiz].is_concentrating());
-        // Concentration drop clears the Blinded mark via the cleanup
-        // pipeline.
+        // Concentration drop takes the cloud off the map.
         e.drop_concentration(wiz);
-        assert!(!e.actors[&g].has_condition(Condition::Blinded));
+        assert!(e.zones().is_empty());
+        assert!(!e.tile_is_obscured(center));
+        assert!(e.viewer_can_see(wiz, inside));
         assert!(!e.actors[&wiz].is_concentrating());
     }
 

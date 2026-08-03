@@ -966,19 +966,6 @@ pub enum Condition {
     /// load-bearing half as a condition on the caster that triggers an
     /// aura-style DoT at round-end for each nearby enemy.
     SpiritGuarding,
-    /// Moonbeam (5e level-2 evocation, concentration). A 5ft-radius
-    /// cylinder of pale light shines down: creatures entering or starting
-    /// their turn in the area make a CON save or take 2d10 radiant (half
-    /// on pass). Shapechangers auto-fail. We collapse the zone to a
-    /// condition on targets caught in the initial burst, with a round-end
-    /// DoT drip for the sustained damage.
-    Moonbeamed,
-    /// Cloud of Daggers (5e level-2 conjuration, concentration). A 5ft
-    /// cube of spinning daggers fills the area: any creature that enters
-    /// or starts its turn there takes 4d4 slashing automatically (no
-    /// save). We collapse to a condition-tagged DoT on targets caught in
-    /// the initial placement.
-    CloudOfDaggered,
     /// Menacing Attack primed (5e Fighter Battle Master maneuver, once
     /// per long rest in our model). Bonus action prime; the next melee
     /// weapon hit forces the target to make a WIS save vs the fighter's
@@ -2062,8 +2049,6 @@ impl Condition {
             Condition::DangerSense => "sensing danger",
             Condition::WitchBolted => "tethered by witch bolt",
             Condition::SpiritGuarding => "guarded by spirits",
-            Condition::Moonbeamed => "caught in moonbeam",
-            Condition::CloudOfDaggered => "shredded by daggers",
             Condition::MenacingAttacking => "primed to menace",
             Condition::DisarmingAttacking => "primed to disarm",
             Condition::PushingAttacking => "primed to push",

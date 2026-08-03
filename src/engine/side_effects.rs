@@ -372,6 +372,15 @@ impl ApplicableSideEffect for MoveActor {
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
             ei.pickup_items_at(self.actor_id, dest);
+            // 5e persistent areas: "when a creature enters the area for
+            // the first time on a turn". Asked on every step because
+            // the area's boundary can be crossed anywhere along the
+            // path; `touch_zones` owns the once-per-turn ledger, so a
+            // six-tile walk through one web is one save. A zone that
+            // drops the walker is caught by the liveness check at the
+            // top of the next iteration, the same as an opportunity
+            // attack that does.
+            ei.touch_zones(self.actor_id);
             // 5e Spike Growth: a Spiked actor takes 2d4 piercing per 5ft
             // (one tile in our grid) of movement. The damage rolls through
             // the standard pipeline so resistance / immunity is honored.
@@ -461,6 +470,11 @@ impl ApplicableSideEffect for TeleportActor {
                     ei.log(format!("{} teleports to {}.", name, self.dest));
                 }
                 ei.pickup_items_at(self.actor_id, self.dest);
+                // A teleport skips the tiles in between, not the
+                // destination: a Misty Step that lands inside a web is
+                // an entry into it, and RAW gives no exemption for
+                // arriving by magic.
+                ei.touch_zones(self.actor_id);
             }
             Err(e) => ei.log(format!("TeleportActor failed: {}", e)),
         }
@@ -987,6 +1001,64 @@ const APPLY_CONDITION_AURA_SUPPRESSORS: &[AuraConditionSuppressor] = &[
     },
 ];
 
+/// Lay a persistent magical area on the board — see
+/// `crate::engine::zones`.
+///
+/// The zone's `id` field is ignored and overwritten by
+/// `install_zone`; callers build the rest of it and let the encounter
+/// hand out the handle.
+///
+/// Extended Spell reaches this the same way it reaches a condition
+/// install, and for the same reason: a doubled Web is a Web that clings
+/// to the floor for two minutes, and the metamagic that says "the
+/// duration is doubled" has nothing else in a zone spell to double.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstallZone {
+    pub zone: crate::engine::zones::Zone,
+    /// Whether the creatures already standing in the area pay the
+    /// contact clause the moment the zone appears.
+    ///
+    /// The two spells that lay clinging ground both say so explicitly —
+    /// Web's "each creature in the area when the web appears" and
+    /// Grease's "when the grease appears, each creature standing in its
+    /// area" — and the two that don't, don't: a Fog Cloud has nothing
+    /// to charge, and a Cloud of Daggers cuts only what walks into it.
+    /// Left to the caller because the zone layer has no way to guess,
+    /// and guessing wrong makes a spell either a free round of denial
+    /// or a wasted one.
+    pub catch_present: bool,
+}
+
+impl ApplicableSideEffect for InstallZone {
+    fn extend_duration(&mut self) -> bool {
+        if self.zone.rounds_remaining < EXTENDED_SPELL_MIN_ROUNDS {
+            return false;
+        }
+        self.zone.rounds_remaining = self
+            .zone
+            .rounds_remaining
+            .saturating_mul(2)
+            .min(EXTENDED_SPELL_MAX_ROUNDS);
+        true
+    }
+
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let name = self.zone.name;
+        let origin = self.zone.origin;
+        let zone_id = ei.install_zone(self.zone.clone());
+        ei.log(format!("  {} settles over {}.", name, origin));
+        if !self.catch_present {
+            return;
+        }
+        // Sorted so a burst that catches three creatures resolves their
+        // saves in a fixed order — the same determinism every other
+        // multi-target site in the engine keeps.
+        for id in ei.sorted_actor_ids() {
+            ei.touch_zone(zone_id, id);
+        }
+    }
+}
+
 /// Add a status condition to an actor with a given timer. No-op if the
 /// actor is missing; if the condition was already present its timer is
 /// replaced (no stacking semantics yet — revisit when needed).
@@ -1280,6 +1352,10 @@ fn forced_move(
     }
     ei.log(format!("{} is {} to {}.", name, verb, dest));
     ei.pickup_items_at(actor_id, dest);
+    // RAW makes no exception for *how* a creature got into the area:
+    // shoved into a web by a Thunderwave, it has still entered the area
+    // for the first time on this turn, and it saves.
+    ei.touch_zones(actor_id);
 }
 
 /// Forced movement toward a fixed point, up to `max_tiles` steps, without

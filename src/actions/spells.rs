@@ -15,10 +15,11 @@ use crate::{
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
         side_effects::{
-            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, Resource,
-            StartConcentration, install_condition_with_link,
+            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, InstallZone,
+            Resource, StartConcentration, install_condition_with_link,
         },
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
+        zones::{Zone, ZoneContact, ZoneEffect},
     },
 };
 
@@ -2326,11 +2327,35 @@ impl Action for GuidingBolt {
 
 pub static GUIDING_BOLT: LazyLock<GuidingBolt> = LazyLock::new(|| GuidingBolt {});
 
-/// Web — level-2 conjuration. AoE 4-tile burst, 1-minute concentration.
-/// Targets in the burst make a DEX save; fail = Restrained, success =
-/// no effect. We don't model the "difficult terrain" clause yet (no
-/// terrain-mod system); the Restrained condition does the heavy lifting.
+/// Web — level-2 conjuration, concentration (sorcerer / wizard). A
+/// 20-ft cube of thick, sticky webbing filling the area within 60 ft.
+///
+/// Both RAW clauses, on the zone layer:
+///
+///   - "The webs are difficult terrain." Composed with the map's own
+///     rough ground by `max`, so webbing spun over rubble costs double
+///     and not quadruple.
+///   - "Each creature that starts its turn in the webs or that enters
+///     them during its turn must make a Dexterity saving throw. On a
+///     failed save, the creature is restrained as long as it remains in
+///     the webs." Both triggers are the zone layer's `touch_zones`,
+///     which is what makes the second one real: the old cast-time model
+///     saved only the creatures standing in the burst at the instant of
+///     the cast, so a wizard could web a doorway and watch the whole
+///     warband walk through it untouched.
+///
+/// One simplification survives. RAW ties the Restrained condition to
+/// *remaining in the webs*, and the engine's conditions are timed, not
+/// spatial — so a creature that breaks free and staggers clear stays
+/// restrained until the timer or the caster's concentration lets go. The
+/// zone tears down cleanly when concentration drops, which is the case
+/// that actually decides fights.
 pub struct Web {}
+
+impl Web {
+    /// 20-ft cube ≈ 4-tile radius on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for Web {
     fn school(&self) -> Option<SpellSchool> {
@@ -2343,7 +2368,9 @@ impl Action for Web {
         vec!["wb"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(24)
@@ -2364,6 +2391,16 @@ impl Action for Web {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2379,38 +2416,42 @@ impl Action for Web {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        let radius = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
-        };
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conditions = Vec::new();
-        // Web is friend-or-foe agnostic — every creature in the burst
-        // (except the caster) makes a DEX save. `neutral_burst_targets`
-        // captures that policy in one chokepoint instead of an ad-hoc
-        // loop over `actors.keys()`.
-        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
-            if !save.passed() {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Restrained,
-                    timer: ConditionTimer::Rounds(10),
-                }));
-                conditions.push((tid, Condition::Restrained));
-            }
-        }
-        if !conditions.is_empty() {
-            effects.push(Box::new(StartConcentration {
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "web",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::clinging(ZoneContact::save_or(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Condition::Restrained,
+                        // RAW: "as long as it remains in the webs",
+                        // capped by the spell's own 1-minute duration.
+                        // Ten rounds is that minute; concentration
+                        // almost always ends it first.
+                        ConditionTimer::Rounds(10),
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // RAW: "each creature in the area when the web appears"
+                // saves at once, as well as on entry and at the start
+                // of its turn.
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData::with_conditions("Web", conditions),
-            }));
-        }
-        effects
+                data: ConcentrationData::new("Web"),
+            }),
+        ]
     }
 }
 
 pub static WEB: LazyLock<Web> = LazyLock::new(|| Web {});
+
 
 /// False Life — level-1 necromancy. Self-target; gain 1d4+4 temp HP.
 /// Doesn't require concentration (it's a flat buff). Cleared by long
@@ -7099,14 +7140,35 @@ impl Action for BeaconOfHope {
 
 pub static BEACON_OF_HOPE: LazyLock<BeaconOfHope> = LazyLock::new(|| BeaconOfHope {});
 
-/// Cloud of Daggers — level-2 conjuration, concentration. 5-ft cube of
-/// whirling daggers; any creature that enters or starts its turn in the
-/// area takes 4d4 slashing. We model the instantaneous on-cast hit as a
-/// guaranteed 4d4 to every enemy currently inside the burst (radius 1 in
-/// our tile-gap math); persistent ticks aren't yet modeled, but the
-/// concentration is started so a follow-up cast or drop behaves cleanly.
-/// No save — RAW autohits creatures in the area.
+/// Cloud of Daggers — level-2 conjuration, concentration. A 5-ft cube of
+/// whirling blades within 60 ft. "A creature takes 4d4 slashing damage
+/// when it enters the spell's area for the first time on a turn or
+/// starts its turn there."
+///
+/// No save and no attack roll: the only zone in the set whose contact
+/// clause simply happens. That is what makes it worth having alongside
+/// Web and Grease — the layer has to express an unavoidable toll as
+/// cleanly as a contested one, or half of 5e's area spells don't fit.
+///
+/// What this replaces is worth naming, because it was wrong in an
+/// expensive direction. The old model tagged every enemy in the burst
+/// with a `CloudOfDaggered` condition and dripped 4d4 at the end of
+/// every round for as long as the caster concentrated — so the blades
+/// followed their first victims around the map, and never touched
+/// anyone who walked in afterwards. A 5-ft cube of knives that chases
+/// people is a different spell, and a much better one.
+///
+/// A 1-tile radius, which is the same rounding every other area in the
+/// engine uses (Web's 20-ft cube is 4). Small enough that placement is
+/// most of the spell: parked on a doorway it taxes every approach,
+/// parked in the open it does nothing at all.
 pub struct CloudOfDaggers {}
+
+impl CloudOfDaggers {
+    /// 5-ft cube, rounded to the 1-tile burst the rest of the engine
+    /// uses for a small area.
+    const RADIUS: isize = 1;
+}
 
 impl Action for CloudOfDaggers {
     fn school(&self) -> Option<SpellSchool> {
@@ -7119,7 +7181,9 @@ impl Action for CloudOfDaggers {
         vec!["cod", "daggers"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 1 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -7141,9 +7205,19 @@ impl Action for CloudOfDaggers {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -7152,34 +7226,32 @@ impl Action for CloudOfDaggers {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const RADIUS: isize = 1;
-        let damage = encounter.roll_empowered_sum(caster_id, 4, 4);
-        encounter.log(format!(
-            "  cloud of daggers: 4d4({}) = {} slashing",
-            damage, damage
-        ));
-
-        let targets = encounter.enemy_burst_targets(caster_id, point, RADIUS);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in targets {
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: damage,
-                damage_type: DamageType::Slashing,
-            }));
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::CloudOfDaggered,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conc_conditions.push((tid, Condition::CloudOfDaggered));
-        }
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Cloud of Daggers", conc_conditions),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "cloud of daggers",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::damage(
+                        Dice::new(4, 4),
+                        DamageType::Slashing,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // RAW charges only on entry and at the start of a turn:
+                // conjuring the blades around somebody already standing
+                // there costs them nothing until their turn comes back
+                // around.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Cloud of Daggers"),
+            }),
+        ]
     }
 }
 
@@ -11906,14 +11978,33 @@ impl Action for Goodberry {
 
 pub static GOODBERRY: LazyLock<Goodberry> = LazyLock::new(|| Goodberry {});
 
-/// Moonbeam — 5e druid level-2 evocation, concentration. A 5ft-radius
-/// beam of silvery light strikes the targeted point. Every creature in
-/// the beam makes a CON save; fail = 2d10 radiant, pass = half. We treat
-/// the cast as a single burst (Spirit Guardians shape) since the engine
-/// doesn't yet model "lingering area, re-rolled each round" AoEs. Targets
-/// allies and enemies alike (it's an indiscriminate beam) and starts
-/// concentration so the AI knows it's holding it.
+/// Moonbeam — level-2 evocation, concentration (druid). A 5-ft-radius
+/// pillar of silvery light shining down on a point within 120 ft.
+///
+/// A creature makes a Constitution saving throw when the beam appears
+/// over it, when it enters the light, and at the start of each of its
+/// turns in it: 2d10 radiant on a failure, half on a success.
+///
+/// Held on the zone layer, which is what finally makes it the spell it
+/// is. The old model rolled the beam once, tagged whoever failed with a
+/// `Moonbeamed` condition, and dripped 2d10 at every round end for as
+/// long as the caster concentrated — a beam that was fixed to its
+/// victims rather than to the floor. A druid could burn it on a
+/// skirmisher and be paid for ten rounds while the light shone on empty
+/// ground, and could never be paid for the archer who walked into it.
+///
+/// Not modeled: RAW's "you can move the beam up to 60 feet as an
+/// action" on later turns. The zone's `origin` is a plain field and
+/// nothing forbids a mover later; the pillar simply stays where the
+/// druid put it, which makes placement the decision it already was for
+/// Web and Grease.
 pub struct Moonbeam {}
+
+impl Moonbeam {
+    /// 5-ft radius ≈ 1 tile either side of the anchor on the 2.5-ft
+    /// grid.
+    const RADIUS: isize = 1;
+}
 
 impl Action for Moonbeam {
     fn school(&self) -> Option<SpellSchool> {
@@ -11926,7 +12017,9 @@ impl Action for Moonbeam {
         vec!["mb", "moon"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 1 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft = 48 tiles.
@@ -11948,6 +12041,16 @@ impl Action for Moonbeam {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -11963,35 +12066,32 @@ impl Action for Moonbeam {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let raw = encounter.roll_empowered_sum(caster_id, 2, 10);
-        encounter.log(format!("  moonbeam: 2d10({}) radiant beam", raw));
-        let targets = encounter.enemy_burst_targets(caster_id, point, 1);
-        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in targets {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg > 0 {
-                effs.push(Box::new(DealDamage {
-                    actor_id: tid,
-                    amount: dmg,
-                    damage_type: DamageType::Radiant,
-                }));
-            }
-            if !save.passed() {
-                effs.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Moonbeamed,
-                    timer: ConditionTimer::Rounds(10),
-                }));
-                conc_conditions.push((tid, Condition::Moonbeamed));
-            }
-        }
-        effs.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Moonbeam", conc_conditions),
-        }));
-        effs
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "moonbeam",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_for_half(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Dice::new(2, 10),
+                        DamageType::Radiant,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // "…each creature in the cylinder when it appears makes
+                // a Constitution saving throw."
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Moonbeam"),
+            }),
+        ]
     }
 }
 
@@ -15859,17 +15959,46 @@ impl Action for InvestitureOfFlame {
 pub static INVESTITURE_OF_FLAME: LazyLock<InvestitureOfFlame> =
     LazyLock::new(|| InvestitureOfFlame {});
 
-/// Grease — level-1 conjuration. A 10-foot square of slick grease coats
-/// the ground at a point within 60 ft. Every enemy whose footprint
-/// touches the burst makes a DEX save vs the caster's spell DC; failure
-/// knocks them Prone (the difficult-terrain half of RAW is omitted — the
-/// load-bearing penalty is the prone). Allies are spared via the
-/// enemy_burst_targets partition (the spell is centered by the caster,
-/// not a friendly-fire AoE in our model). No concentration; the slick
-/// surface lasts a flat 10-round Rounds timer (1 minute RAW). The
-/// caster doesn't *need* to do anything else — the prone is the entire
-/// payload, matching the spell's reputation as a cheap lv1 disabler.
+/// Grease — level-1 conjuration, *no* concentration. A 10-ft square of
+/// slick grease coating the ground at a point within 60 ft.
+///
+/// The cheapest thing in 5e that shapes a battlefield, and the clearest
+/// case for the zone layer: a level-1 slot that keeps charging a
+/// Dexterity save to everyone who crosses a doorway for the next
+/// minute, without the caster holding concentration or spending another
+/// action. Under the old cast-time model the spell resolved once and
+/// evaporated, so the patch it left behind was a log line.
+///
+/// All three RAW clauses now, on the zone:
+///
+///   - "turns it into difficult terrain for the duration"
+///   - "When the grease appears, each creature standing in its area
+///     must succeed on a Dexterity saving throw or fall prone"
+///     (`catch_present: true`)
+///   - "A creature that enters the area or ends its turn there must
+///     also succeed on a Dexterity saving throw or fall prone"
+///
+/// Two deliberate deviations:
+///
+///   - RAW's recurring trigger is *ends* its turn there, where the zone
+///     layer — and every other area spell in 5e — fires on *starts*.
+///     The creature standing in the grease still falls; it falls at the
+///     top of its turn instead of the bottom, and it costs them the
+///     same half their movement to get back up.
+///   - It catches allies. The old implementation partitioned to enemies
+///     only, on the reasoning that the caster aims it; RAW grease is
+///     ground, and ground does not know whose side it is on. This is
+///     the same friend-or-foe rule Web and Fog Cloud now follow, and
+///     it is what makes *where* the wizard puts it a decision.
+///
+/// Prone is `Permanent` because that is what prone is: you lie there
+/// until you spend the movement to stand.
 pub struct Grease {}
+
+impl Grease {
+    /// 10-ft square ≈ a 2-tile Chebyshev burst on the 2.5-ft grid.
+    const RADIUS: isize = 2;
+}
 
 impl Action for Grease {
     fn school(&self) -> Option<SpellSchool> {
@@ -15882,9 +16011,9 @@ impl Action for Grease {
         vec!["slick", "slip"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 10ft square ≈ 2-tile Chebyshev burst (the grease covers a
-        // 2x2-tile patch in 2.5ft squares).
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -15925,21 +16054,27 @@ impl Action for Grease {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        const RADIUS: isize = 2;
-        encounter.log(format!("  grease: slick patch at {} (DC {})", point, dc));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-        }
-        effects
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "grease",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::clinging(ZoneContact::save_or(
+                    AbilityScoreType::Dexterity,
+                    dc,
+                    Condition::Prone,
+                    ConditionTimer::Permanent,
+                )),
+                // RAW 1 minute, and no concentration — the rare area
+                // spell a wizard lays down and then walks away from,
+                // which is most of why it is worth a slot.
+                rounds_remaining: 10,
+                concentration: false,
+            },
+            catch_present: true,
+        })]
     }
 }
 
@@ -18180,29 +18315,29 @@ impl Action for EarthTremor {
 pub static EARTH_TREMOR: LazyLock<EarthTremor> = LazyLock::new(|| EarthTremor {});
 
 /// Fog Cloud — level-1 conjuration, concentration (druid / ranger /
-/// sorcerer / wizard). The caster creates a 20-ft-radius sphere of fog
-/// centered on a point within 120 ft. The area is heavily obscured —
-/// per 5e RAW, every creature inside is effectively Blinded (auto-fail
-/// vision checks, attacks against have advantage, attacks from have
-/// disadvantage).
+/// sorcerer / wizard). A 20-ft-radius sphere of fog centered on a point
+/// within 120 ft. The area is **heavily obscured**: everything trying to
+/// see into, out of, or through it is effectively blinded.
 ///
-/// We model the heavy obscurement by installing the existing `Blinded`
-/// condition on every combat-active actor inside the burst at cast
-/// time. This is a friend-or-foe install: allies caught in the cloud
-/// suffer the same penalty as enemies (matches RAW, and rewards
-/// thoughtful AoE placement). Concentration-bound on the caster, so
-/// dropping concentration (taking damage, casting another concentration
-/// spell, the spell timer running out) clears the Blinded mark on every
-/// affected actor automatically via the engine's concentration cleanup
-/// pipeline.
+/// Installed as a zone (`crate::engine::zones`) rather than as a
+/// condition on whoever happened to be standing there. That was the old
+/// model, and it got the spell backwards in both directions: a creature
+/// that walked into the cloud a round later picked nothing up, and a
+/// creature that walked *out* of it stayed blind until the caster's
+/// concentration lapsed. The fog is a place, and the place is what is
+/// obscured — so an archer who steps behind it stops being a target the
+/// moment the fog is between them, and stops being blind the moment
+/// they step clear.
 ///
-/// Simplification vs RAW: we install at cast time only. A creature that
-/// walks into the cloud later doesn't pick up the Blinded mark, and a
-/// creature that leaves the cloud keeps it until concentration drops.
-/// In practice this is close enough: the cloud's tactical value is the
-/// burst install + sustained denial of the area, and the engine has no
-/// "is this tile fog-covered" terrain layer to query for moves yet.
+/// Friend-or-foe blind, which is the whole tactical point: the cloud
+/// hides the caster's own party as readily as it blinds the enemy, and
+/// where it is put is the decision.
 pub struct FogCloud {}
+
+impl FogCloud {
+    /// 20-ft sphere = 4-tile radius on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for FogCloud {
     fn school(&self) -> Option<SpellSchool> {
@@ -18215,9 +18350,9 @@ impl Action for FogCloud {
         vec!["fog", "cloud-spell"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 20-ft sphere = 4-tile radius on the 2.5ft grid (8 tiles
-        // diameter ≈ 20 ft).
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft = 48 tiles.
@@ -18262,7 +18397,7 @@ impl Action for FogCloud {
     }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -18271,43 +18406,32 @@ impl Action for FogCloud {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const RADIUS: isize = 4;
-        encounter.log(format!("  fog cloud: heavy obscurement at {}", point));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
-            // Skip targets that are immune to Blinded (treat the
-            // condition table as the source of truth for "can this
-            // actor be obscured?"). Honors dynamic immunities too even
-            // though no current source dynamically immunes Blinded —
-            // future-proof against feature additions.
-            let immune = encounter
-                .actors
-                .get(&tid)
-                .is_some_and(|a| a.effectively_immune_to_condition(Condition::Blinded));
-            if immune {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Blinded,
-                // RAW: 1 hour. Concentration caps the practical duration
-                // long before the round timer; 10 rounds keeps the timer
-                // honest even if the caster dies and the cleanup hook
-                // misses a target somehow.
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conditions.push((tid, Condition::Blinded));
-        }
-        // Always start concentration even if no targets caught the burst
-        // — the slot is spent and the fog is on the map; a future patch
-        // that walks creatures into the cloud should pick up the spell
-        // via this concentration mark.
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Fog Cloud", conditions),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "fog cloud",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::OBSCURING,
+                    // RAW: 1 hour. Concentration caps the practical
+                    // duration long before the round timer; 10 rounds
+                    // keeps the timer honest if the caster somehow
+                    // leaves the board without the teardown hook firing.
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // Nothing to charge: the cloud's whole effect is the
+                // obscurement, which is a standing property of the
+                // ground rather than a thing that happens to anyone.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Fog Cloud"),
+            }),
+        ]
     }
 }
 
