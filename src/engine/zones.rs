@@ -129,6 +129,24 @@ impl ZoneContact {
         }
     }
 
+    /// A condition the area simply imposes, with no save and no
+    /// damage: Silence's hush, which nobody rolls against.
+    ///
+    /// Paired with `ConditionTimer::UntilStartOfNextTurn`, this is how
+    /// the layer expresses a condition that lasts *while you are in
+    /// here*. The zone re-installs it at the top of every turn spent
+    /// inside, and it lapses on its own for a creature that has walked
+    /// out — which is one tick later than RAW and infinitely closer
+    /// than a condition stamped on at cast time and never removed.
+    pub const fn afflicts(condition: Condition, timer: ConditionTimer) -> Self {
+        Self {
+            save: None,
+            damage: None,
+            condition: Some((condition, timer)),
+            breaks_concentration: false,
+        }
+    }
+
     /// Chainable: this clause also forces a concentration check at the
     /// same DC. Sleet Storm's second sentence.
     pub const fn also_breaking_concentration(mut self) -> Self {
@@ -175,6 +193,26 @@ impl ZoneContact {
             }),
             damage: Some((dice, damage_type)),
             condition: Some((condition, timer)),
+            breaks_concentration: false,
+        }
+    }
+
+    /// A save that negates the damage outright rather than halving it:
+    /// Hunger of Hadar's acid, whose Dexterity save is all-or-nothing.
+    pub const fn save_or_take(
+        ability: AbilityScoreType,
+        dc: i32,
+        dice: Dice,
+        damage_type: DamageType,
+    ) -> Self {
+        Self {
+            save: Some(ZoneSave {
+                ability,
+                dc,
+                half_on_success: false,
+            }),
+            damage: Some((dice, damage_type)),
+            condition: None,
             breaks_concentration: false,
         }
     }

@@ -43181,6 +43181,93 @@ mod tests {
         );
     }
 
+    /// Hunger of Hadar needs two coincident zones to hold three RAW
+    /// clauses: the dark and its automatic cold on one, the saved-for
+    /// acid on the other. Both are held by the same concentration, so
+    /// the void arrives and leaves as one thing.
+    #[test]
+    fn hunger_of_hadar_opens_as_two_coincident_zones() {
+        use crate::actions::spells::HUNGER_OF_HADAR;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let lock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 10), 1, 0)
+            .unwrap();
+        let centre = Coordinate::new(16, 10);
+        for ef in HUNGER_OF_HADAR.side_effects(&mut e, lock, None, Some(&vec![centre]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 2, "the dark and the acid are separate zones");
+        assert!(e.tile_is_obscured(centre));
+        assert!(!e.viewer_can_see(lock, ogre));
+        // Neither clause has a "when it appears" trigger, so opening the
+        // void costs the ogre nothing until its own turn comes round.
+        let before = e.actors[&ogre].hitpoints();
+        assert_eq!(before, e.actors[&ogre].max_hitpoints());
+        e.start_turn_for(ogre);
+        assert!(
+            e.actors[&ogre].hitpoints() < before,
+            "a turn opened inside the void is billed for it"
+        );
+        // One concentration, both halves.
+        e.drop_concentration(lock);
+        assert!(e.zones().is_empty());
+    }
+
+    /// Silence is a "while you are in here" condition, which the layer
+    /// expresses as an `UntilStartOfNextTurn` install the zone renews
+    /// every turn. A caster who walks out is free on their next turn; a
+    /// caster who walks in is not.
+    #[test]
+    fn silence_follows_the_sphere_rather_than_the_creature() {
+        use crate::actions::spells::SILENCE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let inside = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+            .unwrap();
+        let outside = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(35, 35), 1, 1)
+            .unwrap();
+        let centre = Coordinate::new(20, 20);
+        for ef in SILENCE.side_effects(&mut e, caster, None, Some(&vec![centre]), None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&inside].has_condition(Condition::Silenced));
+        assert!(!e.actors[&outside].has_condition(Condition::Silenced));
+        // Still inside at the top of its turn: the hush is renewed.
+        e.start_turn_for(inside);
+        assert!(e.actors[&inside].has_condition(Condition::Silenced));
+        // Walk clear, and the timer lapses on the next turn instead of
+        // riding along for the full minute.
+        MoveActor {
+            actor_id: inside,
+            path: vec![Coordinate::new(35, 20)],
+        }
+        .apply(&mut e);
+        e.start_turn_for(inside);
+        assert!(!e.actors[&inside].has_condition(Condition::Silenced));
+        // And walking in picks it up, which the cast-time install never
+        // did.
+        MoveActor {
+            actor_id: outside,
+            path: vec![Coordinate::new(21, 21)],
+        }
+        .apply(&mut e);
+        assert!(e.actors[&outside].has_condition(Condition::Silenced));
+    }
+
     /// Fog Cloud lays a heavy-obscurement zone rather than marking the
     /// creatures who happened to be standing there. Verifies the lv1
     /// slot cost, the zone install, that sight through the cloud fails

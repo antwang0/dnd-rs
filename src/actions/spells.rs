@@ -22304,14 +22304,43 @@ impl Action for WitherAndBloom {
 
 pub static WITHER_AND_BLOOM: LazyLock<WitherAndBloom> = LazyLock::new(|| WitherAndBloom {});
 
-/// Hunger of Hadar — level-3 conjuration (warlock-exclusive, concentration).
-/// A 20ft sphere of frigid blackness: enemies inside the sphere take 2d6
-/// cold (no save) + 2d6 acid (DEX save for none) at the start of their turns
-/// RAW. We collapse the sustained-zone mechanic to a one-shot burst at cast
-/// time: 2d6 cold + DEX-save 2d6 acid to every enemy in a radius-4 sphere.
-/// The burst runs through `enemy_burst_save_for_half` for the acid half,
-/// then flat cold damage for the cold half. Concentration-bound on the caster.
+/// Hunger of Hadar — level-3 conjuration, concentration
+/// (warlock-exclusive). A 20-ft-radius sphere of lightless, freezing
+/// void opens at a point within 150 ft.
+///
+/// Three RAW clauses, and the only spell in the set that needs *two*
+/// zones to hold them:
+///
+///   - "The sphere is filled with … blackness. No light, magical or
+///     otherwise, can illuminate the area" — heavy obscurement.
+///   - "Any creature that starts its turn in the area takes 2d6 cold
+///     damage" — no save.
+///   - "Any creature that ends its turn in the area must succeed on a
+///     Dexterity saving throw or take 2d6 acid damage."
+///
+/// A `ZoneContact` carries one damage roll, and these are two, asked
+/// on different terms — one automatic, one saved against. Rather than
+/// widening the contact shape for the single spell in 5e that wants
+/// two, the void goes down as two coincident zones: the darkness and
+/// its cold, and the acid. Overlapping zones are something the layer
+/// already supports and already resolves in install order, so the
+/// composition costs nothing but the second `InstallZone`, and each
+/// half stays a plain reading of its own sentence.
+///
+/// One collapse, the same one Grease takes: RAW's acid is billed at the
+/// *end* of a turn and the layer fires at the start. The creature
+/// standing in the void still pays for both; it pays at the top of its
+/// turn rather than the bottom.
+///
+/// Both halves are concentration-held by the same warlock, so
+/// `drop_concentration` takes the whole void off the board in one
+/// sweep.
 pub struct HungerOfHadar {}
+
+impl HungerOfHadar {
+    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
 
 impl Action for HungerOfHadar {
     fn school(&self) -> Option<SpellSchool> {
@@ -22324,7 +22353,9 @@ impl Action for HungerOfHadar {
         vec!["hoh", "hadar"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(60)
@@ -22370,39 +22401,43 @@ impl Action for HungerOfHadar {
             return Vec::new();
         };
         let dc = caster.best_spell_save_dc([AbilityScoreType::Charisma]);
-        encounter.log("  hunger of hadar: the void opens...".to_string());
-        let cold_raw = encounter.roll_empowered_sum(caster_id, 2, 6);
-        let targets = encounter.enemy_burst_targets(caster_id, point, 4);
-        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in &targets {
-            encounter.log(format!(
-                "  cold lash: 2d6({}) cold on {}",
-                cold_raw,
-                encounter.actors.get(tid).map(|a| a.name()).unwrap_or("?")
-            ));
-            effs.push(Box::new(DealDamage {
-                actor_id: *tid,
-                amount: cold_raw,
-                damage_type: DamageType::Cold,
-            }));
-        }
-        let (acid_effs, _) = enemy_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(2, 6),
-            DamageType::Acid,
-            "hadar acid",
-        );
-        effs.extend(acid_effs);
-        effs.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Hunger of Hadar"),
-        }));
-        effs
+        let half = |name: &'static str, effect: ZoneEffect| InstallZone {
+            zone: Zone {
+                id: 0,
+                name,
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect,
+                rounds_remaining: 10,
+                concentration: true,
+            },
+            // Neither clause has a "when it appears" trigger: the void
+            // opens, and the bill arrives on the victim's own turn.
+            catch_present: false,
+        };
+        vec![
+            Box::new(half(
+                "hunger of hadar",
+                ZoneEffect::choking(ZoneContact::damage(
+                    Dice::new(2, 6),
+                    DamageType::Cold,
+                )),
+            )),
+            Box::new(half(
+                "hadar's acid",
+                ZoneEffect::hazard(ZoneContact::save_or_take(
+                    AbilityScoreType::Dexterity,
+                    dc,
+                    Dice::new(2, 6),
+                    DamageType::Acid,
+                )),
+            )),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Hunger of Hadar"),
+            }),
+        ]
     }
 }
 
@@ -26225,21 +26260,37 @@ impl Action for OtherworldlyGuise {
 pub static OTHERWORLDLY_GUISE: LazyLock<OtherworldlyGuise> =
     LazyLock::new(|| OtherworldlyGuise {});
 
-/// Silence — level-2 illusion, no concentration. Pick a tile within range;
-/// a 20ft (8-tile) sphere of magical silence covers the area. Every actor
-/// caught in the burst (friend or foe — silence is non-discriminating)
-/// gains the `Silenced` condition for the duration. Mechanically:
-/// - Can't cast leveled spells (verbal-component proxy — gated in
-///   `can_consume_resource`'s SpellSlot lane via `blocks_spell_slots`).
-/// - Immune to thunder damage (the magical hush absorbs sonic effects —
-///   folded into `effective_damage`'s condition-driven immunity lane).
+/// Silence — level-2 illusion, concentration in RAW; modeled here
+/// without it, as the old implementation was. A 20-ft-radius sphere of
+/// magical hush at a point within 120 ft.
 ///
-/// RAW also Deafens holders, but the engine's `Deafened` condition is a
-/// cosmetic marker today, so the silence install skips it to avoid
-/// piling a no-op flag onto every burst victim. Distinct from
-/// `Counterspell` (which fizzles a specific cast) — Silence is a
-/// persistent zone debuff that locks down spellcasters in a radius.
+/// "No sound can be created within or pass through the area. Any
+/// creature or object entirely inside the sphere is immune to thunder
+/// damage, and creatures are deafened while entirely inside it. Casting
+/// a spell that includes a verbal component is impossible there."
+///
+/// Mechanically the `Silenced` condition carries all of that — it gates
+/// the spell-slot lane in `can_consume_resource` and folds thunder
+/// immunity into `effective_damage` — and it stays the carrier. What
+/// changes is *who holds it and for how long*: the hush is now a zone
+/// that re-imposes the condition at the top of every turn spent inside
+/// it, on an `UntilStartOfNextTurn` timer that lapses on its own for
+/// anyone who has walked out.
+///
+/// That pairing is the layer's answer to a "while you are in here"
+/// condition, and it is a strictly better answer than what it replaces:
+/// a wizard used to be able to step out of the sphere and stay silenced
+/// for the full minute, while one who walked in was free to cast.
+///
+/// RAW also deafens holders, but `Deafened` is a near-cosmetic marker
+/// here, so the install skips it rather than piling a no-op flag onto
+/// everyone in the burst.
 pub struct Silence {}
+
+impl Silence {
+    /// 20-ft radius = 8 tile-gaps.
+    const RADIUS: isize = 8;
+}
 
 impl Action for Silence {
     fn name(&self) -> &str {
@@ -26249,8 +26300,9 @@ impl Action for Silence {
         vec!["sil", "hush"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 20 ft radius = 8 tile-gaps.
-        TargetingSchema::Burst { radius: 8 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft = 48 tiles.
@@ -26283,7 +26335,7 @@ impl Action for Silence {
     }
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -26292,25 +26344,29 @@ impl Action for Silence {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let radius = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
-        };
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        // Non-discriminating burst — Silence covers allies and enemies
-        // alike (RAW: "any creature or object entirely inside the sphere").
-        // We route through `neutral_burst_targets` so the standard
-        // caster-exclusion + combat-active filter applies.
-        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Silenced,
-                // 10 rounds ~ 1 minute RAW; no concentration so the buff
-                // can outlast a concentration drop on another spell.
-                timer: ConditionTimer::Rounds(10),
-            }));
-        }
-        effects
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "silence",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::hazard(ZoneContact::afflicts(
+                    Condition::Silenced,
+                    ConditionTimer::UntilStartOfNextTurn,
+                )),
+                // 10 rounds ~ 1 minute RAW. No concentration, matching
+                // the shape this spell already had here — so the hush
+                // outlives whatever else the caster is holding.
+                rounds_remaining: 10,
+                concentration: false,
+            },
+            // The sphere falls over whoever is standing there and they
+            // are silenced at once; the timer they pick up lapses at
+            // the top of their next turn, when the zone renews it if
+            // they are still inside.
+            catch_present: true,
+        })]
     }
 }
 
