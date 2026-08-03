@@ -15218,20 +15218,36 @@ impl Action for ArmorOfAgathys {
 
 pub static ARMOR_OF_AGATHYS: LazyLock<ArmorOfAgathys> = LazyLock::new(|| ArmorOfAgathys {});
 
-/// Sickening Radiance — 5e level-4 evocation, concentration. RAW: a 30ft
-/// sphere of dim radiant light persists for the spell's duration; every
-/// creature inside that fails a CON save each round takes 4d10 radiant
-/// and gains a level of exhaustion. We collapse the sustained zone into
-/// a one-shot burst at cast time: every enemy in the 30ft radius rolls
-/// CON; on fail they eat the full 4d10 radiant AND gain `Exhausted`
-/// (engine's single-tier exhaustion). The concentration mark holds so
-/// dropping it can prune the exhaustion later if the AI swaps focus.
-/// Excludes allies (typical 5e gotcha — RAW hits everyone in the zone,
-/// but enemy-only is the load-bearing tactical use). Damage and save are
-/// rolled per-target (independent CON saves per RAW); the `Exhausted`
-/// install is paired with the `SickeningRadiated` marker for the
-/// concentration cleanup hook.
+/// Sickening Radiance — level-4 evocation, concentration (sorcerer /
+/// warlock / wizard). Dim, greenish light fills a 30-ft-radius sphere.
+///
+/// "When a creature moves into the spell's area for the first time on a
+/// turn or starts its turn there, that creature must succeed on a
+/// Constitution saving throw or take 4d10 radiant damage, and it
+/// suffers one level of exhaustion."
+///
+/// The nastiest thing on the zone layer, and the spell the layer was
+/// most obviously missing: its whole design is a place nobody can
+/// afford to stand, and the old model resolved it once — a single
+/// round of 4d10 and one rung of exhaustion, after which the sphere sat
+/// on the map doing nothing. Now every round spent inside is another
+/// save, and the sixth failure is fatal.
+///
+/// The exhaustion is `Permanent` and rides no teardown list. A level,
+/// once gained, is the creature's to carry: the spell ending does not
+/// give it back, and that is what makes leaving the sphere urgent
+/// rather than merely sensible.
+///
+/// It catches allies now, like every other zone. The `SickeningRadiated`
+/// marker retires with the cast-time model — it existed only so
+/// concentration cleanup could find its victims, and a zone keeps its
+/// own books.
 pub struct SickeningRadiance {}
+
+impl SickeningRadiance {
+    /// 30-ft radius, held at the 6-tile burst the spell shipped with.
+    const RADIUS: isize = 6;
+}
 
 impl Action for SickeningRadiance {
     fn school(&self) -> Option<SpellSchool> {
@@ -15241,13 +15257,14 @@ impl Action for SickeningRadiance {
         "sickening radiance"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["sr", "sickening"]
+        vec!["sickening", "srad"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 120ft range to the burst origin.
         Some(48)
     }
     fn requires_los(&self) -> bool {
@@ -15265,6 +15282,16 @@ impl Action for SickeningRadiance {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -15285,66 +15312,35 @@ impl Action for SickeningRadiance {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        // 30ft = 6 tile gap. Enemy-only partition matches the burst's
-        // tactical use; allies caught in the zone are spared per
-        // standard engine convention.
-        let targets = encounter.enemy_burst_targets(caster_id, center, 6);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in targets {
-            // Deliberately a bare `roll` and the only damage roll in
-            // this file that stays one. `roll_empowered_sum` carries
-            // flat per-*cast* bonuses (Empowered Evocation's +INT,
-            // Potent Spellcasting's +WIS) and a per-*cast* metamagic
-            // reroll, and this is the one burst that rolls fresh dice
-            // inside the per-target loop rather than sharing a single
-            // roll — so routing it through the chokepoint would pay the
-            // flat bonus once per victim and burn the Empowered Spell
-            // prime on whichever target happened to be first in the
-            // sorted order. RAW's unit for all three features is the
-            // spell, not the target.
-            let raw = encounter.roll(&Dice::new(4, 10));
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
-            encounter.log(format!(
-                "  sickening radiance: 4d10({}) radiant ({})",
-                raw,
-                if save.passed() { "save" } else { "fail" }
-            ));
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: raw,
-                damage_type: DamageType::Radiant,
-            }));
-            // RAW: "the creature gains 1 level of exhaustion". A level,
-            // once gained, is the target's to carry — the spell ending
-            // does not give it back, which is what makes standing in
-            // this zone a decision rather than an inconvenience. So the
-            // exhaustion is `Permanent` and stays off the concentration
-            // teardown list below, while the glow that marks the victim
-            // rides the concentration the ordinary way.
-            //
-            // Every round the target fails again is another rung, and
-            // the sixth is fatal.
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Exhausted,
-                timer: ConditionTimer::Permanent,
-            }));
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::SickeningRadiated,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conditions.push((tid, Condition::SickeningRadiated));
-        }
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Sickening Radiance", conditions),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "sickening radiance",
+                    owner_id: caster_id,
+                    origin: center,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_or_suffer(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Dice::new(4, 10),
+                        DamageType::Radiant,
+                        Condition::Exhausted,
+                        ConditionTimer::Permanent,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                // RAW's triggers are entry and turn-start; the light
+                // going up around a creature costs it nothing until its
+                // turn comes round.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Sickening Radiance"),
+            }),
+        ]
     }
 }
 
@@ -15876,13 +15872,31 @@ impl Action for TidalWave {
 
 pub static TIDAL_WAVE: LazyLock<TidalWave> = LazyLock::new(|| TidalWave {});
 
-/// Dawn — level-5 evocation, concentration. The caster summons a 30ft-
-/// radius cylinder of sunlight. Every enemy in the area makes a CON
-/// save: fail = full 4d10 radiant, pass = half. We collapse the
-/// per-round sustained-cylinder RAW into a one-shot install at cast
-/// time (matches our Sickening Radiance simplification). Concentration-
-/// bound on the caster; dropping concentration ends the dawn.
+/// Dawn — level-5 evocation, concentration (cleric / wizard). A 30-ft
+/// radius, 40-ft high cylinder of sunlight.
+///
+/// "When a creature moves into the spell's area for the first time on a
+/// turn or ends its turn there, it must make a Constitution saving
+/// throw, taking 4d10 radiant damage on a failed save, or half as much
+/// on a successful one."
+///
+/// The straightforward damaging zone, and the level-5 sibling of
+/// Moonbeam in every respect that matters: the same save, the same
+/// half-on-success, four times the dice and six times the area. Held on
+/// the layer, it is finally the thing its own name suggests — a
+/// standing pillar of light that costs something every round anybody
+/// stays under it — rather than a single 4d10 that happened once and
+/// left a concentration mark behind.
+///
+/// Same collapse Grease takes: RAW bills at the end of a turn, the
+/// layer at the start. Not modeled: RAW's "you can move it 60 feet as a
+/// bonus action."
 pub struct Dawn {}
+
+impl Dawn {
+    /// 30-ft radius ≈ a 6-tile Chebyshev burst.
+    const RADIUS: isize = 6;
+}
 
 impl Action for Dawn {
     fn school(&self) -> Option<SpellSchool> {
@@ -15892,14 +15906,14 @@ impl Action for Dawn {
         "dawn"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["sunlight"]
+        vec!["sunrise", "dwn"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 30ft radius ≈ 6-tile Chebyshev burst.
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 60ft to the burst origin = 24 tiles.
         Some(24)
     }
     fn requires_los(&self) -> bool {
@@ -15918,6 +15932,16 @@ impl Action for Dawn {
     ) -> Vec<Resource> {
         action_and_slot(5)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -15932,28 +15956,31 @@ impl Action for Dawn {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.best_spell_save_dc([
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Charisma,
-        ]);
-        let (mut effects, _) = enemy_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            6,
-            AbilityScoreType::Constitution,
-            dc,
-            Dice::new(4, 10),
-            DamageType::Radiant,
-            "dawn",
-        );
-        // Concentration mark — dropping cleans up the dawn marker.
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Dawn"),
-        }));
-        effects
+        let dc = caster.spellcasting_save_dc();
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "dawn",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_for_half(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Dice::new(4, 10),
+                        DamageType::Radiant,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                },
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Dawn"),
+            }),
+        ]
     }
 }
 

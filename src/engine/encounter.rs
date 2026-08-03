@@ -39843,55 +39843,52 @@ mod tests {
         );
     }
 
-    /// Sickening Radiance is enemy-only — allies in the burst radius are
-    /// spared, enemies on fail eat radiant damage and gain Exhausted.
-    /// We seed multiple times so at least one CON save fails (we don't
-    /// gate on per-seed determinism).
+    /// Sickening Radiance is a place nobody can afford to stand in: no
+    /// bill at all for the light going up, and a fresh Constitution
+    /// save — 4d10 radiant and another rung of exhaustion — for every
+    /// turn opened inside it. Friend and foe alike, and the exhaustion
+    /// stays when the spell ends.
     #[test]
-    fn sickening_radiance_exhausts_enemies_spares_allies() {
+    fn sickening_radiance_charges_a_rung_for_every_turn_spent_in_it() {
         use crate::actions::spells::SICKENING_RADIANCE;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
-        let mut saw_exhaust = false;
+        let mut saw_two_rungs = false;
         for seed in 0..30u64 {
-            let mut e = ei_with_terrain(30, 30, &[]);
-            for _ in 0..seed {
-                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
-            }
+            let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
             let warlock = e
                 .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            let ally = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 11), 0, 1)
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 20), 1, 0)
                 .unwrap();
-            let enemy = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
-                .unwrap();
-            let origin = Coordinate::new(10, 10);
+            let origin = Coordinate::new(20, 20);
             for x in
                 SICKENING_RADIANCE.side_effects(&mut e, warlock, None, Some(&vec![origin]), None)
             {
                 x.apply(&mut e);
             }
-            // Ally on caster's team — spared regardless of save.
-            assert!(
-                !e.actors[&ally].has_condition(Condition::Exhausted),
-                "allies in the burst should never be exhausted by Sickening Radiance"
-            );
-            assert!(
-                !e.actors[&ally].has_condition(Condition::SickeningRadiated),
-                "allies should not carry the SickeningRadiated marker"
-            );
-            if e.actors.contains_key(&enemy)
-                && e.actors[&enemy].has_condition(Condition::Exhausted)
+            // The light going up costs nothing on its own.
+            assert_eq!(e.actors[&ogre].exhaustion_level(), 0);
+            assert!(e.actors[&warlock].is_concentrating());
+            e.start_turn_for(ogre);
+            e.start_turn_for(ogre);
+            if e.actors
+                .get(&ogre)
+                .is_some_and(|a| a.exhaustion_level() >= 2)
             {
-                saw_exhaust = true;
+                // A level, once gained, is the creature's to carry: the
+                // spell ending does not hand it back.
+                e.drop_concentration(warlock);
+                assert!(e.zones().is_empty());
+                assert!(e.actors[&ogre].exhaustion_level() >= 2);
+                saw_two_rungs = true;
                 break;
             }
         }
         assert!(
-            saw_exhaust,
-            "Sickening Radiance should exhaust the goblin enemy across seeds"
+            saw_two_rungs,
+            "two turns opened in the light should be two rungs of exhaustion"
         );
     }
 
@@ -41016,37 +41013,32 @@ mod tests {
         assert!(saw_prone, "tidal wave should knock failed-save enemies prone");
     }
 
-    /// Dawn: enemy-only CON-save radiant burst with concentration mark
-    /// on the caster. Verifies allies in the radius are spared and the
-    /// caster ends up concentrating on Dawn.
+    /// Dawn is a pillar of light that stands: nothing happens when it
+    /// goes up, and everyone under it pays a Constitution save at the
+    /// top of each of their turns — friend and foe, since sunlight
+    /// doesn't check tabards.
     #[test]
-    fn dawn_spares_allies_and_installs_concentration() {
+    fn dawn_stands_and_bills_every_turn_spent_under_it() {
         use crate::actions::spells::DAWN;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-        let mut e = ei_with_terrain(20, 20, &[]);
+        let mut e = ei_with_terrain(30, 30, &[]);
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let ally = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 20), 1, 0)
             .unwrap();
-        let _enemy = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
-            .unwrap();
-        let ally_hp_before = e.actors[&ally].hitpoints();
-        let origin = Coordinate::new(10, 10);
+        let origin = Coordinate::new(20, 20);
+        let full = e.actors[&ogre].hitpoints();
         for ef in DAWN.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
             ef.apply(&mut e);
         }
+        assert_eq!(e.zones().len(), 1);
         assert_eq!(
-            e.actors[&ally].hitpoints(),
-            ally_hp_before,
-            "ally in burst should be spared by dawn"
-        );
-        assert!(
-            e.actors[&wiz].is_concentrating(),
-            "caster should concentrate on Dawn"
+            e.actors[&ogre].hitpoints(),
+            full,
+            "the light going up bills nobody"
         );
         assert_eq!(
             e.actors[&wiz]
@@ -41054,6 +41046,13 @@ mod tests {
                 .map(|c| c.spell_name.as_str()),
             Some("Dawn")
         );
+        e.start_turn_for(ogre);
+        assert!(
+            e.actors[&ogre].hitpoints() < full,
+            "a turn opened under the light is billed for it"
+        );
+        e.drop_concentration(wiz);
+        assert!(e.zones().is_empty());
     }
 
     /// Mental Prison: failed INT save installs MentallyImprisoned on
