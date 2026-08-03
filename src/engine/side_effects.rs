@@ -1048,6 +1048,40 @@ impl ApplicableSideEffect for InstallZone {
     }
 }
 
+/// Retype a run of map tiles for the duration of a spell — see
+/// `crate::engine::conjured_terrain`.
+///
+/// The terrain-layer twin of `InstallZone`, down to the contract on
+/// `id` (ignored, overwritten by `conjure_terrain`) and the reason the
+/// two are separate effects: a zone overlays the map and this replaces
+/// it, which is what lets a conjured wall block a line of sight.
+///
+/// Extended Spell reaches it the same way it reaches a zone, and for
+/// the same reason — a doubled Wall of Stone is a wall that stands for
+/// twice as long, and there is nothing else in it to double.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConjureTerrain {
+    pub patch: crate::engine::conjured_terrain::ConjuredTerrain,
+}
+
+impl ApplicableSideEffect for ConjureTerrain {
+    fn extend_duration(&mut self) -> bool {
+        if self.patch.rounds_remaining < EXTENDED_SPELL_MIN_ROUNDS {
+            return false;
+        }
+        self.patch.rounds_remaining = self
+            .patch
+            .rounds_remaining
+            .saturating_mul(2)
+            .min(EXTENDED_SPELL_MAX_ROUNDS);
+        true
+    }
+
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.conjure_terrain(self.patch.clone());
+    }
+}
+
 /// Walk a persistent magical area that is already on the board to a new
 /// centre — the steered half of `crate::engine::zones::ZoneMotion`.
 ///

@@ -1107,6 +1107,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a''''. Walls — cut the line an enemy is closing down. Below
+        //         the AoE picker rather than above it because a burst
+        //         that catches two enemies is worth more right now than
+        //         a wall that inconveniences one, and both want the same
+        //         action. Above the damage lane below because a wall is
+        //         the only answer a squishy caster has to something that
+        //         is going to reach them next turn — the alternative is
+        //         to keep casting and then be hit.
+        if let Some(aei) = try_wall_off_approach(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5b. Caster-centered NoArgs burst (Thunderwave / Word of Radiance
         //     / Holy Word) — fire when 2+ enemies sit inside the spell's
         //     implicit radius. The action validates its own radius via
@@ -5597,6 +5609,142 @@ fn try_attack_aoe(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     best_burst_placement(encounter, actor_id, |_| true)
+}
+
+/// The wall spells the AI will raise to cut a line, in the order it
+/// reaches for them.
+///
+/// Both write terrain (`crate::engine::conjured_terrain`), both cost a
+/// level-5 slot and the caster's concentration, and both target a
+/// single point whose *orientation* the spell derives — which is why
+/// they need a lane of their own rather than falling out of the burst
+/// picker. A burst is aimed at a creature; a wall is aimed at a gap.
+///
+/// Wall of Force first: it is the strictly better wall for a caster who
+/// intends to keep casting, because it is transparent, so the line the
+/// wall cuts is the enemy's and not the caster's own. Wall of Stone
+/// blinds both sides equally, which is worth less to somebody who wants
+/// to keep shooting and is therefore the fallback.
+const WALL_SPELLS: &[&str] = &["wall of force", "wall of stone"];
+
+/// How far along the line to the threat the wall goes up. Two tiles is
+/// close enough that a wall aimed at an enemy eight tiles out still
+/// lands between them and the caster rather than beside them, and far
+/// enough that the caster is not standing in their own wall's footprint
+/// — a tile with a creature on it is skipped by the terrain layer, and
+/// a wall with a hole in it where the caster is standing is not a wall.
+const WALL_STANDOFF: isize = 2;
+
+/// Raise a wall across the line an enemy is closing down.
+///
+/// This is the one thing a wall spell is for, and it is not something
+/// any of the pickers above can express. They all choose a *target* —
+/// a creature to hit, a cluster to catch, an ally to buff. A wall has
+/// no target. Its whole value is a piece of empty floor between the
+/// caster and somebody who wants to reach them, and picking that floor
+/// takes a rule of its own.
+///
+/// Fires when all of:
+///
+///   - the caster owns one of `WALL_SPELLS` and isn't already holding
+///     a concentration spell (both walls are concentration, so casting
+///     one would drop whatever is up — and everything the AI puts up
+///     above this rung it put up on purpose);
+///   - some hostile is closing but hasn't arrived: further than melee
+///     reach, closer than `MAX_THREAT_GAP`. A wall does nothing about
+///     a creature already swinging at you, and nothing yet about one
+///     on the far side of the room;
+///   - no ally of the caster's is nearer that hostile than the caster
+///     is. A wall raised across a line an ally is standing on cuts the
+///     ally off from their own side, and the AI has no way to ask them
+///     whether they wanted that.
+///
+/// The nearest qualifying threat wins, ties by lowest id, which is the
+/// same deterministic tie-break every other picker uses.
+fn try_wall_off_approach(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    /// Beyond this the threat is somebody else's problem this turn.
+    const MAX_THREAT_GAP: isize = 12;
+
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let walls: Vec<&'static (dyn Action + Send + Sync)> = WALL_SPELLS
+        .iter()
+        .filter_map(|name| actor.find_action(name))
+        .collect();
+    if walls.is_empty() {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let gap_to = |from: Coordinate, from_size: usize, tid: usize| -> Option<isize> {
+        let t = encounter.actors.get(&tid)?;
+        Some(footprint_chebyshev(
+            from,
+            from_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        ))
+    };
+
+    let mut threat: Option<(isize, Coordinate)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        let Some(gap) = gap_to(my_loc, my_size, tid) else {
+            continue;
+        };
+        if gap <= crate::actions::action_template::MELEE_REACH || gap > MAX_THREAT_GAP {
+            continue;
+        }
+        // Somebody on my side is already between us — walling the line
+        // would strand them on the wrong side of it.
+        let ally_is_closer = encounter.sorted_actor_ids().into_iter().any(|aid| {
+            if aid == actor_id {
+                return false;
+            }
+            let Some(a) = encounter.actors.get(&aid) else {
+                return false;
+            };
+            if a.team() != my_team || !a.is_combat_active() {
+                return false;
+            }
+            gap_to(a.location(), get_tiles_from_size(a.size()), tid)
+                .is_some_and(|d| d < gap)
+        });
+        if ally_is_closer {
+            continue;
+        }
+        if threat.as_ref().is_none_or(|(best, _)| gap < *best) {
+            threat = Some((gap, t.location()));
+        }
+    }
+    let (_, threat_at) = threat?;
+
+    // Two tiles along the line to them: `wall_tiles` stands the wall
+    // *across* whatever line it is aimed down, so aiming at the
+    // approach is aiming at the gap.
+    let toward = threat_at - my_loc;
+    let anchor = my_loc
+        + Coordinate::new(
+            toward.x.signum() * WALL_STANDOFF,
+            toward.y.signum() * WALL_STANDOFF,
+        );
+    walls.into_iter().find_map(|action| {
+        let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![anchor]), None);
+        aei.validate(encounter).then_some(aei)
+    })
 }
 
 /// Shared "where do I drop this burst?" search, used by both burst
@@ -10483,6 +10631,86 @@ mod tests {
         assert!(
             !picked(Some(Condition::Blurred), None),
             "Blur is not invisibility; the spell would do nothing"
+        );
+    }
+
+    /// The wall lane: a caster with a wall spell and something closing
+    /// on them raises a wall across the approach, and the wall really
+    /// goes onto the map.
+    #[test]
+    fn a_caster_walls_off_the_thing_closing_on_them() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        // Six tiles out: past melee reach, inside the lane's window.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        let aei = super::try_wall_off_approach(&e, wizard)
+            .expect("a wizard with a wall spell and something walking at them raises a wall");
+        for ef in aei.execute(&mut e) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.conjured_terrain().len(), 1);
+        // Two tiles along the line, standing across it.
+        let anchor = Coordinate::new(6, 10);
+        assert!(
+            matches!(
+                e.terrain_at(anchor).map(|t| t.terrain_type),
+                Some(TerrainType::ForceWall) | Some(TerrainType::Wall)
+            ),
+            "the wall stands between the wizard and the goblin"
+        );
+    }
+
+    /// The two gates that keep the lane from firing on its own side or
+    /// on a fight it can't affect.
+    #[test]
+    fn the_wall_lane_holds_its_fire_for_an_ally_or_an_empty_room() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        // Nobody closing: no wall.
+        let mut alone = empty_arena();
+        let solo = alone
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        alone
+            .actors
+            .get_mut(&solo)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        assert!(super::try_wall_off_approach(&alone, solo).is_none());
+
+        // An ally already stands between the wizard and the goblin.
+        // Walling the line would strand them on the far side of it.
+        let mut screened = empty_arena();
+        let wizard = screened
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        screened
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 10), 0, 1)
+            .unwrap();
+        screened
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        screened
+            .actors
+            .get_mut(&wizard)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        assert!(
+            super::try_wall_off_approach(&screened, wizard).is_none(),
+            "the fighter is closer to the goblin than the wizard is"
         );
     }
 

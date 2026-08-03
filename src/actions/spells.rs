@@ -11,13 +11,15 @@ use crate::{
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
+        conjured_terrain::{ConjuredTerrain, block_tiles, wall_tiles},
         dice::Dice,
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
         side_effects::{
-            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, InstallZone,
-            MoveZone, Resource, StartConcentration, install_condition_with_link,
+            ApplicableSideEffect, ApplyCondition, ConjureTerrain, DealDamage, GainTempHp, Heal,
+            InstallZone, MoveZone, Resource, StartConcentration, install_condition_with_link,
         },
+        terrain::TerrainType,
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
         zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion},
     },
@@ -10226,15 +10228,33 @@ impl Action for AuraOfVitality {
 
 pub static AURA_OF_VITALITY: LazyLock<AuraOfVitality> = LazyLock::new(|| AuraOfVitality {});
 
-/// Wall of Force — level-5 evocation, concentration. Drops a panel of
-/// invisible force at a tile within 120 ft. Anyone footprint-adjacent to
-/// the panel at cast time is shoved one tile away (we approximate with a
-/// `PullActor` *away from* the wall via negative max_tiles — no, just
-/// pick a direction and use TeleportActor). Concrete effect today:
-/// everyone in the burst takes 0 damage but is moved one tile away from
-/// the anchor. Lasts 10 rounds. Concentration: dropping it doesn't
-/// recall the moved actors.
+/// Wall of Force — level-5 evocation, concentration (wizard). An
+/// invisible wall of force at a point within 120 ft.
+///
+/// "Nothing can physically pass through the wall… It is immune to all
+/// damage and can't be dispelled by dispel magic."
+///
+/// One sentence, and it is the most useful sentence in the level-5
+/// list, because of the word the wall *doesn't* say: it never says you
+/// can't see through it. A caster puts one between the party and the
+/// thing that is killing them and then keeps shooting through it. That
+/// asymmetry — solid, transparent — is the corner of the terrain layer
+/// that `Wall` and `LowWall` between them could not reach, and it is
+/// why `TerrainType::ForceWall` exists.
+///
+/// The old model had nothing to write terrain with, and its own
+/// docstring recorded the search for a stand-in ("we approximate with a
+/// `PullActor` away from the wall via negative max_tiles — no, just
+/// pick a direction and use TeleportActor"). What it settled on was
+/// knocking adjacent enemies prone, which is not in the spell. It is a
+/// wall now.
 pub struct WallOfForce {}
+
+impl WallOfForce {
+    /// Seven tiles, three either side of the anchor — a shorter pane
+    /// than Wall of Stone's, matching RAW's smaller panel budget.
+    const REACH: isize = 3;
+}
 
 impl Action for WallOfForce {
     fn school(&self) -> Option<SpellSchool> {
@@ -10247,13 +10267,16 @@ impl Action for WallOfForce {
         vec!["woforce", "force-wall"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 1 }
+        TargetingSchema::SinglePoint
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(48)
     }
     fn requires_los(&self) -> bool {
         true
+    }
+    fn is_harmful(&self) -> bool {
+        false
     }
     fn deals_damage(&self) -> bool {
         false
@@ -10268,6 +10291,16 @@ impl Action for WallOfForce {
     ) -> Vec<Resource> {
         action_and_slot(5)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -10279,24 +10312,25 @@ impl Action for WallOfForce {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        // Approximate the panel by knocking enemies adjacent to the anchor
-        // prone (no save) — a stand-in for "blocked by an invisible wall."
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
-            .enemy_burst_targets(caster_id, point, 1)
-            .into_iter()
-            .map(|id| {
-                Box::new(ApplyCondition {
-                    actor_id: id,
-                    condition: Condition::Prone,
-                    timer: ConditionTimer::Permanent,
-                }) as Box<dyn ApplicableSideEffect>
-            })
-            .collect();
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Wall of Force"),
-        }));
-        effects
+        let Some(caster_at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ConjureTerrain {
+                patch: ConjuredTerrain::new(
+                    "wall of force",
+                    caster_id,
+                    TerrainType::ForceWall,
+                    wall_tiles(caster_at, point, Self::REACH),
+                    10,
+                    true,
+                ),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Wall of Force"),
+            }),
+        ]
     }
 }
 
@@ -23572,26 +23606,48 @@ impl Action for PlaneShift {
 
 pub static PLANE_SHIFT: LazyLock<PlaneShift> = LazyLock::new(|| PlaneShift {});
 
-/// Wall of Stone — level-5 evocation (wizard / sorcerer / druid),
-/// concentration. RAW: the caster summons up to ten 10-ft panels of
-/// stone at a point within 120 ft, forming an impassable barrier. We
-/// collapse the panel geometry to the load-bearing combat hook: every
-/// creature whose footprint touches the 10-ft-radius (2-tile) burst at
-/// cast time makes a DEX save vs the caster's spell save DC. On fail,
-/// they're caught in the rising stone — `Restrained` for 10 rounds
-/// (movement zero, attack disadvantage, advantage to attackers, DEX-save
-/// disadvantage). On pass, they slip clear with no penalty. The
-/// restraint is anchored to the caster's concentration so dropping it
-/// dissolves the wall and frees everyone caught.
+/// Wall of Stone — level-5 evocation (druid / sorcerer / wizard),
+/// concentration. Up to ten 10-ft panels of nonmagical stone, raised at
+/// a point within 120 ft.
 ///
-/// Distinct from Wall of Force (no damage, no save, just shoves
-/// adjacent enemies prone) and Wall of Ice (instant cold burst + prone).
-/// Wall of Stone's defining feature is the lockdown — a single high-CR
-/// enemy caught in the rising stone loses an entire turn while the
-/// caster's allies focus-fire.
+/// The spell has no save, no damage and no condition. What it has is
+/// stone: "the wall is an object made of stone that can be damaged and
+/// thus breached", and everything a caster does with it follows from
+/// the fact that nobody can walk through it or see through it. It cuts
+/// a room in half, and the half the party isn't in stops being part of
+/// the fight.
+///
+/// So it writes terrain, through
+/// `crate::engine::conjured_terrain` — the wall stands across the line
+/// the caster aimed it along, blocks the pathfinder and blocks the
+/// line-of-sight walk, and is handed back tile for tile when the
+/// concentration ends.
+///
+/// The old model had to be something else, because the terrain layer
+/// had no door in it: it rolled a Dexterity save against everyone near
+/// the anchor and `Restrained` the failures, which is a rule from a
+/// different spell. A wall of stone does not grab anybody. Losing the
+/// lockdown is the point — what replaces it is an actual wall, which is
+/// worth considerably more than one enemy's turn.
+///
+/// Not modeled: the wall's hit points, and RAW's "if you maintain
+/// concentration for the whole duration the wall becomes permanent".
+/// Both are about a wall outliving a fight, and the engine's scope is
+/// the fight.
 pub struct WallOfStone {}
 
+impl WallOfStone {
+    /// Nine tiles of wall, four either side of the anchor — about 22 ft
+    /// on the 2.5-ft grid. RAW's ten panels are 100 ft, which on this
+    /// grid would be forty tiles and would not so much divide a room as
+    /// replace it.
+    const REACH: isize = 4;
+}
+
 impl Action for WallOfStone {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn name(&self) -> &str {
         "wall of stone"
     }
@@ -23599,7 +23655,7 @@ impl Action for WallOfStone {
         vec!["wostone", "stone-wall"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::SinglePoint
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft RAW = 48 tiles.
@@ -23607,6 +23663,9 @@ impl Action for WallOfStone {
     }
     fn requires_los(&self) -> bool {
         true
+    }
+    fn is_harmful(&self) -> bool {
+        false
     }
     fn deals_damage(&self) -> bool {
         false
@@ -23644,49 +23703,25 @@ impl Action for WallOfStone {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
+        let Some(caster_at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
             return Vec::new();
         };
-        let dc = caster.best_spell_save_dc([
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]);
-        encounter.log(format!(
-            "  wall of stone: panels rise from the ground (DC {})",
-            dc
-        ));
-        let targets = encounter.enemy_burst_targets(caster_id, point, 2);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut restrained: Vec<(usize, Condition)> = Vec::new();
-        for tid in targets {
-            // Route through the caster-aware save helper so Heightened
-            // Spell metamagic forces disadvantage on the first save in
-            // the burst (RAW). Subsequent targets fall through normally.
-            let save = encounter.roll_save_against_caster(
-                tid,
-                AbilityScoreType::Dexterity,
-                dc,
+        vec![
+            Box::new(ConjureTerrain {
+                patch: ConjuredTerrain::new(
+                    "wall of stone",
+                    caster_id,
+                    TerrainType::Wall,
+                    wall_tiles(caster_at, point, Self::REACH),
+                    10,
+                    true,
+                ),
+            }),
+            Box::new(StartConcentration {
                 caster_id,
-            );
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Restrained,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            restrained.push((tid, Condition::Restrained));
-        }
-        // Anchor concentration so dropping it dissolves the wall and
-        // frees everyone caught in it — mirrors the Hold Person /
-        // Plant Growth concentration-prune shape.
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Wall of Stone", restrained),
-        }));
-        effects
+                data: ConcentrationData::new("Wall of Stone"),
+            }),
+        ]
     }
 }
 
@@ -25064,20 +25099,36 @@ pub static PSYCHIC_SCREAM: LazyLock<PsychicScream> = LazyLock::new(|| PsychicScr
 /// Six 5-ft-thick pillars of stone erupt from the ground in a 2-tile
 /// burst at a target point within 120ft. Every creature in the burst
 /// makes a DEX save vs the caster's WIS-based spell DC: pass = half,
-/// fail = full. 6d6 bludgeoning damage. The pillars themselves are
-/// not modeled (the engine has no terrain-mutation lane for
-/// per-tile pillars), but the load-bearing combat clause — the
-/// erupting damage and the "pinned between pillars" prone rider on
-/// failed saves — lands cleanly through the existing burst + Prone
-/// shape (Tidal Wave / Wall of Stone use the same install).
+/// fail = full. 6d6 bludgeoning damage, and a Prone rider on a failure
+/// for the "pinned between the pillars" clause.
+///
+/// The pillars themselves are terrain now, written through
+/// `crate::engine::conjured_terrain`: the ring of tiles around the
+/// anchor becomes stone, which blocks movement and sight until it
+/// crumbles. That is what makes the spell an *earth* spell rather than
+/// a smaller Fireball with a knockdown — the druid leaves a stand of
+/// rock in the middle of the room, and the enemy line has to come
+/// around it.
+///
+/// The ring rather than the whole square: RAW is six pillars, not a
+/// plug of stone, and a solid 5×5 block dropped on a corridor would
+/// seal it. The centre tile stays open, so the pillars are cover to
+/// hide behind rather than a wall to be stopped by.
+///
+/// Not concentration in RAW — the pillars are physical objects that
+/// stand on their own — so the patch is on a plain timer and outlives
+/// whatever the druid concentrates on next.
 ///
 /// Slots between Sleet Storm (lv3, control / cover) and Earthquake
 /// (lv8, AoE Prone + difficult terrain) on the druid's earth-themed
-/// control ladder. The Prone rider on fail mirrors Wall of Stone — a
-/// big enemy line gets laid flat for a Spike Growth / Spirit Guardians
-/// follow-up. Concentration-free RAW (the pillars are physical objects
-/// that stand on their own); we model as a one-shot burst.
+/// control ladder.
 pub struct BonesOfTheEarth {}
+
+impl BonesOfTheEarth {
+    /// The pillars stand on the ring two tiles out from the anchor —
+    /// the edge of the same burst the damage is rolled against.
+    const RADIUS: isize = 2;
+}
 
 impl Action for BonesOfTheEarth {
     fn name(&self) -> &str {
@@ -25141,7 +25192,7 @@ impl Action for BonesOfTheEarth {
         );
         // RAW rider: failed-save targets are pinned between rising
         // pillars — we collapse to Prone via the existing AoE Prone
-        // rider table (same shape Wall of Stone / Tidal Wave use).
+        // rider table (same shape Tidal Wave uses).
         push_condition_on_failed_save(
             &mut effects,
             &saves,
@@ -25150,6 +25201,24 @@ impl Action for BonesOfTheEarth {
             // the timer is a safety net so the rider doesn't dangle.
             ConditionTimer::Rounds(10),
         );
+        // The pillars: the ring of the burst, not its interior, so the
+        // stand is cover rather than a plug. Tiles with somebody
+        // standing on them are skipped by the terrain layer, which is
+        // what keeps a pillar from being raised through a creature.
+        let ring: Vec<Coordinate> = block_tiles(point, Self::RADIUS)
+            .into_iter()
+            .filter(|c| c.chebyshev_to(point) == Self::RADIUS)
+            .collect();
+        effects.push(Box::new(ConjureTerrain {
+            patch: ConjuredTerrain::new(
+                "bones of the earth",
+                caster_id,
+                TerrainType::Wall,
+                ring,
+                10,
+                false,
+            ),
+        }));
         effects
     }
 }

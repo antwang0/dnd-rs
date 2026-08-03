@@ -247,6 +247,7 @@ use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
+use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
@@ -1578,6 +1579,13 @@ pub struct EncounterInstance {
     /// a creature shoved into a web on somebody else's turn triggers it,
     /// and shoving them back in on that same turn does not.
     zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
+    /// Map tiles a spell has retyped, and the ledger that hands them
+    /// back — see `crate::engine::conjured_terrain`. Sibling to `zones`
+    /// in every respect but one: a zone overlays the map and this
+    /// *replaces* it, which is what lets a conjured wall block a line
+    /// of sight when no combination of `ZoneEffect` fields can.
+    conjured_terrain: Vec<ConjuredTerrain>,
+    conjured_terrain_id_next: usize,
 }
 
 /// One frame of the in-flight spell-cast stack — the resolved identity
@@ -4529,6 +4537,115 @@ impl EncounterInstance {
         id
     }
 
+    /// Every patch of conjured map currently standing, in install order.
+    pub fn conjured_terrain(&self) -> &[ConjuredTerrain] {
+        &self.conjured_terrain
+    }
+
+    /// Retype the tiles a spell asked for, remembering what was there,
+    /// and return the handle the teardown paths key off.
+    ///
+    /// `patch.tiles` is the request; `patch.restore` is what was
+    /// actually taken, and the two differ wherever a tile was off the
+    /// map or the new terrain would have buried somebody. Both
+    /// exclusions are silent by design — a wall raised across a corridor
+    /// with a goblin in it is a wall with a goblin-shaped gap, which is
+    /// the shape RAW's "the creature is pushed to one side" produces
+    /// without needing a forced-movement resolution to reach.
+    ///
+    /// A patch that took no tiles at all is still installed, still
+    /// expires, and is still torn down by its owner's concentration —
+    /// which keeps "the spell is up" and "the spell got something" as
+    /// separate questions rather than making a wall raised entirely off
+    /// the map look like a wall that was never cast.
+    pub fn conjure_terrain(&mut self, mut patch: ConjuredTerrain) -> usize {
+        let id = self.conjured_terrain_id_next;
+        self.conjured_terrain_id_next += 1;
+        patch.id = id;
+        let blocks_movement = !patch.terrain_type.is_passable();
+        let requested = std::mem::take(&mut patch.tiles);
+        for coord in requested {
+            if !self.in_bounds(coord) {
+                continue;
+            }
+            if blocks_movement && self.actor_id_at(coord).is_some() {
+                continue;
+            }
+            let Some(was) = self.terrain_at(coord).map(|t| t.terrain_type) else {
+                continue;
+            };
+            if was == patch.terrain_type {
+                // Nothing to hold and nothing to hand back. Skipping
+                // keeps the ledger honest: a patch that "restores" a
+                // tile to what it already was owns a tile it never
+                // changed, and would undo somebody else's write.
+                continue;
+            }
+            self.set_terrain_at(coord, patch.terrain_type);
+            patch.restore.push((coord, was));
+        }
+        let (name, taken) = (patch.name, patch.restore.len());
+        self.conjured_terrain.push(patch);
+        self.log(format!("  {} rises across {} tiles.", name, taken));
+        id
+    }
+
+    /// Take a patch of conjured map back down, handing every tile it is
+    /// still holding to whatever was there before. Returns true if one
+    /// was there.
+    ///
+    /// A tile is only restored if it still carries the terrain this
+    /// patch wrote. Anything else has been claimed since — by a second
+    /// wall, or by a future terrain-mutating effect — and handing back
+    /// a tile somebody else owns would turn their stone into this
+    /// patch's floor.
+    pub fn dispel_conjured_terrain(&mut self, id: usize) -> bool {
+        let Some(index) = self.conjured_terrain.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let patch = self.conjured_terrain.remove(index);
+        for (coord, was) in patch.restore {
+            if self.terrain_at(coord).map(|t| t.terrain_type) == Some(patch.terrain_type) {
+                self.set_terrain_at(coord, was);
+            }
+        }
+        true
+    }
+
+    /// Expire one round off every patch and take down the ones that ran
+    /// out. Called from `round_end`, beside `tick_zones`.
+    fn tick_conjured_terrain(&mut self) {
+        let mut expired: Vec<(usize, String)> = Vec::new();
+        for patch in self.conjured_terrain.iter_mut() {
+            patch.rounds_remaining = patch.rounds_remaining.saturating_sub(1);
+            if patch.rounds_remaining == 0 {
+                expired.push((patch.id, patch.name.to_string()));
+            }
+        }
+        for (id, name) in expired {
+            self.dispel_conjured_terrain(id);
+            self.log(format!("The {} crumbles away.", name));
+        }
+    }
+
+    /// Take down every concentration-held patch `actor_id` is
+    /// sustaining. The terrain-layer twin of
+    /// `remove_concentration_zones_of`, called from the same chokepoint
+    /// and for the same reason: `drop_concentration` is the one place
+    /// that knows a caster's grip has failed, however it failed.
+    fn remove_concentration_terrain_of(&mut self, actor_id: usize) {
+        let doomed: Vec<(usize, String)> = self
+            .conjured_terrain
+            .iter()
+            .filter(|p| p.concentration && p.owner_id == actor_id)
+            .map(|p| (p.id, p.name.to_string()))
+            .collect();
+        for (id, name) in doomed {
+            self.dispel_conjured_terrain(id);
+            self.log(format!("The {} fades back into nothing.", name));
+        }
+    }
+
     /// The area `owner_id` is sustaining under the given name, if any.
     ///
     /// The handle the steered cohort re-enters through: Moonbeam cast a
@@ -4750,6 +4867,24 @@ impl EncounterInstance {
     /// knows a caster's grip has failed — and which reaches every way it
     /// can fail (damage, a second concentration spell, death, a lapsed
     /// timer) at one chokepoint.
+    /// Take down everything on the *map* layers that `actor_id`'s
+    /// concentration was holding up — the persistent areas and the
+    /// conjured terrain both.
+    ///
+    /// The one call every "this caster has stopped concentrating"
+    /// path makes, so that a second map layer is wired into all of
+    /// them at once rather than into whichever ones somebody
+    /// remembered. There are three, and they are not variations on each
+    /// other: `drop_concentration` (the grip failed), `remove_actor`
+    /// (death, which never routes through it), and `despawn_actor` (a
+    /// summon unbinding). A dead wizard's wall holding a doorway for the
+    /// rest of the fight is the kind of leak the map layers make very
+    /// visible.
+    fn release_map_layers_of(&mut self, actor_id: usize) {
+        self.remove_concentration_zones_of(actor_id);
+        self.remove_concentration_terrain_of(actor_id);
+    }
+
     fn remove_concentration_zones_of(&mut self, actor_id: usize) {
         let doomed: Vec<(usize, String)> = self
             .zones
@@ -5087,7 +5222,7 @@ impl EncounterInstance {
     /// walls do (matches 5e's "creatures don't grant cover" default).
     pub fn has_line_of_sight(&self, from: Coordinate, to: Coordinate) -> bool {
         !tiles_between(from, to)
-            .any(|c| matches!(self.terrain_at(c), Some(t) if t.terrain_type == TerrainType::Wall))
+            .any(|c| matches!(self.terrain_at(c), Some(t) if t.terrain_type.blocks_sight()))
     }
 
     /// 5e cover. Counts the obstructions a straight origin-to-origin
@@ -6571,6 +6706,8 @@ impl EncounterInstance {
             zones: Vec::new(),
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
+            conjured_terrain: Vec::new(),
+            conjured_terrain_id_next: 0,
         }
     }
 
@@ -10417,7 +10554,7 @@ impl EncounterInstance {
         // here, and the two are the same event seen from either side of
         // a spell that has both (Web restrains creatures *and* clings to
         // the floor).
-        self.remove_concentration_zones_of(actor_id);
+        self.release_map_layers_of(actor_id);
         for (target_id, condition) in data.conditions {
             // 5e Conjure Animals / Conjure Elemental cleanup: the
             // summoned minion holds the `Conjured` flag, and dropping
@@ -10770,10 +10907,13 @@ impl EncounterInstance {
         // Round-end timers just expired; anything that was holding a
         // creature at a larger size has now let go of it.
         self.reconcile_footprints();
-        // The map layer's own timers, ticked alongside the actors'. Last
-        // rather than first so a zone in its final round still charged
-        // everyone who stood in it this round before it disperses.
+        // The map layers' own timers, ticked alongside the actors'.
+        // Last rather than first so a zone in its final round still
+        // charged everyone who stood in it this round before it
+        // disperses, and a wall in its last round still stood in
+        // somebody's way.
         self.tick_zones();
+        self.tick_conjured_terrain();
     }
 
     pub fn set_actor_map(
@@ -11182,7 +11322,7 @@ impl EncounterInstance {
         // Same reason as `remove_actor`: an actor leaving the board
         // takes their concentration — and so the areas it was holding
         // up — with them.
-        self.remove_concentration_zones_of(id);
+        self.release_map_layers_of(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -11217,7 +11357,7 @@ impl EncounterInstance {
         // through it — the actor is lifted straight out of the table —
         // and a dead wizard's web holding a doorway for the rest of the
         // fight is the kind of leak the map layer makes very visible.
-        self.remove_concentration_zones_of(id);
+        self.release_map_layers_of(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -43923,6 +44063,164 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // The conjured-terrain layer (`crate::engine::conjured_terrain`) —
+    // map tiles a spell retypes and hands back. Exercised directly
+    // here, without a caster's slot economy in the way.
+    // ---------------------------------------------------------------
+
+    /// A patch takes the tiles it asked for, remembers what they were,
+    /// and gives every one of them back.
+    #[test]
+    fn conjured_terrain_is_handed_back_tile_for_tile() {
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.set_terrain_at(Coordinate::new(6, 5), TerrainType::DifficultTerrain);
+        let tiles = vec![
+            Coordinate::new(5, 5),
+            Coordinate::new(6, 5),
+            Coordinate::new(7, 5),
+        ];
+        let id = e.conjure_terrain(ConjuredTerrain::new(
+            "test wall",
+            usize::MAX,
+            TerrainType::Wall,
+            tiles.clone(),
+            5,
+            false,
+        ));
+        for c in &tiles {
+            assert_eq!(
+                e.terrain_at(*c).map(|t| t.terrain_type),
+                Some(TerrainType::Wall)
+            );
+        }
+        assert!(e.dispel_conjured_terrain(id));
+        // Each tile goes back to what *it* was, not to a uniform floor.
+        assert_eq!(
+            e.terrain_at(Coordinate::new(5, 5)).map(|t| t.terrain_type),
+            Some(TerrainType::Floor)
+        );
+        assert_eq!(
+            e.terrain_at(Coordinate::new(6, 5)).map(|t| t.terrain_type),
+            Some(TerrainType::DifficultTerrain),
+            "the rubble was there before the wall and is there after it"
+        );
+        assert!(!e.dispel_conjured_terrain(id), "and it only comes down once");
+    }
+
+    /// A wall is never raised through somebody. RAW pushes the creature
+    /// to one side; skipping the tile leaves the same creature-shaped
+    /// gap without needing a forced-movement resolution to reach it.
+    #[test]
+    fn a_conjured_wall_does_not_bury_the_creature_standing_in_it() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        e.conjure_terrain(ConjuredTerrain::new(
+            "test wall",
+            usize::MAX,
+            TerrainType::Wall,
+            vec![
+                Coordinate::new(5, 5),
+                Coordinate::new(6, 5),
+                Coordinate::new(7, 5),
+            ],
+            5,
+            false,
+        ));
+        assert_eq!(
+            e.terrain_at(Coordinate::new(6, 5)).map(|t| t.terrain_type),
+            Some(TerrainType::Floor),
+            "the goblin's tile is left open"
+        );
+        assert!(e.actors[&goblin].is_combat_active());
+        // A goblin is Small, which is a 2×2 footprint here, so it is
+        // standing on two of the three tiles the wall asked for and the
+        // patch ends up holding one.
+        assert_eq!(
+            e.terrain_at(Coordinate::new(7, 5)).map(|t| t.terrain_type),
+            Some(TerrainType::Floor)
+        );
+        assert_eq!(
+            e.conjured_terrain()[0].restore.len(),
+            1,
+            "the patch holds only what it was allowed to take"
+        );
+    }
+
+    /// A patch hands back only what it still holds. Two walls across the
+    /// same tile unwind in either order without the second one's stone
+    /// being handed back as the first one's floor.
+    #[test]
+    fn a_patch_does_not_hand_back_a_tile_somebody_else_took() {
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let tile = Coordinate::new(5, 5);
+        let stone = e.conjure_terrain(ConjuredTerrain::new(
+            "stone",
+            usize::MAX,
+            TerrainType::Wall,
+            vec![tile],
+            5,
+            false,
+        ));
+        let force = e.conjure_terrain(ConjuredTerrain::new(
+            "force",
+            usize::MAX,
+            TerrainType::ForceWall,
+            vec![tile],
+            5,
+            false,
+        ));
+        // The stone comes down first, but the force wall owns the tile
+        // now — so nothing is handed back and the pane stays up.
+        assert!(e.dispel_conjured_terrain(stone));
+        assert_eq!(
+            e.terrain_at(tile).map(|t| t.terrain_type),
+            Some(TerrainType::ForceWall)
+        );
+        // And when the pane goes, it hands back the stone it took, not
+        // the floor that was there two patches ago.
+        assert!(e.dispel_conjured_terrain(force));
+        assert_eq!(
+            e.terrain_at(tile).map(|t| t.terrain_type),
+            Some(TerrainType::Wall)
+        );
+    }
+
+    /// Off-map tiles and no-op writes are dropped from the ledger, so a
+    /// patch never claims ground it did not change.
+    #[test]
+    fn a_patch_claims_only_the_tiles_it_actually_changed() {
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        e.set_terrain_at(Coordinate::new(4, 4), TerrainType::Wall);
+        e.conjure_terrain(ConjuredTerrain::new(
+            "test wall",
+            usize::MAX,
+            TerrainType::Wall,
+            vec![
+                Coordinate::new(-1, 4), // off the map
+                Coordinate::new(40, 4), // off the map, and past the row
+                Coordinate::new(4, 4),  // already stone
+                Coordinate::new(5, 4),  // the only real write
+            ],
+            5,
+            false,
+        ));
+        assert_eq!(e.conjured_terrain()[0].restore.len(), 1);
+        assert!(e.conjured_terrain()[0].covers(Coordinate::new(5, 4)));
+        assert!(!e.conjured_terrain()[0].covers(Coordinate::new(4, 4)));
+    }
+
+    // ---------------------------------------------------------------
     // Zones that move (`ZoneMotion`). The layer-level rules: who pays
     // when an area arrives on them, who doesn't, and where a drifting
     // cloud goes.
@@ -51863,82 +52161,126 @@ mod tests {
         );
     }
 
-    /// Wall of Stone: lv5 concentration burst. Verifies the lv5 slot cost,
-    /// that failed-save enemies eventually pick up Restrained across
-    /// seeds, and that the caster picks up concentration.
+    /// Wall of Stone raises real wall. The tiles it writes stop the
+    /// pathfinder and stop the line-of-sight walk, and every one of
+    /// them is handed back when the caster's concentration ends.
     #[test]
-    fn wall_of_stone_restrains_enemies_in_burst() {
+    fn wall_of_stone_puts_stone_on_the_map_and_takes_it_back() {
         use crate::actions::spells::WALL_OF_STONE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
+        use crate::engine::terrain::TerrainType;
 
-        let mut concentrated = false;
-        let mut restrained = false;
-        for seed in 0..40u64 {
-            let mut e = ei_seeded(30, 30, &[], seed);
-            let wiz = e
-                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
-                .unwrap();
-            let g = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
-                .unwrap();
-            let center = Coordinate::new(15, 5);
-            let costs = WALL_OF_STONE.cost(&e, wiz, None, Some(&vec![center]), None);
-            assert!(
-                costs.iter().any(|c| matches!(c, Resource::SpellSlot(5))),
-                "Wall of Stone should cost a lv5 spell slot"
-            );
-            for ef in WALL_OF_STONE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
-                ef.apply(&mut e);
-            }
-            if e.actors[&wiz].is_concentrating() {
-                concentrated = true;
-            }
-            if e.actors
-                .get(&g)
-                .is_some_and(|a| a.has_condition(Condition::Restrained))
-            {
-                restrained = true;
-            }
-            if concentrated && restrained {
-                break;
-            }
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+            .unwrap();
+        let anchor = Coordinate::new(12, 5);
+        let costs = WALL_OF_STONE.cost(&e, wiz, None, Some(&vec![anchor]), None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(5))));
+        assert!(e.viewer_can_see(wiz, foe), "clear line before the wall");
+
+        for ef in WALL_OF_STONE.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+            ef.apply(&mut e);
         }
-        assert!(concentrated, "Wall of Stone should anchor caster concentration");
-        assert!(
-            restrained,
-            "Wall of Stone should restrain at least one enemy across seeds"
+        assert_eq!(e.conjured_terrain().len(), 1);
+        assert_eq!(
+            e.terrain_at(anchor).map(|t| t.terrain_type),
+            Some(TerrainType::Wall)
         );
+        // Aimed straight down the row, so it stands across it — the
+        // tiles above and below the anchor are stone too.
+        assert_eq!(
+            e.terrain_at(Coordinate::new(12, 7)).map(|t| t.terrain_type),
+            Some(TerrainType::Wall)
+        );
+        assert!(!e.viewer_can_see(wiz, foe), "you cannot see through stone");
+        assert!(!e.can_move_to(foe, anchor), "and you cannot walk through it");
+
+        // Every tile handed back, and the wall gone with the grip.
+        e.drop_concentration(wiz);
+        assert!(e.conjured_terrain().is_empty());
+        assert_eq!(
+            e.terrain_at(anchor).map(|t| t.terrain_type),
+            Some(TerrainType::Floor)
+        );
+        assert!(e.viewer_can_see(wiz, foe));
     }
 
-    /// Wall of Stone spares allies in the burst (uses enemy_burst_targets
-    /// so friendly fire is impossible). Verifies an ally in the same
-    /// radius never picks up Restrained.
+    /// Wall of Force is the other corner of the terrain layer: solid,
+    /// and transparent. That asymmetry is the whole spell — you put one
+    /// between the party and the thing killing them, and keep shooting.
     #[test]
-    fn wall_of_stone_spares_allies_in_burst() {
-        use crate::actions::spells::WALL_OF_STONE;
+    fn a_wall_of_force_stops_bodies_and_not_eyes() {
+        use crate::actions::spells::WALL_OF_FORCE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-        for seed in 0..20u64 {
-            let mut e = ei_seeded(30, 30, &[], seed);
-            let wiz = e
-                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
-                .unwrap();
-            // Ally on team 0 — same team as the wizard.
-            let ally = e
-                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 0, 0)
-                .unwrap();
-            let center = Coordinate::new(15, 5);
-            for ef in WALL_OF_STONE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
-                ef.apply(&mut e);
-            }
-            assert!(
-                !e.actors[&ally].has_condition(Condition::Restrained),
-                "Wall of Stone should never restrain allies (seed {})",
-                seed
-            );
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+            .unwrap();
+        let anchor = Coordinate::new(12, 5);
+        for ef in WALL_OF_FORCE.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+            ef.apply(&mut e);
         }
+        assert_eq!(
+            e.terrain_at(anchor).map(|t| t.terrain_type),
+            Some(TerrainType::ForceWall)
+        );
+        assert!(
+            e.viewer_can_see(wiz, foe),
+            "a pane of force is invisible, and RAW never says otherwise"
+        );
+        assert!(!e.can_move_to(foe, anchor), "nothing can physically pass through");
+        e.drop_concentration(wiz);
+        assert!(e.can_move_to(foe, anchor));
+    }
+
+    /// Bones of the Earth leaves a stand of rock behind — a ring, not a
+    /// plug, so it is cover rather than a seal. It is not concentration
+    /// in RAW, so the pillars outlive whatever the druid holds next and
+    /// come down on their own timer.
+    #[test]
+    fn bones_of_the_earth_leaves_pillars_standing_on_their_own() {
+        use crate::actions::spells::BONES_OF_THE_EARTH;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let anchor = Coordinate::new(15, 15);
+        for ef in BONES_OF_THE_EARTH.side_effects(&mut e, druid, None, Some(&vec![anchor]), None)
+        {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.conjured_terrain().len(), 1);
+        let is_stone = |e: &EncounterInstance, c: Coordinate| {
+            e.terrain_at(c).map(|t| t.terrain_type) == Some(TerrainType::Wall)
+        };
+        assert!(is_stone(&e, Coordinate::new(13, 13)), "the ring is stone");
+        assert!(is_stone(&e, Coordinate::new(17, 17)));
+        assert!(!is_stone(&e, anchor), "and the middle of it is not");
+        assert!(
+            !e.actors[&druid].is_concentrating(),
+            "the pillars stand on their own"
+        );
+        // Ten rounds and they crumble, handing the floor back.
+        for _ in 0..10 {
+            e.round_end();
+        }
+        assert!(e.conjured_terrain().is_empty());
+        assert!(!is_stone(&e, Coordinate::new(13, 13)));
     }
 
     /// Tasha's Caustic Brew: failed-save enemies pick up the CausticBrewed

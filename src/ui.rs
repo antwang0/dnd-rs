@@ -218,6 +218,11 @@ pub fn render_map(
                         // can cross it and you can shoot over it, but
                         // both cost you something.
                         Some(TerrainType::LowWall) => '▓',
+                        // A pane you can see through and not walk
+                        // through. Drawn as an outline rather than a
+                        // fill for exactly that reason — what is behind
+                        // it is still in play.
+                        Some(TerrainType::ForceWall) => '╬',
                         _ => ' ',
                     }
                     .to_string(),

@@ -39,6 +39,23 @@ pub enum TerrainType {
     /// `ActorInstance::ignores_difficult_terrain`. A creature flying over
     /// a low wall pays nothing for it, and still gets no cover from it.
     LowWall,
+    /// A barrier that stops bodies and not eyes — 5e Wall of Force's
+    /// "an invisible wall of force… nothing can physically pass through
+    /// the wall", and the same sentence in every other transparent
+    /// barrier.
+    ///
+    /// The one combination `Wall` and `LowWall` between them could not
+    /// express, and the reason it needs its own variant rather than a
+    /// flag on either of them: `Wall` is opaque and impassable,
+    /// `LowWall` is transparent and passable, and a force wall is the
+    /// remaining corner. Everything a caster does with one turns on
+    /// being able to see through it — you put it between the party and
+    /// the dragon and then shoot the dragon.
+    ///
+    /// Never generated. The terrain generator lays scenery; this
+    /// variant exists for the conjured-terrain lane
+    /// (`crate::engine::conjured_terrain`) to write and take back.
+    ForceWall,
 }
 
 impl TerrainType {
@@ -53,7 +70,22 @@ impl TerrainType {
     }
 
     pub fn is_passable(self) -> bool {
-        !matches!(self, TerrainType::Wall | TerrainType::Empty)
+        !matches!(
+            self,
+            TerrainType::Wall | TerrainType::Empty | TerrainType::ForceWall
+        )
+    }
+
+    /// True if this tile stops a line of sight dead.
+    ///
+    /// The rule used to live inline in `has_line_of_sight` as a bare
+    /// `== TerrainType::Wall`, which was fine while "solid" and "opaque"
+    /// named the same single variant. `ForceWall` is the case that
+    /// separates them — solid, and transparent — so the question gets
+    /// its own name next to `is_passable`, and the two properties can
+    /// disagree.
+    pub fn blocks_sight(self) -> bool {
+        matches!(self, TerrainType::Wall)
     }
 
     /// True if a line of attack crossing this tile is obstructed enough
@@ -62,7 +94,11 @@ impl TerrainType {
     /// Only `LowWall` does. `Wall` is deliberately excluded: it blocks
     /// line of sight outright, so an attack that crosses one never
     /// reaches the cover walk at all — counting it here would be dead
-    /// code that looked like a rule.
+    /// code that looked like a rule. `ForceWall` is excluded for the
+    /// opposite reason: RAW it is a clean, transparent pane, and a
+    /// creature on the far side of it is in plain view — the wall's
+    /// protection is that nothing can *reach* them, which the
+    /// impassability already says.
     pub fn grants_cover(self) -> bool {
         matches!(self, TerrainType::LowWall)
     }

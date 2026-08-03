@@ -1,6 +1,7 @@
 pub mod action_overrides;
 pub mod actor_gen;
 pub mod attack;
+pub mod conjured_terrain;
 pub mod dice;
 pub mod encounter;
 pub mod errors;
