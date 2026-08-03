@@ -44,6 +44,32 @@
 //!     rather than by the turn: Spike Growth's "2d4 piercing for every
 //!     5 feet it travels".
 //!
+//! ## Where a zone is
+//!
+//! Most of them are wherever they were put, forever — a web is spun on
+//! a patch of floor and that is the patch of floor it holds. But 5e has
+//! a whole cohort whose defining sentence is about *going somewhere*,
+//! and `motion` is the axis that carries them:
+//!
+//!   - **`ZoneMotion::Fixed`** — the default, and the right answer for
+//!     every ground-laid area.
+//!   - **`ZoneMotion::DriftsFromOwner`** — Cloudkill's "the cloud moves
+//!     10 feet away from you at the start of each of your turns", and
+//!     Incendiary Cloud's identical clause. Nobody spends anything; the
+//!     cloud walks itself, and walking itself off the far end of the
+//!     board is how those two spells stop being the caster's problem.
+//!   - **`ZoneMotion::Directed`** — Moonbeam's "you can move the beam up
+//!     to 60 feet" and the bonus-action siblings (Dawn, Flaming
+//!     Sphere). The owner pays for it, and pays on their own turn.
+//!
+//! Both movers land on `EncounterInstance::move_zone`, which is also
+//! where the one rule a moving area needs that a still one doesn't
+//! lives: the contact clause fires at whoever the area has *newly*
+//! covered, and at nobody else. Moonbeam says so outright ("when you
+//! move the beam into a creature's space"), and the alternative — a
+//! blanket re-charge of everyone underneath — would bill the creature
+//! the beam was already on twice for standing still.
+//!
 //! ## What a zone deliberately isn't
 //!
 //! **It has no shape but a square.** `radius` is a Chebyshev radius
@@ -54,11 +80,6 @@
 //! layer today is a sphere, a cube, or a square. Wall of Fire and Blade
 //! Barrier are the ones this shuts out, and they stay one-shot bursts
 //! until somebody wants the geometry enough to write it.
-//!
-//! **It doesn't move.** RAW lets a Moonbeam be walked around the board
-//! for an action. Nothing here forbids adding that later — `origin` is
-//! a plain field — but no zone the engine installs today moves, so
-//! there is no mover.
 //!
 //! **It is friend-or-foe blind.** A web catches the wizard who cast it.
 //! That is RAW, it is what makes placement a decision, and the AI is
@@ -340,6 +361,58 @@ impl ZoneEffect {
     }
 }
 
+/// How a persistent area moves once it is on the board.
+///
+/// The variants are distinguished by *who pays*, which is the only
+/// question the engine has to answer differently for each of them:
+/// `DriftsFromOwner` is charged to nobody and so is run by the engine
+/// at the top of the owner's turn, while `Directed` is charged to the
+/// owner's action economy and so is run by the spell that owns the
+/// zone, on the turn the owner decides to spend it.
+///
+/// `tiles` is in tiles on the engine's 2.5-ft grid throughout: 10 ft is
+/// 4, 30 ft is 12, 60 ft is 24.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoneMotion {
+    /// The area holds the ground it was laid on. Web, Grease, Fog
+    /// Cloud, Spike Growth — everything whose placement is a decision
+    /// made once.
+    Fixed,
+    /// 5e Cloudkill / Incendiary Cloud: "the cloud moves 10 feet away
+    /// from you at the start of each of your turns."
+    ///
+    /// The direction is the unit step pointing from the owner to the
+    /// area's current origin, so the cloud keeps travelling along the
+    /// line it was cast down. A cloud centred exactly on its owner has
+    /// no "away" to move along and stays put for that turn — which is
+    /// self-correcting, since the owner only has to take a step for the
+    /// drift to pick a direction again.
+    DriftsFromOwner { tiles: isize },
+    /// 5e Moonbeam / Dawn / Flaming Sphere: the owner may reposition the
+    /// area on their own turn, up to `tiles` from where it stands.
+    ///
+    /// The engine does not move these — the spell does, by being cast
+    /// again while its zone is already up. That is what makes the
+    /// action economy come out right without a second action per spell:
+    /// the recast is where a cost lives, and each of the three spells
+    /// charges a different one (Moonbeam an action, Dawn and Flaming
+    /// Sphere a bonus action) with no spell slot behind it.
+    Directed { tiles: isize },
+}
+
+impl ZoneMotion {
+    /// How far the owner may shift this area on their own turn, or
+    /// `None` for an area they don't steer. Read by the repositioning
+    /// half of a `Directed` spell's validation, so the range clause
+    /// lives on the zone rather than being restated by each spell.
+    pub fn directed_range(self) -> Option<isize> {
+        match self {
+            ZoneMotion::Directed { tiles } => Some(tiles),
+            _ => None,
+        }
+    }
+}
+
 /// One persistent magical area on the board.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Zone {
@@ -364,6 +437,10 @@ pub struct Zone {
     /// True if the owner's concentration holds it up, in which case
     /// `drop_concentration` tears it down early.
     pub concentration: bool,
+    /// Whether the area travels, and on whose account — see
+    /// `ZoneMotion`. `Fixed` for all but the drifting clouds and the
+    /// steered beams.
+    pub motion: ZoneMotion,
 }
 
 impl Zone {
@@ -372,6 +449,27 @@ impl Zone {
     /// asks the same question of the whole body.
     pub fn covers(&self, coord: Coordinate) -> bool {
         self.origin.chebyshev_to(coord) <= self.radius
+    }
+
+    /// Where a `DriftsFromOwner` area would end up this turn, given
+    /// where its owner is standing. `None` for an area that doesn't
+    /// drift, and for the degenerate case of a cloud centred on the
+    /// creature it is supposed to be moving away from — there is no
+    /// direction in that sentence, and inventing one would send the
+    /// cloud somewhere the table can't predict.
+    ///
+    /// The step is taken per-axis by sign, so a cloud cast diagonally
+    /// keeps travelling diagonally and one cast straight down a
+    /// corridor keeps travelling down it.
+    pub fn drift_destination(&self, owner_at: Coordinate) -> Option<Coordinate> {
+        let ZoneMotion::DriftsFromOwner { tiles } = self.motion else {
+            return None;
+        };
+        let away = self.origin - owner_at;
+        if away.x == 0 && away.y == 0 {
+            return None;
+        }
+        Some(self.origin + Coordinate::new(away.x.signum() * tiles, away.y.signum() * tiles))
     }
 }
 
@@ -389,7 +487,14 @@ mod tests {
             effect: ZoneEffect::OBSCURING,
             rounds_remaining: 10,
             concentration: false,
+            motion: ZoneMotion::Fixed,
         }
+    }
+
+    fn drifting_zone_at(origin: Coordinate, owner_at: Coordinate) -> (Zone, Coordinate) {
+        let mut z = zone_at(origin, 2);
+        z.motion = ZoneMotion::DriftsFromOwner { tiles: 4 };
+        (z, owner_at)
     }
 
     #[test]
@@ -411,6 +516,61 @@ mod tests {
     #[test]
     fn obscurement_alone_is_not_harmful() {
         assert!(!ZoneEffect::OBSCURING.is_harmful());
+    }
+
+    /// A still area is still: nothing about the default motion asks the
+    /// engine to move anything.
+    #[test]
+    fn a_fixed_zone_has_nowhere_to_drift() {
+        let z = zone_at(Coordinate::new(5, 5), 2);
+        assert_eq!(z.motion, ZoneMotion::Fixed);
+        assert!(z.drift_destination(Coordinate::new(1, 1)).is_none());
+    }
+
+    /// "Moves 10 feet away from you" — along the line from the owner
+    /// through the cloud, which for a cloud cast straight down a
+    /// corridor keeps it in the corridor.
+    #[test]
+    fn a_drifting_cloud_travels_away_along_the_axis_it_was_cast_down() {
+        let (z, owner) = drifting_zone_at(Coordinate::new(10, 5), Coordinate::new(2, 5));
+        assert_eq!(
+            z.drift_destination(owner),
+            Some(Coordinate::new(14, 5)),
+            "four tiles further along +x, and not a tile off the row"
+        );
+    }
+
+    /// The step is taken per axis by sign, so a diagonal cast keeps
+    /// travelling diagonally rather than snapping onto an axis.
+    #[test]
+    fn a_diagonal_drift_stays_diagonal() {
+        let (z, owner) = drifting_zone_at(Coordinate::new(8, 8), Coordinate::new(4, 2));
+        assert_eq!(z.drift_destination(owner), Some(Coordinate::new(12, 12)));
+    }
+
+    /// A cloud centred on its owner has no "away" in it. Standing still
+    /// is the honest answer; picking a direction would make the cloud's
+    /// path depend on something the table can't see.
+    #[test]
+    fn a_cloud_sitting_on_its_owner_has_no_direction_to_take() {
+        let (z, _) = drifting_zone_at(Coordinate::new(6, 6), Coordinate::new(6, 6));
+        assert!(z.drift_destination(Coordinate::new(6, 6)).is_none());
+    }
+
+    /// The steered cohort reports its own leash so the spells that own
+    /// them don't each restate the range.
+    #[test]
+    fn only_a_directed_zone_reports_a_reposition_range() {
+        assert_eq!(
+            ZoneMotion::Directed { tiles: 24 }.directed_range(),
+            Some(24)
+        );
+        assert_eq!(ZoneMotion::Fixed.directed_range(), None);
+        assert_eq!(
+            ZoneMotion::DriftsFromOwner { tiles: 4 }.directed_range(),
+            None,
+            "a cloud that walks itself is not a cloud the owner can aim"
+        );
     }
 
     #[test]

@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn the_initiative_panel_counts_down_a_persistent_area() {
         use crate::engine::types::AbilityScoreType;
-        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect};
+        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion};
 
         let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
         assert!(!rendered_panel(&e).contains("web"));
@@ -780,6 +780,7 @@ mod tests {
             )),
             rounds_remaining: 7,
             concentration: true,
+            motion: ZoneMotion::Fixed,
         });
         let panel = rendered_panel(&e);
         assert!(

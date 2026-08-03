@@ -4381,12 +4381,24 @@ impl EncounterInstance {
         Ok(coord.x as usize + coord.y as usize * self.width)
     }
 
-    pub fn is_spawnable(&self, coord: Coordinate) -> bool {
-        if coord.x < 0 || coord.y < 0 {
-            return false;
-        }
+    /// True if `coord` names a tile that is actually on the map.
+    ///
+    /// Distinct from `idx().is_ok()`, which only rejects the negative
+    /// half-plane: the row-major index of a coordinate one column past
+    /// the right edge is a perfectly valid index belonging to the *next
+    /// row*. Every caller that reaches the map from outside a walk
+    /// between two known-good tiles has to ask this question, and the
+    /// three that already did each spelled the same two comparisons out
+    /// by hand.
+    pub fn in_bounds(&self, coord: Coordinate) -> bool {
+        coord.x >= 0
+            && coord.y >= 0
+            && (coord.x as usize) < self.width
+            && (coord.y as usize) < self.height
+    }
 
-        if coord.x as usize >= self.width || coord.y as usize >= self.height {
+    pub fn is_spawnable(&self, coord: Coordinate) -> bool {
+        if !self.in_bounds(coord) {
             return false;
         }
 
@@ -4398,11 +4410,7 @@ impl EncounterInstance {
     }
 
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
-        if coord.x < 0 || coord.y < 0 {
-            return false;
-        }
-
-        if coord.x as usize >= self.width || coord.y as usize >= self.height {
+        if !self.in_bounds(coord) {
             return false;
         }
 
@@ -4519,6 +4527,112 @@ impl EncounterInstance {
         zone.id = id;
         self.zones.push(zone);
         id
+    }
+
+    /// The area `owner_id` is sustaining under the given name, if any.
+    ///
+    /// The handle the steered cohort re-enters through: Moonbeam cast a
+    /// second time is not a second Moonbeam, it is the first one being
+    /// walked somewhere, and the only way for the spell to tell those
+    /// two cases apart is to ask whether its own beam is already up.
+    /// Matched on `(owner, name)` rather than on a remembered id
+    /// because an `Action` is a zero-sized static with nowhere to keep
+    /// one — the name is the identity a spell carries.
+    pub fn zone_sustained_by(&self, owner_id: usize, name: &str) -> Option<&Zone> {
+        self.zones
+            .iter()
+            .find(|z| z.owner_id == owner_id && z.name == name)
+    }
+
+    /// Move a persistent area to `dest`, firing its contact clause at
+    /// whoever it has newly covered.
+    ///
+    /// Returns false — and changes nothing — for an unknown id or a
+    /// move that lands where the area already is.
+    ///
+    /// The "newly" is the whole rule. RAW's trigger for a moving area is
+    /// the area arriving on somebody ("when you move the beam into a
+    /// creature's space"), not the area being on them, so a creature
+    /// the beam was already burning and stays on doesn't pay a second
+    /// time for standing still — it pays again at the start of its own
+    /// turn, through `touch_zones`, like every other creature in every
+    /// other area. Symmetrically, a creature the area has *left* has
+    /// its ledger row dropped, so a beam walked off a target and back
+    /// on again in the same round bills for the second arrival.
+    ///
+    /// Charged in sorted-id order, the determinism every other
+    /// multi-target site in the engine keeps.
+    pub fn move_zone(&mut self, zone_id: usize, dest: Coordinate) -> bool {
+        let Some(index) = self.zones.iter().position(|z| z.id == zone_id) else {
+            return false;
+        };
+        if self.zones[index].origin == dest {
+            return false;
+        }
+        let covered_before: Vec<usize> = self
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|&id| self.actor_in_zone(id, &self.zones[index]))
+            .collect();
+        let name = self.zones[index].name;
+        self.zones[index].origin = dest;
+        self.log(format!("  {} moves to {}.", name, dest));
+        let covered_after: Vec<usize> = self
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|&id| self.actor_in_zone(id, &self.zones[index]))
+            .collect();
+        // Everyone the area is no longer over loses their claim on this
+        // turn's ledger; everyone it has newly arrived on loses theirs
+        // too, and then pays.
+        for id in &covered_before {
+            if !covered_after.contains(id) {
+                self.zone_contacts_this_turn.remove(&(zone_id, *id));
+            }
+        }
+        for id in covered_after {
+            if covered_before.contains(&id) {
+                continue;
+            }
+            self.zone_contacts_this_turn.remove(&(zone_id, id));
+            self.touch_zone(zone_id, id);
+        }
+        true
+    }
+
+    /// Walk every `DriftsFromOwner` area `actor_id` is sustaining one
+    /// step further away, at the top of their turn.
+    ///
+    /// A cloud whose new centre has left the map is swept rather than
+    /// tracked off-board: the two spells that drift both say the cloud
+    /// keeps going, and a cloud that has gone is not something either
+    /// side of the fight has to keep asking about. Its concentration is
+    /// deliberately left alone — RAW the caster is still holding a
+    /// spell that is still burning, just not here.
+    fn drift_zones_of(&mut self, actor_id: usize) {
+        let Some(owner_at) = self.actors.get(&actor_id).map(|a| a.location()) else {
+            return;
+        };
+        let moves: Vec<(usize, Coordinate)> = self
+            .zones
+            .iter()
+            .filter(|z| z.owner_id == actor_id)
+            .filter_map(|z| Some((z.id, z.drift_destination(owner_at)?)))
+            .collect();
+        for (zone_id, dest) in moves {
+            if !self.in_bounds(dest) {
+                let name = self
+                    .zones
+                    .iter()
+                    .find(|z| z.id == zone_id)
+                    .map(|z| z.name)
+                    .unwrap_or("cloud");
+                self.log(format!("The {} drifts off the field.", name));
+                self.remove_zone(zone_id);
+                continue;
+            }
+            self.move_zone(zone_id, dest);
+        }
     }
 
     /// Drop a zone by id. Returns true if one was there.
@@ -7803,6 +7917,13 @@ impl EncounterInstance {
         // web during somebody else's turn has entered it for the first
         // time on that turn and saves for it.
         self.zone_contacts_this_turn.clear();
+        // "The cloud moves 10 feet away from you at the start of each of
+        // your turns." Runs after the ledger clear, so a creature the
+        // cloud arrives on pays for the arrival, and before
+        // `touch_zones`, so the owner who has just been overtaken by
+        // their own drifting cloud is standing in it by the time the
+        // "starts its turn there" clause is asked.
+        self.drift_zones_of(actor_id);
         // "…or starts its turn there." Runs after the clear so the
         // creature standing in the web pays this turn's save, and after
         // `reconcile_footprints` so a creature that just grew into the
@@ -11483,7 +11604,7 @@ mod tests {
     use crate::engine::terrain::TerrainInfo;
     use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::AbilityScoreType;
-    use crate::engine::zones::{ZoneContact, ZoneEffect};
+    use crate::engine::zones::{ZoneContact, ZoneEffect, ZoneMotion};
 
     /// Builds a tiny encounter with no actors and a hand-crafted terrain
     /// grid so LOS can be tested deterministically (terrain_gen randomness
@@ -43313,6 +43434,7 @@ mod tests {
             effect,
             rounds_remaining: 10,
             concentration: false,
+            motion: ZoneMotion::Fixed,
         }
     }
 
@@ -43753,6 +43875,187 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------
+    // Zones that move (`ZoneMotion`). The layer-level rules: who pays
+    // when an area arrives on them, who doesn't, and where a drifting
+    // cloud goes.
+    // ---------------------------------------------------------------
+
+    /// A moving area bills the creature it has newly arrived on, and
+    /// leaves the one it was already covering alone — RAW's trigger is
+    /// the arrival, not the overlap, and a beam that charged everybody
+    /// underneath on every move would bill a pinned target twice a
+    /// round for standing still.
+    #[test]
+    fn a_moving_zone_charges_who_it_arrives_on_and_not_who_it_was_already_on() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 20, &[]);
+        let left = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let right = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        // Radius 1 centred between them. Coverage is measured as a
+        // footprint *gap*, so a radius-1 area reaches two tiles from a
+        // Small creature's anchor and both goblins start under it.
+        let id = e.install_zone(restraining_zone(Coordinate::new(12, 10), 1, 100));
+        // The area's own "moves to" line names it too, so the contact
+        // count has to exclude it.
+        let contacts = |e: &EncounterInstance| {
+            e.messages()
+                .iter()
+                .filter(|m| m.contains("test area") && !m.contains("moves to"))
+                .count()
+        };
+        e.touch_zone(id, left);
+        e.touch_zone(id, right);
+        assert_eq!(contacts(&e), 2, "both start under it and both pay once");
+        // Sliding right onto `right`: it was already covered and stays
+        // covered, and `left` is simply dropped. Nobody is *newly*
+        // covered, so nobody pays again.
+        assert!(e.move_zone(id, Coordinate::new(16, 10)));
+        assert_eq!(
+            contacts(&e),
+            2,
+            "an area that arrives on nobody new charges nobody"
+        );
+        // Sliding back onto `left`: it has been left and re-entered, so
+        // it pays for the second arrival.
+        assert!(e.move_zone(id, Coordinate::new(10, 10)));
+        assert_eq!(contacts(&e), 3, "the target it came back to pays again");
+    }
+
+    /// Moving an area to where it already is is not a move.
+    #[test]
+    fn a_zone_moved_onto_its_own_origin_does_nothing() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e.install_zone(restraining_zone(Coordinate::new(5, 5), 1, 10));
+        assert!(!e.move_zone(id, Coordinate::new(5, 5)));
+        assert!(!e.move_zone(usize::MAX, Coordinate::new(6, 6)), "unknown id");
+    }
+
+    /// "The cloud moves 10 feet away from you at the start of each of
+    /// your turns" — along the line from the owner through the cloud,
+    /// and under its own power at the top of the owner's turn.
+    #[test]
+    fn a_drifting_cloud_walks_itself_at_the_top_of_its_owners_turn() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let owner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let mut cloud = restraining_zone(Coordinate::new(10, 10), 1, 100);
+        cloud.owner_id = owner;
+        cloud.motion = ZoneMotion::DriftsFromOwner { tiles: 4 };
+        let id = e.install_zone(cloud);
+        e.start_turn_for(owner);
+        assert_eq!(
+            e.zones().iter().find(|z| z.id == id).map(|z| z.origin),
+            Some(Coordinate::new(14, 10)),
+            "four tiles further from the owner"
+        );
+        e.start_turn_for(owner);
+        assert_eq!(
+            e.zones().iter().find(|z| z.id == id).map(|z| z.origin),
+            Some(Coordinate::new(18, 10)),
+            "and four more the turn after"
+        );
+    }
+
+    /// A drifting cloud catches whoever it rolls over, on the owner's
+    /// turn — which is the clause that makes Cloudkill worth a slot
+    /// against a line that is holding still.
+    #[test]
+    fn a_drifting_cloud_bills_whoever_it_rolls_over() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let owner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        let mut cloud = restraining_zone(Coordinate::new(10, 10), 1, 100);
+        cloud.owner_id = owner;
+        cloud.motion = ZoneMotion::DriftsFromOwner { tiles: 4 };
+        e.install_zone(cloud);
+        assert!(!e.actors[&victim].has_condition(Condition::Restrained));
+        e.start_turn_for(owner);
+        assert!(
+            e.actors[&victim].has_condition(Condition::Restrained),
+            "the cloud rolled onto them and the contact clause fired"
+        );
+    }
+
+    /// A cloud whose centre has left the map is swept rather than
+    /// tracked off-board — the two spells that drift both say the cloud
+    /// keeps going, and a cloud that has gone is nobody's problem.
+    #[test]
+    fn a_cloud_that_drifts_off_the_map_disperses() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let owner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let mut cloud = restraining_zone(Coordinate::new(18, 10), 1, 100);
+        cloud.owner_id = owner;
+        cloud.motion = ZoneMotion::DriftsFromOwner { tiles: 4 };
+        e.install_zone(cloud);
+        e.start_turn_for(owner);
+        assert!(e.zones().is_empty(), "it rolled off the edge and is gone");
+    }
+
+    /// A creature standing exactly where its own cloud is has no "away"
+    /// to send it, and the cloud stays. Pinned because the alternative
+    /// (picking a direction) would make the path unpredictable at the
+    /// table.
+    #[test]
+    fn a_cloud_centred_on_its_owner_does_not_drift() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let owner = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let mut cloud = restraining_zone(Coordinate::new(10, 10), 1, 100);
+        cloud.owner_id = owner;
+        cloud.motion = ZoneMotion::DriftsFromOwner { tiles: 4 };
+        let id = e.install_zone(cloud);
+        e.start_turn_for(owner);
+        assert_eq!(
+            e.zones().iter().find(|z| z.id == id).map(|z| z.origin),
+            Some(Coordinate::new(10, 10))
+        );
+    }
+
+    /// `zone_sustained_by` is the handle the steered spells re-enter
+    /// through, and it is scoped to the owner: two druids with two
+    /// moonbeams each find their own.
+    #[test]
+    fn a_sustained_zone_is_found_by_its_owner_and_not_by_anybody_else() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mine = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let theirs = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let mut z = restraining_zone(Coordinate::new(10, 10), 1, 10);
+        z.owner_id = mine;
+        z.name = "beam";
+        e.install_zone(z);
+        assert!(e.zone_sustained_by(mine, "beam").is_some());
+        assert!(e.zone_sustained_by(theirs, "beam").is_none());
+        assert!(e.zone_sustained_by(mine, "some other spell").is_none());
+    }
+
     /// Hunger of Hadar needs two coincident zones to hold three RAW
     /// clauses: the dark and its automatic cold on one, the saved-for
     /// acid on the other. Both are held by the same concentration, so
@@ -43895,6 +44198,161 @@ mod tests {
         assert!(!e.tile_is_obscured(center));
         assert!(e.viewer_can_see(wiz, inside));
         assert!(!e.actors[&wiz].is_concentrating());
+    }
+
+    /// Moonbeam's second clause: "on each of your turns after you cast
+    /// this spell, you can use an action to move the beam up to 60
+    /// feet." The recast costs an action and *no slot*, moves the beam
+    /// the druid already has rather than laying a second one, and keeps
+    /// the concentration it was cast under.
+    #[test]
+    fn a_second_moonbeam_walks_the_first_one_instead_of_laying_another() {
+        use crate::actions::spells::MOONBEAM;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(60, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let first = Coordinate::new(10, 10);
+        let cast = |e: &mut EncounterInstance, at: Coordinate| {
+            for ef in MOONBEAM.side_effects(e, druid, None, Some(&vec![at]), None) {
+                ef.apply(e);
+            }
+        };
+        assert!(
+            MOONBEAM
+                .cost(&e, druid, None, Some(&vec![first]), None)
+                .iter()
+                .any(|c| matches!(c, Resource::SpellSlot(2))),
+            "the first cast is a level-2 slot"
+        );
+        cast(&mut e, first);
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.actors[&druid].is_concentrating());
+
+        // With the beam up, the spell prices itself as an action alone.
+        let second = Coordinate::new(20, 10);
+        let recast = MOONBEAM.cost(&e, druid, None, Some(&vec![second]), None);
+        assert!(
+            !recast.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+            "walking the beam costs no second slot"
+        );
+        assert!(recast.iter().any(|c| matches!(c, Resource::Action)));
+        cast(&mut e, second);
+        assert_eq!(e.zones().len(), 1, "one beam, moved — not two beams");
+        assert_eq!(e.zones()[0].origin, second);
+        assert!(
+            e.actors[&druid].is_concentrating(),
+            "the druid never let go, so the beam it is walking must survive"
+        );
+    }
+
+    /// The leash is real: "up to 60 feet" is 24 tiles from where the
+    /// beam *is*, and a destination past it is not a legal move.
+    #[test]
+    fn a_moonbeam_cannot_be_walked_further_than_its_own_range() {
+        use crate::actions::spells::MOONBEAM;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+
+        let mut e = ei_with_terrain(80, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let first = Coordinate::new(10, 10);
+        for ef in MOONBEAM.side_effects(&mut e, druid, None, Some(&vec![first]), None) {
+            ef.apply(&mut e);
+        }
+        let far = Coordinate::new(70, 10);
+        assert!(
+            !MOONBEAM.custom_validate_input(&e, druid, None, Some(&vec![far]), None),
+            "60 tiles is well past the beam's 24-tile step"
+        );
+        let near = Coordinate::new(30, 10);
+        assert!(MOONBEAM.custom_validate_input(&e, druid, None, Some(&vec![near]), None));
+    }
+
+    /// Flaming Sphere's bonus-action roll. Same idiom as Moonbeam, a
+    /// different resource — which is the whole difference between the
+    /// two spells' turns.
+    #[test]
+    fn a_flaming_sphere_rolls_for_a_bonus_action() {
+        use crate::actions::spells::FLAMING_SPHERE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+            .unwrap();
+        let first = Coordinate::new(10, 10);
+        for ef in FLAMING_SPHERE.side_effects(&mut e, wiz, None, Some(&vec![first]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 1, "the sphere is a place, not an event");
+        let roll_to = Coordinate::new(16, 10);
+        let recast = FLAMING_SPHERE.cost(&e, wiz, None, Some(&vec![roll_to]), None);
+        assert!(recast.iter().any(|c| matches!(c, Resource::BonusAction)));
+        assert!(!recast.iter().any(|c| matches!(c, Resource::SpellSlot(_))));
+        for ef in FLAMING_SPHERE.side_effects(&mut e, wiz, None, Some(&vec![roll_to]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 1);
+        assert_eq!(e.zones()[0].origin, roll_to);
+    }
+
+    /// Cloudkill's third clause: the fog rolls 10 ft away from the
+    /// wizard at the top of every one of the wizard's turns, and takes
+    /// its poison with it.
+    #[test]
+    fn a_cloudkill_rolls_away_from_the_wizard_who_cast_it() {
+        use crate::actions::spells::CLOUDKILL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(60, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let center = Coordinate::new(20, 10);
+        for ef in CLOUDKILL.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.tile_is_obscured(center), "its area is heavily obscured");
+        e.start_turn_for(wiz);
+        assert_eq!(
+            e.zones()[0].origin,
+            Coordinate::new(24, 10),
+            "four tiles further down the line the wizard cast it along"
+        );
+        assert!(e.tile_is_obscured(Coordinate::new(24, 10)));
+    }
+
+    /// Incendiary Cloud is Cloudkill's level-8 sibling and is built the
+    /// same way: a concentration-held, obscuring, drifting area rather
+    /// than a one-shot burst that leaves nothing behind.
+    #[test]
+    fn an_incendiary_cloud_is_a_place_that_drifts_and_not_a_detonation() {
+        use crate::actions::spells::INCENDIARY_CLOUD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(60, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let center = Coordinate::new(20, 10);
+        for ef in INCENDIARY_CLOUD.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.zones().len(), 1);
+        assert!(e.tile_is_obscured(center));
+        assert!(e.actors[&wiz].is_concentrating());
+        e.start_turn_for(wiz);
+        assert_eq!(e.zones()[0].origin, Coordinate::new(24, 10));
+        // And the concentration anchor still reaches it.
+        e.drop_concentration(wiz);
+        assert!(e.zones().is_empty());
     }
 
     /// Gust of Wind: lv2 concentration line push. Verifies the lv2 slot

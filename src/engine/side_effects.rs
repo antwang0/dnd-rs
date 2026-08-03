@@ -1048,6 +1048,30 @@ impl ApplicableSideEffect for InstallZone {
     }
 }
 
+/// Walk a persistent magical area that is already on the board to a new
+/// centre — the steered half of `crate::engine::zones::ZoneMotion`.
+///
+/// Emitted by the reposition branch of the spells that own a `Directed`
+/// zone (Moonbeam, Dawn, Flaming Sphere), which reach it by being cast
+/// again while their own area is still up. Deliberately *not* paired
+/// with a `StartConcentration`: the caster never stopped concentrating,
+/// and re-announcing the spell would tear down the very zone this
+/// effect is moving.
+///
+/// No `extend_duration`: Extended Spell doubles a duration, and moving
+/// an area is not one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoveZone {
+    pub zone_id: usize,
+    pub dest: crate::engine::types::Coordinate,
+}
+
+impl ApplicableSideEffect for MoveZone {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.move_zone(self.zone_id, self.dest);
+    }
+}
+
 /// Add a status condition to an actor with a given timer. No-op if the
 /// actor is missing; if the condition was already present its timer is
 /// replaced (no stacking semantics yet — revisit when needed).

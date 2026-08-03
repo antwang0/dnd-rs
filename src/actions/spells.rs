@@ -16,10 +16,10 @@ use crate::{
         saves::SaveDamagePolicy,
         side_effects::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, InstallZone,
-            Resource, StartConcentration, install_condition_with_link,
+            MoveZone, Resource, StartConcentration, install_condition_with_link,
         },
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
-        zones::{Zone, ZoneContact, ZoneEffect},
+        zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion},
     },
 };
 
@@ -482,6 +482,78 @@ pub fn spell_attack_outcome(
         target_id,
     );
     (effects, total_dmg)
+}
+
+/// The steered-zone cohort's shared entry test: is this cast a *move*
+/// of the area this caster already has up, and is the destination
+/// inside the leash?
+///
+/// Returns `(zone id, destination)` when it is, `None` when it isn't —
+/// in which case the cast is an ordinary first cast and the spell falls
+/// through to its install branch.
+///
+/// Moonbeam, Dawn and Flaming Sphere all say some version of "on your
+/// turn you can move it up to N feet", and all three reach it the same
+/// way: the caster names the spell again while the first one is still
+/// burning. That idiom is what keeps the action economy honest without
+/// a bespoke "move your moonbeam" action per spell — the recast is
+/// where the cost lives, and each spell charges its own
+/// (`action_only` for Moonbeam, `bonus_action_only` for the other two)
+/// with no slot behind it.
+///
+/// The leash is read off `ZoneMotion::Directed` rather than restated
+/// here, so a spell that steers further is one number in one place.
+/// Distance is measured from where the area *is*, which is the clause
+/// RAW writes — a beam that has been walked halfway across the room is
+/// 60 ft from there, not from the druid.
+fn steered_zone_move(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    zone_name: &str,
+    target_locations: Option<&Vec<Coordinate>>,
+) -> Option<(usize, Coordinate)> {
+    let point = first_target_location(target_locations)?;
+    let zone = encounter.zone_sustained_by(caster_id, zone_name)?;
+    let leash = zone.motion.directed_range()?;
+    (zone.origin.chebyshev_to(point) <= leash).then_some((zone.id, point))
+}
+
+/// The cost half of the same idiom: `reposition` while the caster's own
+/// area is up, `first_cast` otherwise.
+///
+/// Split from `steered_zone_move` because `cost` is asked before a
+/// destination is known (the UI prices an action to decide whether to
+/// offer it), so the only question it can answer is "is the area up".
+/// A recast aimed outside the leash is refused by validation, not by
+/// being priced differently — a spell whose cost moved with its aim
+/// would be unreadable at the prompt.
+fn steered_zone_cost(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    zone_name: &str,
+    reposition: Vec<Resource>,
+    first_cast: Vec<Resource>,
+) -> Vec<Resource> {
+    if encounter.zone_sustained_by(caster_id, zone_name).is_some() {
+        reposition
+    } else {
+        first_cast
+    }
+}
+
+/// The validation half: a recast may only be aimed somewhere the area
+/// can actually reach, and a first cast has to be one the caster can
+/// hold onto.
+fn steered_zone_validate(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    zone_name: &str,
+    target_locations: Option<&Vec<Coordinate>>,
+) -> bool {
+    if encounter.zone_sustained_by(caster_id, zone_name).is_some() {
+        return steered_zone_move(encounter, caster_id, zone_name, target_locations).is_some();
+    }
+    encounter.caster_can_concentrate(caster_id)
 }
 
 /// Who's caught in a save-burst: enemies only (allies on the safe side
@@ -2436,6 +2508,7 @@ impl Action for Web {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // RAW: "each creature in the area when the web appears"
                 // saves at once, as well as on entry and at the start
@@ -6549,6 +6622,7 @@ impl Action for StinkingCloud {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // RAW's trigger is the *start of a turn* inside the
                 // cloud; the gas rolling in around somebody costs them
@@ -7265,6 +7339,7 @@ impl Action for CloudOfDaggers {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // RAW charges only on entry and at the start of a turn:
                 // conjuring the blades around somebody already standing
@@ -9401,13 +9476,15 @@ pub static WALL_OF_FIRE: LazyLock<WallOfFire> = LazyLock::new(|| WallOfFire {});
 /// Cloudkill — level-5 conjuration, concentration (sorcerer / wizard). A
 /// 20-ft-radius sphere of poisonous yellow-green fog within 120 ft.
 ///
-/// Both RAW clauses:
+/// All three RAW clauses:
 ///
 ///   - "Its area is heavily obscured."
 ///   - "Each creature in the area makes a Constitution saving throw,
 ///     taking 5d8 poison damage on a failed save or half as much on a
 ///     successful one. A creature makes this save when it enters the
 ///     area for the first time on a turn or starts its turn there."
+///   - "The cloud moves 10 feet away from you at the start of each of
+///     your turns, rolling along the surface of the ground."
 ///
 /// The obscurement is the half the old implementation had no way to
 /// express, and it is most of what makes the spell frightening: a wall
@@ -9416,15 +9493,20 @@ pub static WALL_OF_FIRE: LazyLock<WallOfFire> = LazyLock::new(|| WallOfFire {});
 /// the cloud used to hit once for 5d8 and then sit on the map as a log
 /// line.
 ///
-/// Not modeled: RAW's "the cloud moves 10 feet away from you at the
-/// start of each of your turns." A zone's `origin` is a plain field and
-/// nothing forbids a mover later; today the fog stays where it was
-/// cast.
+/// The drift is the clause that makes the spell a decision rather than
+/// a placement. A cloudkill is aimed *through* a formation, not at it:
+/// it rolls four tiles further away every turn the wizard stands still,
+/// and stops being anybody's problem once it has rolled off the board.
+/// Carried by `ZoneMotion::DriftsFromOwner`, so the direction is the
+/// line from the wizard through the fog — the wizard steers it by
+/// walking.
 pub struct Cloudkill {}
 
 impl Cloudkill {
     /// 20-ft radius = 4 tiles on the 2.5-ft grid.
     const RADIUS: isize = 4;
+    /// "…moves 10 feet away from you" = 4 tiles per turn.
+    const DRIFT: isize = 4;
 }
 
 impl Action for Cloudkill {
@@ -9503,6 +9585,9 @@ impl Action for Cloudkill {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::DriftsFromOwner {
+                        tiles: Self::DRIFT,
+                    },
                 },
                 catch_present: true,
             }),
@@ -9612,6 +9697,7 @@ impl Action for InsectPlague {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // "When the swarm appears…" — the one damaging area in
                 // the set whose text charges on arrival as well.
@@ -10273,6 +10359,7 @@ impl Action for SpikeGrowth {
                     effect: ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // Nothing to charge on arrival: the thorns bill
                 // movement, and standing still in them is free.
@@ -12132,17 +12219,25 @@ pub static GOODBERRY: LazyLock<Goodberry> = LazyLock::new(|| Goodberry {});
 /// skirmisher and be paid for ten rounds while the light shone on empty
 /// ground, and could never be paid for the archer who walked into it.
 ///
-/// Not modeled: RAW's "you can move the beam up to 60 feet as an
-/// action" on later turns. The zone's `origin` is a plain field and
-/// nothing forbids a mover later; the pillar simply stays where the
-/// druid put it, which makes placement the decision it already was for
-/// Web and Grease.
+/// RAW's "on each of your turns after you cast this spell, you can use
+/// an action to move the beam up to 60 feet in any direction" is the
+/// steered half, and it is what makes the beam a weapon rather than a
+/// trap: the druid walks it onto whoever is worth 2d10 this round.
+/// Reached by naming the spell again while the first beam is still
+/// burning — the recast costs an action and no slot, and moves the
+/// pillar instead of laying a second one. See `steered_zone_move`.
 pub struct Moonbeam {}
 
 impl Moonbeam {
     /// 5-ft radius ≈ 1 tile either side of the anchor on the 2.5-ft
     /// grid.
     const RADIUS: isize = 1;
+    /// The name the zone carries, and so the handle a recast finds its
+    /// own beam by. Shared between the install and the reposition
+    /// branch so the two can't drift apart.
+    const ZONE: &'static str = "moonbeam";
+    /// "…up to 60 feet in any direction" = 24 tiles.
+    const STEP: isize = 24;
 }
 
 impl Action for Moonbeam {
@@ -12172,23 +12267,25 @@ impl Action for Moonbeam {
     }
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        // "…you can use an action to move the beam": an action, and no
+        // second slot, for as long as the first beam is up.
+        steered_zone_cost(e, c, Self::ZONE, action_only(), action_and_slot(2))
     }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.caster_can_concentrate(caster_id)
+        steered_zone_validate(encounter, caster_id, Self::ZONE, target_locations)
     }
     fn side_effects(
         &self,
@@ -12198,6 +12295,14 @@ impl Action for Moonbeam {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some((zone_id, dest)) =
+            steered_zone_move(encounter, caster_id, Self::ZONE, target_locations)
+        {
+            // No `StartConcentration` on this branch: the druid never
+            // let go, and re-announcing the spell would tear down the
+            // beam being walked.
+            return vec![Box::new(MoveZone { zone_id, dest })];
+        }
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
@@ -12209,7 +12314,7 @@ impl Action for Moonbeam {
             Box::new(InstallZone {
                 zone: Zone {
                     id: 0,
-                    name: "moonbeam",
+                    name: Self::ZONE,
                     owner_id: caster_id,
                     origin: point,
                     radius: Self::RADIUS,
@@ -12221,6 +12326,7 @@ impl Action for Moonbeam {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Directed { tiles: Self::STEP },
                 },
                 // "…each creature in the cylinder when it appears makes
                 // a Constitution saving throw."
@@ -12425,6 +12531,7 @@ impl Action for SleetStorm {
                     ),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // RAW's triggers are entry and turn-start only; the
                 // storm rolls in around whoever is standing there
@@ -13827,6 +13934,7 @@ impl Action for SpikeStones {
                     effect: ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 catch_present: false,
             }),
@@ -15338,6 +15446,7 @@ impl Action for SickeningRadiance {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // RAW's triggers are entry and turn-start; the light
                 // going up around a creature costs it nothing until its
@@ -15897,13 +16006,23 @@ pub static TIDAL_WAVE: LazyLock<TidalWave> = LazyLock::new(|| TidalWave {});
 /// left a concentration mark behind.
 ///
 /// Same collapse Grease takes: RAW bills at the end of a turn, the
-/// layer at the start. Not modeled: RAW's "you can move it 60 feet as a
-/// bonus action."
+/// layer at the start.
+///
+/// RAW's "as a bonus action, you can move the sunlight up to 60 feet"
+/// is the steered half, and it is the difference between a level-5 slot
+/// and a level-2 one: Moonbeam costs the druid its whole action to
+/// walk, Dawn costs the cleric a bonus action and keeps its Action free
+/// for a Spirit Guardians turn. Reached the same way — name the spell
+/// again while the light is still up. See `steered_zone_move`.
 pub struct Dawn {}
 
 impl Dawn {
     /// 30-ft radius ≈ a 6-tile Chebyshev burst.
     const RADIUS: isize = 6;
+    /// The zone's name, and so the handle a recast finds it by.
+    const ZONE: &'static str = "dawn";
+    /// "…up to 60 feet" = 24 tiles.
+    const STEP: isize = 24;
 }
 
 impl Action for Dawn {
@@ -15932,23 +16051,23 @@ impl Action for Dawn {
     }
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(5)
+        steered_zone_cost(e, c, Self::ZONE, bonus_action_only(), action_and_slot(5))
     }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.caster_can_concentrate(caster_id)
+        steered_zone_validate(encounter, caster_id, Self::ZONE, target_locations)
     }
     fn side_effects(
         &self,
@@ -15958,6 +16077,11 @@ impl Action for Dawn {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some((zone_id, dest)) =
+            steered_zone_move(encounter, caster_id, Self::ZONE, target_locations)
+        {
+            return vec![Box::new(MoveZone { zone_id, dest })];
+        }
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
@@ -15969,7 +16093,7 @@ impl Action for Dawn {
             Box::new(InstallZone {
                 zone: Zone {
                     id: 0,
-                    name: "dawn",
+                    name: Self::ZONE,
                     owner_id: caster_id,
                     origin: point,
                     radius: Self::RADIUS,
@@ -15981,6 +16105,7 @@ impl Action for Dawn {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Directed { tiles: Self::STEP },
                 },
                 catch_present: false,
             }),
@@ -16273,6 +16398,7 @@ impl Action for Grease {
                 // which is most of why it is worth a slot.
                 rounds_remaining: 10,
                 concentration: false,
+                motion: ZoneMotion::Fixed,
             },
             catch_present: true,
         })]
@@ -16281,15 +16407,37 @@ impl Action for Grease {
 
 pub static GREASE: LazyLock<Grease> = LazyLock::new(|| Grease {});
 
-/// Flaming Sphere — level-2 conjuration, concentration. The caster
-/// conjures a 5-ft-radius ball of flame at a tile within 60 ft. Every
-/// enemy whose footprint touches the burst makes a DEX save vs the
-/// caster's spell DC: fail = full 2d6 fire, pass = half. RAW lets the
-/// sphere be re-positioned each turn as a bonus action; we collapse the
-/// per-round re-roll to the cast-time install (matches our Sickening
-/// Radiance / Dawn simplification). Concentration-bound so the slot is
-/// committed; dropping concentration ends the sphere cleanly.
+/// Flaming Sphere — level-2 conjuration, concentration. A 5-ft-radius
+/// ball of flame conjured on a tile within 60 ft.
+///
+/// Both of RAW's clauses, which are the two halves of what makes a
+/// second-level slot worth spending on 2d6:
+///
+///   - "Any creature that ends its turn within 5 feet of the sphere
+///     must make a Dexterity saving throw, taking 2d6 fire damage on a
+///     failed save, or half as much on a successful one." That is a
+///     place, so it is a zone — and the layer's "starts its turn there"
+///     collapse is the same one Grease and Dawn take.
+///   - "As a bonus action, you can move the sphere up to 30 feet."
+///     Reached by naming the spell again while the sphere is still up:
+///     a bonus action, no slot, and the ball rolls onto whoever is
+///     standing where it wasn't. See `steered_zone_move`.
+///
+/// The sphere used to be a one-shot burst that rolled 2d6 at cast time
+/// and then left nothing behind but a concentration mark — a spell that
+/// was strictly worse than a cantrip after its first round. Held on the
+/// layer and steered, it is the thing a wizard actually spends a
+/// concentration slot on: a hazard that follows the enemy line.
 pub struct FlamingSphere {}
+
+impl FlamingSphere {
+    /// 5-ft radius ≈ a 1-tile Chebyshev burst.
+    const RADIUS: isize = 1;
+    /// The zone's name, and so the handle a recast finds it by.
+    const ZONE: &'static str = "flaming sphere";
+    /// "…up to 30 feet" = 12 tiles.
+    const STEP: isize = 12;
+}
 
 impl Action for FlamingSphere {
     fn school(&self) -> Option<SpellSchool> {
@@ -16302,8 +16450,9 @@ impl Action for FlamingSphere {
         vec!["sphere", "fs-spell", "flameball"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 5ft-radius sphere ≈ 1-tile burst.
-        TargetingSchema::Burst { radius: 1 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -16317,13 +16466,23 @@ impl Action for FlamingSphere {
     }
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        steered_zone_cost(e, c, Self::ZONE, bonus_action_only(), action_and_slot(2))
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        steered_zone_validate(encounter, caster_id, Self::ZONE, target_locations)
     }
     fn side_effects(
         &self,
@@ -16333,6 +16492,11 @@ impl Action for FlamingSphere {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some((zone_id, dest)) =
+            steered_zone_move(encounter, caster_id, Self::ZONE, target_locations)
+        {
+            return vec![Box::new(MoveZone { zone_id, dest })];
+        }
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
@@ -16344,23 +16508,34 @@ impl Action for FlamingSphere {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        let (mut effects, _) = enemy_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            1,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(2, 6),
-            DamageType::Fire,
-            "flaming sphere",
-        );
-        // Concentration mark — dropping cleans up the sphere marker.
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Flaming Sphere"),
-        }));
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: Self::ZONE,
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(2, 6),
+                        DamageType::Fire,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                    motion: ZoneMotion::Directed { tiles: Self::STEP },
+                },
+                // "…any creature that ends its turn within 5 feet of the
+                // sphere" — the sphere doesn't burn on arrival, only on
+                // a turn spent beside it, so nobody pays at cast time.
+                catch_present: false,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Flaming Sphere"),
+            }),
+        ]
     }
 }
 
@@ -16714,6 +16889,7 @@ impl Action for EvardsBlackTentacles {
                     )),
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // The tentacles erupt around whoever is standing there,
                 // and RAW's "enters the area" covers the square
@@ -18654,6 +18830,7 @@ impl Action for FogCloud {
                     // leaves the board without the teardown hook firing.
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 // Nothing to charge: the cloud's whole effect is the
                 // obscurement, which is a standing property of the
@@ -20427,17 +20604,44 @@ impl Action for DelayedBlastFireball {
 pub static DELAYED_BLAST_FIREBALL: LazyLock<DelayedBlastFireball> =
     LazyLock::new(|| DelayedBlastFireball {});
 
-/// Incendiary Cloud — level-8 conjuration. A churning cloud of smoke
-/// and embers fills a 20-ft (4-tile) radius sphere at a point within
-/// 150 ft (60 tiles). Every creature in the area makes a DEX save vs
-/// the caster's spell save DC: fail = 10d8 fire, success = half. RAW
-/// lasts 1 minute with the cloud drifting 10 ft per round; we collapse
-/// to a one-shot burst on cast (consistent with Fire Storm / DBF) since
-/// the engine doesn't model moving cloud zones. Friend-or-foe agnostic
-/// via the neutral-burst route — the cloud doesn't discriminate.
+/// Incendiary Cloud — level-8 conjuration, concentration (sorcerer /
+/// wizard). A churning cloud of smoke and embers filling a 20-ft
+/// (4-tile) radius sphere at a point within 150 ft (60 tiles).
+///
+/// The level-8 sibling of Cloudkill, clause for clause, which is why it
+/// is built the same way:
+///
+///   - "Its area is heavily obscured."
+///   - "When the cloud appears, each creature in it must make a
+///     Dexterity saving throw, taking 10d8 fire damage on a failed
+///     save, or half as much on a successful one. A creature must also
+///     make this saving throw when it enters the spell's area for the
+///     first time on a turn or ends its turn there."
+///   - "The cloud moves 10 feet directly away from you in a direction
+///     that you choose at the start of each of your turns."
+///
+/// Friend-or-foe blind, like every zone: the embers don't check
+/// allegiance, and neither does the layer. That is the same
+/// non-discrimination the old one-shot `neutral_burst` route had, kept
+/// rather than narrowed — an eighth-level slot that clears a room
+/// clears the room.
+///
+/// The cloud used to detonate once for 10d8 and vanish, which made a
+/// level-8 slot a slightly larger Fireball. Held on the layer and
+/// drifting, it is the area-denial spell its own text describes.
 pub struct IncendiaryCloud {}
 
+impl IncendiaryCloud {
+    /// 20-ft radius = 4 tiles.
+    const RADIUS: isize = 4;
+    /// "…moves 10 feet directly away from you" = 4 tiles per turn.
+    const DRIFT: isize = 4;
+}
+
 impl Action for IncendiaryCloud {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
     fn name(&self) -> &str {
         "incendiary cloud"
     }
@@ -20445,7 +20649,9 @@ impl Action for IncendiaryCloud {
         vec!["ic", "icloud", "embers"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft RAW = 60 tiles.
@@ -20467,6 +20673,16 @@ impl Action for IncendiaryCloud {
     ) -> Vec<Resource> {
         action_and_slot(8)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -20486,18 +20702,35 @@ impl Action for IncendiaryCloud {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let (effects, _) = neutral_burst_save_for_half(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            dc,
-            Dice::new(10, 8),
-            DamageType::Fire,
-            "incendiary cloud",
-        );
-        effects
+        vec![
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "incendiary cloud",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::RADIUS,
+                    effect: ZoneEffect::choking(ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(10, 8),
+                        DamageType::Fire,
+                    )),
+                    rounds_remaining: 10,
+                    concentration: true,
+                    motion: ZoneMotion::DriftsFromOwner {
+                        tiles: Self::DRIFT,
+                    },
+                },
+                // "When the cloud appears, each creature in it must make
+                // a Dexterity saving throw."
+                catch_present: true,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Incendiary Cloud"),
+            }),
+        ]
     }
 }
 
@@ -21841,6 +22074,7 @@ impl Action for Entangle {
                 effect: ZoneEffect::ROUGH,
                 rounds_remaining: 10,
                 concentration: true,
+                motion: ZoneMotion::Fixed,
             },
             // The zone carries no contact clause, so there is nothing
             // for it to charge on arrival; the sweep below is the
@@ -22446,6 +22680,7 @@ impl Action for HungerOfHadar {
                 effect,
                 rounds_remaining: 10,
                 concentration: true,
+                motion: ZoneMotion::Fixed,
             },
             // Neither clause has a "when it appears" trigger: the void
             // opens, and the bill arrives on the victim's own turn.
@@ -26395,6 +26630,7 @@ impl Action for Silence {
                 // outlives whatever else the caster is holding.
                 rounds_remaining: 10,
                 concentration: false,
+                motion: ZoneMotion::Fixed,
             },
             // The sphere falls over whoever is standing there and they
             // are silenced at once; the timer they pick up lapses at
@@ -26698,6 +26934,7 @@ impl Action for Darkness {
                     effect: ZoneEffect::OBSCURING,
                     rounds_remaining: 10,
                     concentration: true,
+                    motion: ZoneMotion::Fixed,
                 },
                 catch_present: false,
             }),
