@@ -74,12 +74,24 @@
 //!
 //! **It has no shape but a square.** `radius` is a Chebyshev radius
 //! around `origin`, the same measure every burst in the engine already
-//! uses. Walls and lines would each need their own geometry and their
-//! own answer for "which tiles does a 4-tile line through a doorway
-//! cover"; a burst reuses `footprint_chebyshev`, and every spell on the
-//! layer today is a sphere, a cube, or a square. Wall of Fire and Blade
-//! Barrier are the ones this shuts out, and they stay one-shot bursts
-//! until somebody wants the geometry enough to write it.
+//! uses. Lines would need their own geometry and their own answer for
+//! "which tiles does a 4-tile line through a doorway cover"; a burst
+//! reuses `footprint_chebyshev`, and every spell on the layer is a
+//! sphere, a cube, or a square.
+//!
+//! The hazard walls — Wall of Fire, Blade Barrier, Wall of Thorns — do
+//! live here, as squares. What they needed from the layer was
+//! *persistence*, not geometry: the clause that makes each of them a
+//! wall rather than a burst is "when a creature enters it for the first
+//! time on a turn or ends its turn there", and that sentence is what a
+//! zone is. A wide square is a coarse wall and a perfectly good one.
+//!
+//! The walls that are really about geometry — the ones whose whole
+//! effect is that you cannot get past them — are not zones at all.
+//! Wall of Stone and Wall of Force write terrain, through
+//! `crate::engine::conjured_terrain`, because what they need is for the
+//! pathfinder and the line-of-sight walk to see them, and both of those
+//! read the map rather than this layer.
 //!
 //! **It is friend-or-foe blind.** A web catches the wizard who cast it.
 //! That is RAW, it is what makes placement a decision, and the AI is
