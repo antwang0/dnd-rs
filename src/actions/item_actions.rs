@@ -2919,11 +2919,19 @@ impl Action for ReadAidScroll {
         // gets bumped to 5 HP and is back in the fight (the `bump_max_hp`
         // helper raises current by the same delta). Mirrors the spell-
         // side `Aid` impl which doesn't filter dying targets.
+        // Allies already carrying Aid are skipped rather than counted —
+        // PHB: "the effects of the same spell cast multiple times don't
+        // combine" — so a scroll read into a party that is already
+        // buffed spends itself on whoever is not, instead of stacking a
+        // second five onto the three lowest.
         let mut candidates: Vec<(u64, usize)> = encounter
             .ally_candidates_in_range(caster_id, RANGE_TILES)
             .into_iter()
             .filter_map(|(id, _dist)| {
                 let a = encounter.actors.get(&id)?;
+                if a.has_condition(Condition::Aided) {
+                    return None;
+                }
                 let max = a.max_hitpoints().max(1) as u64;
                 let hp_pct = (a.hitpoints() as u64 * 1000) / max;
                 Some((hp_pct, id))
@@ -2932,9 +2940,7 @@ impl Action for ReadAidScroll {
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
         for (_, tid) in &candidates {
-            if let Some(target) = encounter.actors.get_mut(tid) {
-                target.bump_max_hp(5);
-            }
+            crate::actions::spells::apply_aid(encounter, *tid);
         }
         encounter.log(format!(
             "  aid: +5 max HP / +5 HP on {} ally{}",

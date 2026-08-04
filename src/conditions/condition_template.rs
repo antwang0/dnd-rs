@@ -137,6 +137,32 @@ pub enum Condition {
     /// a flat AC boost via `condition_ac_bonus`). Lasts 8 hours; we just
     /// give it a long Rounds timer.
     MageArmored,
+    /// Already carrying Aid's +5 to hit-point maximum and current hit
+    /// points. A marker and nothing else — no consumer reads it for a
+    /// modifier, because Aid's effect is a change to the sheet
+    /// (`bump_max_hp`) rather than something recomputed from the
+    /// condition each time it is asked for.
+    ///
+    /// It exists to enforce PHB's stacking rule: "the effects of the
+    /// same spell cast multiple times don't combine." Without it, Aid
+    /// added five hit points every time it was cast, on the spell and on
+    /// the scroll alike — and an AI support caster, which re-runs its
+    /// ladder every turn and sees the same wounded ally, spent its whole
+    /// slot table re-buffing one target five points at a time. That is
+    /// both against the rule and the worst available use of the turns.
+    ///
+    /// Deliberately *not* on `is_dispellable_buff`. Every other entry on
+    /// that list is read live — an AC bonus, a save bonus, a damage
+    /// clamp — so removing the condition removes the effect. Removing
+    /// this one would leave the five hit points exactly where they are
+    /// and merely re-open the door to another five, which is the
+    /// opposite of what dispelling should do.
+    ///
+    /// Timer is the same long `Rounds` count Mage Armor uses for the
+    /// same reason: RAW's duration is 8 hours, which no encounter
+    /// reaches, and a marker that lapses mid-fight would re-open the
+    /// stack it exists to close.
+    Aided,
     /// Mocked by Vicious Mockery — disadvantage on the next attack roll
     /// before the end of the target's next turn. Short timer
     /// (`UntilStartOfNextTurn`) clears the debuff after the holder takes
@@ -1963,6 +1989,7 @@ impl Condition {
             Condition::Deafened => "deafened",
             Condition::HuntersMarked => "marked by hunter's mark",
             Condition::MageArmored => "mage armored",
+            Condition::Aided => "aided",
             Condition::Mocked => "mocked",
             Condition::Heroic => "heroic",
             Condition::NoReaction => "shocked",

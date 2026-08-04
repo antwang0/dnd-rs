@@ -3185,6 +3185,45 @@ pub static MAGE_ARMOR: LazyLock<MageArmor> = LazyLock::new(|| MageArmor {});
 /// single ally pick for now (the picker UI doesn't yet support multi-
 /// actor selection). The HP boost is permanent for the encounter
 /// (8-hour 5e duration, longer than any combat).
+/// Hit points Aid adds to both the target's maximum and its current
+/// total, per RAW at the spell's base level.
+pub const AID_HP: i32 = 5;
+
+/// How long the `Aided` marker sits on a target. RAW's duration is 8
+/// hours; this is the same long round count Mage Armor uses to say the
+/// same thing, which is "longer than any encounter".
+pub const AID_ROUNDS: u32 = 100;
+
+/// Apply Aid to one creature, once. Returns `true` if the buff landed
+/// and `false` if the target was already carrying it.
+///
+/// Shared by the spell and by `ReadAidScroll`, which had each written
+/// the bump out by hand and had each stacked without limit — PHB is
+/// explicit that "the effects of the same spell cast multiple times
+/// don't combine", and neither site knew whether it was the first. The
+/// marker is the answer, and putting it in one function is what keeps
+/// the answer the same on both.
+///
+/// RAW's upcast — five more hit points per slot level above 2nd — has no
+/// surface here yet, and the marker is what a future one would read: a
+/// second cast at a higher level should top the target up by the
+/// difference rather than being refused outright.
+pub fn apply_aid(encounter: &mut EncounterInstance, target_id: usize) -> bool {
+    let already = encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|a| a.has_condition(Condition::Aided));
+    if already {
+        return false;
+    }
+    let Some(target) = encounter.actors.get_mut(&target_id) else {
+        return false;
+    };
+    target.bump_max_hp(AID_HP);
+    target.add_condition(Condition::Aided, ConditionTimer::Rounds(AID_ROUNDS));
+    true
+}
+
 pub struct Aid {}
 
 impl Action for Aid {
@@ -3223,6 +3262,29 @@ impl Action for Aid {
     ) -> Vec<Resource> {
         action_and_slot(2)
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // A target already carrying Aid gains nothing from a second
+        // cast, so the slot should stay in the book. Refusing here
+        // rather than silently no-op-ing in `side_effects` is what makes
+        // the AI move on: the support rung walks its heal list and takes
+        // the first action that validates, so an Aid that validated and
+        // then did nothing was an Action and a level-2 slot spent every
+        // turn on the same ally for the rest of the fight.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return true;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| !a.has_condition(Condition::Aided))
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3240,13 +3302,14 @@ impl Action for Aid {
             return Vec::new();
         };
         // RAW Aid: "the target's hit point maximum and current hit
-        // points increase by 5." Our `bump_max_hp` raises the base by
-        // `delta` and the current HP by the same amount, capped at the
-        // new max — no separate Heal needed.
-        if let Some(target) = encounter.actors.get_mut(&target_id) {
-            target.bump_max_hp(5);
+        // points increase by 5." `bump_max_hp` raises the base by the
+        // delta and the current HP by the same amount, capped at the new
+        // max — no separate Heal needed. `apply_aid` adds the half that
+        // was missing: the marker that keeps a second cast from stacking
+        // a second five on top.
+        if apply_aid(encounter, target_id) {
+            encounter.log(format!("  aid: +{} max HP, +{} HP", AID_HP, AID_HP));
         }
-        encounter.log("  aid: +5 max HP, +5 HP".to_string());
         Vec::new()
     }
 }
