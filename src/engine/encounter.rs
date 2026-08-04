@@ -32228,6 +32228,67 @@ mod tests {
         );
     }
 
+    /// A `Multiattack` inherits its sub-attack's gate, and a
+    /// `CompoundAttack` inherits every part's.
+    ///
+    /// The wrappers already inherit reach, line of sight, targeting
+    /// schema and cost from what they wrap; validation was the one
+    /// member of that set they didn't, which meant a wrapper was legal
+    /// in situations where the thing inside it wasn't. Nothing in the
+    /// bestiary tripped it — every sub-attack shipped today validates
+    /// unconditionally — so this is a trap rather than a bug report, and
+    /// the trap is real: the two shapes in the engine that *do* gate are
+    /// a weapon that has to be summoned first and a breath weapon on a
+    /// recharge, and either one wrapped twice would have resolved twice
+    /// regardless.
+    ///
+    /// Built out of `ASTRAL_ARMS_STRIKE` because it is the live gated
+    /// weapon, and the Astral Self Monk gets a second attack at RAW
+    /// level 17 — the wrapper this pins is a plausible next commit, not
+    /// a hypothetical.
+    #[test]
+    fn a_multiattack_cannot_swing_a_weapon_its_sub_attack_could_not() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{ASTRAL_ARMS_STRIKE, CompoundAttack, Multiattack};
+        use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+        let flurry = Multiattack {
+            display_name: "astral flurry",
+            sub_attack: &ASTRAL_ARMS_STRIKE,
+            count: 2,
+        };
+        let mixed = CompoundAttack {
+            display_name: "astral compound",
+            parts: vec![(&ASTRAL_ARMS_STRIKE, 1)],
+        };
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let monk = e
+            .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+
+        // Arms not summoned: the single strike refuses, and so must
+        // anything wrapping it.
+        assert!(!ASTRAL_ARMS_STRIKE.custom_validate_input(&e, monk, None, None, None));
+        assert!(
+            !flurry.custom_validate_input(&e, monk, None, None, None),
+            "the flurry swung arms the monk hasn't called"
+        );
+        assert!(
+            !mixed.custom_validate_input(&e, monk, None, None, None),
+            "the compound swung arms the monk hasn't called"
+        );
+
+        // Arms up: all three agree the other way, so the delegation is
+        // a gate rather than a blanket refusal.
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .add_condition(Condition::AstralArms, ConditionTimer::Rounds(10));
+        assert!(ASTRAL_ARMS_STRIKE.custom_validate_input(&e, monk, None, None, None));
+        assert!(flurry.custom_validate_input(&e, monk, None, None, None));
+        assert!(mixed.custom_validate_input(&e, monk, None, None, None));
+    }
+
     /// Empowered Arms is gated on the arms being up, not merely on the
     /// monk carrying the feature — the first `caster_gate` on the shared
     /// once-per-turn rider cohort, and the reason that column exists.

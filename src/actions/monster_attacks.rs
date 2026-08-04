@@ -2174,6 +2174,37 @@ impl Action for Multiattack {
         Some(per * self.count as f32)
     }
 
+    /// Inherited from the sub-attack, like the reach and the schema and
+    /// the cost above it — a wrapper cannot be legal in a situation
+    /// where the thing it wraps is not.
+    ///
+    /// This delegation was missing, and its absence was a trap rather
+    /// than a live bug: every sub-attack wrapped today validates
+    /// unconditionally, so nothing misbehaved. But two shapes in the
+    /// engine do gate — a `SimpleWeapon` that has to be summoned first
+    /// (`ASTRAL_ARMS_STRIKE`, gated on `Condition::AstralArms`) and a
+    /// `BreathWeapon` gated on its recharge — and wrapping either in a
+    /// `Multiattack` would have swung an unsummoned weapon or breathed
+    /// a spent breath, twice, with nothing in the engine objecting. The
+    /// Astral Self Monk gets a second attack at RAW level 17, so that
+    /// wrapper is a plausible next commit rather than a hypothetical.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        self.sub_attack.custom_validate_input(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        )
+    }
+
     fn cost(
         &self,
         encounter: &EncounterInstance,
@@ -2318,6 +2349,37 @@ impl Action for CompoundAttack {
             })
             .sum();
         Some(total)
+    }
+
+    /// Every part has to be legal, not just the first — see
+    /// `Multiattack::custom_validate_input` for why the delegation
+    /// matters at all.
+    ///
+    /// `all` rather than `any` because `side_effects` swings every part
+    /// unconditionally: a compound that ran with one gate closed would
+    /// resolve that part anyway. Stricter than it needs to be for the
+    /// compounds that exist (every part of every one validates
+    /// unconditionally, so this is a no-op today), and the strict
+    /// direction is the safe one — a mixed compound that refuses is a
+    /// visible loss of one action, where a mixed compound that resolves
+    /// is a silent rules violation.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        self.parts.iter().all(|(a, _)| {
+            a.custom_validate_input(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            )
+        })
     }
 
     fn cost(

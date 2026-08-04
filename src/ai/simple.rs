@@ -5998,8 +5998,10 @@ impl SummonTier {
     }
 }
 
-/// Put a friendly body on the board — Conjure Animals, Conjure
-/// Elemental, Animate Dead, Animate Objects, the Ranger's Companion.
+/// Put a friendly body on the board — the Tasha's summon family, Conjure
+/// Animals, Conjure Elemental, Animate Dead, Animate Objects, the
+/// Ranger's Companion, and every feature summon. `tier` picks which half
+/// of the lane this call is for; see `SummonTier`.
 ///
 /// The action set comes off `Action::summons_allies` rather than a
 /// name list, so a summon added tomorrow is picked up by declaring
@@ -6020,9 +6022,9 @@ impl SummonTier {
 ///      which is the same argument `try_area_control` makes. A summon
 ///      that concentrates on nothing can't make that trade, so it isn't
 ///      asked to.
-///   2. **One *slot* spent calling for help per fight.** The
-///      concentration check caps three of the six summons and a per-rest
-///      charge caps two more, but Animate Dead has neither — RAW it is a
+///   2. **One *slot* spent calling for help per fight.** Gate 1 caps
+///      every summon that concentrates and a per-rest charge caps every
+///      feature summon, but Animate Dead has neither — RAW it is a
 ///      permanent minion, so without this a wizard spends every
 ///      third-level slot it owns on skeletons and never casts anything
 ///      else. See `Condition::Summoner`. The cap is on the slot, not on

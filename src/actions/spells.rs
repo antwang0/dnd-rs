@@ -1130,12 +1130,15 @@ fn ally_aura_concentration_effects(
 /// gives Conjure Elemental (and any future "summon N adjacent
 /// creatures of size S") a one-line entry point.
 ///
-/// `search_radius` widens the find_adjacent_spawn ring after the first
-/// successful spawn (each new minion occupies its anchor, so later
-/// spawns need a slightly wider search to find an open slot). The
-/// caller passes the same value used by their RAW envelope — Conjure
-/// Animals uses radius 3 for the 30 ft RAW range; Animate Dead uses
-/// radius 2 for the touch-range envelope.
+/// `search_radius` is how far from the caster `find_adjacent_spawn` may
+/// look, and it is the same number on every iteration — the widening is
+/// something the *board* does, not the caller: each minion that lands
+/// occupies its anchor, so the next one finds the near tiles taken and
+/// is pushed outward by the search itself. What the caller passes is
+/// their RAW envelope, with slack for a big footprint. Conjure Animals
+/// uses 3 for the 30 ft range; Animate Dead uses 2 for touch; the Large
+/// summons use 4 because a 2×2 body needs a wider ring to find room at
+/// all.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_adjacent_summons(
     encounter: &mut EncounterInstance,
