@@ -691,7 +691,7 @@ pub static WILDFIRE_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     // chokepoints, so the druid's turn options are the baseline's plus
     // the summon.
     let mut actions = DRUID_TEMPLATE.actions.clone();
-    actions.push(&*SUMMON_WILDFIRE_SPIRIT);
+    actions.push(&SUMMON_WILDFIRE_SPIRIT);
     CreatureTemplate {
         name: "Wildfire Druid",
         glyph: 'W',

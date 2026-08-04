@@ -76636,7 +76636,7 @@ mod tests {
             &*crate::actions::spells::CONJURE_ELEMENTAL,
             &*crate::actions::spells::ANIMATE_DEAD,
             &*crate::actions::spells::ANIMATE_OBJECTS,
-            &*crate::actions::class_features::RANGERS_COMPANION,
+            &crate::actions::class_features::RANGERS_COMPANION,
         ];
         for action in summons {
             assert!(

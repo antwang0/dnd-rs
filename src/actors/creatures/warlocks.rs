@@ -1214,7 +1214,7 @@ pub static FATHOMLESS_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     // action plus two tags plus a resistance — the same reason the Fiend
     // and Undead patrons sit outside it.
     let mut actions = WARLOCK_TEMPLATE.actions.clone();
-    actions.push(&*SUMMON_TENTACLE_OF_THE_DEEP);
+    actions.push(&SUMMON_TENTACLE_OF_THE_DEEP);
     let mut features = WARLOCK_TEMPLATE.features.clone();
     features.insert(TENTACLE_OF_THE_DEEP_TAG);
     features.insert(GUARDIAN_COIL_TAG);

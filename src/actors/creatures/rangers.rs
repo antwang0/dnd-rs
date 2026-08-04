@@ -896,7 +896,7 @@ pub static BEAST_MASTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     // chassis — longbow, scimitar, the half-caster spell list, Vanish,
     // and every baseline passive.
     let mut actions = RANGER_TEMPLATE.actions.clone();
-    actions.push(&*RANGERS_COMPANION);
+    actions.push(&RANGERS_COMPANION);
     let mut features = RANGER_TEMPLATE.features.clone();
     features.insert(RANGERS_COMPANION_TAG);
     CreatureTemplate {

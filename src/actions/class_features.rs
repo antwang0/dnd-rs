@@ -289,6 +289,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // a Wild Shape use, which recovers on a short rest — the same
     // reasoning that puts the Stars Druid's Starry Form on this lane.
     SUMMON_WILDFIRE_SPIRIT_TAG,
+    // 5e Fathomless Warlock — Tentacle of the Deep and Guardian Coil.
+    // Everything a warlock owns comes back on a short rest; RAW says so
+    // of Pact Magic and of both of these by name.
+    TENTACLE_OF_THE_DEEP_TAG,
+    GUARDIAN_COIL_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -9168,6 +9173,132 @@ pub static INVOKE_DUPLICITY: LazyLock<InvokeDuplicity> = LazyLock::new(|| Invoke
 /// another this fight."
 pub const RANGERS_COMPANION_TAG: &str = "ranger.rangers_companion";
 
+/// Declarative chassis for a **feature summon**: a class feature that
+/// spends a per-rest charge to put one friendly body on the board and
+/// then gets out of the way.
+///
+/// Three features arrived at the same ninety lines independently — the
+/// Beast Master's Ranger's Companion, the Circle of Wildfire's Summon
+/// Wildfire Spirit, and the Fathomless warlock's Tentacle of the Deep —
+/// and they differed in eight values: what it is called, what it
+/// summons, how big that is, how far to look for a free tile, which
+/// per-rest charge it spends, and whether it costs an Action or a Bonus
+/// Action. Everything else was identical, down to the order the charge
+/// is spent in. This is those eight values.
+///
+/// **What every feature summon has in common, and why it isn't a
+/// spell.** No spell slot, so nothing competes with the caster's other
+/// magic. No concentration, so the summoner can hold a control spell at
+/// the same time — the structural difference from Conjure Animals and
+/// the reason all three subclasses play as "a caster with a body" rather
+/// than as pet classes. And no `Conjured` marker, so the summon outlives
+/// whatever its summoner is concentrating on and stays until something
+/// kills it. What it costs instead is a once-per-rest charge and a turn.
+///
+/// Summons that *are* spells stay where they are, in `spells.rs`, built
+/// out of `spawn_adjacent_summons` directly: they have slot costs and
+/// concentration anchors this chassis deliberately has no field for.
+pub struct FeatureSummon {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// The per-short-rest charge this spends, and the gate
+    /// `custom_validate_input` reads.
+    pub tag: &'static str,
+    /// What appears. A `&'static LazyLock` rather than a
+    /// `&'static CreatureTemplate` because every creature template in
+    /// the engine is lazily built, and the deref happens once, at
+    /// resolution.
+    pub template: &'static LazyLock<crate::actors::actor_template::CreatureTemplate>,
+    /// The summon's footprint, which decides what counts as a free tile.
+    pub size: crate::engine::types::Size,
+    /// How far from the summoner to look for one.
+    pub search_radius: isize,
+    /// Instance-id band, kept distinct per summon so two of them on one
+    /// board don't collide. The summon *spells* live at 90+.
+    pub base_instance_id: usize,
+    /// `Resource::Action` or `Resource::BonusAction`. RAW disagrees
+    /// across the three, and the disagreement is a real balance lever:
+    /// a bonus-action summon lands on round one alongside an attack, an
+    /// Action summon costs the turn it arrives on.
+    pub cost_resource: Resource,
+}
+
+impl Action for FeatureSummon {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    // `deals_damage` needs no override: it defaults to `is_harmful()`,
+    // and the summon hurts nobody directly — whatever it does, it does
+    // on its own turns.
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![self.cost_resource]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The charge, and then the part the AI shouldn't have to guess
+        // at: whether a body of this size fits anywhere nearby.
+        feature_ready(encounter, caster_id, self.tag)
+            && encounter
+                .find_adjacent_spawn(caster_id, self.size, self.search_radius)
+                .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Charge first, spawn second. The validator has already
+        // confirmed a free tile, and a spawn that fails because the
+        // arena filled in between should still cost the summoner the
+        // call rather than leaving a charge to retry with the same
+        // result.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(self.tag);
+        }
+        crate::actions::spells::spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            self.template,
+            self.size,
+            1,
+            self.search_radius,
+            self.base_instance_id,
+            self.display_name,
+        );
+        // Nothing to queue: no `Conjured` marker and no concentration
+        // anchor. That absence is the feature.
+        Vec::new()
+    }
+}
+
 /// Ranger's Companion — Beast Master Ranger action. Calls the bonded
 /// beast to a free tile beside the ranger, on the ranger's team, once
 /// per long rest.
@@ -9185,94 +9316,16 @@ pub const RANGERS_COMPANION_TAG: &str = "ranger.rangers_companion";
 /// on round one it is an Action not swung and a body that fights for
 /// the whole encounter; held back it is a full ranger turn and a
 /// companion arriving into a fight that may already be decided.
-///
-/// Declares `summons_allies` so the AI's summon rung picks it up
-/// without a name to remember — the same hook Conjure Animals and
-/// Animate Dead use. The validator owns the part the AI shouldn't
-/// guess at: whether a Medium creature fits anywhere nearby.
-pub struct RangersCompanion {}
-
-impl Action for RangersCompanion {
-    fn name(&self) -> &str {
-        "ranger's companion"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["companion", "beast", "rc"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        // Indirect: the beast deals the damage, on its own turns.
-        false
-    }
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_ready(encounter, caster_id, RANGERS_COMPANION_TAG)
-            && encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
-                .is_some()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE;
-        // Spend the charge before the spawn attempt, not after: the
-        // validator has already confirmed a free tile, and a partial
-        // failure inside `spawn_adjacent_summons` (the arena filled in
-        // between) should still cost the ranger the call rather than
-        // leaving a charge to retry with the same result.
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(RANGERS_COMPANION_TAG);
-        }
-        // Instance ids from 70 — a private band that doesn't collide
-        // with the summon spells' 90+ range.
-        crate::actions::spells::spawn_adjacent_summons(
-            encounter,
-            caster_id,
-            &RANGERS_COMPANION_TEMPLATE,
-            crate::engine::types::Size::Medium,
-            1,
-            2,
-            70,
-            "ranger's companion",
-        );
-        // No side-effects to queue: unlike the conjuration spells there
-        // is no `Conjured` marker and no `StartConcentration` anchor to
-        // hang the beast's lifetime on. It stays until it drops, which
-        // is the whole distinction from a summoning spell.
-        Vec::new()
-    }
-}
-
-pub static RANGERS_COMPANION: LazyLock<RangersCompanion> = LazyLock::new(|| RangersCompanion {});
+pub static RANGERS_COMPANION: FeatureSummon = FeatureSummon {
+    display_name: "ranger's companion",
+    aliases: &["companion", "beast", "rc"],
+    tag: RANGERS_COMPANION_TAG,
+    template: &crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    search_radius: 2,
+    base_instance_id: 70,
+    cost_resource: Resource::Action,
+};
 
 /// Summon Wildfire Spirit — Circle of Wildfire Druid level-2 action.
 /// Once per short rest, a Small elemental appears beside the druid on
@@ -9287,107 +9340,21 @@ pub static RANGERS_COMPANION: LazyLock<RangersCompanion> = LazyLock::new(|| Rang
 /// is not this one, it is every turn afterwards, and the question the
 /// subclass keeps asking is where the second body should be standing.
 ///
-/// **Not a spell, and the differences matter.** Conjure Animals costs
-/// a level-3 slot and the druid's concentration — which is the same
-/// concentration Moonbeam, Spike Growth, Call Lightning and every other
-/// control spell on the chassis wants. The spirit costs neither. A
-/// Wildfire druid can hold the spirit and a concentration spell at
-/// once, which no other summoner on the roster can, and that is the
-/// structural reason the subclass plays as a caster with a pet rather
-/// than as a pet class.
-///
-/// Modeled the way `RangersCompanion` is: one per-rest charge, an
-/// Action, no `Conjured` marker and no concentration anchor, so the
-/// spirit outlives whatever the druid is concentrating on. RAW spends a
-/// druid's Wild Shape use rather than a charge of its own; the engine's
-/// Wild Shape lane belongs to the Moon Druid's `COMBAT_WILD_SHAPE_TAG`
-/// and this chassis does not carry it, so a charge is the honest
-/// translation — it is the same "once per short rest, and you only get
-/// one body" shape RAW is charging for.
-pub struct SummonWildfireSpirit {}
-
-impl Action for SummonWildfireSpirit {
-    fn name(&self) -> &str {
-        "summon wildfire spirit"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["wildfire spirit", "spirit", "sws"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        // Indirect: the spirit throws the flame seeds, on its own turns.
-        false
-    }
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_ready(encounter, caster_id, SUMMON_WILDFIRE_SPIRIT_TAG)
-            && encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Small, 2)
-                .is_some()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE;
-        // Charge first, spawn second — same reasoning as
-        // `RangersCompanion`: the validator has already confirmed a free
-        // tile, and a spawn that fails because the arena filled in
-        // between should still cost the druid the call rather than
-        // leaving a charge to retry with the same result.
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(SUMMON_WILDFIRE_SPIRIT_TAG);
-        }
-        // Instance ids from 71 — the band above the Ranger's Companion's
-        // 70, and clear of the summon spells' 90+ range.
-        crate::actions::spells::spawn_adjacent_summons(
-            encounter,
-            caster_id,
-            &WILDFIRE_SPIRIT_TEMPLATE,
-            crate::engine::types::Size::Small,
-            1,
-            2,
-            71,
-            "summon wildfire spirit",
-        );
-        // Nothing to queue: no `Conjured` marker and no concentration
-        // anchor, so the spirit outlives whatever the druid is
-        // concentrating on. That is the distinction from Conjure
-        // Animals, and it is the whole reason to play the circle.
-        Vec::new()
-    }
-}
-
-pub static SUMMON_WILDFIRE_SPIRIT: LazyLock<SummonWildfireSpirit> =
-    LazyLock::new(|| SummonWildfireSpirit {});
+/// RAW spends a druid's Wild Shape use rather than a charge of its own;
+/// the engine's Wild Shape lane belongs to the Moon Druid's
+/// `COMBAT_WILD_SHAPE_TAG` and this chassis does not carry it, so a
+/// charge is the honest translation — it is the same "once per short
+/// rest, and you only get one body" shape RAW is charging for.
+pub static SUMMON_WILDFIRE_SPIRIT: FeatureSummon = FeatureSummon {
+    display_name: "summon wildfire spirit",
+    aliases: &["wildfire spirit", "spirit", "sws"],
+    tag: SUMMON_WILDFIRE_SPIRIT_TAG,
+    template: &crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    search_radius: 2,
+    base_instance_id: 71,
+    cost_resource: Resource::Action,
+};
 
 /// Tentacle of the Deep — Fathomless Warlock level-1 bonus action.
 /// Once per short rest, a rooted spectral limb rises beside the warlock
@@ -9409,93 +9376,22 @@ pub static SUMMON_WILDFIRE_SPIRIT: LazyLock<SummonWildfireSpirit> =
 /// where a ten-foot bubble of cold and protection sits, and it does not
 /// have to be anywhere near them. See `GUARDIAN_COIL_TAG`.
 ///
-/// No slot, no concentration, no `Conjured` anchor: the tentacle stays
-/// until something kills it, which on 10 hit points is usually soon.
-pub struct SummonTentacleOfTheDeep {}
-
-impl Action for SummonTentacleOfTheDeep {
-    fn name(&self) -> &str {
-        "tentacle of the deep"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["tentacle", "totd"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        // Indirect: the tentacle lashes on its own turns.
-        false
-    }
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_ready(encounter, caster_id, TENTACLE_OF_THE_DEEP_TAG)
-            && encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
-                .is_some()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE;
-        // Charge first, spawn second — the same reasoning the two
-        // sibling feature summons give.
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(TENTACLE_OF_THE_DEEP_TAG);
-        }
-        // Instance ids from 72 — the band above the wildfire spirit's
-        // 71, clear of the summon spells' 90+ range.
-        //
-        // Search radius 3 rather than the siblings' 2: RAW places the
-        // tentacle anywhere within 60 ft, and since it never moves
-        // again, where it lands is the only placement decision the
-        // feature ever makes. A slightly wider search is the cheapest
-        // approximation of that — the engine has no destination picker
-        // the AI could answer, which is the same wall the Eldritch
-        // Knight's Arcane Charge runs into.
-        crate::actions::spells::spawn_adjacent_summons(
-            encounter,
-            caster_id,
-            &TENTACLE_OF_THE_DEEP_TEMPLATE,
-            crate::engine::types::Size::Medium,
-            1,
-            3,
-            72,
-            "tentacle of the deep",
-        );
-        Vec::new()
-    }
-}
-
-pub static SUMMON_TENTACLE_OF_THE_DEEP: LazyLock<SummonTentacleOfTheDeep> =
-    LazyLock::new(|| SummonTentacleOfTheDeep {});
+/// Search radius 3 rather than the siblings' 2: RAW places the tentacle
+/// anywhere within 60 ft, and since it never moves again, where it
+/// lands is the only placement decision the feature ever makes. A
+/// slightly wider search is the cheapest approximation of that — the
+/// engine has no destination picker the AI could answer, which is the
+/// same wall the Eldritch Knight's Arcane Charge runs into.
+pub static SUMMON_TENTACLE_OF_THE_DEEP: FeatureSummon = FeatureSummon {
+    display_name: "tentacle of the deep",
+    aliases: &["tentacle", "totd"],
+    tag: TENTACLE_OF_THE_DEEP_TAG,
+    template: &crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    search_radius: 3,
+    base_instance_id: 72,
+    cost_resource: Resource::BonusAction,
+};
 
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered
@@ -15069,5 +14965,56 @@ mod tests {
             "given a charge pool but on no instantiable template: {:?}",
             orphans
         );
+    }
+
+    /// The feature summons don't collide.
+    ///
+    /// Each carries its own instance-id band because two of them can
+    /// share a board — a party with a Beast Master, a Wildfire druid and
+    /// a Fathomless warlock puts three of these out at once — and
+    /// `instantiate_creature` keys the display name off the band. The
+    /// tags have to differ for the same reason the bands do: two
+    /// features sharing a charge would spend each other's.
+    #[test]
+    fn every_feature_summon_gets_its_own_band_and_its_own_charge() {
+        let summons = [
+            &RANGERS_COMPANION,
+            &SUMMON_WILDFIRE_SPIRIT,
+            &SUMMON_TENTACLE_OF_THE_DEEP,
+        ];
+        let mut bands: Vec<usize> = summons.iter().map(|s| s.base_instance_id).collect();
+        bands.sort_unstable();
+        let unique = {
+            let mut b = bands.clone();
+            b.dedup();
+            b.len()
+        };
+        assert_eq!(unique, summons.len(), "two feature summons share an id band");
+        // Clear of the summon *spells*, which start at 90.
+        assert!(
+            bands.iter().all(|b| *b < 90),
+            "a feature summon wandered into the spell summons' band"
+        );
+
+        let mut tags: Vec<&str> = summons.iter().map(|s| s.tag).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), summons.len(), "two feature summons share a charge");
+
+        // Every one of them has something that gives the charge back.
+        // The Ranger's Companion is the long-rest exception — RAW
+        // rebonds the beast over a long rest and not a short one — and
+        // it is named rather than defaulted so a summon that simply
+        // forgot to register fails here instead of quietly costing its
+        // owner the subclass for the rest of the day. Which is what
+        // happened: the tentacle shipped with no refresh at all, and
+        // this assertion is how it was found.
+        for s in summons {
+            assert!(
+                SHORT_REST_FEATURES.contains(&s.tag) || s.tag == RANGERS_COMPANION_TAG,
+                "{} spends a charge nothing gives back",
+                s.display_name
+            );
+        }
     }
 }
