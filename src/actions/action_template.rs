@@ -1182,6 +1182,31 @@ pub trait Action {
             target_locations,
             overrides,
         );
+        // `holds_concentration` is a declaration, and a declaration that
+        // nothing checks is a comment. This is the check: an action that
+        // queues a `StartConcentration` and says it does not hold
+        // concentration is caught the first time it is cast under a
+        // debug build, which the whole test suite is.
+        //
+        // It is worth a runtime assertion rather than a review habit
+        // because the failure is silent and the default is the wrong
+        // answer. Ninety-two concentration spells in this file declared
+        // nothing — Haste, Polymorph, Banishment, Wall of Fire, every
+        // wall, every aura — and the AI's summon and area-control rungs,
+        // which ask an action what it costs before trading a landed
+        // effect for an unlanded one, were told all ninety-two were free.
+        //
+        // The payload accessor is the ground truth because it is what
+        // the concentration machinery itself reads; there is no way to
+        // start concentration without going through it.
+        debug_assert!(
+            self.holds_concentration()
+                || !side_effects
+                    .iter()
+                    .any(|e| e.concentration_payload().is_some()),
+            "{} queues a StartConcentration but declares holds_concentration() == false",
+            self.name()
+        );
         // 5e Sorcerer Extended Spell metamagic: if the caster has the
         // prime up and the action installs at least one long-duration
         // condition (Rounds(n) with n >= 10), double the timer in place

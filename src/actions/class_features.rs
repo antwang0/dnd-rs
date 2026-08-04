@@ -12909,6 +12909,13 @@ pub const SHAPECHANGER_TAG: &str = "wizard.shapechanger";
 pub struct Shapechanger {}
 
 impl Action for Shapechanger {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "shapechanger"
     }
@@ -15552,6 +15559,14 @@ impl Action for AtWillAllyTempHpPulse {
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
+    }
+    /// The pulse's own envelope, declared so the AI's support rung can
+    /// ask who is standing in it rather than guessing. Harmless on a
+    /// `NoArgs` action — the reach gate in `validate_input` only fires
+    /// when there is a target id or a target point to measure against,
+    /// and this action takes neither.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.radius)
     }
     fn is_harmful(&self) -> bool {
         false

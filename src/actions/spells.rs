@@ -1686,6 +1686,13 @@ pub static SACRED_BURST: LazyLock<SacredBurst> = LazyLock::new(|| SacredBurst {}
 pub struct HoldPerson {}
 
 impl Action for HoldPerson {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -1891,6 +1898,13 @@ pub static FIRE_BOLT: LazyLock<FireBolt> = LazyLock::new(|| FireBolt {});
 pub struct Bless {}
 
 impl Action for Bless {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -2203,6 +2217,13 @@ pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile
 pub struct ShieldOfFaith {}
 
 impl Action for ShieldOfFaith {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "shield of faith"
     }
@@ -2267,6 +2288,13 @@ pub static SHIELD_OF_FAITH: LazyLock<ShieldOfFaith> = LazyLock::new(|| ShieldOfF
 pub struct CauseFear {}
 
 impl Action for CauseFear {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "cause fear"
     }
@@ -2728,6 +2756,13 @@ pub static SHIELD: LazyLock<Shield> = LazyLock::new(|| Shield {});
 pub struct FaerieFire {}
 
 impl Action for FaerieFire {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "faerie fire"
     }
@@ -3053,6 +3088,13 @@ pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});
 pub struct Bane {}
 
 impl Action for Bane {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -3534,6 +3576,13 @@ pub static SPIRITUAL_WEAPON: LazyLock<SpiritualWeapon> = LazyLock::new(|| Spirit
 pub struct HuntersMark {}
 
 impl Action for HuntersMark {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Divination)
     }
@@ -4212,6 +4261,13 @@ pub static VICIOUS_MOCKERY: LazyLock<ViciousMockery> = LazyLock::new(|| ViciousM
 pub struct Heroism {}
 
 impl Action for Heroism {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -4888,6 +4944,13 @@ pub static ELDRITCH_BLAST: LazyLock<EldritchBlast> = LazyLock::new(|| EldritchBl
 pub struct ProtectionFromEvilAndGood {}
 
 impl Action for ProtectionFromEvilAndGood {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -5213,6 +5276,13 @@ pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
 pub struct MagicWeapon {}
 
 impl Action for MagicWeapon {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "magic weapon"
     }
@@ -5452,6 +5522,13 @@ pub static LIGHTNING_BOLT: LazyLock<LightningBolt> = LazyLock::new(|| LightningB
 pub struct VampiricTouch {}
 
 impl Action for VampiricTouch {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "vampiric touch"
     }
@@ -5649,6 +5726,13 @@ pub static HYPNOTIC_PATTERN: LazyLock<HypnoticPattern> = LazyLock::new(|| Hypnot
 pub struct DivineFavor {}
 
 impl Action for DivineFavor {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "divine favor"
     }
@@ -5720,6 +5804,13 @@ pub static DIVINE_FAVOR: LazyLock<DivineFavor> = LazyLock::new(|| DivineFavor {}
 pub struct SpiritGuardians {}
 
 impl Action for SpiritGuardians {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "spirit guardians"
     }
@@ -5822,6 +5913,13 @@ pub static SPIRIT_GUARDIANS: LazyLock<SpiritGuardians> = LazyLock::new(|| Spirit
 pub struct Hex {}
 
 impl Action for Hex {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "hex"
     }
@@ -5893,6 +5991,13 @@ pub static HEX: LazyLock<Hex> = LazyLock::new(|| Hex {});
 pub struct HoldMonster {}
 
 impl Action for HoldMonster {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -5974,6 +6079,13 @@ pub static HOLD_MONSTER: LazyLock<HoldMonster> = LazyLock::new(|| HoldMonster {}
 pub struct Invisibility {}
 
 impl Action for Invisibility {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "invisibility"
     }
@@ -6044,6 +6156,13 @@ pub static INVISIBILITY: LazyLock<Invisibility> = LazyLock::new(|| Invisibility 
 pub struct BestowCurse {}
 
 impl Action for BestowCurse {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "bestow curse"
     }
@@ -6187,6 +6306,13 @@ pub static MIND_SLIVER: LazyLock<MindSliver> = LazyLock::new(|| MindSliver {});
 pub struct Blur {}
 
 impl Action for Blur {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "blur"
     }
@@ -6243,6 +6369,13 @@ pub static BLUR: LazyLock<Blur> = LazyLock::new(|| Blur {});
 pub struct Haste {}
 
 impl Action for Haste {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "haste"
     }
@@ -6317,6 +6450,13 @@ pub static HASTE: LazyLock<Haste> = LazyLock::new(|| Haste {});
 pub struct Slow {}
 
 impl Action for Slow {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "slow"
     }
@@ -6653,6 +6793,13 @@ impl StinkingCloud {
 }
 
 impl Action for StinkingCloud {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -6878,6 +7025,13 @@ pub static DISPEL_MAGIC: LazyLock<DispelMagic> = LazyLock::new(|| DispelMagic {}
 pub struct GreaterInvisibility {}
 
 impl Action for GreaterInvisibility {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "greater invisibility"
     }
@@ -7194,6 +7348,13 @@ pub static REVIVIFY: LazyLock<Revivify> = LazyLock::new(|| Revivify {});
 pub struct Stoneskin {}
 
 impl Action for Stoneskin {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -7269,6 +7430,13 @@ pub static STONESKIN: LazyLock<Stoneskin> = LazyLock::new(|| Stoneskin {});
 pub struct BeaconOfHope {}
 
 impl Action for BeaconOfHope {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -7376,6 +7544,13 @@ impl CloudOfDaggers {
 }
 
 impl Action for CloudOfDaggers {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -7472,6 +7647,13 @@ pub static CLOUD_OF_DAGGERS: LazyLock<CloudOfDaggers> = LazyLock::new(|| CloudOf
 pub struct WitchBolt {}
 
 impl Action for WitchBolt {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -7562,6 +7744,13 @@ pub static WITCH_BOLT: LazyLock<WitchBolt> = LazyLock::new(|| WitchBolt {});
 pub struct PhantasmalKiller {}
 
 impl Action for PhantasmalKiller {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "phantasmal killer"
     }
@@ -7648,6 +7837,13 @@ pub static PHANTASMAL_KILLER: LazyLock<PhantasmalKiller> =
 pub struct Banishment {}
 
 impl Action for Banishment {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -7733,6 +7929,13 @@ pub static BANISHMENT: LazyLock<Banishment> = LazyLock::new(|| Banishment {});
 pub struct TashasHideousLaughter {}
 
 impl Action for TashasHideousLaughter {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -8228,6 +8431,13 @@ pub static SYNAPTIC_STATIC: LazyLock<SynapticStatic> = LazyLock::new(|| Synaptic
 pub struct CrownOfMadness {}
 
 impl Action for CrownOfMadness {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -8486,6 +8696,13 @@ pub static CALM_EMOTIONS: LazyLock<CalmEmotions> = LazyLock::new(|| CalmEmotions
 pub struct Suggestion {}
 
 impl Action for Suggestion {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -9142,6 +9359,13 @@ pub static PRAYER_OF_HEALING: LazyLock<PrayerOfHealing> = LazyLock::new(|| Praye
 pub struct Sunbeam {}
 
 impl Action for Sunbeam {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -9528,6 +9752,13 @@ impl WallOfFire {
 }
 
 impl Action for WallOfFire {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -9660,6 +9891,13 @@ impl Cloudkill {
 }
 
 impl Action for Cloudkill {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -9772,6 +10010,13 @@ impl InsectPlague {
 }
 
 impl Action for InsectPlague {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -10180,6 +10425,13 @@ pub static TRUE_RESURRECTION: LazyLock<TrueResurrection> = LazyLock::new(|| True
 pub struct HealingSpirit {}
 
 impl Action for HealingSpirit {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -10266,6 +10518,13 @@ pub static HEALING_SPIRIT: LazyLock<HealingSpirit> = LazyLock::new(|| HealingSpi
 pub struct AuraOfVitality {}
 
 impl Action for AuraOfVitality {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "aura of vitality"
     }
@@ -10361,6 +10620,13 @@ impl WallOfForce {
 }
 
 impl Action for WallOfForce {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -10472,6 +10738,13 @@ impl SpikeGrowth {
 }
 
 impl Action for SpikeGrowth {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Transmutation)
     }
@@ -10567,6 +10840,13 @@ pub static SPIKE_GROWTH: LazyLock<SpikeGrowth> = LazyLock::new(|| SpikeGrowth {}
 pub struct Telekinesis {}
 
 impl Action for Telekinesis {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "telekinesis"
     }
@@ -10662,6 +10942,13 @@ pub static TELEKINESIS: LazyLock<Telekinesis> = LazyLock::new(|| Telekinesis {})
 pub struct Polymorph {}
 
 impl Action for Polymorph {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "polymorph"
     }
@@ -10762,6 +11049,13 @@ pub static POLYMORPH: LazyLock<Polymorph> = LazyLock::new(|| Polymorph {});
 pub struct GlobeOfInvulnerability {}
 
 impl Action for GlobeOfInvulnerability {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -11094,6 +11388,13 @@ pub static MIND_WHIP: LazyLock<MindWhip> = LazyLock::new(|| MindWhip {});
 pub struct CrusadersMantle {}
 
 impl Action for CrusadersMantle {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "crusader's mantle"
     }
@@ -11148,6 +11449,13 @@ pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| Crusad
 pub struct Earthquake {}
 
 impl Action for Earthquake {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -11494,6 +11802,13 @@ pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownO
 pub struct Fear {}
 
 impl Action for Fear {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "fear"
     }
@@ -11691,6 +12006,13 @@ pub static GREATER_RESTORATION: LazyLock<GreaterRestoration> =
 pub struct CompelledDuel {}
 
 impl Action for CompelledDuel {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "compelled duel"
     }
@@ -11803,6 +12125,13 @@ pub struct SmiteSpell {
 }
 
 impl Action for SmiteSpell {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         self.display_name
     }
@@ -12123,6 +12452,13 @@ pub static FLAME_STRIKE: LazyLock<FlameStrike> = LazyLock::new(|| FlameStrike {}
 pub struct HeatMetal {}
 
 impl Action for HeatMetal {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "heat metal"
     }
@@ -12430,6 +12766,13 @@ impl Moonbeam {
 }
 
 impl Action for Moonbeam {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -12543,6 +12886,13 @@ pub static MOONBEAM: LazyLock<Moonbeam> = LazyLock::new(|| Moonbeam {});
 pub struct CallLightning {}
 
 impl Action for CallLightning {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "call lightning"
     }
@@ -12750,6 +13100,13 @@ pub static SLEET_STORM: LazyLock<SleetStorm> = LazyLock::new(|| SleetStorm {});
 pub struct ReverseGravity {}
 
 impl Action for ReverseGravity {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "reverse gravity"
     }
@@ -12847,6 +13204,13 @@ pub static REVERSE_GRAVITY: LazyLock<ReverseGravity> = LazyLock::new(|| ReverseG
 pub struct StormOfVengeance {}
 
 impl Action for StormOfVengeance {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "storm of vengeance"
     }
@@ -13034,6 +13398,13 @@ pub static HELLISH_REBUKE: LazyLock<HellishRebuke> = LazyLock::new(|| HellishReb
 pub struct SpiritShroud {}
 
 impl Action for SpiritShroud {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "spirit shroud"
     }
@@ -13100,6 +13471,13 @@ pub static SPIRIT_SHROUD: LazyLock<SpiritShroud> = LazyLock::new(|| SpiritShroud
 pub struct HolyAura {}
 
 impl Action for HolyAura {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -13175,6 +13553,13 @@ pub static HOLY_AURA: LazyLock<HolyAura> = LazyLock::new(|| HolyAura {});
 pub struct Foresight {}
 
 impl Action for Foresight {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Divination)
     }
@@ -13354,6 +13739,13 @@ pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
 pub struct Confusion {}
 
 impl Action for Confusion {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -13436,6 +13828,13 @@ pub static CONFUSION: LazyLock<Confusion> = LazyLock::new(|| Confusion {});
 pub struct Fly {}
 
 impl Action for Fly {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "fly"
     }
@@ -13504,6 +13903,13 @@ pub static FLY: LazyLock<Fly> = LazyLock::new(|| Fly {});
 pub struct Levitate {}
 
 impl Action for Levitate {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "levitate"
     }
@@ -13645,6 +14051,13 @@ pub static PLANT_GROWTH: LazyLock<PlantGrowth> = LazyLock::new(|| PlantGrowth {}
 pub struct DominatePerson {}
 
 impl Action for DominatePerson {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -13727,6 +14140,13 @@ pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| Dominate
 pub struct DominateBeast {}
 
 impl Action for DominateBeast {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -14005,6 +14425,13 @@ impl SpikeStones {
 }
 
 impl Action for SpikeStones {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Transmutation)
     }
@@ -14418,6 +14845,13 @@ pub static FEEBLEMIND: LazyLock<Feeblemind> = LazyLock::new(|| Feeblemind {});
 pub struct OttosIrresistibleDance {}
 
 impl Action for OttosIrresistibleDance {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -14505,6 +14939,13 @@ pub static OTTOS_IRRESISTIBLE_DANCE: LazyLock<OttosIrresistibleDance> =
 pub struct Maze {}
 
 impl Action for Maze {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "maze"
     }
@@ -14657,6 +15098,13 @@ pub static FIRE_STORM: LazyLock<FireStorm> = LazyLock::new(|| FireStorm {});
 pub struct Eyebite {}
 
 impl Action for Eyebite {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "eyebite"
     }
@@ -15196,6 +15644,13 @@ pub fn summon_family() -> Vec<&'static SummonSpell> {
 pub struct PowerWordPain {}
 
 impl Action for PowerWordPain {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -15291,6 +15746,13 @@ pub static POWER_WORD_PAIN: LazyLock<PowerWordPain> = LazyLock::new(|| PowerWord
 pub struct MassPolymorph {}
 
 impl Action for MassPolymorph {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "mass polymorph"
     }
@@ -15396,6 +15858,13 @@ pub static MASS_POLYMORPH: LazyLock<MassPolymorph> = LazyLock::new(|| MassPolymo
 pub struct MordenkainensSword {}
 
 impl Action for MordenkainensSword {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -15744,6 +16213,13 @@ impl SickeningRadiance {
 }
 
 impl Action for SickeningRadiance {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -15853,6 +16329,13 @@ pub static SICKENING_RADIANCE: LazyLock<SickeningRadiance> =
 pub struct BigbysHand {}
 
 impl Action for BigbysHand {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -15913,6 +16396,13 @@ pub static BIGBYS_HAND: LazyLock<BigbysHand> = LazyLock::new(|| BigbysHand {});
 pub struct TensersTransformation {}
 
 impl Action for TensersTransformation {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "tenser's transformation"
     }
@@ -15974,6 +16464,13 @@ pub static TENSERS_TRANSFORMATION: LazyLock<TensersTransformation> =
 pub struct AuraOfLife {}
 
 impl Action for AuraOfLife {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -16050,6 +16547,13 @@ pub static AURA_OF_LIFE: LazyLock<AuraOfLife> = LazyLock::new(|| AuraOfLife {});
 pub struct AuraOfPurity {}
 
 impl Action for AuraOfPurity {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -16404,6 +16908,13 @@ impl Dawn {
 }
 
 impl Action for Dawn {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -16510,6 +17021,13 @@ pub static DAWN: LazyLock<Dawn> = LazyLock::new(|| Dawn {});
 pub struct MentalPrison {}
 
 impl Action for MentalPrison {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "mental prison"
     }
@@ -16606,6 +17124,13 @@ pub static MENTAL_PRISON: LazyLock<MentalPrison> = LazyLock::new(|| MentalPrison
 pub struct InvestitureOfFlame {}
 
 impl Action for InvestitureOfFlame {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "investiture of flame"
     }
@@ -16818,6 +17343,13 @@ impl FlamingSphere {
 }
 
 impl Action for FlamingSphere {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -17038,6 +17570,13 @@ impl BladeBarrier {
 }
 
 impl Action for BladeBarrier {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -17142,6 +17681,13 @@ pub static BLADE_BARRIER: LazyLock<BladeBarrier> = LazyLock::new(|| BladeBarrier
 pub struct WindWall {}
 
 impl Action for WindWall {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -17341,6 +17887,13 @@ pub static EVARDS_BLACK_TENTACLES: LazyLock<EvardsBlackTentacles> =
 pub struct OtilukesResilientSphere {}
 
 impl Action for OtilukesResilientSphere {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -17621,6 +18174,13 @@ pub static SHILLELAGH: LazyLock<Shillelagh> = LazyLock::new(|| Shillelagh {});
 pub struct MaximiliansEarthenGrasp {}
 
 impl Action for MaximiliansEarthenGrasp {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "earthen grasp"
     }
@@ -18614,6 +19174,13 @@ impl SizeShiftSpell {
 }
 
 impl Action for SizeShiftSpell {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         self.name
     }
@@ -19172,6 +19739,13 @@ impl FogCloud {
 }
 
 impl Action for FogCloud {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -19294,6 +19868,13 @@ pub static FOG_CLOUD: LazyLock<FogCloud> = LazyLock::new(|| FogCloud {});
 pub struct GustOfWind {}
 
 impl Action for GustOfWind {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -20056,6 +20637,13 @@ pub static STEEL_WIND_STRIKE: LazyLock<SteelWindStrike> = LazyLock::new(|| Steel
 pub struct WallOfIce {}
 
 impl Action for WallOfIce {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "wall of ice"
     }
@@ -21068,6 +21656,13 @@ impl IncendiaryCloud {
 }
 
 impl Action for IncendiaryCloud {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -21699,6 +22294,13 @@ pub static CONJURE_VOLLEY: LazyLock<ConjureVolley> = LazyLock::new(|| ConjureVol
 pub struct Tsunami {}
 
 impl Action for Tsunami {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "tsunami"
     }
@@ -21809,6 +22411,13 @@ impl WallOfThorns {
 }
 
 impl Action for WallOfThorns {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -21914,6 +22523,13 @@ pub static WALL_OF_THORNS: LazyLock<WallOfThorns> = LazyLock::new(|| WallOfThorn
 pub struct Barkskin {}
 
 impl Action for Barkskin {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "barkskin"
     }
@@ -22009,6 +22625,13 @@ pub static BARKSKIN: LazyLock<Barkskin> = LazyLock::new(|| Barkskin {});
 pub struct PassWithoutTrace {}
 
 impl Action for PassWithoutTrace {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -22108,6 +22731,13 @@ pub static PASS_WITHOUT_TRACE: LazyLock<PassWithoutTrace> =
 pub struct HolyWeapon {}
 
 impl Action for HolyWeapon {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "holy weapon"
     }
@@ -22325,6 +22955,13 @@ pub static ABSORB_ELEMENTS: LazyLock<AbsorbElements> = LazyLock::new(|| AbsorbEl
 pub struct WardingWind {}
 
 impl Action for WardingWind {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "warding wind"
     }
@@ -22390,6 +23027,13 @@ pub static WARDING_WIND: LazyLock<WardingWind> = LazyLock::new(|| WardingWind {}
 pub struct ShadowBlade {}
 
 impl Action for ShadowBlade {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "shadow blade"
     }
@@ -22656,6 +23300,13 @@ pub static PRODUCE_FLAME: LazyLock<ProduceFlame> = LazyLock::new(|| ProduceFlame
 pub struct CreateBonfire {}
 
 impl Action for CreateBonfire {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -22734,6 +23385,13 @@ pub static CREATE_BONFIRE: LazyLock<CreateBonfire> = LazyLock::new(|| CreateBonf
 pub struct FlameBlade {}
 
 impl Action for FlameBlade {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "flame blade"
     }
@@ -22872,6 +23530,13 @@ pub static INFESTATION: LazyLock<Infestation> = LazyLock::new(|| Infestation {})
 pub struct RayOfEnfeeblement {}
 
 impl Action for RayOfEnfeeblement {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "ray of enfeeblement"
     }
@@ -23084,6 +23749,13 @@ impl HungerOfHadar {
 }
 
 impl Action for HungerOfHadar {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -23332,6 +24004,13 @@ pub static ELDRITCH_SMITE: LazyLock<EldritchSmite> = LazyLock::new(|| EldritchSm
 pub struct CrownOfThorns {}
 
 impl Action for CrownOfThorns {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "crown of thorns"
     }
@@ -23503,6 +24182,13 @@ pub static SILVERY_BARBS: LazyLock<SilveryBarbs> = LazyLock::new(|| SilveryBarbs
 pub struct ProtectionFromEnergy {}
 
 impl Action for ProtectionFromEnergy {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "protection from energy"
     }
@@ -23688,6 +24374,13 @@ pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {}
 pub struct DominateMonster {}
 
 impl Action for DominateMonster {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -23760,6 +24453,13 @@ pub static DOMINATE_MONSTER: LazyLock<DominateMonster> = LazyLock::new(|| Domina
 pub struct AntilifeShell {}
 
 impl Action for AntilifeShell {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "antilife shell"
     }
@@ -23957,6 +24657,13 @@ impl WallOfStone {
 }
 
 impl Action for WallOfStone {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -24050,6 +24757,13 @@ pub static WALL_OF_STONE: LazyLock<WallOfStone> = LazyLock::new(|| WallOfStone {
 pub struct InvestitureOfIce {}
 
 impl Action for InvestitureOfIce {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "investiture of ice"
     }
@@ -24129,6 +24843,13 @@ pub static INVESTITURE_OF_ICE: LazyLock<InvestitureOfIce> =
 pub struct InvestitureOfStone {}
 
 impl Action for InvestitureOfStone {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "investiture of stone"
     }
@@ -24206,6 +24927,13 @@ pub static INVESTITURE_OF_STONE: LazyLock<InvestitureOfStone> =
 pub struct SpiderClimb {}
 
 impl Action for SpiderClimb {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "spider climb"
     }
@@ -24289,6 +25017,13 @@ pub static SPIDER_CLIMB: LazyLock<SpiderClimb> = LazyLock::new(|| SpiderClimb {}
 pub struct TashasCausticBrew {}
 
 impl Action for TashasCausticBrew {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "tasha's caustic brew"
     }
@@ -24536,6 +25271,13 @@ pub static VORTEX_WARP: LazyLock<VortexWarp> = LazyLock::new(|| VortexWarp {});
 pub struct PhantasmalForce {}
 
 impl Action for PhantasmalForce {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "phantasmal force"
     }
@@ -24637,6 +25379,13 @@ pub static PHANTASMAL_FORCE: LazyLock<PhantasmalForce> = LazyLock::new(|| Phanta
 pub struct WallOfLight {}
 
 impl Action for WallOfLight {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "wall of light"
     }
@@ -24741,6 +25490,13 @@ pub static WALL_OF_LIGHT: LazyLock<WallOfLight> = LazyLock::new(|| WallOfLight {
 pub struct WaterySphere {}
 
 impl Action for WaterySphere {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -24840,6 +25596,13 @@ pub static WATERY_SPHERE: LazyLock<WaterySphere> = LazyLock::new(|| WaterySphere
 pub struct InvestitureOfWind {}
 
 impl Action for InvestitureOfWind {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "investiture of wind"
     }
@@ -25214,6 +25977,13 @@ pub static DUST_DEVIL: LazyLock<DustDevil> = LazyLock::new(|| DustDevil {});
 pub struct FleshToStone {}
 
 impl Action for FleshToStone {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "flesh to stone"
     }
@@ -25314,6 +26084,13 @@ pub static FLESH_TO_STONE: LazyLock<FleshToStone> = LazyLock::new(|| FleshToSton
 pub struct PsychicScream {}
 
 impl Action for PsychicScream {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "psychic scream"
     }
@@ -25561,6 +26338,13 @@ pub static BONES_OF_THE_EARTH: LazyLock<BonesOfTheEarth> =
 pub struct StormSphere {}
 
 impl Action for StormSphere {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "storm sphere"
     }
@@ -25672,6 +26456,13 @@ pub static STORM_SPHERE: LazyLock<StormSphere> = LazyLock::new(|| StormSphere {}
 pub struct MaddeningDarkness {}
 
 impl Action for MaddeningDarkness {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "maddening darkness"
     }
@@ -25892,6 +26683,13 @@ pub static GEAS: LazyLock<Geas> = LazyLock::new(|| Geas {});
 pub struct WallOfSand {}
 
 impl Action for WallOfSand {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "wall of sand"
     }
@@ -25994,6 +26792,13 @@ pub static WALL_OF_SAND: LazyLock<WallOfSand> = LazyLock::new(|| WallOfSand {});
 pub struct WallOfWater {}
 
 impl Action for WallOfWater {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "wall of water"
     }
@@ -26111,6 +26916,13 @@ pub static WALL_OF_WATER: LazyLock<WallOfWater> = LazyLock::new(|| WallOfWater {
 pub struct Compulsion {}
 
 impl Action for Compulsion {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -26290,6 +27102,13 @@ pub static LONGSTRIDER: LazyLock<Longstrider> = LazyLock::new(|| Longstrider {})
 pub struct ExpeditiousRetreat {}
 
 impl Action for ExpeditiousRetreat {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "expeditious retreat"
     }
@@ -26468,6 +27287,13 @@ pub static EARTHBIND: LazyLock<Earthbind> = LazyLock::new(|| Earthbind {});
 pub struct EnhanceAbility {}
 
 impl Action for EnhanceAbility {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "enhance ability"
     }
@@ -26824,6 +27650,13 @@ pub static PYROTECHNICS: LazyLock<Pyrotechnics> = LazyLock::new(|| Pyrotechnics 
 pub struct FlameArrows {}
 
 impl Action for FlameArrows {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "flame arrows"
     }
@@ -26898,6 +27731,13 @@ pub static FLAME_ARROWS: LazyLock<FlameArrows> = LazyLock::new(|| FlameArrows {}
 pub struct AshardalonsStride {}
 
 impl Action for AshardalonsStride {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "ashardalon's stride"
     }
@@ -26980,6 +27820,13 @@ pub static ASHARDALONS_STRIDE: LazyLock<AshardalonsStride> =
 pub struct OtherworldlyGuise {}
 
 impl Action for OtherworldlyGuise {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "otherworldly guise"
     }
@@ -27370,6 +28217,13 @@ impl Darkness {
 }
 
 impl Action for Darkness {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -27479,6 +28333,13 @@ pub static DARKNESS: LazyLock<Darkness> = LazyLock::new(|| Darkness {});
 pub struct ShadowOfMoil {}
 
 impl Action for ShadowOfMoil {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "shadow of moil"
     }
@@ -27778,6 +28639,13 @@ pub static MAGNIFY_GRAVITY: LazyLock<MagnifyGravity> = LazyLock::new(|| MagnifyG
 pub struct ElementalWeapon {}
 
 impl Action for ElementalWeapon {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "elemental weapon"
     }
@@ -28205,6 +29073,13 @@ pub static SEE_INVISIBILITY: LazyLock<SeeInvisibility> = LazyLock::new(|| SeeInv
 pub struct Immolation {}
 
 impl Action for Immolation {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }

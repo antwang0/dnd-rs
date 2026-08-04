@@ -98,6 +98,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3'. The at-will ally-support pulse — an action whose whole
+        //     effect is spreading a buff over the teammates standing
+        //     near the actor, at no cost and on every turn. See
+        //     `try_ally_support_pulse`.
+        if let Some(aei) = try_ally_support_pulse(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3a'. Greater Restoration — cleanse a debuffed ally of a severe
         //      condition (Petrified, Stunned, Paralyzed, Blinded, etc.).
         //      High priority because the conditions block the ally's turn.
@@ -6204,6 +6212,76 @@ fn try_summon_allies(
         .map(|(_, _, aei)| aei)
 }
 
+/// Fire an at-will, self-centered **ally support pulse** — a `NoArgs`
+/// action that costs nothing but the turn, harms nobody, and hands a
+/// buff to the teammates standing near the actor.
+///
+/// One creature has such an action today and it has no others: the
+/// Artillerist's Protector cannon, whose whole turn is `1d8 + INT`
+/// temporary hit points over every ally within ten feet. Nothing else on
+/// the ladder could reach it. `try_support_heal` walks `SingleActor`
+/// heals and hands them to a chosen ally; `try_self_heal` walks `NoArgs`
+/// heals but only fires when the *actor* is below half, which a turret
+/// standing behind the line never is. So the cannon that never attacks
+/// also never did anything else.
+///
+/// The gate is deliberately thin — is there an ally in range at all —
+/// because for this cohort the answer to "is it worth a turn" is always
+/// yes: the action is free, repeatable, and the alternative is the
+/// turret standing still. A future entry that costs a slot or a charge
+/// would need a real gate, and would belong on a different rung for
+/// exactly that reason.
+///
+/// Slotted directly below the heal rung: a bleeding ally wants the heal
+/// first, and everyone wants the shield before the shooting starts.
+fn try_ally_support_pulse(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    for action in actor.actions.iter() {
+        if action.is_harmful()
+            || !action.is_heal()
+            || !matches!(action.targeting_schema(), TargetingSchema::NoArgs)
+        {
+            continue;
+        }
+        // Free, or it does not belong on this rung. A pulse the actor
+        // has to pay a slot or a charge for is a decision, and this is
+        // a reflex.
+        if !action
+            .cost(encounter, actor_id, None, None, None)
+            .iter()
+            .all(|c| {
+                use crate::engine::side_effects::Resource;
+                matches!(c, Resource::Action | Resource::BonusAction)
+            })
+        {
+            continue;
+        }
+        // Somebody has to be standing in it. The action declares its own
+        // envelope through `reach_tiles`; without one there is nothing
+        // to measure and the rung declines rather than guessing.
+        let radius = action.reach_tiles()?;
+        let loc = actor.location();
+        if encounter
+            .ally_burst_targets(actor_id, loc, radius)
+            .iter()
+            .all(|&id| id == actor_id)
+        {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(*action, actor_id, None, None, None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
 /// Drop an area-control spell on the densest cluster of hostiles.
 ///
 /// Shares `best_burst_placement` with `try_attack_aoe`, so the
@@ -6269,7 +6347,21 @@ fn try_self_centered_burst(
                 ) <= CLUSTER_RADIUS
         })
         .count();
-    if nearby_enemies < 2 {
+    // Two enemies is the price of *choosing* a burst over a swing: a
+    // blast that catches one creature is nearly always worse than
+    // pointing an attack at it, so a caster holding both should point
+    // the attack.
+    //
+    // An actor holding no attack at all is not making that choice. The
+    // Artillerist's flamethrower cannon is the case: a turret with a
+    // cone and nothing else, whose whole existence is that one action.
+    // Against a single enemy the two-enemy floor meant it sat on the
+    // board for the entire encounter and never fired once — the
+    // subclass's headline feature, inert, in every duel. So the floor
+    // is one when there is nothing else to do with the turn.
+    let has_a_swing = try_attack_focus_fire(encounter, actor_id).is_some();
+    let floor = if has_a_swing { 2 } else { 1 };
+    if nearby_enemies < floor {
         return None;
     }
 
@@ -6982,6 +7074,76 @@ mod tests {
     /// A melee build carrying an attack cantrip swings the weapon once
     /// the enemy is already standing next to it.
     ///
+    /// A turret whose only action is a self-centered burst fires it at a
+    /// single enemy.
+    ///
+    /// The two-enemy floor on `try_self_centered_burst` is the price of
+    /// *choosing* a blast over a swing, and an actor with no swing is
+    /// not choosing. Before the floor learned that, the Artillerist's
+    /// flamethrower cannon — a cone and nothing else — sat on the board
+    /// for entire encounters without firing once.
+    #[test]
+    fn a_burst_only_actor_fires_at_a_lone_enemy() {
+        use crate::actors::creatures::eldritch_cannons::FLAMETHROWER_CANNON_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = empty_arena();
+        let cannon = e
+            .instantiate_creature(&FLAMETHROWER_CANNON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let aei = try_self_centered_burst(&e, cannon).expect("the cannon should fire");
+        assert_eq!(aei.action().name(), "flamethrower");
+
+        // And a caster that *does* hold a swing still wants two bodies
+        // before it reaches for a blast — the floor is relaxed for the
+        // actor with no alternative, not lifted.
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_self_centered_burst(&e, wizard).is_none(),
+            "one enemy is not a cluster for something holding a cantrip"
+        );
+    }
+
+    /// The Protector cannon's whole turn is a pulse of temporary hit
+    /// points over the allies standing near it, and nothing on the
+    /// ladder could reach it: the heal rung walks single-target heals,
+    /// and the self-heal rung only fires when the *actor* is bloodied,
+    /// which a turret behind the line never is.
+    #[test]
+    fn an_ally_support_pulse_fires_for_the_teammates_standing_in_it() {
+        use crate::actors::creatures::eldritch_cannons::PROTECTOR_CANNON_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let mut e = empty_arena();
+        let cannon = e
+            .instantiate_creature(&PROTECTOR_CANNON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 14), 1, 0)
+            .unwrap();
+        // Nobody to shield yet — the cannon is alone on its team.
+        assert!(try_ally_support_pulse(&e, cannon).is_none());
+
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let aei = try_ally_support_pulse(&e, cannon).expect("an ally is standing in it");
+        assert_eq!(aei.action().name(), "protector pulse");
+        for ef in aei.execute(&mut e) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].temp_hp() > 0,
+            "the pulse should have shielded the ally"
+        );
+    }
+
     /// The kite rung backs an actor out of contact so it can shoot. It
     /// should not do that when there is nothing to shoot with.
     ///
@@ -11437,6 +11599,7 @@ mod tests {
     /// wiring test would only be re-testing the rider, which the
     /// engine-side sweep already covers.
     
+
 
 
     #[test]

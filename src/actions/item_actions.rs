@@ -5065,6 +5065,13 @@ pub static READ_BARKSKIN_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
 pub struct ReadConjureAnimalsScrollItem {}
 
 impl Action for ReadConjureAnimalsScrollItem {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "read conjure animals scroll"
     }
