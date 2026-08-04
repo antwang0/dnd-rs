@@ -1946,50 +1946,6 @@ const EXTENDABLE: &[&str] = &[
     "shadow blade",
 ];
 
-/// Elemental-damage spells, for the Sorcerer's Transmuted Spell gate.
-/// The engine tags damage types on the action rather than the spell
-/// list, but `damage_types()` is UI-only on most impls, so this
-/// whitelist stands in. A false positive wastes one bonus action, not
-/// the sorcery point.
-const ELEMENTAL_SPELLS: &[&str] = &[
-    // Acid
-    "acid splash",
-    "acid arrow",
-    "vitriolic sphere",
-    // Cold
-    "ray of frost",
-    "cone of cold",
-    "ice knife",
-    "ice storm",
-    "frostbite",
-    "snowball swarm",
-    // Fire
-    "fire bolt",
-    "burning hands",
-    "fireball",
-    "scorching ray",
-    "wall of fire",
-    "flame strike",
-    "produce flame",
-    "delayed blast fireball",
-    "incendiary cloud",
-    "fire storm",
-    // Lightning
-    "lightning bolt",
-    "chain lightning",
-    "shocking grasp",
-    "call lightning",
-    "lightning lure",
-    // Poison
-    "poison spray",
-    "stinking cloud",
-    "cloudkill",
-    // Thunder
-    "thunderwave",
-    "shatter",
-    "thunderclap",
-    "thunder step",
-];
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "reaper's touch",
     "divine strike",
@@ -2590,15 +2546,29 @@ fn try_transmuted_spell(
     if actor.has_any_metamagic_prime() {
         return None;
     }
-    // Kit gate: at least one elemental damage spell in the kit. We use a
-    // name-based whitelist rather than `damage_types()` since many spell
-    // impls don't override that hook (it's UI-only today) — the whitelist
-    // covers the elemental staples sorcerers / warlocks / wizards / druids
-    // typically carry. The prime no-ops on non-elemental casts anyway, so a
-    // false-positive here just wastes one bonus action, not the SP.
-    let has_elemental_spell = ELEMENTAL_SPELLS
-        .iter()
-        .any(|name| actor.find_action(name).is_some());
+    // Kit gate: at least one elemental damage spell in the kit, asked of
+    // each action rather than matched against a list of forty spell
+    // names. The list was here because `damage_types()` was described as
+    // UI-only and unreliable — it isn't: every damaging spell any
+    // playable template carries declares its types, which
+    // `nothing_friendly_claims_to_deal_damage` and the school-tag sweeps
+    // keep true. Asking is both shorter and strictly more accurate; the
+    // whitelist was missing fourteen spells the playable roster
+    // actually carries — Chromatic Orb, Aganazzar's Scorcher, Flaming
+    // Sphere, Immolation, Hellish Rebuke, Witch Bolt, Meteor Swarm,
+    // Prismatic Spray and the rest — and every one of those was a
+    // sorcerer declining a metamagic it could have used.
+    //
+    // `school().is_some()` is what keeps a flaming weapon out of it:
+    // Transmuted Spell remaps a *spell's* damage, and a monster's fire
+    // bite is not one.
+    let has_elemental_spell = actor.actions.iter().any(|a| {
+        a.school().is_some()
+            && a.damage_types()
+                .iter()
+                .copied()
+                .any(crate::engine::side_effects::is_transmutable_element)
+    });
     if !has_elemental_spell {
         return None;
     }
@@ -11469,14 +11439,13 @@ mod tests {
         // Every module-level name list the heuristics consult. A new
         // list belongs here; the cost of forgetting is a heuristic that
         // quietly never fires.
-        let lists: [(&str, &[&str]); 7] = [
+        let lists: [(&str, &[&str]); 6] = [
             ("MELEE_ADJACENT_PRIMES", MELEE_ADJACENT_PRIMES),
             ("SELF_TELEPORT_ESCAPES", SELF_TELEPORT_ESCAPES),
             ("AREA_CONTROL_SPELLS", AREA_CONTROL_SPELLS),
             ("HEIGHTENED_LOCKDOWN", HEIGHTENED_LOCKDOWN),
             ("HEIGHTENED_BURST", HEIGHTENED_BURST),
             ("EXTENDABLE", EXTENDABLE),
-            ("ELEMENTAL_SPELLS", ELEMENTAL_SPELLS),
         ];
         // Two entries name real spells that no playable template
         // currently carries — a level-8 lockdown and a level-1 temp-HP
