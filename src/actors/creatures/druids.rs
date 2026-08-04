@@ -781,6 +781,98 @@ mod wildfire_tests {
         assert!(!e.wildfire_bond_active(&e.actors[&druid]));
     }
 
+    /// The healing half of Enhanced Bond, which lives at a different
+    /// chokepoint from the damage half and shares only the gate.
+    ///
+    /// Two seed-identical runs of the same Cure Wounds, one with a
+    /// spirit standing beside the druid and one without, so the delta
+    /// between them isolates the d8 rather than measuring the heal.
+    #[test]
+    fn the_bond_puts_a_die_on_the_druids_healing_too() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE;
+
+        let heal_with_spirit = |summon: bool| {
+            let mut e = arena();
+            let druid = e
+                .instantiate_creature(&WILDFIRE_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+                .unwrap();
+            if summon {
+                e.instantiate_creature(&WILDFIRE_SPIRIT_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+                    .unwrap();
+            }
+            let max = e.actors[&ally].max_hitpoints();
+            // Deep enough that neither heal clips against the cap.
+            e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+            let before = e.actors[&ally].hitpoints();
+            e.pop_prompt();
+            let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, druid, Some(vec![ally]), None, None);
+            assert!(aei.validate(&e), "cure wounds should validate at touch range");
+            e.push_action(aei);
+            e.process_stack();
+            (
+                e.actors[&ally].hitpoints() - before,
+                e.messages().iter().any(|m| m.contains("enhanced bond")),
+            )
+        };
+
+        let (bare, bare_logged) = heal_with_spirit(false);
+        let (bonded, bonded_logged) = heal_with_spirit(true);
+        assert!(!bare_logged, "no spirit, no bond");
+        assert!(bonded_logged, "the bond should say so in the log");
+        let delta = bonded - bare;
+        assert!(
+            (1..=8).contains(&delta),
+            "expected a d8 more healing with the spirit up, got {delta}"
+        );
+    }
+
+    /// Enhanced Bond reads `Action::damage_types()`, so a fire spell
+    /// that forgets the declaration silently drops out of the feature —
+    /// the die stops arriving, every mechanical test still passes, and
+    /// nothing says why.
+    ///
+    /// This pins the six spells on the chassis that RAW's "a spell that
+    /// deals fire damage" covers. It is deliberately a whitelist rather
+    /// than a "spells with 'fire' in the name" scan: the interesting
+    /// cases are the ones whose names say nothing (Heat Metal, Produce
+    /// Flame, Create Bonfire), and a name-shaped test would miss exactly
+    /// those.
+    ///
+    /// Flame Blade and Ashardalon's Stride are the deliberate
+    /// exclusions. Both are self-buffs whose fire arrives later, from a
+    /// weapon swing or a step — there is no damage roll during the cast
+    /// for a d8 to ride, so declaring the type would only make the
+    /// feature look like it fired.
+    #[test]
+    fn the_druids_fire_spells_declare_that_they_are_fire() {
+        use crate::engine::types::DamageType;
+        let fire_spells = [
+            "produce flame",
+            "create bonfire",
+            "heat metal",
+            "flaming sphere",
+            "wall of fire",
+            "fire storm",
+        ];
+        for name in fire_spells {
+            let action = WILDFIRE_DRUID_TEMPLATE
+                .actions
+                .iter()
+                .find(|a| a.name() == name)
+                .unwrap_or_else(|| panic!("{name} left the Wildfire druid's list"));
+            assert!(
+                action.damage_types().contains(&DamageType::Fire),
+                "{name} stopped declaring fire, so Enhanced Bond stopped paying out on it"
+            );
+        }
+    }
+
     /// A baseline druid standing next to a wildfire spirit is still a
     /// baseline druid — the gate reads the tag on the *caster* first.
     #[test]
