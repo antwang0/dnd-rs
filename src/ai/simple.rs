@@ -6993,6 +6993,67 @@ mod tests {
         assert!(try_summon_allies(&empty, alone).is_none());
     }
 
+    /// A free feature summon leaves the slot lane alone.
+    ///
+    /// The `Summoner` marker means "I have spent a slot calling for
+    /// help", and it used to mean "I have called for help" — which
+    /// silently barred a Beast Master who whistled up their wolf on
+    /// round one from ever casting Conjure Animals, and would have done
+    /// the same to the Wildfire druid and the Fathomless warlock. Both
+    /// halves are pinned here: the free summon leaves no mark, and the
+    /// slotted one that follows it does.
+    #[test]
+    fn a_free_summon_does_not_spend_the_fights_one_slotted_call() {
+        use crate::actors::creatures::druids::WILDFIRE_DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let druid = e
+            .instantiate_creature(&WILDFIRE_DRUID_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
+
+        // Cheapest-first: the charge-gated spirit outranks the level-3
+        // wolves, which is also the order a player would spend them in.
+        let aei = try_summon_allies(&e, druid).expect("an engaged Wildfire druid should summon");
+        assert_eq!(aei.action().name(), "summon wildfire spirit");
+        for ef in aei.execute(&mut e) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&druid].has_condition(Condition::Summoner),
+            "a free feature summon must not consume the fight's one slotted call"
+        );
+
+        // Hand the druid their Action back and the rung reaches past
+        // the spent charge to the slot summon underneath it.
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        let second = try_summon_allies(&e, druid)
+            .expect("the slot summon should still be available to a Wildfire druid");
+        assert_eq!(second.action().name(), "conjure animals");
+        for ef in second.execute(&mut e) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&druid].has_condition(Condition::Summoner),
+            "the slotted call is the one that closes the lane"
+        );
+    }
+
     /// The summon rung fires once per fight and then stops.
     ///
     /// The concentration check caps most of the roster, but Animate
@@ -11529,6 +11590,41 @@ mod tests {
             checked.len() >= expected.len() - 1,
             "only reached {:?} of the pinned actions",
             checked
+        );
+    }
+
+    /// An action that isn't aimed at an enemy doesn't whittle anybody's
+    /// hit points.
+    ///
+    /// `deals_damage()` defaults to `is_harmful()` precisely so this
+    /// holds without anyone maintaining it, and the exception list is
+    /// the point of the test: exactly one action in the engine is
+    /// legitimately `!is_harmful()` while declaring a damage type, and
+    /// it says `deals_damage() == false` anyway. A second exception
+    /// should have to be argued for here rather than arriving as a
+    /// forgotten override.
+    ///
+    /// Worth pinning because the failure is silent. Every consumer of
+    /// `deals_damage` today happens to check `is_harmful` first, so a
+    /// wrong answer costs nothing until the consumer that doesn't
+    /// arrives — at which point it inherits every wrong answer at once.
+    #[test]
+    fn nothing_friendly_claims_to_deal_damage() {
+        use crate::actors::creatures::pc_template_families;
+
+        let mut liars: Vec<&str> = Vec::new();
+        for (_family, templates) in pc_template_families() {
+            for action in templates.iter().flat_map(|t| t.actions.iter()) {
+                if !action.is_harmful() && action.deals_damage() {
+                    liars.push(action.name());
+                }
+            }
+        }
+        liars.sort_unstable();
+        liars.dedup();
+        assert!(
+            liars.is_empty(),
+            "these actions target no enemy yet claim to deal damage: {liars:?}"
         );
     }
 }

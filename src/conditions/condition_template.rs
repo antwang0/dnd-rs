@@ -581,12 +581,23 @@ pub enum Condition {
     /// feature, not a spell, so Dispel Magic has nothing to grab —
     /// the same call `WildShaped` makes.
     Duplicity,
-    /// Has already called for reinforcements this encounter.
+    /// Has already spent a spell slot calling for reinforcements this
+    /// encounter.
     ///
     /// Pure bookkeeping, installed on the *caster* by
-    /// `spawn_adjacent_summons` the first time any summon actually puts
-    /// a body on the board, and read by exactly one consumer: the AI's
-    /// summon rung, which declines while it is up.
+    /// `spawn_adjacent_summons` the first time a summon **cast from a
+    /// slot** actually puts a body on the board, and read by exactly one
+    /// consumer: the AI's summon rung, which won't spend a second slot
+    /// while it is up.
+    ///
+    /// The slot leg matters. A per-rest *feature* summon — the Ranger's
+    /// Companion, the Wildfire druid's spirit, the Fathomless warlock's
+    /// tentacle — leaves no mark, because each already carries its own
+    /// once-per-rest cap and RAW is explicit that a feature summon and a
+    /// conjured pack can share a board. The marker used to go up for
+    /// those too, which meant a Beast Master who whistled up their wolf
+    /// on round one was silently barred from Conjure Animals for the
+    /// rest of the fight.
     ///
     /// It exists because the summons disagree about what stops them
     /// from being cast again. Conjure Animals, Conjure Elemental and

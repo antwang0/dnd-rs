@@ -22,23 +22,13 @@ fn push_damage_modifier_line(
     actor: &crate::actors::actor_template::ActorInstance,
 ) {
     use crate::engine::types::{DamageModifier, DamageType};
-    let all = [
-        DamageType::Acid,
-        DamageType::Bludgeoning,
-        DamageType::Cold,
-        DamageType::Fire,
-        DamageType::Force,
-        DamageType::Lightning,
-        DamageType::Necrotic,
-        DamageType::Piercing,
-        DamageType::Poison,
-        DamageType::Psychic,
-        DamageType::Radiant,
-        DamageType::Slashing,
-        DamageType::Thunder,
-    ];
     let mut buckets: [Vec<String>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    for dt in all {
+    // `DamageType::ALL` rather than a copy of the enum: this panel's
+    // whole job is to be exhaustive, and a hand-written list is
+    // exhaustive only until somebody adds a fourteenth damage type and
+    // forgets this file. The shared array is the same one
+    // `DamageTypeSet` assigns bits from, so the two can't disagree.
+    for dt in DamageType::ALL {
         match actor.damage_modifier(dt) {
             Some(DamageModifier::Resistance) => buckets[0].push(format!("{:?}", dt)),
             Some(DamageModifier::Immunity) => buckets[1].push(format!("{:?}", dt)),

@@ -659,12 +659,33 @@ pub trait Action {
         true
     }
 
-    /// True if this action's primary effect is HP loss on the target
-    /// (default). Hostile control actions like Shove return false so
-    /// the AI's focus-fire pipeline doesn't pick them over attacks that
-    /// actually whittle down enemy HP.
+    /// True if this action's primary effect is HP loss on the target.
+    /// Hostile control actions like Shove return false so the AI's
+    /// focus-fire pipeline doesn't pick them over attacks that actually
+    /// whittle down enemy HP.
+    ///
+    /// **Defaults to `is_harmful()`**, which is the only default that
+    /// can't be wrong by accident: an action that isn't aimed at an
+    /// enemy at all is not whittling anybody's hit points, and an action
+    /// that is aimed at one usually is. A flat `true` here — which is
+    /// what this was — quietly gave twenty-one buffs, heals and
+    /// movement actions the claim that they deal damage. Dodge, Dash,
+    /// Help, Hide, Second Wind, Action Surge, Bless, Aid, Cure Wounds,
+    /// Healing Word, Shield and Shield of Faith all said so, and the
+    /// only reason nothing broke is that every consumer happens to
+    /// check `is_harmful()` first. That is a coincidence rather than a
+    /// design, and the next consumer to read this alone would have
+    /// inherited twelve wrong answers.
+    ///
+    /// The two clauses stay separate because a real distinction lives
+    /// between them: **harmful but not damaging** is a whole category —
+    /// Shove, Grapple, Hold Person, Banishment, Sanctuary — and those
+    /// override to `false`. The reverse (not harmful yet damaging) has
+    /// exactly one member, Spirit Guardians, whose aura hurts enemies
+    /// while the *cast* targets nobody; it already says `false` here for
+    /// the same reason the AI shouldn't treat it as an attack.
     fn deals_damage(&self) -> bool {
-        true
+        self.is_harmful()
     }
 
     /// True if this action restores HP / temp HP on its target.

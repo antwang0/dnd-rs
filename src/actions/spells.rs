@@ -1174,12 +1174,26 @@ pub(crate) fn spawn_adjacent_summons(
             }
         }
     }
-    // Mark the caster as having called for reinforcements. Read only by
-    // the AI's summon rung, which declines while it is up — see
-    // `Condition::Summoner` for why the marker lives on the caster and
-    // why the concentration check the rung already does isn't enough
-    // (Animate Dead holds no concentration and has no charge).
-    if !spawned.is_empty()
+    // Mark the caster as having spent a *slot* calling for
+    // reinforcements. Read only by the AI's summon rung, which won't
+    // spend a second slot while it is up — see `Condition::Summoner`
+    // for why the marker lives on the caster and why the concentration
+    // check the rung already does isn't enough (Animate Dead holds no
+    // concentration and has no charge).
+    //
+    // The slot leg is read off the open cast frame rather than passed
+    // in: `Action::execute` opens the frame before `side_effects` runs
+    // and stamps it with the resolved slot level, so a spell arrives
+    // here at level 1+ and a per-rest *feature* summon — the Ranger's
+    // Companion, the wildfire spirit, the tentacle — arrives at 0 and
+    // leaves no mark. Which is right, and used not to be: those three
+    // already carry their own once-per-rest cap, and a Beast Master who
+    // whistled up their wolf should not thereby be barred from ever
+    // casting Conjure Animals. RAW is explicit that a Wildfire druid's
+    // spirit and their conjured wolves can share a board.
+    let cost_a_slot = encounter.current_cast().is_some_and(|c| c.level > 0);
+    if cost_a_slot
+        && !spawned.is_empty()
         && let Some(caster) = encounter.actors.get_mut(&caster_id)
     {
         caster.add_condition(

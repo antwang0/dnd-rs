@@ -150,28 +150,6 @@ impl DamageTypeSet {
     pub fn contains(self, damage_type: DamageType) -> bool {
         self.0 & (1 << damage_type.bit_index()) != 0
     }
-
-    pub fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// True if this set and `other` share at least one type. The shape
-    /// a feature keyed to a *family* of types needs — Heart of the
-    /// Storm's lightning-or-thunder, Dampen Elements' five elementals —
-    /// without either side having to walk `DamageType::ALL`.
-    pub fn intersects(self, other: DamageTypeSet) -> bool {
-        self.0 & other.0 != 0
-    }
-}
-
-impl FromIterator<DamageType> for DamageTypeSet {
-    fn from_iter<I: IntoIterator<Item = DamageType>>(iter: I) -> Self {
-        let mut set = DamageTypeSet::EMPTY;
-        for t in iter {
-            set.insert(t);
-        }
-        set
-    }
 }
 
 impl fmt::Display for DamageType {
