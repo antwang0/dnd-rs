@@ -2432,6 +2432,9 @@ impl Web {
 }
 
 impl Action for Web {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -5443,6 +5446,9 @@ pub static VAMPIRIC_TOUCH: LazyLock<VampiricTouch> = LazyLock::new(|| VampiricTo
 pub struct HypnoticPattern {}
 
 impl Action for HypnoticPattern {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -12531,6 +12537,9 @@ impl SleetStorm {
 }
 
 impl Action for SleetStorm {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -14693,6 +14702,9 @@ pub static EYEBITE: LazyLock<Eyebite> = LazyLock::new(|| Eyebite {});
 pub struct ConjureAnimals {}
 
 impl Action for ConjureAnimals {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn summons_allies(&self) -> bool {
         true
     }
@@ -14792,6 +14804,9 @@ pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureA
 pub struct ConjureElemental {}
 
 impl Action for ConjureElemental {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn summons_allies(&self) -> bool {
         true
     }
@@ -16928,6 +16943,9 @@ impl EvardsBlackTentacles {
 }
 
 impl Action for EvardsBlackTentacles {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -22162,6 +22180,9 @@ impl Entangle {
 }
 
 impl Action for Entangle {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -27252,6 +27273,9 @@ pub static SHADOW_OF_MOIL: LazyLock<ShadowOfMoil> = LazyLock::new(|| ShadowOfMoi
 pub struct AnimateObjects {}
 
 impl Action for AnimateObjects {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn summons_allies(&self) -> bool {
         true
     }

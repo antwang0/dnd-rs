@@ -5931,10 +5931,12 @@ fn best_burst_placement(
 /// expresses that. This mirrors the way `try_hold_person` already sits
 /// above plain attacks on the single-target lane.
 ///
-/// Each entry carries whether holding it costs the caster's
-/// concentration, because that is what bounds the rung: a caster
-/// already holding something declines every concentration entry, so a
-/// control spell can never displace a control spell.
+/// What bounds the rung is each entry's own
+/// `Action::holds_concentration`: a caster already holding something
+/// declines every concentrating entry, so a control spell can never
+/// displace a control spell. That used to be a `bool` column beside
+/// each name here, which put the fact somewhere the spell couldn't see
+/// it; asking the action is the same rule with one source of truth.
 ///
 /// The spike fields are deliberately *not* here, despite being area
 /// denial. What earns a spell this rung is taking hostiles out of the
@@ -5944,20 +5946,20 @@ fn best_burst_placement(
 /// way round, and Spike Growth was displacing Hold Person. They stay
 /// reachable through the ordinary AoE picker.
 ///
-/// Grease is the one entry that costs no concentration, and the flag
-/// exists for it. RAW it is laid down and walked away from — a level-1
-/// slot that keeps tripping people for a minute while the caster
-/// concentrates on something else entirely — and folding it into a
-/// blanket "not while concentrating" gate would have made the cheapest
-/// control spell in the game the only one a caster can't combine with
-/// anything.
-const AREA_CONTROL_SPELLS: &[(&str, bool)] = &[
-    ("web", true),
-    ("hypnotic pattern", true),
-    ("black tentacles", true),
-    ("entangle", true),
-    ("sleet storm", true),
-    ("grease", false),
+/// Grease is the one entry that costs no concentration, and the
+/// per-entry check exists for it. RAW it is laid down and walked away
+/// from — a level-1 slot that keeps tripping people for a minute while
+/// the caster concentrates on something else entirely — and folding it
+/// into a blanket "not while concentrating" gate would have made the
+/// cheapest control spell in the game the only one a caster can't
+/// combine with anything.
+const AREA_CONTROL_SPELLS: &[&str] = &[
+    "web",
+    "hypnotic pattern",
+    "black tentacles",
+    "entangle",
+    "sleet storm",
+    "grease",
 ];
 
 /// Put a friendly body on the board — Conjure Animals, Conjure
@@ -5970,53 +5972,77 @@ const AREA_CONTROL_SPELLS: &[(&str, bool)] = &[
 /// nothing, so every picker in the ladder filtered them out, and the
 /// spells were reachable only by a human typing their name.
 ///
-/// Three gates, in cheapest-first order:
+/// One rung-wide gate and then three per-summon ones:
 ///
-///   1. **Not already concentrating.** Every summon on the list except
-///      the Ranger's Companion holds concentration, and the picker
-///      declines wholesale rather than per-action — a caster who traded
-///      a landed Web for an unlanded pack of wolves has made the fight
-///      worse, and the same argument `try_area_control` makes.
-///   2. **A fight is actually on** (24 tiles ≈ 60 ft). Summons are the
+///   0. **A fight is actually on** (24 tiles ≈ 60 ft). Summons are the
 ///      most expensive thing in the ladder to waste: a concentration
 ///      slot, an Action, and a spell slot, all spent on bodies that
 ///      time out before anything walks into range.
+///   1. **Not concentrating on something else** — but only for a summon
+///      that would take the concentration. A caster who traded a landed
+///      Web for an unlanded pack of wolves has made the fight worse,
+///      which is the same argument `try_area_control` makes. A summon
+///      that concentrates on nothing can't make that trade, so it isn't
+///      asked to.
+///   2. **One *slot* spent calling for help per fight.** The
+///      concentration check caps three of the six summons and a per-rest
+///      charge caps two more, but Animate Dead has neither — RAW it is a
+///      permanent minion, so without this a wizard spends every
+///      third-level slot it owns on skeletons and never casts anything
+///      else. See `Condition::Summoner`. The cap is on the slot, not on
+///      the summoning: a charge-gated *feature* summon already carries
+///      its own once-per-rest cap, and RAW is clear that a Wildfire
+///      druid's spirit and their Conjure Animals wolves can be on the
+///      board at once.
 ///   3. **The action's own validator**, which owns the part the AI
 ///      shouldn't guess at — whether there is a free adjacent tile of
 ///      the right size to put the creature on.
 ///
-/// Ties break by list order within the actor's own action list, which
-/// puts whichever summon the template author listed first ahead of the
-/// rest. That is deliberate: the templates order their kits by intent,
-/// and there is no cross-summon quality metric worth inventing (a
-/// conjured elemental and two wolves are good in different fights).
+/// Candidates are tried **cheapest first** — free before slotted, and
+/// among slotted ones the smaller slot first — falling back to the
+/// actor's own list order for a genuine tie. Cost is the only
+/// cross-summon metric worth having: there is no sense in which two
+/// wolves and a fire elemental can be compared on quality (they are
+/// good in different fights), but a body that costs neither a slot nor
+/// the caster's attention is unambiguously the one to spend first. It
+/// is also what makes gate 2 above sit right — the free summon goes
+/// down, and the slot stays available for the fight to ask for a second
+/// one later.
 fn try_summon_allies(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    // One call for help per fight. The concentration check above caps
-    // three of the five summons and the per-rest charge caps a fourth,
-    // but Animate Dead has neither — RAW it is a permanent minion, so
-    // without this a wizard spends every third-level slot it owns on
-    // skeletons and never casts anything else. See `Condition::Summoner`.
-    if actor.has_condition(Condition::Summoner) {
-        return None;
-    }
     if !any_enemy_within(encounter, actor_id, 24) {
         return None;
     }
-    actor
+    let busy = actor.is_concentrating();
+    let already_called = actor.has_condition(Condition::Summoner);
+    let mut candidates: Vec<(u32, usize, ActionExecutionInfo)> = actor
         .actions
         .iter()
-        .filter(|a| a.summons_allies())
-        .find_map(|a| {
+        .enumerate()
+        .filter(|(_, a)| a.summons_allies())
+        .filter_map(|(order, a)| {
+            if busy && a.holds_concentration() {
+                return None;
+            }
             let aei = ActionExecutionInfo::new(*a, actor_id, None, None, None);
-            aei.validate(encounter).then_some(aei)
+            let slot = crate::engine::side_effects::spell_slot_level(&a.cost(
+                encounter, actor_id, None, None, None,
+            ))
+            .unwrap_or(0);
+            if already_called && slot > 0 {
+                return None;
+            }
+            Some((slot, order, aei))
         })
+        .collect();
+    candidates.sort_by_key(|(slot, order, _)| (*slot, *order));
+    candidates
+        .into_iter()
+        .find(|(_, _, aei)| aei.validate(encounter))
+        .map(|(_, _, aei)| aei)
 }
 
 /// Drop an area-control spell on the densest cluster of hostiles.
@@ -6038,11 +6064,8 @@ fn try_area_control(
     let actor = encounter.actors.get(&actor_id)?;
     let busy = actor.is_concentrating();
     best_burst_placement(encounter, actor_id, |a| {
-        AREA_CONTROL_SPELLS
-            .iter()
-            .any(|(name, needs_concentration)| {
-                *name == a.name() && !(busy && *needs_concentration)
-            })
+        AREA_CONTROL_SPELLS.iter().any(|name| *name == a.name())
+            && !(busy && a.holds_concentration())
     })
 }
 
@@ -8385,6 +8408,17 @@ mod tests {
             .get_mut(&cleric)
             .unwrap()
             .start_concentration(ConcentrationData::new("Placeholder"));
+        // And gate out the summon rung, which also outranks AoE. The
+        // held concentration used to do that on its own; it no longer
+        // does, because the rung asks each summon whether *it* wants a
+        // concentration rather than declining wholesale — and the
+        // cleric's Animate Dead wants none. Marking the cleric as having
+        // already called for help is the narrowest way to say "not this
+        // rung" without changing what the test is about.
+        e.actors.get_mut(&cleric).unwrap().add_condition(
+            crate::conditions::Condition::Summoner,
+            crate::conditions::ConditionTimer::Rounds(100),
+        );
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -10032,9 +10066,7 @@ mod tests {
         let (mut e, wiz) = clustered_hostiles(&WIZARD_TEMPLATE, 3);
         let aei = try_area_control(&e, wiz).expect("three clustered hostiles");
         assert!(
-            AREA_CONTROL_SPELLS
-                .iter()
-                .any(|(name, _)| *name == aei.action().name()),
+            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
             "picked {} which isn't on the control registry",
             aei.action().name()
         );
@@ -10047,13 +10079,12 @@ mod tests {
             None => {}
             Some(aei) => {
                 let name = aei.action().name().to_string();
-                let needs_concentration = AREA_CONTROL_SPELLS
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, c)| *c)
-                    .expect("picked something off the registry");
                 assert!(
-                    !needs_concentration,
+                    AREA_CONTROL_SPELLS.contains(&name.as_str()),
+                    "picked {name}, which isn't on the control registry"
+                );
+                assert!(
+                    !aei.action().holds_concentration(),
                     "a held concentration must block {}, which wants one of its own",
                     name
                 );
@@ -10117,9 +10148,7 @@ mod tests {
             panic!("expected an action");
         };
         assert!(
-            AREA_CONTROL_SPELLS
-                .iter()
-                .any(|(name, _)| *name == aei.action().name()),
+            AREA_CONTROL_SPELLS.contains(&aei.action().name()),
             "a dense cluster should take the concentration, got {}",
             aei.action().name()
         );
@@ -10800,7 +10829,9 @@ mod tests {
     fn the_ai_reaches_for_each_new_subclass_signature() {
         use crate::actors::actor_template::CreatureTemplate;
         use crate::actors::creatures::clerics::{DEATH_CLERIC_TEMPLATE, ORDER_CLERIC_TEMPLATE};
-        use crate::actors::creatures::druids::{SPORES_DRUID_TEMPLATE, STARS_DRUID_TEMPLATE};
+        use crate::actors::creatures::druids::{
+            SPORES_DRUID_TEMPLATE, STARS_DRUID_TEMPLATE, WILDFIRE_DRUID_TEMPLATE,
+        };
         use crate::actors::creatures::fighters::{
             ARCANE_ARCHER_FIGHTER_TEMPLATE, RUNE_KNIGHT_FIGHTER_TEMPLATE,
         };
@@ -10823,7 +10854,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 28] = [
+        let cases: [(&CreatureTemplate, &str); 30] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -10922,6 +10953,17 @@ mod tests {
             // Rage halving every physical hit does not get there against
             // one ogre. Its rung is pinned directly by
             // `the_beast_bite_is_only_reached_for_once_the_rage_is_losing`.
+            //
+            // The summon and the die it turns on are two separate facts.
+            // The first is that the AI's summon rung finds a feature
+            // rather than a spell — Summon Wildfire Spirit costs no slot
+            // and holds no concentration, so it reaches the rung through
+            // `summons_allies()` alone. The second is that the spirit
+            // being *there* is what pays: Enhanced Bond prints only when
+            // a fire spell goes off with the spirit inside 60 ft, which
+            // no amount of summoning guarantees on its own.
+            (&WILDFIRE_DRUID_TEMPLATE, "summon wildfire spirit"),
+            (&WILDFIRE_DRUID_TEMPLATE, "enhanced bond"),
         ];
 
         for (template, marker) in cases {
@@ -11355,12 +11397,10 @@ mod tests {
         // Every module-level name list the heuristics consult. A new
         // list belongs here; the cost of forgetting is a heuristic that
         // quietly never fires.
-        let area_control: Vec<&str> =
-            AREA_CONTROL_SPELLS.iter().map(|(name, _)| *name).collect();
         let lists: [(&str, &[&str]); 7] = [
             ("MELEE_ADJACENT_PRIMES", MELEE_ADJACENT_PRIMES),
             ("SELF_TELEPORT_ESCAPES", SELF_TELEPORT_ESCAPES),
-            ("AREA_CONTROL_SPELLS", &area_control),
+            ("AREA_CONTROL_SPELLS", AREA_CONTROL_SPELLS),
             ("HEIGHTENED_LOCKDOWN", HEIGHTENED_LOCKDOWN),
             ("HEIGHTENED_BURST", HEIGHTENED_BURST),
             ("EXTENDABLE", EXTENDABLE),
@@ -11390,6 +11430,93 @@ mod tests {
             "these AI heuristic entries match no action any playable \
              template carries, so they can never fire:\n  {}",
             orphans.join("\n  ")
+        );
+    }
+
+    /// Every action the AI's two concentration-aware rungs can reach
+    /// declares whether it takes the caster's concentration, and the
+    /// answers are pinned here.
+    ///
+    /// `Action::holds_concentration` defaults to `false`, which is the
+    /// right default for the thousands of actions in the engine that
+    /// genuinely do not concentrate and the wrong one for a
+    /// concentration spell that forgets to override it. The two cohorts
+    /// below are exactly where a wrong answer costs something — the
+    /// summon rung and the area-control rung both gate on it — so a new
+    /// summon or a new control spell has to state its answer here rather
+    /// than inherit a default nobody checked.
+    ///
+    /// The summon cohort is discovered rather than listed: every action
+    /// on every playable template that declares `summons_allies`. A
+    /// seventh summon added tomorrow fails this test until someone says
+    /// what it costs.
+    #[test]
+    fn the_ai_gated_cohorts_declare_their_concentration() {
+        use crate::actors::creatures::pc_template_families;
+        use std::collections::HashSet;
+
+        // (action name, does it take the caster's concentration)
+        let expected: &[(&str, bool)] = &[
+            // Summons — three spells anchor their minions to the
+            // caster's concentration, three do not.
+            ("conjure animals", true),
+            ("conjure elemental", true),
+            ("animate objects", true),
+            ("animate dead", false),
+            ("ranger's companion", false),
+            ("summon wildfire spirit", false),
+            // Area control.
+            ("web", true),
+            ("hypnotic pattern", true),
+            ("black tentacles", true),
+            ("entangle", true),
+            ("sleet storm", true),
+            ("grease", false),
+        ];
+
+        let mut checked: HashSet<&str> = HashSet::new();
+        let mut summons: HashSet<&str> = HashSet::new();
+        for (_family, templates) in pc_template_families() {
+            for action in templates.iter().flat_map(|t| t.actions.iter()) {
+                if action.summons_allies() {
+                    summons.insert(action.name());
+                }
+                if let Some((_, wants)) =
+                    expected.iter().find(|(n, _)| *n == action.name())
+                {
+                    assert_eq!(
+                        action.holds_concentration(),
+                        *wants,
+                        "{} disagrees with the pinned answer",
+                        action.name()
+                    );
+                    checked.insert(action.name());
+                }
+            }
+        }
+
+        let undeclared: Vec<&str> = summons
+            .iter()
+            .filter(|n| !expected.iter().any(|(e, _)| e == *n))
+            .copied()
+            .collect();
+        assert!(
+            undeclared.is_empty(),
+            "these summons reach the AI's summon rung without an answer \
+             pinned here: {undeclared:?}"
+        );
+        for name in AREA_CONTROL_SPELLS {
+            assert!(
+                expected.iter().any(|(e, _)| e == name),
+                "{name} is on the area-control registry without an answer pinned here"
+            );
+        }
+        // Sanity that the walk above actually found the cohorts rather
+        // than passing vacuously.
+        assert!(
+            checked.len() >= expected.len() - 1,
+            "only reached {:?} of the pinned actions",
+            checked
         );
     }
 }

@@ -614,3 +614,183 @@ pub static STARS_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..DRUID_TEMPLATE.clone()
     }
 });
+
+/// Wildfire Druid — Druid Circle **Circle of Wildfire** subclass build
+/// (TCE), the fifth circle on the roster, and the only one whose
+/// features are worth what a *second creature's position* makes them
+/// worth.
+///
+/// Two subclass features ship:
+///
+///   - **Summon Wildfire Spirit** (lv2, Action, once per short rest) —
+///     a Small fire elemental appears beside the druid and stays until
+///     it drops. No slot, no concentration.
+///   - **Enhanced Bond** (lv6, passive) — while the spirit is within
+///     60 ft, a d8 rides one damage roll of every fire spell the druid
+///     casts and one healing roll of every heal.
+///
+/// The two are one feature wearing two hats, and the seam between them
+/// is the subclass. The spirit is a mediocre combatant on purpose — 17
+/// hit points and a 1d6 attack, worse in a straight fight than the two
+/// wolves Conjure Animals buys for a level-3 slot. What it is for is
+/// *being within 60 feet*: every fire spell and every heal the druid
+/// casts is a die bigger while it is, and nothing at all bigger while
+/// it isn't. So a Wildfire druid spends the fight steering a body they
+/// don't fight with, to keep a bonus on spells they cast themselves,
+/// and the interesting decision is never "should I summon" (yes, round
+/// one, always) but "where does the spirit need to be standing three
+/// rounds from now".
+///
+/// **It is also the only summoner on the roster that keeps its
+/// concentration.** Conjure Animals, Conjure Elemental and Animate
+/// Objects all anchor their minions to the caster's concentration,
+/// which is the same concentration Moonbeam, Spike Growth, Call
+/// Lightning, Wall of Fire and Polymorph want. The spirit costs none,
+/// so a Wildfire druid is a full control caster *and* a summoner in the
+/// same round — the structural reason the circle reads as a caster with
+/// a pet rather than as a pet class.
+///
+/// **The fire half of Enhanced Bond is what the spell list is for.**
+/// The baseline druid chassis already carries Produce Flame, Create
+/// Bonfire, Flaming Sphere, Wall of Fire, Fire Storm, Investiture of
+/// Flame-adjacent picks and Flame Blade; every one of them picks the
+/// die up, and RAW's Enhanced Bond has no level floor, so the cantrips
+/// get it too. The heal half rides the same sentence and the same gate
+/// at the slot-heal chokepoint next to the Life Cleric's Disciple of
+/// Life — a Wildfire druid's Healing Word is `1d4 + WIS + 1d8`, which
+/// is roughly a Cure Wounds for a level-1 slot and a bonus action.
+///
+/// Contrast the sibling circles, which is where the shape of this one
+/// shows. Moon trades the entire spell list for a bear. Spores trades
+/// hit points for a melee rider. Land hands slots back. Stars changes
+/// what the existing kit is worth *without adding a body*. Wildfire is
+/// the only one whose feature is a creature, and therefore the only one
+/// the map can take away — a spirit that dies is a subclass that stops
+/// paying out until the next short rest.
+///
+/// RAW features not shipped: **Fiery Teleportation** (lv6 — the spirit
+/// teleports itself and a willing creature, then bursts; the teleport
+/// needs a destination picker the AI has no channel to answer, the same
+/// reason the Eldritch Knight's Arcane Charge is still future work),
+/// **Cauterizing Flames** (lv10 — a heal-or-harm burst triggered by a
+/// creature dying near where the spirit stood, which needs an
+/// on-death-location hook the engine's drop path doesn't expose), and
+/// **Blazing Revival** (lv14 — a once-per-long-rest self-resurrection
+/// that consumes the spirit).
+///
+/// Glyph 'W' — for **W**ildfire. Distinct from baseline druid 'D', Land
+/// 'L', Moon 'B', Spores 'F' and Stars 'S', and paired with the
+/// spirit's lowercase 'w' so summoner and summon read as a set.
+pub static WILDFIRE_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        ENHANCED_BOND_TAG, SUMMON_WILDFIRE_SPIRIT, SUMMON_WILDFIRE_SPIRIT_TAG,
+    };
+    // One action on top of the baseline caster chassis — the same
+    // additive shape Spores and Stars use. Enhanced Bond adds nothing to
+    // the action list: it is a passive read at two damage / heal
+    // chokepoints, so the druid's turn options are the baseline's plus
+    // the summon.
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(&*SUMMON_WILDFIRE_SPIRIT);
+    CreatureTemplate {
+        name: "Wildfire Druid",
+        glyph: 'W',
+        actions,
+        features: HashSet::from([SUMMON_WILDFIRE_SPIRIT_TAG, ENHANCED_BOND_TAG]),
+        ..DRUID_TEMPLATE.clone()
+    }
+});
+
+#[cfg(test)]
+mod wildfire_tests {
+    use super::*;
+    use crate::actions::class_features::{ENHANCED_BOND_TAG, SUMMON_WILDFIRE_SPIRIT_TAG};
+    use crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE;
+    use crate::engine::actor_gen::ActorGenParams;
+    use crate::engine::encounter::EncounterInstance;
+    use crate::engine::terrain_gen::TerrainGenParams;
+    use crate::engine::types::Coordinate;
+
+    fn arena() -> EncounterInstance {
+        let tp = TerrainGenParams {
+            width: 40,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap()
+    }
+
+    #[test]
+    fn the_circle_ships_both_halves_of_its_level_two_and_six() {
+        let t = &*WILDFIRE_DRUID_TEMPLATE;
+        assert!(t.features.contains(SUMMON_WILDFIRE_SPIRIT_TAG));
+        assert!(t.features.contains(ENHANCED_BOND_TAG));
+        assert!(
+            t.actions.iter().any(|a| a.name() == "summon wildfire spirit"),
+            "the summon has to be pickable, not just tagged"
+        );
+    }
+
+    /// The bond is a creature, not a flag: a Wildfire druid standing
+    /// alone gets nothing, the same druid with a spirit beside them gets
+    /// the die, and moving the spirit past 60 ft takes it away again.
+    #[test]
+    fn the_bond_is_live_only_while_the_spirit_is_within_sixty_feet() {
+        let mut e = arena();
+        let druid = e
+            .instantiate_creature(&WILDFIRE_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.wildfire_bond_active(&e.actors[&druid]),
+            "no spirit on the board, no bond"
+        );
+        let spirit = e
+            .instantiate_creature(&WILDFIRE_SPIRIT_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.wildfire_bond_active(&e.actors[&druid]));
+        // 30 tiles away is 75 ft — past RAW's 60.
+        e.actors
+            .get_mut(&spirit)
+            .unwrap()
+            .set_location(Coordinate::new(34, 2));
+        assert!(
+            !e.wildfire_bond_active(&e.actors[&druid]),
+            "the spirit wandered out of range and took the die with it"
+        );
+    }
+
+    /// A spirit on the *enemy* team is somebody else's spirit. The gate
+    /// walks allies, and the check is worth pinning because the search
+    /// is by tag rather than by a back-link — the one thing a tag
+    /// search could get wrong is finding a spirit that isn't yours.
+    #[test]
+    fn an_enemy_spirit_does_not_feed_the_bond() {
+        let mut e = arena();
+        let druid = e
+            .instantiate_creature(&WILDFIRE_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&WILDFIRE_SPIRIT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(!e.wildfire_bond_active(&e.actors[&druid]));
+    }
+
+    /// A baseline druid standing next to a wildfire spirit is still a
+    /// baseline druid — the gate reads the tag on the *caster* first.
+    #[test]
+    fn the_bond_needs_the_feature_not_just_the_neighbour() {
+        let mut e = arena();
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&WILDFIRE_SPIRIT_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(!e.wildfire_bond_active(&e.actors[&druid]));
+    }
+}

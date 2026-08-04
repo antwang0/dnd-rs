@@ -569,15 +569,33 @@ pub static DRACONIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     //     `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage` next
     //     to Dwarven Resilience / Fiendish Resilience — same lane,
     //     different class chassis.
+    //   - `ELEMENTAL_AFFINITY_TAG` (lv6, damage half): passive +CHA on
+    //     one damage roll of any spell that deals fire damage. A row on
+    //     the shared `FLAT_SPELL_DAMAGE_BONUSES` cohort next to the
+    //     Evocation Wizard's Empowered Evocation, and the sorcerer's
+    //     answer to it — where the wizard's covers a whole school at
+    //     every tier, this covers one damage type across every school.
+    //
+    // The two lv6 halves point at the same element on purpose. Draconic
+    // Resilience says "you resist fire"; Elemental Affinity says "your
+    // fire hits harder"; RAW derives both from the same ancestry, and
+    // shipping them on different elements would have been two half-
+    // features rather than one. On a CHA-18 chassis that is +4 on every
+    // Fireball, Burning Hands, Scorching Ray and Fire Bolt the sorcerer
+    // throws — and nothing at all on their Lightning Bolt, which is the
+    // choice the feature exists to pose.
     //
     // The `..base.clone()` tail picks up every other field — actions,
     // spell slots, sorcery points, save profs, features — without an
     // N-line field-by-field copy. Same shape as `FIEND_WARLOCK_TEMPLATE`
     // and the paladin / rogue / ranger subclass templates.
+    let mut features = SORCERER_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::ELEMENTAL_AFFINITY_TAG);
     CreatureTemplate {
         name: "Draconic Sorcerer",
         glyph: 'D',
         has_draconic_resilience: true,
+        features,
         ..SORCERER_TEMPLATE.clone()
     }
 });

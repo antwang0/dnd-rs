@@ -111,6 +111,7 @@ pub mod vrocks;
 pub mod warlocks;
 pub mod werewolves;
 pub mod wights;
+pub mod wildfire_spirits;
 pub mod wisps;
 pub mod wizards;
 pub mod wolves;
@@ -357,6 +358,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*druids::MOON_DRUID_TEMPLATE,
                     &*druids::SPORES_DRUID_TEMPLATE,
                     &*druids::STARS_DRUID_TEMPLATE,
+                    &*druids::WILDFIRE_DRUID_TEMPLATE,
                 ],
             ),
             (

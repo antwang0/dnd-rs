@@ -697,6 +697,39 @@ pub trait Action {
         false
     }
 
+    /// True if resolving this action puts the caster's concentration on
+    /// the line — i.e. its side effects include a `StartConcentration`.
+    ///
+    /// A *declaration*, read by the AI's gates so they can ask an action
+    /// what it costs instead of matching its name against a list. The
+    /// two rungs that consult it are `try_summon_allies` and
+    /// `try_area_control`, and both are answering the same question:
+    /// would firing this trade a concentration effect that has already
+    /// landed for one that hasn't?
+    ///
+    /// It replaced a hand-kept `bool` column beside a name list in the
+    /// AI, which had the defect every name list has — the fact lived
+    /// somewhere the spell couldn't see, so a spell whose concentration
+    /// changed had two places to update and only one of them would fail
+    /// a test.
+    ///
+    /// **Defaults to `false`, and that is a real default rather than an
+    /// unknown**: the overwhelming majority of actions in the engine —
+    /// every weapon swing, every monster attack, every item use, every
+    /// non-concentration spell — genuinely do not concentrate. What the
+    /// default cannot do is catch a concentration spell that forgets to
+    /// override, so the two cohorts the AI actually reads are pinned by
+    /// `the_ai_gated_cohorts_declare_their_concentration`: a new summon
+    /// or area-control spell has to state its answer or fail the build's
+    /// tests.
+    ///
+    /// Note this asks whether the action *starts* concentration, not
+    /// whether the caster is holding any — that is
+    /// `ActorInstance::is_concentrating`.
+    fn holds_concentration(&self) -> bool {
+        false
+    }
+
     /// Damage types this action can deal (for actor-side resistance /
     /// immunity hints in the prompt UI). Empty for non-damaging actions
     /// or those whose typing depends on runtime data.
@@ -1015,7 +1048,11 @@ pub trait Action {
             overrides,
         ))
         .unwrap_or(0);
-        encounter.enter_cast(self.school(), cast_level);
+        encounter.enter_cast(
+            self.school(),
+            cast_level,
+            crate::engine::types::DamageTypeSet::from_types(&self.damage_types()),
+        );
         let mut side_effects = self.side_effects(
             encounter,
             caster_id,

@@ -285,6 +285,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Soulknife Rogue **Homing Strikes**. RAW recovers Psionic Energy
     // dice on a short rest, which is the cadence this registry carries.
     HOMING_STRIKES_TAG,
+    // 5e Circle of Wildfire Druid **Summon Wildfire Spirit**. RAW spends
+    // a Wild Shape use, which recovers on a short rest — the same
+    // reasoning that puts the Stars Druid's Starry Form on this lane.
+    SUMMON_WILDFIRE_SPIRIT_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -5610,8 +5614,7 @@ pub const DIVINE_STRIKE_TAG: &str = "cleric.divine_strike";
 /// cleric cantrip."
 ///
 /// A pure passive with no charge and no action surface — the whole
-/// feature is a flat bonus read at
-/// `EncounterInstance::potent_spellcasting_bonus`, the chokepoint that
+/// feature is a row on `FLAT_SPELL_DAMAGE_BONUSES`, the cohort that
 /// already carries the Evocation Wizard's Empowered Evocation. The two
 /// are the same shape on opposite halves of the spell list: INT on
 /// levelled evocations, WIS on cantrips.
@@ -5623,6 +5626,83 @@ pub const DIVINE_STRIKE_TAG: &str = "cleric.divine_strike";
 /// else at level 8, and why the Trickery and Tempest domains take a
 /// Divine Strike instead.
 pub const POTENT_SPELLCASTING_TAG: &str = "cleric.potent_spellcasting";
+
+/// Class-feature tag for the Draconic Bloodline Sorcerer's **Elemental
+/// Affinity** (subclass level 6, damage half): "when you cast a spell
+/// that deals damage of the type associated with your draconic
+/// ancestry, you can add your Charisma modifier to one damage roll of
+/// that spell."
+///
+/// A pure passive with no charge and no action surface — a row on
+/// `FLAT_SPELL_DAMAGE_BONUSES` next to Empowered Evocation and Potent
+/// Spellcasting. Where those two read the cast's *school* and *tier*,
+/// this one reads the damage type the action declared, which is the
+/// axis `CastContext::damage_types` was added for.
+///
+/// **The ancestry is fire**, chosen to match `has_draconic_resilience`
+/// on the same template — the engine's Draconic Sorcerer already
+/// resists fire, and a lv6 that resisted one element while empowering
+/// another would be two half-features rather than one.
+///
+/// It is the sorcerer's answer to the wizard's Empowered Evocation, and
+/// it trades in the opposite direction: Empowered Evocation covers a
+/// whole school at every tier, this covers one damage type across every
+/// school. A Draconic Sorcerer's Fireball, Burning Hands, Scorching
+/// Ray, Fire Bolt, Wall of Fire, Delayed Blast Fireball, Immolation and
+/// Investiture of Flame all carry it; their Lightning Bolt and Chain
+/// Lightning do not, which is the choice the feature is asking the
+/// player to make when they pick what to prepare.
+///
+/// RAW's other half — an hour of resistance to the same damage type for
+/// a sorcery point — is left out: the engine has no lane for a cast to
+/// grant its caster a typed resistance, and the damage half is the one
+/// that reads at a site that already exists.
+pub const ELEMENTAL_AFFINITY_TAG: &str = "sorcerer.elemental_affinity";
+
+/// Class-feature tag for the Circle of Wildfire Druid's **Enhanced
+/// Bond** (subclass level 6): "while your spirit is summoned, ... when
+/// you cast a spell that deals fire damage or restores hit points, roll
+/// a d8 and add the number rolled to one damage or healing roll of that
+/// spell."
+///
+/// Two halves at two chokepoints, sharing one gate
+/// (`EncounterInstance::wildfire_bond_active`):
+///
+///   - the damage half is a row on `FLAT_SPELL_DAMAGE_BONUSES`, and the
+///     only row there that rolls a die rather than reading a modifier;
+///   - the healing half rides `slot_heal_effects` next to the Life
+///     Cleric's Disciple of Life.
+///
+/// **The gate is a creature, not a flag**, and that is the subclass.
+/// Every Wildfire feature is worth exactly what the spirit's position
+/// makes it worth: a druid whose spirit is dead gets nothing, and a
+/// druid whose spirit wandered past 60 ft gets nothing until it comes
+/// back. Nothing else on the druid chassis asks the player to keep a
+/// second body somewhere in particular — Conjure Animals' wolves fight
+/// wherever they like and the druid's own spells never notice.
+///
+/// RAW's "spell of 1st level or higher" is not in the text of Enhanced
+/// Bond, and we honour the omission: a Wildfire druid's Produce Flame
+/// and Create Bonfire pick the die up. That is deliberately unlike
+/// Disciple of Life, whose RAW *does* carry a level floor.
+pub const ENHANCED_BOND_TAG: &str = "druid.enhanced_bond";
+
+/// Marker tag carried by the **wildfire spirit** itself, not by the
+/// druid — the needle `EncounterInstance::wildfire_bond_active` looks
+/// for when it asks whether the bond is live.
+///
+/// A tag on the summon rather than a back-link on the summoner, because
+/// a link would dangle in the two cases that actually happen: the
+/// spirit dies and is re-summoned onto a fresh id, and two Wildfire
+/// druids share a team (RAW does not care whose spirit is standing next
+/// to whom). The tag search finds the right answer in both without any
+/// despawn path having to remember to clean up.
+pub const WILDFIRE_SPIRIT_TAG: &str = "druid.wildfire_spirit";
+
+/// Class-feature tag for the Circle of Wildfire Druid's **Summon
+/// Wildfire Spirit** (subclass level 2). One charge per short rest; see
+/// `SummonWildfireSpirit` for the action.
+pub const SUMMON_WILDFIRE_SPIRIT_TAG: &str = "druid.summon_wildfire_spirit";
 
 /// Class-feature tag for the Trickery Domain Cleric's **Divine Strike
 /// (poison)** (5e level-8 subclass feature; once per long rest in our
@@ -9148,6 +9228,121 @@ impl Action for RangersCompanion {
 
 pub static RANGERS_COMPANION: LazyLock<RangersCompanion> = LazyLock::new(|| RangersCompanion {});
 
+/// Summon Wildfire Spirit — Circle of Wildfire Druid level-2 action.
+/// Once per short rest, a Small elemental appears beside the druid on
+/// their team and stays until it drops.
+///
+/// **The spirit is not the payload — its position is.** A wildfire
+/// spirit fights about as well as a goblin, and a druid who summoned
+/// one purely for the extra body would have been better off casting
+/// Conjure Animals for two wolves. What the summon actually buys is
+/// Enhanced Bond: a d8 on every fire spell and every heal the druid
+/// casts while the spirit stands within 60 ft. So the interesting turn
+/// is not this one, it is every turn afterwards, and the question the
+/// subclass keeps asking is where the second body should be standing.
+///
+/// **Not a spell, and the differences matter.** Conjure Animals costs
+/// a level-3 slot and the druid's concentration — which is the same
+/// concentration Moonbeam, Spike Growth, Call Lightning and every other
+/// control spell on the chassis wants. The spirit costs neither. A
+/// Wildfire druid can hold the spirit and a concentration spell at
+/// once, which no other summoner on the roster can, and that is the
+/// structural reason the subclass plays as a caster with a pet rather
+/// than as a pet class.
+///
+/// Modeled the way `RangersCompanion` is: one per-rest charge, an
+/// Action, no `Conjured` marker and no concentration anchor, so the
+/// spirit outlives whatever the druid is concentrating on. RAW spends a
+/// druid's Wild Shape use rather than a charge of its own; the engine's
+/// Wild Shape lane belongs to the Moon Druid's `COMBAT_WILD_SHAPE_TAG`
+/// and this chassis does not carry it, so a charge is the honest
+/// translation — it is the same "once per short rest, and you only get
+/// one body" shape RAW is charging for.
+pub struct SummonWildfireSpirit {}
+
+impl Action for SummonWildfireSpirit {
+    fn name(&self) -> &str {
+        "summon wildfire spirit"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wildfire spirit", "spirit", "sws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the spirit throws the flame seeds, on its own turns.
+        false
+    }
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, SUMMON_WILDFIRE_SPIRIT_TAG)
+            && encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Small, 2)
+                .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE;
+        // Charge first, spawn second — same reasoning as
+        // `RangersCompanion`: the validator has already confirmed a free
+        // tile, and a spawn that fails because the arena filled in
+        // between should still cost the druid the call rather than
+        // leaving a charge to retry with the same result.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(SUMMON_WILDFIRE_SPIRIT_TAG);
+        }
+        // Instance ids from 71 — the band above the Ranger's Companion's
+        // 70, and clear of the summon spells' 90+ range.
+        crate::actions::spells::spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &WILDFIRE_SPIRIT_TEMPLATE,
+            crate::engine::types::Size::Small,
+            1,
+            2,
+            71,
+            "summon wildfire spirit",
+        );
+        // Nothing to queue: no `Conjured` marker and no concentration
+        // anchor, so the spirit outlives whatever the druid is
+        // concentrating on. That is the distinction from Conjure
+        // Animals, and it is the whole reason to play the circle.
+        Vec::new()
+    }
+}
+
+pub static SUMMON_WILDFIRE_SPIRIT: LazyLock<SummonWildfireSpirit> =
+    LazyLock::new(|| SummonWildfireSpirit {});
+
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered
 /// radiant burst — every enemy in range makes a CON save vs the cleric's
@@ -10692,6 +10887,31 @@ pub fn slot_heal_effects(
     if bonus > 0 && !targets.is_empty() {
         encounter.log(format!("  disciple of life: +{} HP each", bonus));
     }
+    // 5e Circle of Wildfire Druid **Enhanced Bond**, healing half: a d8
+    // on the healing roll of any spell the druid casts while their
+    // spirit stands within 60 ft. The damage half of the same sentence
+    // is a row on `FLAT_SPELL_DAMAGE_BONUSES`; they share the
+    // `wildfire_bond_active` gate and nothing else.
+    //
+    // Added to the shared `amount` rather than to one recipient, which
+    // is the same reading `roll_empowered_sum` gives RAW's "one damage
+    // roll" on a burst: the spell rolls its dice once and every target
+    // is paid out of that one roll, so a die added to the roll reaches
+    // all of them and is still added exactly once.
+    let bond_bonus = {
+        let active = encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|caster| encounter.wildfire_bond_active(caster));
+        if active && !targets.is_empty() {
+            let rolled = encounter.roll(&Dice::new(1, 8));
+            encounter.log(format!("  enhanced bond: +{} HP", rolled));
+            rolled
+        } else {
+            0
+        }
+    };
+    let bonus = bonus + bond_bonus;
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = targets
         .iter()
         .map(|&actor_id| {

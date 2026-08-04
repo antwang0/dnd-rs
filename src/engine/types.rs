@@ -63,6 +63,117 @@ pub enum DamageType {
     Thunder,
 }
 
+impl DamageType {
+    /// Every damage type, in declaration order. The backing array for
+    /// `DamageTypeSet`'s bit assignment — index `i` in this slice is bit
+    /// `i` in the mask — and the list any consumer that needs to walk
+    /// the whole axis should read rather than re-typing thirteen
+    /// variants.
+    pub const ALL: [DamageType; 13] = [
+        DamageType::Acid,
+        DamageType::Bludgeoning,
+        DamageType::Cold,
+        DamageType::Fire,
+        DamageType::Force,
+        DamageType::Lightning,
+        DamageType::Necrotic,
+        DamageType::Piercing,
+        DamageType::Poison,
+        DamageType::Psychic,
+        DamageType::Radiant,
+        DamageType::Slashing,
+        DamageType::Thunder,
+    ];
+
+    /// This type's bit position in a `DamageTypeSet`. Kept as an
+    /// exhaustive `match` rather than a scan of `ALL` so the compiler
+    /// makes adding a fourteenth damage type a build error here instead
+    /// of a silently-aliased bit.
+    const fn bit_index(self) -> u16 {
+        match self {
+            DamageType::Acid => 0,
+            DamageType::Bludgeoning => 1,
+            DamageType::Cold => 2,
+            DamageType::Fire => 3,
+            DamageType::Force => 4,
+            DamageType::Lightning => 5,
+            DamageType::Necrotic => 6,
+            DamageType::Piercing => 7,
+            DamageType::Poison => 8,
+            DamageType::Psychic => 9,
+            DamageType::Radiant => 10,
+            DamageType::Slashing => 11,
+            DamageType::Thunder => 12,
+        }
+    }
+}
+
+/// A `Copy` set of damage types, packed into one `u16`.
+///
+/// Exists because `CastContext` — the frame every in-flight spell
+/// resolution reads its school and slot level off — is `Copy`, and a
+/// whole family of 5e features gates on *what damage the spell deals*
+/// rather than on its school:
+///
+///   - Draconic Sorcerer **Elemental Affinity**: "when you cast a spell
+///     that deals damage of the type associated with your draconic
+///     ancestry, add your Charisma modifier to one damage roll".
+///   - Circle of Wildfire Druid **Enhanced Bond**: "when you cast a
+///     spell that deals fire damage or restores hit points…".
+///
+/// A `Vec<DamageType>` on the frame would cost an allocation per action
+/// executed (not per spell — `Action::execute` opens a frame for every
+/// weapon swing and Move too) and would make the frame non-`Copy`,
+/// which `current_cast` relies on. Thirteen types fit in a `u16` with
+/// three bits to spare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DamageTypeSet(u16);
+
+impl DamageTypeSet {
+    /// The set no damage type belongs to — what a non-spell action, or
+    /// a spell that declares no `damage_types()`, puts on the frame.
+    /// Every gate reading this set therefore fails closed.
+    pub const EMPTY: DamageTypeSet = DamageTypeSet(0);
+
+    pub fn from_types(types: &[DamageType]) -> Self {
+        let mut set = DamageTypeSet::EMPTY;
+        for &t in types {
+            set.insert(t);
+        }
+        set
+    }
+
+    pub fn insert(&mut self, damage_type: DamageType) {
+        self.0 |= 1 << damage_type.bit_index();
+    }
+
+    pub fn contains(self, damage_type: DamageType) -> bool {
+        self.0 & (1 << damage_type.bit_index()) != 0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// True if this set and `other` share at least one type. The shape
+    /// a feature keyed to a *family* of types needs — Heart of the
+    /// Storm's lightning-or-thunder, Dampen Elements' five elementals —
+    /// without either side having to walk `DamageType::ALL`.
+    pub fn intersects(self, other: DamageTypeSet) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+impl FromIterator<DamageType> for DamageTypeSet {
+    fn from_iter<I: IntoIterator<Item = DamageType>>(iter: I) -> Self {
+        let mut set = DamageTypeSet::EMPTY;
+        for t in iter {
+            set.insert(t);
+        }
+        set
+    }
+}
+
 impl fmt::Display for DamageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

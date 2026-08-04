@@ -1624,6 +1624,24 @@ pub struct CastContext {
     /// Spell metamagic) needs no latch — it self-consumes by clearing
     /// its own prime condition on first use.
     pub flat_damage_bonus_paid: bool,
+    /// What the action opening this frame declared it can damage, from
+    /// `Action::damage_types()`.
+    ///
+    /// The school axis answers "what kind of magic is this"; this one
+    /// answers "what does it do to the target", and a family of 5e
+    /// features keys off the second rather than the first — the
+    /// Draconic Sorcerer's Elemental Affinity and the Wildfire Druid's
+    /// Enhanced Bond both read "a spell that deals <type> damage", with
+    /// no school anywhere in the wording.
+    ///
+    /// Empty for every action that declares nothing, which is the
+    /// default on the trait and covers non-spells wholesale — so a gate
+    /// reading this set fails closed on a weapon swing, a Move, and on
+    /// any spell whose typing is decided at runtime (Chaos Bolt,
+    /// Chromatic Orb) rather than declared up front. That is the honest
+    /// answer for the runtime-typed ones: the frame is opened before
+    /// the die that picks the type is rolled.
+    pub damage_types: crate::engine::types::DamageTypeSet,
 }
 
 impl CastContext {
@@ -1659,7 +1677,165 @@ impl CastContext {
     pub fn is_cantrip(&self) -> bool {
         self.school.is_some() && self.level == 0
     }
+
+    /// True when the action that opened this frame declared it deals
+    /// `damage_type`. See the `damage_types` field for why a spell whose
+    /// typing is only decided at roll time answers `false`.
+    pub fn deals(&self, damage_type: DamageType) -> bool {
+        self.damage_types.contains(damage_type)
+    }
 }
+
+/// How much a `FlatSpellDamageBonus` row is worth when its gate passes.
+///
+/// Two shapes, because RAW writes these two ways and no third: a
+/// spellcasting-ability modifier off the holder, or a die.
+#[derive(Debug, Clone, Copy)]
+enum FlatBonusAmount {
+    /// The caster's modifier in this ability, floored at 0.
+    Ability(AbilityScoreType),
+    /// A roll, made fresh each time the row pays out.
+    Die(Dice),
+}
+
+/// One row of the flat-bonus-on-a-spell's-damage-roll cohort.
+///
+/// `applies` gets the board, the in-flight cast frame and the caster —
+/// everything a RAW gate on this family has ever needed. Most rows read
+/// only the frame and the caster's feature tags; the one that reads the
+/// board is Enhanced Bond, whose gate is "your wildfire spirit is
+/// summoned and within 60 feet of you".
+struct FlatSpellDamageBonus {
+    /// Prefixed to the log line when the row pays out. Lowercase, the
+    /// feature's RAW name — the log reads `"  elemental affinity: Sorc
+    /// adds +3"`.
+    label: &'static str,
+    applies: fn(&EncounterInstance, &CastContext, &ActorInstance) -> bool,
+    amount: FlatBonusAmount,
+}
+
+/// Features that add a flat amount to **one damage roll of a spell**.
+///
+/// The unit is the cast, not the die and not the target — see
+/// `CastContext::flat_damage_bonus_paid`, which latches the whole
+/// cohort after its first payout so a spell rolling two damage pools
+/// pays once.
+///
+/// The rows split cleanly on which axis of the cast they read. Two gate
+/// on the *school* (Empowered Evocation) or the *tier* (Potent
+/// Spellcasting); two gate on what the spell **does** — the damage type
+/// it declared — which is the axis `CastContext::damage_types` exists
+/// for. Nothing here reads more than one axis, and a future row that
+/// needs a second one adds a field to the frame rather than a
+/// parameter to this signature.
+///
+/// Additive rather than exclusive, deliberately: the four belong to
+/// four different classes, so no legal build holds two and the sum is
+/// never a stack in practice. A hypothetical multiclass that did hold
+/// two would collect both, which is what RAW says when two features
+/// with no interaction clause both trigger.
+/// RAW's 60 ft between the Wildfire Druid and their spirit, in tiles on
+/// the 2.5 ft grid. Both halves of Enhanced Bond measure against it.
+pub const ENHANCED_BOND_REACH_TILES: isize = 24;
+
+static FLAT_SPELL_DAMAGE_BONUSES: &[FlatSpellDamageBonus] = &[
+    // 5e Evocation Wizard **Empowered Evocation** (subclass lv10): add
+    // the caster's INT modifier to one damage roll of a wizard
+    // evocation spell.
+    //
+    // Gated on the cast stack rather than on anything the caster is
+    // holding, so it is inert outside a cast and on every non-evocation
+    // spell — a Fireball from an evoker gets the bonus, the same
+    // evoker's Vampiric Touch (necromancy) does not. Cantrips qualify:
+    // RAW says "any wizard evocation spell", with no level floor, which
+    // is what makes the feature a real cantrip-scaling boost.
+    FlatSpellDamageBonus {
+        label: "empowered evocation",
+        applies: |_e, cast, caster| {
+            cast.school == Some(SpellSchool::Evocation)
+                && caster.has_passive_feature(
+                    crate::actions::class_features::EMPOWERED_EVOCATION_TAG,
+                )
+        },
+        amount: FlatBonusAmount::Ability(AbilityScoreType::Intelligence),
+    },
+    // 5e **Potent Spellcasting**, which the Knowledge, Light and Nature
+    // Domain Clerics all get at level 8 with the same wording: "you add
+    // your Wisdom modifier to the damage you deal with any cleric
+    // cantrip". The cantrip-tier sibling of the Warlock's Agonizing
+    // Blast and of Empowered Evocation above.
+    //
+    // `is_cantrip` is both halves of the gate in one place: level 0
+    // makes it a cantrip bonus rather than a blanket damage buff (a
+    // Knowledge Cleric's Guiding Bolt and Flame Strike get nothing),
+    // and its `school.is_some()` leg separates a cantrip from the
+    // level-0 frame `Action::execute` opens for every weapon swing and
+    // Move. Without the second leg the cleric's mace would quietly
+    // carry the feature too.
+    FlatSpellDamageBonus {
+        label: "potent spellcasting",
+        applies: |_e, cast, caster| {
+            cast.is_cantrip()
+                && caster.has_passive_feature(
+                    crate::actions::class_features::POTENT_SPELLCASTING_TAG,
+                )
+        },
+        amount: FlatBonusAmount::Ability(AbilityScoreType::Wisdom),
+    },
+    // 5e Draconic Bloodline Sorcerer **Elemental Affinity** (subclass
+    // lv6, damage half): "when you cast a spell that deals damage of
+    // the type associated with your draconic ancestry, you can add your
+    // Charisma modifier to one damage roll of that spell."
+    //
+    // The first row on this cohort to gate on the damage type rather
+    // than on the school, and the reason the cast frame carries a
+    // `DamageTypeSet` at all. The ancestry is fire, which is what
+    // `has_draconic_resilience` already picked for the same template:
+    // the two halves of a draconic sorcerer's lv6 are "you resist your
+    // element" and "your element hits harder", and shipping them on
+    // different elements would be a bug wearing a feature's clothes.
+    //
+    // RAW's second half — spend a sorcery point to add the same
+    // modifier to a spell's *resistance-piercing*, i.e. Elemental
+    // Affinity's "resistance to that damage type for 1 hour" clause —
+    // is left out: the engine has no per-caster elemental-resistance
+    // grant lane that a spell cast could open, and the damage half is
+    // the one that reads at a site the engine already has.
+    FlatSpellDamageBonus {
+        label: "elemental affinity",
+        applies: |_e, cast, caster| {
+            cast.deals(DamageType::Fire)
+                && caster.has_passive_feature(
+                    crate::actions::class_features::ELEMENTAL_AFFINITY_TAG,
+                )
+        },
+        amount: FlatBonusAmount::Ability(AbilityScoreType::Charisma),
+    },
+    // 5e Circle of Wildfire Druid **Enhanced Bond** (subclass lv6,
+    // damage half): "while your spirit is summoned, ... when you cast a
+    // spell that deals fire damage ..., roll a d8 and add the number
+    // rolled to one damage roll of that spell."
+    //
+    // The only row on the cohort whose gate reads the board: the bond
+    // is with a creature, and a druid whose spirit is dead or across
+    // the map gets nothing. That is the whole shape of the subclass —
+    // every Wildfire feature is worth what the spirit's position makes
+    // it worth — so collapsing the range check would be collapsing the
+    // feature.
+    //
+    // A die rather than a modifier, which is also the only row that
+    // rolls. RAW's healing half of the same sentence lives at the slot-
+    // heal chokepoint (`slot_heal_effects`) for the reason the two
+    // sites exist separately: one adds to damage, the other to hit
+    // points, and neither knows about the other.
+    FlatSpellDamageBonus {
+        label: "enhanced bond",
+        applies: |encounter, cast, caster| {
+            cast.deals(DamageType::Fire) && encounter.wildfire_bond_active(caster)
+        },
+        amount: FlatBonusAmount::Die(Dice::new(1, 8)),
+    },
+];
 
 /// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`
 /// AND the actor id its `link` field points at is set to someone OTHER
@@ -1977,23 +2153,22 @@ impl EncounterInstance {
             Some(maxed) => maxed,
             None => self.roll_empowered(caster_id, count, faces).iter().sum(),
         };
-        // Two flat damage bonuses hang off this chokepoint, and they are
-        // deliberately additive rather than exclusive: they belong to
-        // different classes reading different stats on different halves
-        // of the spell list (Empowered Evocation is a wizard's INT on
-        // levelled evocations, Potent Spellcasting a cleric's WIS on
-        // cantrips), so no build can hold both and the sum is never a
-        // stack in practice. Each gates itself on the in-flight cast.
+        // The `FLAT_SPELL_DAMAGE_BONUSES` cohort hangs off this
+        // chokepoint, and its rows are deliberately additive rather than
+        // exclusive: they belong to different classes reading different
+        // stats on different halves of the spell list, so no legal build
+        // holds two and the sum is never a stack in practice. Each row
+        // gates itself on the in-flight cast.
         //
-        // Both are once per *cast*, not once per roll — see
+        // All of them are once per *cast*, not once per roll — see
         // `CastContext::flat_damage_bonus_paid`. The latch is claimed
-        // before either is computed so a spell that rolls two damage
-        // pools (Storm of Vengeance, Acid Arrow) pays the bonus on the
-        // first and not the second, matching RAW's "one damage roll".
+        // before any is computed so a spell that rolls two damage pools
+        // (Storm of Vengeance, Acid Arrow) pays the bonus on the first
+        // and not the second, matching RAW's "one damage roll".
         if !self.claim_flat_damage_bonus() {
             return base;
         }
-        base + self.empowered_evocation_bonus(caster_id) + self.potent_spellcasting_bonus(caster_id)
+        base + self.flat_spell_damage_bonus(caster_id)
     }
 
     /// Claim this cast's once-per-cast flat damage bonus, returning
@@ -2001,11 +2176,11 @@ impl EncounterInstance {
     /// same cast frame.
     ///
     /// Returns `true` outside any cast frame so a non-spell damage roll
-    /// that reaches `roll_empowered_sum` isn't silently gated — the two
-    /// bonuses behind the latch each check the frame themselves and
-    /// return 0 there anyway, so the permissive default costs nothing
-    /// and keeps the latch from becoming a second place that decides
-    /// what counts as a spell.
+    /// that reaches `roll_empowered_sum` isn't silently gated — every
+    /// row behind the latch checks the frame itself and returns 0 there
+    /// anyway, so the permissive default costs nothing and keeps the
+    /// latch from becoming a second place that decides what counts as a
+    /// spell.
     fn claim_flat_damage_bonus(&mut self) -> bool {
         match self.cast_stack.last_mut() {
             Some(frame) => !std::mem::replace(&mut frame.flat_damage_bonus_paid, true),
@@ -2013,50 +2188,88 @@ impl EncounterInstance {
         }
     }
 
-    /// The Potent Spellcasting flat damage bonus for `caster_id` on the
-    /// cast currently in flight: the caster's Wisdom modifier when they
-    /// hold `POTENT_SPELLCASTING_TAG` and the in-flight cast is a
-    /// cantrip, and 0 otherwise.
+    /// True when `caster` holds Enhanced Bond and their wildfire spirit
+    /// is on the board, alive, and within the RAW 60 ft — the shared
+    /// gate for both halves of the Circle of Wildfire Druid's lv6
+    /// feature (the damage row on `FLAT_SPELL_DAMAGE_BONUSES` and the
+    /// heal rider at `slot_heal_effects`).
     ///
-    /// 5e gives Potent Spellcasting to the Knowledge, Light and Nature
-    /// Domain Clerics at level 8 (and Divine Soul Sorcerers a CHA-based
-    /// cousin) with the same text every time: "you add your Wisdom
-    /// modifier to the damage you deal with any cleric cantrip." It is
-    /// the cantrip-tier sibling of the Warlock's Agonizing Blast and of
-    /// the Evocation Wizard's Empowered Evocation, and it shares the
-    /// latter's chokepoint for the same reason: the bonus is a property
-    /// of the *roll total*, not of any individual die, so a per-die
-    /// application would multiply it across a multi-die cantrip.
+    /// The spirit is identified by the passive `WILDFIRE_SPIRIT_TAG` it
+    /// carries on its own template rather than by name or by a back-link
+    /// on the druid. A tag survives the two things a link would not: a
+    /// second Wildfire druid on the same team (each finds a spirit, and
+    /// RAW does not care whose), and the spirit dying and being
+    /// re-summoned (a link would dangle at the old id; the tag search
+    /// simply finds the new body). It also costs nothing to keep
+    /// correct, which a link would not — every despawn path would have
+    /// to remember to clear it.
     ///
-    /// **Gated on the cast stack, not on the holder**, via the shared
-    /// `CastContext::is_cantrip` — which is both halves of the gate in
-    /// one place: level 0 makes it a cantrip bonus rather than a
-    /// blanket damage buff (a Knowledge Cleric's Guiding Bolt and Flame
-    /// Strike get nothing), and `school.is_some()` separates a cantrip
-    /// from the level-0 frame `Action::execute` opens for every weapon
-    /// swing and Move. Without the second leg the cleric's mace would
-    /// quietly carry the feature too.
-    ///
-    /// Floors at 0 so a negative-WIS holder can't invert the feature
-    /// into a damage penalty — same guard `empowered_evocation_bonus`
-    /// carries.
-    fn potent_spellcasting_bonus(&mut self, caster_id: usize) -> u32 {
-        use crate::engine::types::AbilityScoreType;
-        if !self.current_cast().is_some_and(|c| c.is_cantrip()) {
-            return 0;
+    /// Takes `&ActorInstance` rather than an id because every caller
+    /// already has the borrow in hand, and because the caster's identity
+    /// is not needed: the search is "an ally within reach with the tag",
+    /// and the druid does not carry the tag themselves.
+    pub fn wildfire_bond_active(&self, caster: &ActorInstance) -> bool {
+        if !caster.has_passive_feature(crate::actions::class_features::ENHANCED_BOND_TAG) {
+            return false;
         }
-        let Some(caster) = self.actors.get(&caster_id) else {
+        let caster_tiles = get_tiles_from_size(caster.size());
+        self.actors.values().any(|a| {
+            a.team() == caster.team()
+                && a.is_combat_active()
+                && a.has_passive_feature(crate::actions::class_features::WILDFIRE_SPIRIT_TAG)
+                && footprint_chebyshev(
+                    caster.location(),
+                    caster_tiles,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                ) <= ENHANCED_BOND_REACH_TILES
+        })
+    }
+
+    /// Walk `FLAT_SPELL_DAMAGE_BONUSES` and return what the rows whose
+    /// gates pass contribute to the in-flight cast's damage total.
+    ///
+    /// Split into a read pass and a roll pass because one row's amount
+    /// is a die: the gates need `&self` (they read both the encounter
+    /// and the caster), and rolling needs `&mut self`. Collecting the
+    /// hits first means a row can look at the board without the
+    /// borrow checker forcing every gate to be an actor-only predicate.
+    ///
+    /// Each row logs its own line when it pays out, so a player reading
+    /// the log sees *which* feature moved the number rather than an
+    /// unexplained delta between the dice and the total.
+    fn flat_spell_damage_bonus(&mut self, caster_id: usize) -> u32 {
+        let Some(cast) = self.current_cast() else {
             return 0;
         };
-        if !caster.has_passive_feature(crate::actions::class_features::POTENT_SPELLCASTING_TAG) {
-            return 0;
+        let hits: Vec<&'static FlatSpellDamageBonus> = {
+            let Some(caster) = self.actors.get(&caster_id) else {
+                return 0;
+            };
+            FLAT_SPELL_DAMAGE_BONUSES
+                .iter()
+                .filter(|row| (row.applies)(self, &cast, caster))
+                .collect()
+        };
+        let mut total = 0;
+        for row in hits {
+            let amount = match row.amount {
+                // Floored at 0 so a negative-modifier holder can't
+                // invert the feature into a damage penalty.
+                FlatBonusAmount::Ability(ability) => self
+                    .actors
+                    .get(&caster_id)
+                    .map(|c| c.ability_modifier(ability).max(0) as u32)
+                    .unwrap_or(0),
+                FlatBonusAmount::Die(dice) => self.roll(&dice),
+            };
+            if amount > 0 {
+                let name = self.actor_name(caster_id);
+                self.log(format!("  {}: {} adds +{}", row.label, name, amount));
+                total += amount;
+            }
         }
-        let bonus = caster.ability_modifier(AbilityScoreType::Wisdom).max(0) as u32;
-        if bonus > 0 {
-            let name = self.actor_name(caster_id);
-            self.log(format!("  potent spellcasting: {} adds +{}", name, bonus));
-        }
-        bonus
+        total
     }
 
     /// 5e Evocation Wizard **Overchannel** (subclass lv14): if the caster
@@ -2149,42 +2362,6 @@ impl EncounterInstance {
             amount,
             damage_type: DamageType::Necrotic,
         })]
-    }
-
-    /// The Empowered Evocation flat damage bonus for `caster_id` on the
-    /// cast currently in flight: the caster's Intelligence modifier when
-    /// they hold `EMPOWERED_EVOCATION_TAG` and the in-flight cast is an
-    /// evocation spell, and 0 otherwise.
-    ///
-    /// Gated on the cast stack rather than on anything the caster is
-    /// holding, so it is inert outside a cast and on every non-evocation
-    /// spell — a Fireball from an evoker gets the bonus, the same
-    /// evoker's Vampiric Touch (necromancy) does not. Cantrips qualify:
-    /// RAW says "any wizard evocation spell", with no level floor, which
-    /// is what makes the feature a real cantrip-scaling boost.
-    ///
-    /// Floors at 0 so a negative-INT caster can't turn the feature into
-    /// a damage penalty.
-    fn empowered_evocation_bonus(&mut self, caster_id: usize) -> u32 {
-        use crate::engine::types::AbilityScoreType;
-        if !self
-            .current_cast()
-            .is_some_and(|c| c.school == Some(SpellSchool::Evocation))
-        {
-            return 0;
-        }
-        let Some(caster) = self.actors.get(&caster_id) else {
-            return 0;
-        };
-        if !caster.has_passive_feature(crate::actions::class_features::EMPOWERED_EVOCATION_TAG) {
-            return 0;
-        }
-        let bonus = caster.ability_modifier(AbilityScoreType::Intelligence).max(0) as u32;
-        if bonus > 0 {
-            let name = self.actor_name(caster_id);
-            self.log(format!("  empowered evocation: {} adds +{}", name, bonus));
-        }
-        bonus
     }
 
     /// Roll a single d20 with advantage / disadvantage applied. `Advantage`
@@ -6748,11 +6925,21 @@ impl EncounterInstance {
     /// built. Paired with `exit_cast` by `Action::execute` around the
     /// `side_effects` call — the symmetric-guard shape
     /// `enter_multiattack` / `exit_multiattack` already use.
-    pub fn enter_cast(&mut self, school: Option<SpellSchool>, level: u32) {
+    /// `damage_types` is `Action::damage_types()` packed into a mask —
+    /// see `CastContext::damage_types` for why the frame carries it.
+    /// Pass `DamageTypeSet::EMPTY` for a frame whose damage typing is
+    /// irrelevant to what the caller is testing.
+    pub fn enter_cast(
+        &mut self,
+        school: Option<SpellSchool>,
+        level: u32,
+        damage_types: crate::engine::types::DamageTypeSet,
+    ) {
         self.cast_stack.push(CastContext {
             school,
             level,
             flat_damage_bonus_paid: false,
+            damage_types,
         });
     }
 
@@ -73807,12 +73994,12 @@ mod tests {
         // The gate helpers agree with an empty stack.
         assert!(!e.casting_leveled_spell_of(SpellSchool::Abjuration));
         // And read the frame correctly when one is open.
-        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        e.enter_cast(Some(SpellSchool::Evocation), 3, crate::engine::types::DamageTypeSet::EMPTY);
         assert!(e.casting_leveled_spell_of(SpellSchool::Evocation));
         assert!(!e.casting_leveled_spell_of(SpellSchool::Abjuration));
         // Nesting: the innermost frame wins, and unwinding restores the
         // outer one rather than clearing the stack.
-        e.enter_cast(Some(SpellSchool::Abjuration), 0);
+        e.enter_cast(Some(SpellSchool::Abjuration), 0, crate::engine::types::DamageTypeSet::EMPTY);
         assert!(!e.casting_leveled_spell_of(SpellSchool::Evocation));
         assert!(
             e.current_cast()
@@ -73892,7 +74079,7 @@ mod tests {
         e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 9), 0, 1)
             .unwrap();
         // Evocation: the ally is carved out.
-        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        e.enter_cast(Some(SpellSchool::Evocation), 3, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(
             e.auto_pass_shielded_allies(evoker, Coordinate::new(9, 9), 3)
                 .len(),
@@ -73900,7 +74087,7 @@ mod tests {
         );
         e.exit_cast();
         // Enchantment: nobody is.
-        e.enter_cast(Some(SpellSchool::Enchantment), 3);
+        e.enter_cast(Some(SpellSchool::Enchantment), 3, crate::engine::types::DamageTypeSet::EMPTY);
         assert!(
             e.auto_pass_shielded_allies(evoker, Coordinate::new(9, 9), 3)
                 .is_empty()
@@ -73932,7 +74119,7 @@ mod tests {
         let int_mod = e.actors[&evoker].ability_modifier(AbilityScoreType::Intelligence) as u32;
         assert!(int_mod > 0, "the wizard chassis should have a positive INT mod");
 
-        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        e.enter_cast(Some(SpellSchool::Evocation), 3, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(e.roll_empowered_sum(evoker, 0, 6), int_mod);
         assert_eq!(
             e.roll_empowered_sum(baseline, 0, 6),
@@ -73941,7 +74128,7 @@ mod tests {
         );
         e.exit_cast();
 
-        e.enter_cast(Some(SpellSchool::Necromancy), 3);
+        e.enter_cast(Some(SpellSchool::Necromancy), 3, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(
             e.roll_empowered_sum(evoker, 0, 6),
             0,
@@ -73950,13 +74137,122 @@ mod tests {
         e.exit_cast();
 
         // Cantrips qualify per RAW ("any wizard evocation spell").
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(e.roll_empowered_sum(evoker, 0, 6), int_mod);
         e.exit_cast();
 
         // Outside a cast the bonus is inert — a weapon swing routed
         // through this helper must not pick it up.
         assert_eq!(e.roll_empowered_sum(evoker, 0, 6), 0);
+    }
+
+    /// Elemental Affinity reads the *damage type* the cast declared, not
+    /// its school — the axis `CastContext::damage_types` exists for. A
+    /// Draconic Sorcerer's fire spell picks up their CHA modifier
+    /// whatever school it belongs to; their lightning spell picks up
+    /// nothing however evocative it is.
+    #[test]
+    fn elemental_affinity_reads_the_damage_type_not_the_school() {
+        use crate::actors::creatures::sorcerers::{DRACONIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE};
+        use crate::engine::types::{AbilityScoreType, DamageTypeSet};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let draconic = e
+            .instantiate_creature(&DRACONIC_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let cha = e.actors[&draconic].ability_modifier(AbilityScoreType::Charisma) as u32;
+        assert!(cha > 0, "the sorcerer chassis should have a positive CHA mod");
+
+        let fire = DamageTypeSet::from_types(&[DamageType::Fire]);
+        e.enter_cast(Some(SpellSchool::Evocation), 3, fire);
+        assert_eq!(e.roll_empowered_sum(draconic, 0, 6), cha);
+        assert_eq!(
+            e.roll_empowered_sum(baseline, 0, 6),
+            0,
+            "a sorcerer without the bloodline gets no bonus"
+        );
+        e.exit_cast();
+
+        // Not an evocation, still fire — the feature does not care.
+        e.enter_cast(Some(SpellSchool::Conjuration), 2, fire);
+        assert_eq!(e.roll_empowered_sum(draconic, 0, 6), cha);
+        e.exit_cast();
+
+        // Evocation, but the wrong element.
+        e.enter_cast(
+            Some(SpellSchool::Evocation),
+            3,
+            DamageTypeSet::from_types(&[DamageType::Lightning]),
+        );
+        assert_eq!(
+            e.roll_empowered_sum(draconic, 0, 6),
+            0,
+            "Elemental Affinity fired on the wrong damage type"
+        );
+        e.exit_cast();
+
+        // A spell that declares nothing fails the gate closed, which is
+        // also what a weapon swing's level-0 frame does.
+        e.enter_cast(Some(SpellSchool::Evocation), 3, DamageTypeSet::EMPTY);
+        assert_eq!(e.roll_empowered_sum(draconic, 0, 6), 0);
+        e.exit_cast();
+    }
+
+    /// The Wildfire druid's Enhanced Bond is the one row on the cohort
+    /// whose gate is a creature: the die rides their fire spells only
+    /// while the spirit is on the board and within 60 ft.
+    #[test]
+    fn enhanced_bond_rides_fire_spells_only_while_the_spirit_is_near() {
+        use crate::actors::creatures::druids::WILDFIRE_DRUID_TEMPLATE;
+        use crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE;
+        use crate::engine::types::DamageTypeSet;
+        let mut e = ei_with_terrain(40, 15, &[]);
+        let druid = e
+            .instantiate_creature(&WILDFIRE_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fire = DamageTypeSet::from_types(&[DamageType::Fire]);
+
+        // No spirit yet: the druid holds the tag and gets nothing.
+        e.enter_cast(Some(SpellSchool::Evocation), 3, fire);
+        assert_eq!(e.roll_empowered_sum(druid, 0, 6), 0);
+        e.exit_cast();
+
+        let spirit = e
+            .instantiate_creature(&WILDFIRE_SPIRIT_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.enter_cast(Some(SpellSchool::Evocation), 3, fire);
+        let bonus = e.roll_empowered_sum(druid, 0, 6);
+        assert!(
+            (1..=8).contains(&bonus),
+            "expected a d8 from the bond, got {bonus}"
+        );
+        e.exit_cast();
+
+        // Cantrips too — RAW's Enhanced Bond carries no level floor,
+        // unlike Disciple of Life.
+        e.enter_cast(Some(SpellSchool::Conjuration), 0, fire);
+        assert!((1..=8).contains(&e.roll_empowered_sum(druid, 0, 6)));
+        e.exit_cast();
+
+        // Wrong element: nothing.
+        e.enter_cast(
+            Some(SpellSchool::Evocation),
+            3,
+            DamageTypeSet::from_types(&[DamageType::Cold]),
+        );
+        assert_eq!(e.roll_empowered_sum(druid, 0, 6), 0);
+        e.exit_cast();
+
+        // The spirit walks past 60 ft and takes the die with it.
+        e.actors
+            .get_mut(&spirit)
+            .unwrap()
+            .set_location(Coordinate::new(34, 2));
+        e.enter_cast(Some(SpellSchool::Evocation), 3, fire);
+        assert_eq!(e.roll_empowered_sum(druid, 0, 6), 0);
+        e.exit_cast();
     }
 
     /// Every spell the engine tags as Evocation must actually report it
@@ -74017,7 +74313,7 @@ mod tests {
         // A cantrip-level evocation cast: Sculpt Spells alone would
         // shield 1 (1 + 0). Careful Spell shields CHA-mod (min 1). The
         // union is still at least one, and the prime is spent.
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         let shielded = e.auto_pass_shielded_allies(evoker, Coordinate::new(10, 9), 3);
         e.exit_cast();
         assert!(!shielded.is_empty());
@@ -74049,7 +74345,7 @@ mod tests {
             .unwrap();
 
         // Cantrip frame: the evoker's saved cantrip still lands half.
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(
             e.resolve_post_save_damage(
                 evoker,
@@ -74090,7 +74386,7 @@ mod tests {
 
         // Leveled frame: Disintegrate-shaped `NoneOnSave` spells share
         // the policy but must not be lifted.
-        e.enter_cast(Some(SpellSchool::Transmutation), 6);
+        e.enter_cast(Some(SpellSchool::Transmutation), 6, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(
             e.resolve_post_save_damage(
                 evoker,
@@ -74126,7 +74422,7 @@ mod tests {
             .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
             .unwrap();
         assert!(e.actors[&rogue].has_evasion());
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         // Passed DEX save: Potent Cantrip lifts to half, Evasion zeroes it.
         assert_eq!(
             e.resolve_post_save_damage(
@@ -74298,7 +74594,7 @@ mod tests {
 
         // Inside the window: maximized, and the prime is spent.
         prime(&mut e);
-        e.enter_cast(Some(SpellSchool::Evocation), 3);
+        e.enter_cast(Some(SpellSchool::Evocation), 3, crate::engine::types::DamageTypeSet::EMPTY);
         let int_mod = e.actors[&evoker]
             .ability_modifier(crate::engine::types::AbilityScoreType::Intelligence)
             as u32;
@@ -74310,7 +74606,7 @@ mod tests {
         // Above the window (level 6+): RAW excludes it, and the prime
         // survives for a cast that can actually use it.
         prime(&mut e);
-        e.enter_cast(Some(SpellSchool::Evocation), 6);
+        e.enter_cast(Some(SpellSchool::Evocation), 6, crate::engine::types::DamageTypeSet::EMPTY);
         let rolled = e.roll_empowered_sum(evoker, 4, 6);
         assert!(rolled >= 4 + int_mod && rolled <= 24 + int_mod);
         assert!(
@@ -74320,7 +74616,7 @@ mod tests {
         e.exit_cast();
 
         // Cantrips are outside the window too, on the same reasoning.
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         e.roll_empowered_sum(evoker, 4, 6);
         assert!(e.actors[&evoker].has_condition(Condition::Overchanneling));
         e.exit_cast();
@@ -74357,7 +74653,7 @@ mod tests {
                 .get_mut(&evoker)
                 .unwrap()
                 .add_condition(Condition::Overchanneling, ConditionTimer::Rounds(2));
-            e.enter_cast(Some(SpellSchool::Evocation), lvl);
+            e.enter_cast(Some(SpellSchool::Evocation), lvl, crate::engine::types::DamageTypeSet::EMPTY);
             e.roll_empowered_sum(evoker, 2, 6);
             e.exit_cast();
             let log_before = e.messages().len();
@@ -75886,7 +76182,7 @@ mod tests {
         // Zero dice isolate the flat bonus from the roll, so the
         // assertions are exact rather than statistical.
         let mut rolled = |caster: usize, level: u32| {
-            e.enter_cast(Some(SpellSchool::Evocation), level);
+            e.enter_cast(Some(SpellSchool::Evocation), level, crate::engine::types::DamageTypeSet::EMPTY);
             let out = e.roll_empowered_sum(caster, 0, 8);
             e.exit_cast();
             out
@@ -76289,7 +76585,7 @@ mod tests {
         assert!(wis > 0);
 
         // Zero dice isolate the flat bonus from the roll.
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(e.roll_empowered_sum(cleric, 0, 8), wis, "first pool pays");
         assert_eq!(
             e.roll_empowered_sum(cleric, 0, 8),
@@ -76299,7 +76595,7 @@ mod tests {
         e.exit_cast();
 
         // A fresh cast gets a fresh latch.
-        e.enter_cast(Some(SpellSchool::Evocation), 0);
+        e.enter_cast(Some(SpellSchool::Evocation), 0, crate::engine::types::DamageTypeSet::EMPTY);
         assert_eq!(e.roll_empowered_sum(cleric, 0, 8), wis);
         e.exit_cast();
     }
