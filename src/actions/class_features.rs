@@ -5704,6 +5704,52 @@ pub const WILDFIRE_SPIRIT_TAG: &str = "druid.wildfire_spirit";
 /// `SummonWildfireSpirit` for the action.
 pub const SUMMON_WILDFIRE_SPIRIT_TAG: &str = "druid.summon_wildfire_spirit";
 
+/// Marker tag carried by the **tentacle of the deep** itself, and the
+/// charge the Fathomless Warlock spends to call it — one tag doing both
+/// jobs on two different creatures.
+///
+/// On the warlock it is a per-short-rest charge gating
+/// `SummonTentacleOfTheDeep`. On the tentacle it is the beacon
+/// `ClampScope::NearBeacon` searches the board for when Guardian Coil
+/// asks whether the damaged creature is standing close enough to the
+/// coils to be shielded by them.
+///
+/// The two readings never collide: a warlock is never within 10 ft of
+/// *themselves* in the sense the beacon means, because the beacon
+/// search skips the reactor, and the charge is only ever read through
+/// `feature_ready` on the summoner. Sharing one tag rather than minting
+/// a second is the same reasoning `WILDFIRE_SPIRIT_TAG` gives for using
+/// a tag at all — the fact lives on the creature, so a tentacle that
+/// dies and is re-called needs nothing cleaned up.
+pub const TENTACLE_OF_THE_DEEP_TAG: &str = "warlock.tentacle_of_the_deep";
+
+/// Class-feature tag for the Fathomless Warlock's **Guardian Coil**
+/// (subclass level 6): "when you or a creature you can see within 10
+/// feet of your tentacle takes damage, you can use your reaction to
+/// have the tentacle reduce that damage by 1d8."
+///
+/// A row on `REACTIVE_DAMAGE_CLAMPS`, and the row that made
+/// `ClampScope::NearBeacon` necessary. Every other clamp in the cohort
+/// measures from one of the two creatures already in the swing — the
+/// defender shields themselves, or an ally near the defender steps in.
+/// Guardian Coil measures from a *third* body that is in neither role,
+/// which means a Fathomless warlock standing well back from the front
+/// line can still shield whoever is on it, provided the tentacle is
+/// there.
+///
+/// That is the subclass's whole argument, and it is the same argument
+/// the Wildfire druid's Enhanced Bond makes from the other end: the
+/// feature is worth exactly what the summon's position makes it worth.
+/// The difference is which way the value points — Enhanced Bond pays
+/// the summoner for keeping the spirit near *themselves*, Guardian Coil
+/// pays them for putting the tentacle somewhere they are not.
+///
+/// One charge per short rest, on top of the reaction. RAW gives it
+/// warlock-level uses per long rest; the engine's charge lane sizes
+/// pools from `FEATURE_CHARGES`, and a second charge here would be a
+/// second reaction the warlock does not have in the same round anyway.
+pub const GUARDIAN_COIL_TAG: &str = "warlock.guardian_coil";
+
 /// Class-feature tag for the Trickery Domain Cleric's **Divine Strike
 /// (poison)** (5e level-8 subclass feature; once per long rest in our
 /// model, matching the baseline `DIVINE_STRIKE_TAG` cadence).
@@ -9342,6 +9388,114 @@ impl Action for SummonWildfireSpirit {
 
 pub static SUMMON_WILDFIRE_SPIRIT: LazyLock<SummonWildfireSpirit> =
     LazyLock::new(|| SummonWildfireSpirit {});
+
+/// Tentacle of the Deep — Fathomless Warlock level-1 bonus action.
+/// Once per short rest, a rooted spectral limb rises beside the warlock
+/// on their team.
+///
+/// **A bonus action, which is what separates it from the roster's other
+/// two feature summons.** The Ranger's Companion and the wildfire
+/// spirit each cost their summoner a whole Action — a turn not spent
+/// fighting, paid up front against a body that fights later. The
+/// tentacle costs the warlock a bonus action they had no other use for
+/// on round one, which means a Fathomless warlock opens the fight with
+/// a tentacle on the board *and* an Eldritch Blast already fired. RAW
+/// prices it that way deliberately: the tentacle is weak enough that
+/// making it expensive would have made it not worth calling.
+///
+/// **What it actually buys is a second place to measure from.** The
+/// slam reaches 10 ft from the tentacle, and Guardian Coil shields
+/// anything within 10 ft of the tentacle — so the warlock is choosing
+/// where a ten-foot bubble of cold and protection sits, and it does not
+/// have to be anywhere near them. See `GUARDIAN_COIL_TAG`.
+///
+/// No slot, no concentration, no `Conjured` anchor: the tentacle stays
+/// until something kills it, which on 10 hit points is usually soon.
+pub struct SummonTentacleOfTheDeep {}
+
+impl Action for SummonTentacleOfTheDeep {
+    fn name(&self) -> &str {
+        "tentacle of the deep"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tentacle", "totd"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the tentacle lashes on its own turns.
+        false
+    }
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, TENTACLE_OF_THE_DEEP_TAG)
+            && encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+                .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE;
+        // Charge first, spawn second — the same reasoning the two
+        // sibling feature summons give.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(TENTACLE_OF_THE_DEEP_TAG);
+        }
+        // Instance ids from 72 — the band above the wildfire spirit's
+        // 71, clear of the summon spells' 90+ range.
+        //
+        // Search radius 3 rather than the siblings' 2: RAW places the
+        // tentacle anywhere within 60 ft, and since it never moves
+        // again, where it lands is the only placement decision the
+        // feature ever makes. A slightly wider search is the cheapest
+        // approximation of that — the engine has no destination picker
+        // the AI could answer, which is the same wall the Eldritch
+        // Knight's Arcane Charge runs into.
+        crate::actions::spells::spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &TENTACLE_OF_THE_DEEP_TEMPLATE,
+            crate::engine::types::Size::Medium,
+            1,
+            3,
+            72,
+            "tentacle of the deep",
+        );
+        Vec::new()
+    }
+}
+
+pub static SUMMON_TENTACLE_OF_THE_DEEP: LazyLock<SummonTentacleOfTheDeep> =
+    LazyLock::new(|| SummonTentacleOfTheDeep {});
 
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered

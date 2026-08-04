@@ -2209,20 +2209,47 @@ impl EncounterInstance {
     /// is not needed: the search is "an ally within reach with the tag",
     /// and the druid does not carry the tag themselves.
     pub fn wildfire_bond_active(&self, caster: &ActorInstance) -> bool {
-        if !caster.has_passive_feature(crate::actions::class_features::ENHANCED_BOND_TAG) {
-            return false;
-        }
-        let caster_tiles = get_tiles_from_size(caster.size());
+        caster.has_passive_feature(crate::actions::class_features::ENHANCED_BOND_TAG)
+            && self.friendly_beacon_within(
+                caster,
+                crate::actions::class_features::WILDFIRE_SPIRIT_TAG,
+                ENHANCED_BOND_REACH_TILES,
+            )
+    }
+
+    /// True if some live creature on `subject`'s team, other than
+    /// `subject` itself, carries the passive feature `beacon` and stands
+    /// within `tiles` footprint-Chebyshev of them.
+    ///
+    /// The shared read behind both summon-anchored subclass features on
+    /// the roster: the Wildfire Druid's Enhanced Bond ("while your
+    /// spirit is within 60 feet") and the Fathomless Warlock's Guardian
+    /// Coil ("within 10 feet of your tentacle"). Both ask the same
+    /// question of the board — is a particular kind of summoned body
+    /// close enough to this creature — and both identify the summon by
+    /// a tag on its own template rather than by a back-link from the
+    /// summoner, for the reasons `WILDFIRE_SPIRIT_TAG` sets out.
+    ///
+    /// Takes `&ActorInstance` rather than an id because both callers
+    /// already hold the borrow, and because the subject's identity is
+    /// not needed beyond its team and footprint.
+    pub fn friendly_beacon_within(
+        &self,
+        subject: &ActorInstance,
+        beacon: &'static str,
+        tiles: isize,
+    ) -> bool {
+        let subject_tiles = get_tiles_from_size(subject.size());
         self.actors.values().any(|a| {
-            a.team() == caster.team()
+            a.team() == subject.team()
                 && a.is_combat_active()
-                && a.has_passive_feature(crate::actions::class_features::WILDFIRE_SPIRIT_TAG)
+                && a.has_passive_feature(beacon)
                 && footprint_chebyshev(
-                    caster.location(),
-                    caster_tiles,
+                    subject.location(),
+                    subject_tiles,
                     a.location(),
                     get_tiles_from_size(a.size()),
-                ) <= ENHANCED_BOND_REACH_TILES
+                ) <= tiles
         })
     }
 
@@ -61275,6 +61302,71 @@ mod tests {
             20
         );
         assert!(e.actors[&psi].feature_available(PROTECTIVE_FIELD_TAG));
+    }
+
+    /// Guardian Coil measures its radius from the tentacle, not from
+    /// the warlock — the whole reason `ClampScope::NearBeacon` exists.
+    /// A Fathomless warlock thirty tiles away shields an ally standing
+    /// next to their coils, and stops shielding the moment the coils
+    /// die.
+    #[test]
+    fn guardian_coil_shields_whatever_stands_beside_the_tentacle() {
+        use crate::actions::class_features::GUARDIAN_COIL_TAG;
+        use crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::FATHOMLESS_WARLOCK_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::attack::apply_reactive_damage_clamps;
+        let mut e = ei_with_terrain(60, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        // Forty tiles from the wizard — past every other ally-scoped
+        // row in the cohort, and past anything RAW would let a warlock
+        // reach with their own body.
+        let warlock = e
+            .instantiate_creature(&FATHOMLESS_WARLOCK_TEMPLATE, Coordinate::new(45, 5), 0, 1)
+            .unwrap();
+        // No tentacle yet: the coils shield nobody.
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing),
+            20,
+            "a warlock with no tentacle on the board has no radius to shield inside"
+        );
+        assert!(e.actors[&warlock].feature_available(GUARDIAN_COIL_TAG));
+
+        let tentacle = e
+            .instantiate_creature(&TENTACLE_OF_THE_DEEP_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reduced = apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing);
+        assert!(
+            reduced < 20,
+            "the coils should clamp damage taken beside them"
+        );
+        assert!(
+            !e.actors[&warlock].feature_available(GUARDIAN_COIL_TAG),
+            "firing spends the coil charge"
+        );
+
+        // Refresh the charge and move the wizard out of the coils'
+        // ten feet: the same swing passes through untouched.
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .restore_feature_charge(GUARDIAN_COIL_TAG);
+        e.actors
+            .get_mut(&tentacle)
+            .unwrap()
+            .set_location(Coordinate::new(30, 15));
+        assert_eq!(
+            apply_reactive_damage_clamps(&mut e, goblin, wizard, 20, true, false, DamageType::Slashing),
+            20,
+            "the shield is a radius around the tentacle, and the wizard left it"
+        );
+        assert!(e.actors[&warlock].feature_available(GUARDIAN_COIL_TAG));
     }
 
     /// Psionic Strike lays +1d8 Force on the Psi Warrior's first hit of

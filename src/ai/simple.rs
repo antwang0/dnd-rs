@@ -10846,7 +10846,9 @@ mod tests {
         use crate::actors::creatures::paladins::{
             CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE,
         };
-        use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+        use crate::actors::creatures::warlocks::{
+            FATHOMLESS_WARLOCK_TEMPLATE, UNDEAD_WARLOCK_TEMPLATE,
+        };
         use crate::actors::creatures::bards::ELOQUENCE_BARD_TEMPLATE;
         use crate::actors::creatures::barbarians::{
             CLAW_BEAST_BARBARIAN_TEMPLATE, TAIL_BEAST_BARBARIAN_TEMPLATE,
@@ -10854,7 +10856,7 @@ mod tests {
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 30] = [
+        let cases: [(&CreatureTemplate, &str); 32] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -10964,6 +10966,15 @@ mod tests {
             // no amount of summoning guarantees on its own.
             (&WILDFIRE_DRUID_TEMPLATE, "summon wildfire spirit"),
             (&WILDFIRE_DRUID_TEMPLATE, "enhanced bond"),
+            // The tentacle is called, and then something walks into it.
+            // Guardian Coil is deliberately absent: this fixture is one
+            // PC against one ogre, so the only creature the coils could
+            // shield is the warlock themselves, and a warlock the ogre
+            // has reached is a warlock whose tentacle placement stopped
+            // mattering. Its radius is pinned engine-side, where a third
+            // body can be put on the board.
+            (&FATHOMLESS_WARLOCK_TEMPLATE, "tentacle of the deep"),
+            (&FATHOMLESS_WARLOCK_TEMPLATE, "tentacle slam"),
         ];
 
         for (template, marker) in cases {
@@ -11465,6 +11476,7 @@ mod tests {
             ("animate dead", false),
             ("ranger's companion", false),
             ("summon wildfire spirit", false),
+            ("tentacle of the deep", false),
             // Area control.
             ("web", true),
             ("hypnotic pattern", true),

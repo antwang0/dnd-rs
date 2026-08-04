@@ -26,6 +26,7 @@ pub mod cockatrices;
 pub mod couatls;
 pub mod cult_fanatics;
 pub mod death_knights;
+pub mod deep_tentacles;
 pub mod dire_wolves;
 pub mod displacer_beasts;
 pub mod doppelgangers;
@@ -454,6 +455,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*warlocks::EFREETI_WARLOCK_TEMPLATE,
                     &*warlocks::HEXBLADE_WARLOCK_TEMPLATE,
                     &*warlocks::UNDEAD_WARLOCK_TEMPLATE,
+                    &*warlocks::FATHOMLESS_WARLOCK_TEMPLATE,
                 ],
             ),
             (

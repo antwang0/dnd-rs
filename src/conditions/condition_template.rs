@@ -1394,6 +1394,25 @@ pub enum Condition {
     /// encounters in the same long rest. Joins `is_dispellable_buff`
     /// so Dispel Magic can rip the speed boost cleanly.
     Longstriding,
+    /// Coiled (5e Fathomless Warlock **Tentacle of the Deep**): the
+    /// tentacle's slam leaves its target's "speed reduced by 10 feet
+    /// until the start of your next turn."
+    ///
+    /// The first *negative* row on the `CONDITION_SPEED_BONUSES` cohort,
+    /// which is why it is a condition rather than an inline subtraction:
+    /// the table sums signed feet, so a slow composes with a Longstrider
+    /// or an Expeditious Retreat the same way two buffs do, and a
+    /// creature that is both hastened and coiled arrives at the number
+    /// RAW would give it without anybody writing the interaction down.
+    ///
+    /// Deliberately not `Slowed`, which is the Slow *spell* — halved
+    /// speed plus -2 AC and -2 DEX saves. RAW's tentacle takes ten feet
+    /// and nothing else, and reusing the heavier condition would have
+    /// made a cantrip-tier bonus action into a level-3 debuff.
+    ///
+    /// Short timer: RAW ends it at the start of the warlock's next turn,
+    /// which on this engine's round model is one round.
+    Coiled,
     /// Expeditiously Retreating (5e Expeditious Retreat spell, level-1
     /// transmutation, concentration). The caster's speed jumps by 30 ft
     /// (the spell RAW lets the caster Dash as a bonus action; we collapse
@@ -2083,6 +2102,7 @@ impl Condition {
             Condition::InvestedInWind => "invested with wind",
             Condition::WindBlasted => "wind-blasted",
             Condition::Longstriding => "longstriding",
+            Condition::Coiled => "coiled by a tentacle",
             Condition::ExpeditiouslyRetreating => "expeditiously retreating",
             Condition::FlamingArrowed => "wielding flame arrows",
             Condition::AshardalonStriding => "striding with elemental power",

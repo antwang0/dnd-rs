@@ -1146,3 +1146,95 @@ pub static UNDEAD_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Fathomless Warlock — Otherworldly Patron **The Fathomless** subclass
+/// build (TCE), the thirteenth warlock on the roster, and the only one
+/// whose signature feature is a square of the map.
+///
+/// Three subclass features ship:
+///
+///   - **Tentacle of the Deep** (lv1, bonus action, once per short
+///     rest) — a rooted spectral limb rises beside the warlock. It has
+///     10 hit points, never moves, and lashes for `1d8` cold at 10 ft,
+///     taking ten feet of speed off whatever it hits.
+///   - **Guardian Coil** (lv6, reaction, once per short rest) — the
+///     warlock spends their reaction to shave `1d8` off damage taken by
+///     anyone within 10 ft of the tentacle, themselves included.
+///   - **Oceanic Soul** (lv10, passive) — cold resistance.
+///
+/// The first two are the same feature read from opposite ends, and the
+/// thing they have in common is that neither measures anything from the
+/// warlock. The slam's reach is from the tentacle; the coil's radius is
+/// from the tentacle; the warlock can be thirty feet behind a wall.
+/// That is a shape nothing else in the engine has — every other reactive
+/// shield on the roster (Uncanny Dodge, Parry, Interception, Warding
+/// Maneuver, Protective Field) is a radius drawn around one of the two
+/// creatures already in the swing, and Guardian Coil is drawn around a
+/// third body that is in neither role. It is the reason
+/// `ClampScope::NearBeacon` exists.
+///
+/// So the decision the subclass poses is placement, once, on round one,
+/// and then living with it: the tentacle cannot walk. Put it in the
+/// doorway and everything that comes through arrives slow and takes
+/// less from the warlock's party for it; put it beside the fighter and
+/// the fighter is meaningfully harder to kill; put it badly and it is
+/// ten hit points of nothing standing in a corner.
+///
+/// **Compare the Wildfire Druid**, the other summon-anchored build on
+/// the roster and the other user of the beacon-tag idiom. Enhanced Bond
+/// pays the druid for keeping the spirit near *themselves* — the summon
+/// follows the summoner. Guardian Coil pays the warlock for putting the
+/// tentacle somewhere they are *not* — the summon replaces the
+/// summoner. Same machinery, opposite tactical instruction.
+///
+/// **Stats** inherit the baseline warlock wholesale — CHA 18, Pact
+/// Magic, Eldritch Blast, the invocation suite — with cold resistance
+/// layered on. The subclass adds a body and a reaction, not a different
+/// warlock, which is the honest way to ship it.
+///
+/// RAW features not shipped: **Grasping Tentacles** (lv10 — a free
+/// casting of Evard's Black Tentacles, which the engine has but which
+/// would need a per-rest free-cast lane no other template wants),
+/// **Fathomless Plunge** (lv14 — a mass teleport that needs a
+/// destination picker the AI has no channel to answer, the same wall
+/// the Eldritch Knight's Arcane Charge runs into), and **Cold
+/// Immunity** (lv14).
+///
+/// Glyph 'T' — for the **T**entacle, paired with the tentacle's own
+/// lowercase 't'. Distinct from baseline warlock 'L', Fiend 'F',
+/// Undying 'U', Great Old One 'O', Archfey 'A', Celestial 'C', Marid
+/// 'M', Dao 'D', Djinni 'J', Efreeti 'Y', Hexblade 'X' and Undead 'W'.
+pub static FATHOMLESS_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        GUARDIAN_COIL_TAG, SUMMON_TENTACLE_OF_THE_DEEP, TENTACLE_OF_THE_DEEP_TAG,
+    };
+    use crate::engine::types::{DamageModifier, DamageType};
+    // Not a `subclass_warlock_template` user: that helper covers the
+    // patrons whose whole surface is one passive flag, and this is an
+    // action plus two tags plus a resistance — the same reason the Fiend
+    // and Undead patrons sit outside it.
+    let mut actions = WARLOCK_TEMPLATE.actions.clone();
+    actions.push(&*SUMMON_TENTACLE_OF_THE_DEEP);
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(TENTACLE_OF_THE_DEEP_TAG);
+    features.insert(GUARDIAN_COIL_TAG);
+    CreatureTemplate {
+        name: "Fathomless Warlock",
+        glyph: 'T',
+        actions,
+        features,
+        // 5e **Oceanic Soul** (subclass level 10): resistance to cold
+        // damage. Ships on this chassis above its strict RAW gate for
+        // the reason every subclass template does — class templates
+        // target a balanced playable level, not lockstep progression.
+        // Thematically the same water the tentacle is made of, and
+        // mechanically the sibling of the Draconic Sorcerer's fire
+        // resistance and the Storm Sorcerer's lightning / thunder pair
+        // on the `PASSIVE_TYPED_RESISTANCES` lane.
+        damage_modifiers: std::collections::HashMap::from([(
+            DamageType::Cold,
+            DamageModifier::Resistance,
+        )]),
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

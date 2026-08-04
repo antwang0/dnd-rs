@@ -343,6 +343,30 @@ enum ClampScope {
     /// scope covering both. Prefers the damaged actor so a Psi Warrior
     /// shields themselves before an ally spends a charge on them.
     HolderOrAlly(isize),
+    /// Like `HolderOrAlly`, except the distance is measured from a
+    /// *third* creature rather than between the two in the swing: the
+    /// damaged actor must stand within `tiles` of a friendly creature
+    /// carrying the passive `beacon` tag, and the reactor may then be
+    /// anywhere they can see the attacker from.
+    ///
+    /// The Fathomless Warlock's Guardian Coil is why this exists —
+    /// "when you or a creature you can see within 10 feet of **your
+    /// tentacle** takes damage". Every other scope on the cohort is a
+    /// radius around one of the two creatures already in the swing,
+    /// and Guardian Coil's is a radius around something in neither
+    /// role, which is exactly what makes the subclass interesting: the
+    /// warlock's shield reaches wherever they chose to put the coils,
+    /// not wherever they happen to be standing.
+    ///
+    /// The reactor's own range is deliberately unbounded. RAW's only
+    /// constraint on the warlock's position is "a creature you can
+    /// see", which `first_reactive_ally_within` already enforces —
+    /// adding a second radius would be inventing a rule the feature
+    /// does not have.
+    NearBeacon {
+        beacon: &'static str,
+        tiles: isize,
+    },
 }
 
 /// Cohort row shape for a reactive per-swing damage clamp: a feature
@@ -582,6 +606,36 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
             bonus: |a| a.ability_modifier(AbilityScoreType::Intelligence),
         },
     },
+    // 5e Fathomless Warlock **Guardian Coil** (subclass level 6): "when
+    // you or a creature you can see within 10 feet of your tentacle
+    // takes damage, you can use your reaction to have the tentacle
+    // reduce that damage by 1d8."
+    //
+    // Last on the cohort, which puts it below every self-scoped row and
+    // below Protective Field: the coils only ever spend their charge on
+    // damage that survived whatever the target could do for themselves.
+    //
+    // The only row whose radius is measured from a creature outside the
+    // swing — see `ClampScope::NearBeacon` and `GUARDIAN_COIL_TAG`.
+    ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::GUARDIAN_COIL_TAG),
+        tag: Some(crate::actions::class_features::GUARDIAN_COIL_TAG),
+        label: "guardian coil",
+        damage_types: None,
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::NearBeacon {
+            beacon: crate::actions::class_features::TENTACLE_OF_THE_DEEP_TAG,
+            // 4 tiles = 10 ft on the 2.5 ft grid.
+            tiles: 4,
+        },
+        // Flat 1d8, no ability modifier — RAW gives the coils no stat to
+        // scale off, which is also what keeps the feature about
+        // positioning rather than about the warlock's Charisma.
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 8),
+            bonus: |_| 0,
+        },
+    },
 ];
 
 /// Cohort row shape for a passive weapon-hit condition mark: a feature
@@ -815,6 +869,32 @@ fn pick_clamp_reactor(
                     attacker_id,
                     target_id,
                     max_tiles,
+                    &row.flag,
+                    row.tag,
+                )
+            }
+        }
+        ClampScope::NearBeacon { beacon, tiles } => {
+            // The gate is on the *damaged* creature's position relative
+            // to the beacon, so it is checked before anyone is asked to
+            // spend a reaction.
+            let covered = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| encounter.friendly_beacon_within(t, beacon, tiles));
+            if !covered {
+                return None;
+            }
+            if reactive_reducer_eligible(encounter, target_id, attacker_id, row.flag, row.tag) {
+                Some(target_id)
+            } else {
+                // Unbounded: RAW puts no distance between the warlock
+                // and what they shield, only between the *tentacle* and
+                // what they shield, and that leg is the check above.
+                encounter.first_reactive_ally_within(
+                    attacker_id,
+                    target_id,
+                    isize::MAX,
                     &row.flag,
                     row.tag,
                 )

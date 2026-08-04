@@ -1472,6 +1472,15 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
         flag: |a| a.has_condition(Condition::AshardalonStriding),
         bonus_ft: 20.0,
     },
+    // 5e Fathomless Warlock **Tentacle of the Deep**: "its speed is
+    // reduced by 10 feet until the start of your next turn". The first
+    // negative row on the cohort, and the reason `bonus_ft` is signed —
+    // a slow and a buff on the same creature sum rather than fighting
+    // over which one the code checked first.
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::Coiled),
+        bonus_ft: -10.0,
+    },
     // 5e Bladesinging Wizard **Bladesong** (subclass level 2): "your
     // walking speed increases by 10 feet." One of the three clauses the
     // trance grants; the AC bump rides
