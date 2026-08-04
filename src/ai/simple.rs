@@ -173,6 +173,26 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a⁵. Free summons — the Ranger's Companion, the wildfire
+        //      spirit, the tentacle. The half of the summon lane that
+        //      costs neither a spell slot nor the caster's concentration,
+        //      hoisted above the buff lane because the argument that puts
+        //      summons *low* is entirely about concentration and does not
+        //      apply to these. See `SummonTier`.
+        //
+        //      Over the self-buffs below on the plainest arithmetic in
+        //      the ladder: a second body attacking every round beats +3
+        //      AC on one body, and unlike a buff a summon's value is
+        //      strictly decreasing in how long you wait — a round spent
+        //      not summoning is a round of its attacks that no later
+        //      turn gets back. The Fathomless warlock is the case that
+        //      surfaced it: it reached its tentacle in one live fight out
+        //      of eight, having spent its bonus action on a shove cantrip
+        //      every round the tentacle was sitting there available.
+        if let Some(aei) = try_summon_allies(encounter, actor_id, SummonTier::Free) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b. Mage Armor — self-only AC boost. Casts once per combat
         //     since the condition lasts ~100 rounds; gated by "don't
         //     re-cast" via the condition check. Bonus action, so it
@@ -1091,9 +1111,9 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 5a'''. Summons — Conjure Animals / Conjure Elemental /
-        //        Animate Dead / Animate Objects / the Ranger's
-        //        Companion. Before this rung existed, no AI-driven
+        // 5a'''. Slotted summons — Conjure Animals, Conjure
+        //        Elemental, Animate Dead, Animate Objects, and the whole
+        //        Tasha's family. Before this rung existed, no AI-driven
         //        caster ever summoned anything on any template: a
         //        summon declares no damage types and targets nothing,
         //        so every picker above filtered it out and the spells
@@ -1113,10 +1133,14 @@ impl Controller for SimpleAi {
         //        the fight is most likely to be the long kind that
         //        pays for it.
         //
+        //        That argument is about the concentration, so it binds
+        //        only the summons that spend some — which is why the
+        //        free half of the lane is up at rung 3a⁵ instead.
+        //
         //        Still above the damage lane below: two extra bodies
         //        out-damage one Fireball across any fight that lasts
         //        long enough for the question to matter.
-        if let Some(aei) = try_summon_allies(encounter, actor_id) {
+        if let Some(aei) = try_summon_allies(encounter, actor_id, SummonTier::Slotted) {
             return ControllerDecision::Act(aei);
         }
 
@@ -5932,6 +5956,48 @@ const AREA_CONTROL_SPELLS: &[&str] = &[
     "grease",
 ];
 
+/// Which half of the summon lane a rung is asking for.
+///
+/// The two halves sit in different places in the ladder because the
+/// argument for putting summons low applies to only one of them. That
+/// argument is about *concentration*: everything ranked above the summon
+/// rung — area control, the apex ally buffs, Spirit Guardians, Hold
+/// Person — wants the same single concentration slot, and all of them
+/// act on the fight now, where a pack of wolves pays out over six rounds
+/// the caster can't be sure they'll get.
+///
+/// A `Free` summon costs neither a slot nor the concentration, so it
+/// competes with none of that. It is a permanent extra body bought with
+/// one bonus action or one action, and every round it spends unsummoned
+/// is a round of its attacks lost for good — there is no fight in which
+/// holding it back is right. It belongs high, above the self-buff lane;
+/// the Fathomless warlock is what made the point, having reached its
+/// tentacle in one live fight out of eight while spending bonus action
+/// after bonus action on a shove cantrip that a second attacker
+/// outvalues in a round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SummonTier {
+    /// No spell slot and no concentration — a per-rest feature summon
+    /// like the Ranger's Companion, the wildfire spirit or the tentacle.
+    Free,
+    /// Costs a slot, or the caster's concentration, or both. Every
+    /// summon *spell* is here, including Animate Dead (no
+    /// concentration, but a level-3 slot).
+    Slotted,
+}
+
+impl SummonTier {
+    /// Which tier a candidate belongs to. `slot` is 0 for an action that
+    /// spends no `Resource::SpellSlot`.
+    fn of(slot: u32, holds_concentration: bool) -> Self {
+        if slot == 0 && !holds_concentration {
+            SummonTier::Free
+        } else {
+            SummonTier::Slotted
+        }
+    }
+}
+
 /// Put a friendly body on the board — Conjure Animals, Conjure
 /// Elemental, Animate Dead, Animate Objects, the Ranger's Companion.
 ///
@@ -5968,19 +6034,18 @@ const AREA_CONTROL_SPELLS: &[&str] = &[
 ///      shouldn't guess at — whether there is a free adjacent tile of
 ///      the right size to put the creature on.
 ///
-/// Candidates are tried **cheapest first** — free before slotted, and
-/// among slotted ones the smaller slot first — falling back to the
-/// actor's own list order for a genuine tie. Cost is the only
-/// cross-summon metric worth having: there is no sense in which two
-/// wolves and a fire elemental can be compared on quality (they are
-/// good in different fights), but a body that costs neither a slot nor
-/// the caster's attention is unambiguously the one to spend first. It
-/// is also what makes gate 2 above sit right — the free summon goes
-/// down, and the slot stays available for the fight to ask for a second
-/// one later.
+/// Candidates are tried **cheapest first** — among slotted ones the
+/// smaller slot first — falling back to the actor's own list order for a
+/// genuine tie. Cost is the only cross-summon metric worth having: there
+/// is no sense in which two wolves and a fire elemental can be compared
+/// on quality (they are good in different fights), but a smaller slot
+/// for a body is unambiguously the one to spend first. It is also what
+/// makes gate 2 above sit right — the cheap call goes out, and the
+/// bigger slots stay available for what else the fight asks for.
 fn try_summon_allies(
     encounter: &EncounterInstance,
     actor_id: usize,
+    tier: SummonTier,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     if !any_enemy_within(encounter, actor_id, 24) {
@@ -6002,6 +6067,9 @@ fn try_summon_allies(
                 encounter, actor_id, None, None, None,
             ))
             .unwrap_or(0);
+            if tier != SummonTier::of(slot, a.holds_concentration()) {
+                return None;
+            }
             if already_called && slot > 0 {
                 return None;
             }
@@ -6951,7 +7019,7 @@ mod tests {
         // ranger has no reason to do anything else first.
         let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
         assert!(
-            try_summon_allies(&e, ranger).is_some(),
+            try_summon_allies(&e, ranger, SummonTier::Free).is_some(),
             "an engaged Beast Master with an unspent bond should call the beast"
         );
         // The engagement gate is load-bearing: with nothing to fight,
@@ -6960,7 +7028,78 @@ mod tests {
         let alone = empty
             .instantiate_creature(&BEAST_MASTER_RANGER_TEMPLATE, Coordinate::new(4, 8), 0, 0)
             .unwrap();
-        assert!(try_summon_allies(&empty, alone).is_none());
+        assert!(try_summon_allies(&empty, alone, SummonTier::Free).is_none());
+    }
+
+    /// The two summon rungs partition the lane: every summon on every
+    /// playable template belongs to exactly one of them, and which one
+    /// follows from what it costs rather than from what it is called.
+    ///
+    /// The partition is the whole reason the split is safe. The free
+    /// rung sits ten rungs above the slotted one, so a summon that fell
+    /// into neither tier would silently become unreachable by the AI —
+    /// the same invisible regression the summon lane already had once,
+    /// before `summons_allies` existed — and one that fell into both
+    /// would be offered twice at two different priorities.
+    #[test]
+    fn every_summon_belongs_to_exactly_one_rung() {
+        use crate::actors::creatures::pc_template_families;
+        use crate::engine::side_effects::spell_slot_level;
+        use std::collections::HashSet;
+
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut free: Vec<&str> = Vec::new();
+        // The tier a summon lands in is read off its cost, and a cost
+        // needs an encounter to be asked for. Any board with the caster
+        // on it will do — no summon's cost varies with the fixture.
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        for (_family, templates) in pc_template_families() {
+            for template in templates {
+                let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+                let caster = e
+                    .instantiate_creature(template, Coordinate::new(4, 8), 0, 0)
+                    .unwrap_or_else(|_| panic!("{} should instantiate", template.name));
+                for action in template.actions.iter().filter(|a| a.summons_allies()) {
+                    let slot =
+                        spell_slot_level(&action.cost(&e, caster, None, None, None)).unwrap_or(0);
+                    let tier = SummonTier::of(slot, action.holds_concentration());
+                    if tier == SummonTier::Free && seen.insert(action.name()) {
+                        free.push(action.name());
+                    }
+                    seen.insert(action.name());
+                }
+            }
+        }
+
+        // Vacuous-pass guard, and a statement of what the free rung is
+        // for: the per-rest feature summons, and nothing else. A summon
+        // *spell* that ended up here would be one that forgot to declare
+        // its slot.
+        free.sort_unstable();
+        assert_eq!(
+            free,
+            vec![
+                "ranger's companion",
+                "summon wildfire spirit",
+                "tentacle of the deep",
+            ],
+            "the free rung's membership changed"
+        );
+        assert!(
+            seen.len() > free.len(),
+            "the slotted rung came out empty, so the walk found nothing"
+        );
     }
 
     /// A free feature summon leaves the slot lane alone.
@@ -6994,9 +7133,10 @@ mod tests {
             .unwrap();
         let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
 
-        // Cheapest-first: the charge-gated spirit outranks the level-3
-        // wolves, which is also the order a player would spend them in.
-        let aei = try_summon_allies(&e, druid).expect("an engaged Wildfire druid should summon");
+        // The free rung finds the charge-gated spirit: no slot, no
+        // concentration, so it is what `SummonTier::Free` selects for.
+        let aei = try_summon_allies(&e, druid, SummonTier::Free)
+            .expect("an engaged Wildfire druid should summon");
         assert_eq!(aei.action().name(), "summon wildfire spirit");
         for ef in aei.execute(&mut e) {
             ef.apply(&mut e);
@@ -7006,13 +7146,16 @@ mod tests {
             "a free feature summon must not consume the fight's one slotted call"
         );
 
-        // Hand the druid their Action back and the rung reaches past
-        // the spent charge to the slot summon underneath it.
+        // Hand the druid their Action back and the *slotted* rung — the
+        // other half of the lane, further down the ladder — still has
+        // something to offer. The two are separate rungs, so this leg
+        // asks the slotted one directly rather than watching the free
+        // one fall through.
         e.actors
             .get_mut(&druid)
             .unwrap()
             .give_resource(crate::engine::side_effects::Resource::Action);
-        let second = try_summon_allies(&e, druid)
+        let second = try_summon_allies(&e, druid, SummonTier::Slotted)
             .expect("the slot summon should still be available to a Wildfire druid");
         // Cheapest slot first, so this is whichever summon on the
         // druid's list costs the lowest level — Summon Beast at level 2
@@ -7066,7 +7209,8 @@ mod tests {
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 0)
             .unwrap();
         let _ = e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0);
-        let aei = try_summon_allies(&e, wizard).expect("an engaged wizard should summon");
+        let aei = try_summon_allies(&e, wizard, SummonTier::Slotted)
+            .expect("an engaged wizard should summon");
         assert_eq!(aei.action().name(), "animate dead");
         for ef in aei.execute(&mut e) {
             ef.apply(&mut e);
@@ -7076,7 +7220,7 @@ mod tests {
             "the spawn helper marks the caster"
         );
         assert!(
-            try_summon_allies(&e, wizard).is_none(),
+            try_summon_allies(&e, wizard, SummonTier::Slotted).is_none(),
             "a second summon in the same fight would eat the whole slot pool"
         );
         // The action itself is untouched — the cap is one AI picker's

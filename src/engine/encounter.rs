@@ -1416,6 +1416,36 @@ pub fn tiles_between(
     TilesBetween::new(from, to)
 }
 
+/// The tiles exactly `ring` Chebyshev steps from `center` — the square
+/// shell, not its interior.
+///
+/// Row-major (dy outer, dx inner), which makes it deterministic: same
+/// board, same seed, same tile. That matters more than which corner of
+/// a shell comes first — a summon that landed somewhere different on a
+/// replay would make a seeded encounter unreproducible.
+fn ring_at(center: Coordinate, ring: isize) -> impl Iterator<Item = Coordinate> {
+    (-ring..=ring).flat_map(move |dy| {
+        (-ring..=ring)
+            // Only the outer edge — the interior belongs to smaller rings.
+            .filter(move |dx| dx.abs() == ring || dy.abs() == ring)
+            .map(move |dx| Coordinate::new(center.x + dx, center.y + dy))
+    })
+}
+
+/// The tiles around `center`, **closest ring first**, out to `radius`
+/// Chebyshev steps. `center` itself is never yielded.
+///
+/// One walk, two callers, and the reason they exist as a pair is that
+/// they used to disagree. `find_adjacent_teleport_anchor` walked rings
+/// outward and got the closest legal tile; `find_adjacent_spawn` walked
+/// a plain `-radius..=radius` double loop and got the *corner* — the
+/// most negative offset that happened to be legal, which is as far from
+/// the caster as the search box allows. Both call themselves "adjacent"
+/// and only one was.
+fn rings_outward(center: Coordinate, radius: isize) -> impl Iterator<Item = Coordinate> {
+    (1..=radius).flat_map(move |ring| ring_at(center, ring))
+}
+
 struct TilesBetween {
     x: isize,
     y: isize,
@@ -11173,8 +11203,37 @@ impl EncounterInstance {
     /// to place a new actor near the caster without overlapping the
     /// caster's own tiles or any other occupied / non-floor tile. Returns
     /// the anchor (top-left of the new footprint) on success, or `None`
-    /// if no slot fits. The search visits offsets in deterministic
-    /// (row-major) order so behavior is reproducible across runs.
+    /// if no slot fits.
+    ///
+    /// **Closest first**, which the function used not to be and its own
+    /// name always claimed it was. The search was a plain `-radius..=radius`
+    /// double loop returning the first hit, so it returned the anchor at
+    /// the *most negative* offset — the far up-left corner of the search
+    /// box. A Conjure Elemental cast with `radius: 4` put the elemental
+    /// four tiles up and to the left of the wizard whenever that tile
+    /// happened to be clear, which is ten feet away and behind them.
+    /// Nothing failed; the summon just showed up in the wrong place, and
+    /// the wider the caller's radius the wronger the place. The Tasha's
+    /// summon family made that visible by shipping six spells at radius
+    /// 3–4 where the lane previously had two.
+    ///
+    /// `ring_at` is the shared shell walk, and the reason this and
+    /// `find_adjacent_teleport_anchor` can't drift apart again: the
+    /// sibling had the ring-walk right all along, in its own hand-inlined
+    /// copy.
+    ///
+    /// **Facing the fight.** Closest-ring-first still leaves a choice —
+    /// eight tiles are equally adjacent — and the tie is broken toward
+    /// the caster's nearest live enemy. Row-major order would otherwise
+    /// resolve every tie to the *up-left* neighbour, which is a bias with
+    /// real consequences for a summon that cannot walk: the Fathomless
+    /// warlock's Tentacle of the Deep has speed 0 and reach 4, so the
+    /// tile it lands on is the entire question of whether it ever hits
+    /// anything. Facing is free for everything that moves and decisive
+    /// for the things that don't.
+    ///
+    /// With no enemy on the board there is nothing to face, and the walk
+    /// falls back to plain closest-first.
     pub fn find_adjacent_spawn(
         &self,
         caster_id: usize,
@@ -11183,20 +11242,32 @@ impl EncounterInstance {
     ) -> Option<Coordinate> {
         let caster = self.actors.get(&caster_id)?;
         let loc = caster.location();
+        let team = caster.team();
         let w = get_tiles_from_size(size) as isize;
-        for dx in -radius..=radius {
-            for dy in -radius..=radius {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let anchor = Coordinate::new(loc.x + dx, loc.y + dy);
-                if (0..w).all(|ox| {
-                    (0..w).all(|oy| {
-                        self.is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy))
-                    })
-                }) {
-                    return Some(anchor);
-                }
+        let fits = |anchor: &Coordinate| {
+            (0..w).all(|ox| {
+                (0..w).all(|oy| self.is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy)))
+            })
+        };
+        // The nearest hostile footprint, measured from the caster. Read
+        // once rather than per candidate tile — which enemy is nearest
+        // doesn't change as the search walks outward, only how far the
+        // candidate is from it.
+        let threat = self
+            .actors
+            .values()
+            .filter(|a| a.team() != team && a.is_combat_active())
+            .map(|a| a.location())
+            .min_by_key(|l| footprint_chebyshev(loc, get_tiles_from_size(caster.size()), *l, 1));
+        let Some(threat) = threat else {
+            return rings_outward(loc, radius).find(fits);
+        };
+        for ring in 1..=radius {
+            if let Some(best) = ring_at(loc, ring)
+                .filter(fits)
+                .min_by_key(|c| footprint_chebyshev(*c, w as usize, threat, 1))
+            {
+                return Some(best);
             }
         }
         None
@@ -11234,22 +11305,8 @@ impl EncounterInstance {
         // won't overlap. Add 1 for slack so a Large host + Medium
         // mover doesn't fall off the end of the search.
         let search_radius = (anchor_size + mover_size).max(2);
-        for ring in 1..=search_radius {
-            for dy in -ring..=ring {
-                for dx in -ring..=ring {
-                    // Only walk the outer ring at this iteration so the
-                    // closest legal anchor wins.
-                    if dx.abs() != ring && dy.abs() != ring {
-                        continue;
-                    }
-                    let candidate = Coordinate::new(anchor_loc.x + dx, anchor_loc.y + dy);
-                    if self.can_move_to(mover_id, candidate) {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-        None
+        rings_outward(anchor_loc, search_radius)
+            .find(|candidate| self.can_move_to(mover_id, *candidate))
     }
 
     pub fn instantiate_creature(
@@ -39907,6 +39964,66 @@ mod tests {
             e.actors.len(),
             before,
             "elemental despawns on concentration drop"
+        );
+    }
+
+    /// A summon lands next to its summoner, on the side the fight is on.
+    ///
+    /// Both halves used to be wrong in the same place.
+    /// `find_adjacent_spawn` scanned `-radius..=radius` and returned the
+    /// first legal anchor, which is the *far up-left corner* of the
+    /// search box — so with `radius: 4` a Large summon could appear four
+    /// tiles behind its caster, and every summon in the engine appeared
+    /// up-and-left of its caster regardless of where the enemy was.
+    ///
+    /// The second half is not cosmetic. The Fathomless warlock's
+    /// Tentacle of the Deep has speed 0 and reach 4: it never moves, so
+    /// the tile it lands on decides whether the feature does anything at
+    /// all for the rest of the fight.
+    #[test]
+    fn a_summon_lands_beside_its_caster_facing_the_enemy() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        // Due east, well clear of any spawn ring.
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+
+        // A wide search radius is exactly the case the old scan got
+        // worst: the more room it was given, the further away it put the
+        // body.
+        let anchor = e
+            .find_adjacent_spawn(wizard, Size::Medium, 4)
+            .expect("an open arena always has room");
+        let caster_loc = e.actors[&wizard].location();
+        let gap = footprint_chebyshev(
+            caster_loc,
+            get_tiles_from_size(e.actors[&wizard].size()),
+            anchor,
+            get_tiles_from_size(Size::Medium),
+        );
+        assert_eq!(gap, 0, "the summon landed at {anchor}, not beside the caster");
+        assert!(
+            anchor.x > caster_loc.x,
+            "the summon landed at {anchor}, on the far side of the caster from the ogre"
+        );
+
+        // Flip the enemy to the west and the facing flips with it — the
+        // rule is "toward the threat", not a fixed preferred direction
+        // that happens to point east.
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 10), 1, 0)
+            .unwrap();
+        let anchor = e.find_adjacent_spawn(wizard, Size::Medium, 4).unwrap();
+        assert!(
+            anchor.x < e.actors[&wizard].location().x,
+            "the summon landed at {anchor}, away from the ogre to the west"
         );
     }
 
