@@ -6340,15 +6340,31 @@ impl EncounterInstance {
         self.burst_targets_with(caster_id, point, radius, |id, _a, _ct| id != caster_id)
     }
 
-    /// Sorted ids of every combat-active enemy whose footprint is
-    /// touching `actor_id`'s footprint (gap 0). Used by per-step
-    /// "scorch everyone nearby" riders — Ashardalon's Stride's blazing
-    /// wake — that fire at the new tile after each move step. Uses
-    /// `footprint_distance` so both sides of the gap check honor the
-    /// actor's full size category; a Medium caster next to a Small
-    /// goblin reads as adjacent even though their origin tiles sit
-    /// one tile apart. Returns an empty vec when `actor_id` is missing.
+    /// Sorted ids of every combat-active enemy standing **within five
+    /// feet** of `actor_id` — a footprint gap of `MELEE_REACH`.
+    ///
+    /// Both callers are RAW clauses that say "within 5 feet" in those
+    /// words: the ranged-attack disadvantage in
+    /// `compute_attack_mode`, and Ashardalon's Stride's blazing wake.
+    /// Both used to read a gap of **zero** — footprints actually
+    /// touching, which on a 2.5 ft grid is a creature standing in
+    /// contact rather than one five feet away, and which is strictly
+    /// narrower than the reach of every melee weapon in the game.
+    ///
+    /// The visible consequence was on the disadvantage clause. A caster
+    /// with an enemy one tile out — inside that enemy's reach, and
+    /// inside its own, and unable to move without provoking — shot at no
+    /// penalty at all. So every gish in the engine had a free ranged
+    /// attack from exactly the tile 5e's rule exists to punish, and the
+    /// AI's attack picker, which reads the mode, was told the cantrip
+    /// was as good as the sword.
+    ///
+    /// Uses `footprint_distance` so both sides of the gap check honor
+    /// the actor's full size category; a Medium caster next to a Small
+    /// goblin reads as adjacent even though their origin tiles sit one
+    /// tile apart. Returns an empty vec when `actor_id` is missing.
     pub fn combat_active_enemy_ids_adjacent(&self, actor_id: usize) -> Vec<usize> {
+        use crate::actions::action_template::MELEE_REACH;
         let Some(actor) = self.actors.get(&actor_id) else {
             return Vec::new();
         };
@@ -6361,7 +6377,7 @@ impl EncounterInstance {
                     return None;
                 }
                 let dist = self.footprint_distance(actor_id, *id)?;
-                if dist == 0 { Some(*id) } else { None }
+                if dist <= MELEE_REACH { Some(*id) } else { None }
             })
             .collect();
         ids.sort_unstable();
@@ -10939,9 +10955,9 @@ impl EncounterInstance {
         self.is_concentration_mark_target(caster_id, target_id, "Hex", Condition::Hexed)
     }
 
-    /// True if any combat-active actor on a different team is footprint-
-    /// adjacent (Chebyshev gap 0) to `actor_id`. Used to gate the 5e
-    /// "ranged attacks at disadvantage in melee" clause.
+    /// True if any combat-active actor on a different team is within
+    /// five feet of `actor_id`. Gates the 5e "ranged attacks at
+    /// disadvantage in melee" clause.
     ///
     /// Thin wrapper over `combat_active_enemy_ids_adjacent` — the public
     /// helper already encodes the same "different team, combat-active,

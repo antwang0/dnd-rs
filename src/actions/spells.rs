@@ -4414,6 +4414,13 @@ impl Action for ShockingGrasp {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Lightning]
     }
+    /// A melee-reach cantrip competes with the weapon in the caster's hand
+    /// for the same Action from the same tile, which is precisely the tie
+    /// the picker's damage key exists to break. See
+    /// `melee_cantrip_expected_damage`.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::melee_cantrip_expected_damage(encounter, caster_id, 8)
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -10941,6 +10948,13 @@ impl Action for BoomingBlade {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Thunder]
+    }
+    /// See `melee_cantrip_expected_damage`. The estimate is the up-front
+    /// die only — the thunder that fires when the target moves is a rider
+    /// the picker has no way to price, the same omission every other
+    /// conditional rider on this hint takes.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::melee_cantrip_expected_damage(encounter, caster_id, 8)
     }
     fn side_effects(
         &self,
@@ -20383,6 +20397,12 @@ impl Action for GreenFlameBlade {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Fire]
+    }
+    /// See `melee_cantrip_expected_damage`. The leap onto a second adjacent
+    /// enemy is left out for the same reason Booming Blade's rider is:
+    /// it depends on the board rather than on the swing.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::melee_cantrip_expected_damage(encounter, caster_id, 8)
     }
     fn side_effects(
         &self,

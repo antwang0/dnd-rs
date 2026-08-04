@@ -4869,10 +4869,18 @@ fn try_grapple(
         }
         // Only grapple enemies that have ranged attacks — melee-only foes
         // gain nothing from breaking free since they want to be in melee.
+        //
+        // `!is_melee_attack`, not `reach > MELEE_REACH`: an ogre's
+        // greatclub reaches two tiles, and under the arithmetic version
+        // every reach weapon in the bestiary read as a ranged attack. So
+        // the rung grappled ogres, giants, treants and dragons — all of
+        // which want to be exactly where the grapple pins them — and
+        // spent the Action to do it.
         let has_ranged = t.actions.iter().any(|a| {
             a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
-                && a.reach_tiles().is_some_and(|r| r > MELEE_REACH)
+                && !a.is_melee_attack()
+                && a.reach_tiles().is_some()
         });
         if !has_ranged {
             continue;
@@ -4898,13 +4906,55 @@ fn mode_priority(mode: RollMode) -> u8 {
     }
 }
 
-/// True if the actor has any single-actor attack with reach beyond melee.
-/// Doesn't require a current valid target — the kite tactic only cares
-/// whether we *could* shoot once we have space.
+/// True if the actor has a ranged attack it can make **right now** —
+/// beyond melee reach, against some live enemy, and affordable this
+/// instant.
+///
+/// Read only by the two kiting rungs at the top of the ladder, which
+/// back an actor out of contact so it can shoot instead. The predicate
+/// used to ask a weaker question — does this sheet list a ranged attack
+/// at all — on the reasoning that "the kite tactic only cares whether we
+/// *could* shoot once we have space". That reasoning has a hole in it,
+/// and the hole is a livelock.
+///
+/// A Four Elements monk holding a stunned ogre found it. Its only
+/// single-target ranged attack is Water Whip, a bonus action it had
+/// already spent; its Action was gone too. So there was nothing it could
+/// do at any range — and rung 2 backed it out of contact anyway, because
+/// the sheet still listed the whip. The approach rung then walked it
+/// straight back in, rung 2 pushed it out again, and the two spent the
+/// monk's entire movement allowance shuffling between two tiles. Then it
+/// Dashed, and did it again, for nine rounds, while the thing it was
+/// holding stood still and waited.
+///
+/// The two rungs contradicting each other is what makes the weaker
+/// predicate dangerous rather than merely imprecise: every turn one of
+/// them wins the first step and the other wins the second, forever.
+/// Asking whether the shot is actually available is what stops the
+/// argument, because a kite that buys nothing no longer starts it.
+///
+/// Deliberately *not* narrowed further to "and the shot is better than
+/// staying". That is the kind of judgement the picker makes and this is
+/// a gate; what it owes the rungs above it is that backing away is not
+/// simply wasted.
 fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
     let Some(actor) = encounter.actors.get(&actor_id) else {
         return false;
     };
+    let my_team = actor.team();
+    let enemies: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|id| {
+            encounter
+                .actors
+                .get(id)
+                .is_some_and(|a| a.team() != my_team && a.is_combat_active())
+        })
+        .collect();
+    if enemies.is_empty() {
+        return false;
+    }
     // Restrict to *harmful* SingleActor actions — kiting / disengaging
     // is about ranged offense, not about long-range buff dispensers like
     // Rally (12-tile reach) or Commander's Strike (24-tile reach). Pre-
@@ -4923,7 +4973,21 @@ fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
         a.is_harmful()
             && a.deals_damage()
             && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
-            && a.reach_tiles().is_some_and(|r| r > MELEE_REACH)
+            // Same reading as the grapple rung's: a swing is not a shot,
+            // however far it reaches. Under the arithmetic version an
+            // ogre counted itself as a ranged attacker and backed away
+            // from things it wanted to club.
+            && !a.is_melee_attack()
+            && a.reach_tiles().is_some()
+            // The half that was missing. `validate` answers reach, line
+            // of sight, the action's own gates *and* whether the actor
+            // can still pay for it — which is the clause the monk above
+            // needed, since its whip was a bonus action it had already
+            // spent.
+            && enemies.iter().any(|&tid| {
+                ActionExecutionInfo::new(*a, actor_id, Some(vec![tid]), None, None)
+                    .validate(encounter)
+            })
     })
 }
 
@@ -6918,6 +6982,79 @@ mod tests {
     /// A melee build carrying an attack cantrip swings the weapon once
     /// the enemy is already standing next to it.
     ///
+    /// The kite rung backs an actor out of contact so it can shoot. It
+    /// should not do that when there is nothing to shoot with.
+    ///
+    /// This is the livelock guard. A Four Elements monk holding a
+    /// stunned ogre had spent both its Action and the bonus action its
+    /// only ranged attack costs — and rung 2 backed it away anyway,
+    /// because the whip was still listed on its sheet. The approach rung
+    /// walked it back in, rung 2 pushed it out, and the pair burned the
+    /// monk's whole movement allowance every turn, then Dashed and did
+    /// it again, for nine rounds.
+    #[test]
+    fn an_actor_with_no_shot_left_does_not_read_as_a_ranged_attacker() {
+        use crate::actors::creatures::monks::FOUR_ELEMENTS_MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = empty_arena();
+        let monk = e
+            .instantiate_creature(&FOUR_ELEMENTS_MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Fresh: the whip is affordable, so the monk really can shoot.
+        assert!(has_ranged_attack(&e, monk));
+        // Spend the economy the whip rides on. Nothing on the sheet
+        // changed; what changed is that none of it can be paid for.
+        {
+            let m = e.actors.get_mut(&monk).unwrap();
+            m.consume_resource(Resource::Action);
+            m.consume_resource(Resource::BonusAction);
+        }
+        assert!(
+            !has_ranged_attack(&e, monk),
+            "a monk with no action economy left has no shot to back away for"
+        );
+    }
+
+    /// A creature standing five feet away is in melee, and a ranged
+    /// attack made from there rolls at disadvantage.
+    ///
+    /// The gate used to ask for a footprint gap of *zero* — actual
+    /// contact. A Medium creature occupies a 2×2 box on this grid, so a
+    /// gap of one is 5 ft and a gap of zero is standing on top of
+    /// someone. Everything in the engine that can reach an enemy with a
+    /// melee weapon could therefore also shoot past it for free, which
+    /// is the exact tile 5e's rule exists to punish.
+    #[test]
+    fn a_shot_taken_from_inside_an_enemys_reach_rolls_at_disadvantage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.footprint_distance(wizard, goblin),
+            Some(MELEE_REACH),
+            "the fixture should put the goblin exactly a melee step away"
+        );
+        assert_eq!(
+            e.compute_attack_mode(wizard, goblin, false),
+            RollMode::Disadvantage
+        );
+        // A swing from the same tile is unaffected — the clause is about
+        // shooting, not about being near something.
+        assert_eq!(
+            e.compute_attack_mode(wizard, goblin, true),
+            RollMode::Normal
+        );
+    }
+
     /// 5e gives a ranged attack disadvantage while a hostile creature
     /// is within 5 feet of the shooter, and the engine has always
     /// enforced it at the attack site — where `best_attack_against`
@@ -11300,6 +11437,7 @@ mod tests {
     /// wiring test would only be re-testing the rider, which the
     /// engine-side sweep already covers.
     
+
 
     #[test]
     fn the_ai_reaches_for_each_new_subclass_signature() {

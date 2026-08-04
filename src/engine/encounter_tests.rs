@@ -19409,10 +19409,18 @@ fn wolf_totem_grants_ally_melee_advantage_against_adjacent_target() {
     let anchored = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
         .unwrap();
-    // Distant goblin: well outside the wolf totem's aura AND not
-    // adjacent to the ally either.
+    // Distant goblin: well outside the wolf totem's aura AND outside
+    // the ally's own five-foot envelope, so the ranged sample at the
+    // bottom reads the aura and nothing else.
+    //
+    // (13, 13) used to be far enough and is not: a Medium creature
+    // occupies a 2×2 box here, so that tile sits a footprint gap of one
+    // from the ally at (10, 10) — which is `MELEE_REACH`, which is what
+    // "within 5 feet" means on this grid. The gate that reads it used
+    // to ask for a gap of zero, i.e. actual contact, and the goblin
+    // slipped through the difference.
     let distant = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(13, 13), 1, 0)
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 16), 1, 0)
         .unwrap();
     // Pre-rage: the aura is dormant; both targets read Normal.
     assert_eq!(e.compute_attack_mode(ally, anchored, true), RollMode::Normal);

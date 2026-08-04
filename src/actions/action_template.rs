@@ -655,6 +655,33 @@ pub fn weapon_expected_damage(
     Some((per_swing * swings as f32).max(0.0))
 }
 
+/// `expected_damage` for a **melee-touch attack cantrip** — one whose
+/// die pool scales with `cantrip_dice_count` and whose damage roll adds
+/// no ability modifier.
+///
+/// The narrow cohort this exists for is the one the AI's attack picker
+/// actually has to arbitrate: a cantrip that costs an Action, reaches
+/// `MELEE_REACH`, and therefore stands in exactly the same lane as the
+/// weapon in the caster's hand. Shocking Grasp, Booming Blade and
+/// Green-Flame Blade are all of it today.
+///
+/// Ranged attack cantrips are deliberately left unannotated. The
+/// picker's damage key only ever decides a tie between two candidates
+/// that already agree on matchup, roll mode and reach — and a ranged
+/// cantrip never ties with a melee weapon on reach, so an estimate for
+/// it would sort nothing that is not already sorted. Annotating the
+/// cohort that can tie, and only that cohort, is what keeps the hint
+/// from quietly becoming a second, worse ranking of everything.
+pub fn melee_cantrip_expected_damage(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    faces: u32,
+) -> Option<f32> {
+    let caster = encounter.actors.get(&caster_id)?;
+    let n = crate::engine::util::cantrip_dice_count(caster.level());
+    Some(crate::engine::dice::Dice::new(n, faces).average_roll())
+}
+
 pub trait Action {
     fn name(&self) -> &str;
 
