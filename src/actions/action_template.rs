@@ -189,6 +189,31 @@ pub fn resolve_enemy_burst_save_damage(
 /// reach weapons would be 2. Ranged actions return their max range here.
 pub const MELEE_REACH: isize = 1;
 
+/// The widest gap a swing can still be a *melee* swing across.
+///
+/// `MELEE_REACH` is the reach of an ordinary weapon; this is the reach
+/// of the longest arm in the bestiary — the Tarrasque's bite and claws
+/// at 15 ft, four tiles on this grid. Between the two sit every reach
+/// weapon in the game: the ogre's greatclub and the hill giant's at 2,
+/// the wyvern's stinger and the storm giant's greatsword at 3.
+///
+/// The two exist separately because a great deal of code wants to ask
+/// "is this creature in melee with that one" and had only `MELEE_REACH`
+/// to ask it with, which quietly answered *no* for every reach weapon
+/// on the roster. That produced two visible bugs — an ogre whose
+/// opportunity attack was a shove because its greatclub did not count
+/// as a melee weapon, and a caster who did not register a giant
+/// standing over it as a melee threat because the giant was two tiles
+/// away rather than one.
+///
+/// Callers pair this with `Action::requires_los`, which is the engine's
+/// existing melee/ranged marker — a melee swing needs contact rather
+/// than sight, so it declares `false`, and every ranged attack declares
+/// `true`. The pair is deliberately conservative from both directions:
+/// the flag alone would admit a touch-range spell with a strange reach,
+/// and the band alone would admit a short-range shot.
+pub const MELEE_BAND_REACH: isize = 4;
+
 /// Sister helper to `resolve_burst_save_damage` for the "save-or-pick-up-
 /// a-condition" burst shape: every enemy in `radius` of `center` rolls
 /// `save_ability` vs `dc`; failed-save targets pick up `condition` for
@@ -657,6 +682,55 @@ pub trait Action {
     /// excludes them from heal-target consideration.
     fn is_harmful(&self) -> bool {
         true
+    }
+
+    /// True when this action swings rather than shoots — a melee weapon
+    /// attack or a touch spell, as opposed to a bow, a thrown rock or a
+    /// Fire Bolt.
+    ///
+    /// Derived rather than declared, from the two things every action
+    /// already says. `requires_los` is the engine's existing
+    /// melee/ranged marker: a swing needs contact and declares `false`,
+    /// a shot needs sight and declares `true`. `reach_tiles` bounds it
+    /// at `MELEE_BAND_REACH`, so a strange long-reach action that
+    /// happens not to require sight cannot claim to be a swing.
+    ///
+    /// It exists because three call sites were each deriving this from
+    /// scratch and two of them got it wrong in the same way — by
+    /// comparing against `MELEE_REACH`, which is the reach of an
+    /// *ordinary* weapon and excludes every reach weapon in the
+    /// bestiary. See `MELEE_BAND_REACH` for the two bugs that produced.
+    /// The three consumers are `first_melee_weapon_action` (which swing
+    /// answers an opportunity attack or a riposte), the AI's attack
+    /// picker (which mode a candidate rolls in), and the picker's own
+    /// melee/ranged bookkeeping.
+    ///
+    /// Note this asks what *kind* of attack it is, not whether it is an
+    /// attack at all — Shove is a melee action by this reading, and
+    /// callers that care pair it with `deals_damage`.
+    fn is_melee_attack(&self) -> bool {
+        !self.requires_los() && self.reach_tiles().is_some_and(|r| r <= MELEE_BAND_REACH)
+    }
+
+    /// True when resolving this action lands more than one attack — the
+    /// `Multiattack` and `CompoundAttack` wrappers, which sit on the
+    /// same action list as the swings they contain.
+    ///
+    /// Exists for the reaction lanes. RAW's opportunity attack and the
+    /// Battle Master's Riposte each grant "one melee attack", and both
+    /// dispatchers resolve the chosen action's `side_effects` directly
+    /// without charging a cost — so a wrapper reaching either of them
+    /// hands out a monster's whole Attack routine for a reaction, once
+    /// per creature that walks past. A tarrasque answering a step with
+    /// bite-claw-claw-tail is not the rule; it is the picker having no
+    /// way to tell a swing from a turn.
+    ///
+    /// Declared rather than sniffed, for the reason `holds_concentration`
+    /// is: the wrappers are the only things that know how many swings
+    /// they contain, and a consumer guessing from the name or the damage
+    /// estimate would be wrong the first time a bespoke routine landed.
+    fn chains_multiple_attacks(&self) -> bool {
+        false
     }
 
     /// True if this action's primary effect is HP loss on the target.

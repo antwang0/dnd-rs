@@ -759,6 +759,33 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         cadence: MarkCadence::FirstHitOfTurn,
         log: "ancestral protectors: the spirits fix on the barbarian's first mark",
     },
+    // 5e Armorer Artificer **Arcane Armor: Guardian** (subclass level
+    // 3, TCE). "A creature hit by the gauntlet has disadvantage on
+    // attack rolls against targets other than you until the end of your
+    // next turn."
+    //
+    // The third row to reach `Dueled` from a third direction — a spell,
+    // a fighter subclass, and now an artificer subclass — which is the
+    // best evidence there is that the condition was the right shape to
+    // share. What separates this one is its price: Compelled Duel costs
+    // a slot and concentration, Unwavering Mark costs a per-rest
+    // charge, and this costs a swing the artificer was making anyway.
+    //
+    // `EveryHit` rather than `FirstHitOfTurn`, matching RAW's "a
+    // creature hit by the gauntlet" — an Armorer who reaches two
+    // enemies has taunted both.
+    OnHitConditionMark {
+        tag: crate::actions::class_features::THUNDER_GAUNTLETS_TAG,
+        condition: Condition::Dueled,
+        // "Until the end of your next turn" is the marker's clock, not
+        // the target's — the same reason every row above uses
+        // `Rounds(2)` rather than `UntilStartOfNextTurn`.
+        timer: ConditionTimer::Rounds(2),
+        melee_only: true,
+        holder_gate: None,
+        cadence: MarkCadence::EveryHit,
+        log: "thunder gauntlets: the concussion fixes the target on its attacker",
+    },
 ];
 
 /// Walk `ON_HIT_CONDITION_MARKS` and queue every mark the swing earns.
@@ -2738,6 +2765,51 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: Some(|a| a.has_condition(crate::conditions::Condition::AstralArms)),
+    },
+    // 5e Armorer Artificer **Arcane Armor: Infiltrator** (subclass
+    // level 3, TCE): "once on each of your turns when you hit a
+    // creature with it, you can deal an extra 1d6 lightning damage to
+    // that target."
+    //
+    // The row whose RAW cadence is this cohort's cadence verbatim,
+    // which is rare — every other entry here is a per-rest or
+    // per-modifier budget that the once-a-turn cap happens to
+    // approximate. Lightning rather than `|p| p.damage_type` for the
+    // same reason Empowered Arms says Force: the launcher is the only
+    // lightning weapon on the chassis, so the two readings agree, and
+    // naming the type is the honest one.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::LIGHTNING_LAUNCHER_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |_| DamageType::Lightning,
+        label: "lightning launcher",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: None,
+    },
+    // 5e Battle Smith Artificer **Arcane Jolt** (subclass level 9,
+    // TCE), damage half: "the target takes an extra 2d6 force damage."
+    //
+    // The biggest die on the cohort, and the row that makes the
+    // subclass carrying the weakest weapon of the four artificers the
+    // one that lands the most damage on a single target. Force, as
+    // written, which is also the damage type nothing in the bestiary
+    // resists — so unlike Colossus Slayer's `|p| p.damage_type` this
+    // rider never gets halved by the thing the swing itself was bad
+    // against.
+    //
+    // RAW's alternative effect on the same trigger — heal a creature
+    // within 30 ft for 2d6 instead — is not here; see
+    // `ARCANE_JOLT_TAG` for why a heal-on-hit would be its own site
+    // rather than a column on this one.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::ARCANE_JOLT_TAG,
+        dice: Dice::new(2, 6),
+        damage_type: |_| DamageType::Force,
+        label: "arcane jolt",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: None,
     },
 ];
 

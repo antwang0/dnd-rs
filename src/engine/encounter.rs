@@ -1865,6 +1865,67 @@ static FLAT_SPELL_DAMAGE_BONUSES: &[FlatSpellDamageBonus] = &[
         },
         amount: FlatBonusAmount::Die(Dice::new(1, 8)),
     },
+    // 5e Artillerist Artificer **Arcane Firearm** (subclass lv5, TCE):
+    // "when you cast an artificer spell through the firearm, roll a d8,
+    // and you gain a bonus to one of the spell's damage rolls equal to
+    // the number rolled."
+    //
+    // The second die on this cohort and the first row with no gate at
+    // all beyond "is this a spell". Enhanced Bond directly above rolls
+    // the same d8 and asks where the druid's spirit is standing; this
+    // asks nothing, which is what makes the Artillerist the reliable
+    // one of the four artificers and the Wildfire druid the positional
+    // one.
+    //
+    // `school().is_some()` is the engine's marker for "this action is a
+    // spell" — the same leg `is_cantrip` uses to tell a cantrip from
+    // the level-0 frame `Action::execute` opens for every weapon swing
+    // and Move. Without it the artificer's shortsword would carry the
+    // die too. RAW narrows further to the *artificer* spell list, which
+    // on a chassis carrying only artificer spells is the same set.
+    FlatSpellDamageBonus {
+        label: "arcane firearm",
+        applies: |_e, cast, caster| {
+            cast.school.is_some()
+                && caster
+                    .has_passive_feature(crate::actions::class_features::ARCANE_FIREARM_TAG)
+        },
+        amount: FlatBonusAmount::Die(Dice::new(1, 8)),
+    },
+    // 5e Alchemist Artificer **Alchemical Savant** (subclass lv5, TCE):
+    // "whenever you cast a spell using your alchemist's supplies, you
+    // can add your Intelligence modifier to one roll of the spell that
+    // restores hit points or deals acid, fire, necrotic, or poison
+    // damage."
+    //
+    // The widest damage-type gate on the cohort — four types against
+    // Elemental Affinity's one — which is what makes the baseline
+    // artificer's Tasha's Caustic Brew and Create Bonfire stop being
+    // filler on this chassis. What it deliberately does not reach is
+    // the force / lightning / psychic lane, so the Alchemist's answer
+    // to a fire-immune enemy is a different spell rather than a bigger
+    // one.
+    //
+    // The healing half of RAW's sentence is not here: the heal
+    // chokepoint takes no cast frame, so it would be a second site
+    // keyed off the same tag with no shared body between them. See
+    // `ALCHEMICAL_SAVANT_TAG`.
+    FlatSpellDamageBonus {
+        label: "alchemical savant",
+        applies: |_e, cast, caster| {
+            [
+                DamageType::Acid,
+                DamageType::Fire,
+                DamageType::Necrotic,
+                DamageType::Poison,
+            ]
+            .iter()
+            .any(|&t| cast.deals(t))
+                && caster
+                    .has_passive_feature(crate::actions::class_features::ALCHEMICAL_SAVANT_TAG)
+        },
+        amount: FlatBonusAmount::Ability(AbilityScoreType::Intelligence),
+    },
 ];
 
 /// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`
@@ -3718,6 +3779,111 @@ impl EncounterInstance {
             .is_some()
     }
 
+    /// RAW's 30 ft on Flash of Genius, in tiles on the 2.5 ft grid.
+    /// Wider than the paladin auras by a factor of three, which is the
+    /// difference between "stand next to me" and "be in the room".
+    pub const FLASH_OF_GENIUS_RADIUS: isize = 12;
+
+    /// 5e Artificer **Flash of Genius** (lv7): "whenever you or another
+    /// creature you can see within 30 feet of you makes an ability
+    /// check or a saving throw, you can use your reaction to add your
+    /// Intelligence modifier to the roll."
+    ///
+    /// Called from `roll_save_with_extra_mode_and_bonus` once the
+    /// initial d20 has landed on a fail and the add-die cohort has
+    /// declined. Returns `Some(Pass)` if some allied artificer paid for
+    /// the rescue, `None` if nobody could or nobody's modifier reached.
+    ///
+    /// **Why this isn't a row on `FAILED_SAVE_ADD_DIE_SOURCES`.** Every
+    /// entry on that cohort is a charge the *failing actor* is
+    /// carrying, which is why the loop can spend it with one
+    /// `actors.get_mut(&actor_id)`. This one is a charge somebody else
+    /// is carrying and a reaction somebody else has to still have, so
+    /// the lookup is a scan of the board and the spend touches two
+    /// actors. Folding it into the cohort would mean giving every row a
+    /// "who pays" column that only one row would ever use.
+    ///
+    /// **What it costs, and why both halves matter.** The reaction
+    /// means an artificer who has already fired one this round — a
+    /// Shield, an opportunity attack, an Absorb Elements — has nothing
+    /// to give, so the feature competes with the rest of the chassis
+    /// rather than sitting outside the economy. The charge means one
+    /// rescue per fight rather than one per save.
+    ///
+    /// **Spent only on a save it can rescue.** The shortfall gate is
+    /// the same judgement the add-die cohort and `fire_missed_attack_boost`
+    /// both make: RAW permits adding the modifier to a save it cannot
+    /// save, and nobody holding the charge would.
+    ///
+    /// Ties are broken by picking the *largest* modifier among eligible
+    /// artificers rather than the lowest id, so a party fielding two
+    /// spends the one who can actually clear the gap; the id order is
+    /// the secondary key so the choice stays deterministic under a
+    /// fixed seed.
+    fn try_flash_of_genius(
+        &mut self,
+        actor_id: usize,
+        dc: i32,
+        total: i32,
+    ) -> Option<crate::engine::saves::SaveOutcome> {
+        use crate::engine::saves::SaveOutcome;
+        let shortfall = dc - total;
+        let target = self.actors.get(&actor_id)?;
+        let team = target.team();
+        let loc = target.location();
+        let size = get_tiles_from_size(target.size());
+        let mut best: Option<(i32, usize)> = None;
+        for (id, artificer) in self.actors.iter() {
+            if artificer.team() != team
+                || !artificer.is_combat_active()
+                || artificer.is_incapacitated()
+                || !artificer
+                    .has_passive_feature(crate::actions::class_features::FLASH_OF_GENIUS_TAG)
+                || !artificer
+                    .feature_available(crate::actions::class_features::FLASH_OF_GENIUS_TAG)
+                || !artificer.can_consume_resource(crate::engine::side_effects::Resource::Reaction)
+            {
+                continue;
+            }
+            // RAW's "a creature you can see". The artificer looks at
+            // the roller, not the other way round — which matters for
+            // an invisible ally, who cannot be helped.
+            if *id != actor_id && !self.viewer_can_see(*id, actor_id) {
+                continue;
+            }
+            if footprint_chebyshev(
+                artificer.location(),
+                get_tiles_from_size(artificer.size()),
+                loc,
+                size,
+            ) > Self::FLASH_OF_GENIUS_RADIUS
+            {
+                continue;
+            }
+            let bonus = artificer.ability_modifier(AbilityScoreType::Intelligence);
+            if bonus < shortfall {
+                continue;
+            }
+            let candidate = (bonus, *id);
+            if best.is_none_or(|(b, bid)| bonus > b || (bonus == b && *id < bid)) {
+                best = Some(candidate);
+            }
+        }
+        let (bonus, helper_id) = best?;
+        let helper = self.actors.get_mut(&helper_id)?;
+        helper.spend_feature(crate::actions::class_features::FLASH_OF_GENIUS_TAG);
+        helper.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        let helper_name = self.actor_name(helper_id);
+        self.log(format!(
+            "  flash of genius: {} adds {:+} = {} vs DC {} \u{2014} pass",
+            helper_name,
+            bonus,
+            total + bonus,
+            dc
+        ));
+        Some(SaveOutcome::Pass)
+    }
+
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
     /// option, lv7) AC bonus for the target's effective AC. Returns 4
     /// when the target holds `MULTIATTACK_DEFENSE_TAG` AND the
@@ -4014,6 +4180,22 @@ impl EncounterInstance {
             if let Some(pass) = boosted_pass {
                 return pass;
             }
+        }
+        // 5e Artificer **Flash of Genius** (lv7): a nearby artificer
+        // spends their reaction and a charge to add their Intelligence
+        // modifier to somebody else's failed save.
+        //
+        // Sits between the add-die cohort above and the reroll cohort
+        // below because it is the same kind of thing as the first —
+        // keep the d20, add to the total — and RAW puts it at the same
+        // moment. What separates it is who pays: every row above is a
+        // charge the failing actor is carrying, and this is a scan of
+        // the board for someone else willing to spend a reaction. That
+        // is why it is a method rather than a row.
+        if !outcome.passed()
+            && let Some(passed) = self.try_flash_of_genius(actor_id, dc, total)
+        {
+            return passed;
         }
         // 5e Fighter Indomitable + Oathbreaker Paladin Fanatical
         // Focus: each is a "reroll the failed save once per {long,
@@ -12570,6 +12752,18 @@ mod tests {
             // Heal the target back so they don't stay downed.
             let max_hp = e.actors[&target].max_hitpoints();
             e.actors.get_mut(&target).unwrap().heal(max_hp);
+            // The fighter has Riposte, and a riposte now swings the
+            // fighter's actual weapon rather than a shove — see
+            // `first_melee_weapon_action`, whose old predicate matched
+            // the reach-1 Shove sitting at the head of every action
+            // list. A zombie that eats a few hundred greatsword
+            // counters is a zombie that is not there to swing the next
+            // time round, so the loop takes the reaction away before
+            // each attempt.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .consume_resource(crate::engine::side_effects::Resource::Reaction);
             let log_before = e.messages().len();
             let target_vec = vec![target];
             let effects =
@@ -30591,6 +30785,18 @@ mod tests {
             let t_max = e.actors[&target].max_hitpoints();
             e.actors.get_mut(&attacker).unwrap().heal(a_max);
             e.actors.get_mut(&target).unwrap().heal(t_max);
+            // The fighter has Riposte, and a riposte now swings the
+            // fighter's actual weapon rather than a shove — see
+            // `first_melee_weapon_action`, whose old predicate matched
+            // the reach-1 Shove sitting at the head of every action
+            // list. A zombie that eats a few hundred greatsword
+            // counters is a zombie that is not there to swing the next
+            // time round, so the loop takes the reaction away before
+            // each attempt.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .consume_resource(crate::engine::side_effects::Resource::Reaction);
             let target_vec = vec![target];
             let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
             let had_hit = !effects.is_empty();
@@ -37327,15 +37533,354 @@ mod tests {
         assert!(!e.actors[&readier].can_consume_resource(Resource::Reaction));
     }
 
+
+    // ─── Artificer ──────────────────────────────────────────────────
+
+    /// Flash of Genius rescues an *ally's* failed save, which no other
+    /// entry on the failed-save recovery ladder can do — every one of
+    /// them is a charge the failing actor is carrying.
+    #[test]
+    fn flash_of_genius_pays_for_an_allys_failed_save() {
+        use crate::actions::class_features::FLASH_OF_GENIUS_TAG;
+        use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let artificer = e
+            .instantiate_creature(&ARTIFICER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // A DC the goblin cannot clear on its own d20 but that the
+        // artificer's +4 Intelligence can drag it over from below.
+        // `roll_save` is seeded, so the shortfall is whatever the die
+        // gives; sweep until one lands inside the modifier's range.
+        let mut rescued = false;
+        for _ in 0..40 {
+            e.actors
+                .get_mut(&artificer)
+                .unwrap()
+                .grant_feature_for_test(FLASH_OF_GENIUS_TAG);
+            e.actors.get_mut(&artificer).unwrap().reset_for_new_round();
+            let before = e.messages().len();
+            let outcome = e.roll_save(ally, AbilityScoreType::Wisdom, 14);
+            let fired = e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("flash of genius"));
+            if fired {
+                assert!(
+                    outcome.passed(),
+                    "a flash that fired should have turned the save"
+                );
+                assert!(
+                    !e.actors[&artificer].feature_available(FLASH_OF_GENIUS_TAG),
+                    "the charge should be spent"
+                );
+                assert!(
+                    !e.actors[&artificer]
+                        .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+                    "the reaction should be spent"
+                );
+                rescued = true;
+                break;
+            }
+        }
+        assert!(rescued, "40 saves at DC 14 should include one the flash could reach");
+    }
+
+    /// The two costs are real, and the range is the one RAW names.
+    /// An artificer across the map pays nothing and rescues nobody.
+    #[test]
+    fn flash_of_genius_does_not_reach_across_the_map() {
+        use crate::actions::class_features::FLASH_OF_GENIUS_TAG;
+        use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let artificer = e
+            .instantiate_creature(&ARTIFICER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(35, 2), 0, 0)
+            .unwrap();
+        for _ in 0..40 {
+            e.actors
+                .get_mut(&artificer)
+                .unwrap()
+                .grant_feature_for_test(FLASH_OF_GENIUS_TAG);
+            let before = e.messages().len();
+            e.roll_save(ally, AbilityScoreType::Wisdom, 25);
+            assert!(
+                !e.messages()[before..]
+                    .iter()
+                    .any(|m| m.contains("flash of genius")),
+                "the flash reached 33 tiles; RAW's range is 30 ft"
+            );
+        }
+        assert!(e.actors[&artificer].feature_available(FLASH_OF_GENIUS_TAG));
+    }
+
+    /// A charge is never burned on a save the modifier cannot rescue —
+    /// the same judgement the add-die cohort and the missed-attack boost
+    /// both make. DC 40 is out of reach of any d20 plus +4.
+    #[test]
+    fn flash_of_genius_holds_its_charge_for_a_save_it_can_win() {
+        use crate::actions::class_features::FLASH_OF_GENIUS_TAG;
+        use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let artificer = e
+            .instantiate_creature(&ARTIFICER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&artificer)
+            .unwrap()
+            .grant_feature_for_test(FLASH_OF_GENIUS_TAG);
+        e.roll_save(ally, AbilityScoreType::Wisdom, 40);
+        assert!(
+            e.actors[&artificer].feature_available(FLASH_OF_GENIUS_TAG),
+            "a hopeless save should leave the charge for a winnable one"
+        );
+    }
+
+    /// The Artillerist's d8 lands on any spell; the Alchemist's
+    /// Intelligence lands only on the four damage types RAW names. Both
+    /// are rows on `FLAT_SPELL_DAMAGE_BONUSES`, and what this pins is
+    /// the difference between their gates — the same Fire Bolt pays
+    /// both, and a force-damage cantrip pays only the Artillerist.
+    #[test]
+    fn the_artificer_spell_damage_rows_gate_on_what_they_say_they_do() {
+        use crate::actions::spells::{FIRE_BOLT, SWORD_BURST};
+        use crate::actors::creatures::artificers::{
+            ALCHEMIST_ARTIFICER_TEMPLATE, ARTILLERIST_ARTIFICER_TEMPLATE,
+        };
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        // (template, label, does the fire cantrip pay, does the force one)
+        let cases: [(&std::sync::LazyLock<CreatureTemplate>, &str, bool); 2] = [
+            (&ARTILLERIST_ARTIFICER_TEMPLATE, "arcane firearm", true),
+            (&ALCHEMIST_ARTIFICER_TEMPLATE, "alchemical savant", false),
+        ];
+        for (template, label, force_pays) in cases {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+
+            // Fire Bolt: fire damage, and a spell. Both rows want it.
+            let mut fire_paid = false;
+            for _ in 0..20 {
+                e.actors.get_mut(&caster).unwrap().reset_for_new_round();
+                let before = e.messages().len();
+                let aei = ActionExecutionInfo::new(
+                    &*FIRE_BOLT,
+                    caster,
+                    Some(vec![target]),
+                    None,
+                    None,
+                );
+                for ef in aei.execute(&mut e) {
+                    ef.apply(&mut e);
+                }
+                if e.messages()[before..].iter().any(|m| m.contains(label)) {
+                    fire_paid = true;
+                    break;
+                }
+            }
+            assert!(fire_paid, "{} never paid out on a fire cantrip", label);
+
+            // Sword Burst: force damage. Only the row that gates on
+            // "is this a spell" should care; the row that gates on four
+            // damage types should not.
+            let mut force_seen = false;
+            for _ in 0..20 {
+                e.actors.get_mut(&caster).unwrap().reset_for_new_round();
+                let max = e.actors[&target].max_hitpoints();
+                e.actors.get_mut(&target).unwrap().heal(max);
+                let before = e.messages().len();
+                let aei = ActionExecutionInfo::new(&*SWORD_BURST, caster, None, None, None);
+                assert!(aei.validate(&e), "the burst should be legal");
+                for ef in aei.execute(&mut e) {
+                    ef.apply(&mut e);
+                }
+                if e.messages()[before..].iter().any(|m| m.contains(label)) {
+                    force_seen = true;
+                    break;
+                }
+            }
+            assert_eq!(
+                force_seen, force_pays,
+                "{} disagreed with its gate on a force spell",
+                label
+            );
+        }
+    }
+
+    /// The Guardian's gauntlets install `Dueled`, the same back-linked
+    /// mark Compelled Duel and the Cavalier's Unwavering Mark use — so
+    /// whatever they hit swings at anyone else at disadvantage.
+    #[test]
+    fn thunder_gauntlets_fix_their_target_on_the_artificer() {
+        use crate::actions::monster_attacks::THUNDER_GAUNTLETS;
+        use crate::actors::creatures::artificers::ARMORER_ARTIFICER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let armorer = e
+            .instantiate_creature(&ARMORER_ARTIFICER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let mut marked = false;
+        for _ in 0..40 {
+            e.actors.get_mut(&armorer).unwrap().reset_for_new_round();
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            let effects = THUNDER_GAUNTLETS.side_effects(
+                &mut e,
+                armorer,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Dueled) {
+                marked = true;
+                break;
+            }
+        }
+        assert!(marked, "40 gauntlet swings should land at least one mark");
+        assert_eq!(
+            e.actors[&target].linked_by(Condition::Dueled),
+            Some(armorer),
+            "the mark should point back at the artificer that made it"
+        );
+    }
+
+    /// Arcane Jolt puts the biggest die on the once-per-turn weapon
+    /// rider cohort onto the Battle Smith's swing, and puts it there
+    /// once — the cadence the ledger enforces.
+    #[test]
+    fn arcane_jolt_rides_the_battle_smiths_first_hit_of_the_turn() {
+        use crate::actions::monster_attacks::ARCANE_INFUSED_WEAPON;
+        use crate::actors::creatures::artificers::BATTLE_SMITH_ARTIFICER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let smith = e
+            .instantiate_creature(
+                &BATTLE_SMITH_ARTIFICER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let mut jolts_in_one_turn = 0usize;
+        for _ in 0..40 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            let before = e.messages().len();
+            let effects = ARCANE_INFUSED_WEAPON.side_effects(
+                &mut e,
+                smith,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            jolts_in_one_turn += e.messages()[before..]
+                .iter()
+                .filter(|m| m.contains("arcane jolt"))
+                .count();
+        }
+        assert_eq!(
+            jolts_in_one_turn, 1,
+            "the jolt is once per turn, and the turn never ended"
+        );
+    }
+
+    /// A creature holding a reach weapon answers an opportunity attack
+    /// with that weapon.
+    #[test]
+    fn a_reach_weapon_answers_an_opportunity_attack_with_itself() {
+        use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+        use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+
+        // One creature per rung of the melee band: 10 ft, 10 ft, 15 ft,
+        // 15 ft. Every one of them used to answer a creature walking out
+        // of its reach by trying to *shove* it, because the picker
+        // measured the swing against `MELEE_REACH` — an ordinary
+        // weapon's 5 ft — and Shove is the first harmful, single-target,
+        // reach-1 action on every action list in the game.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cases: [(&std::sync::LazyLock<CreatureTemplate>, &str); 4] = [
+            (&OGRE_TEMPLATE, "greatclub"),
+            (&HILL_GIANT_TEMPLATE, "giant greatclub"),
+            (&WYVERN_TEMPLATE, "wyvern bite"),
+            (&TARRASQUE_TEMPLATE, "tarrasque bite"),
+        ];
+        for (i, (template, expected)) in cases.iter().enumerate() {
+            let id = e
+                .instantiate_creature(template, Coordinate::new(2 + i as isize * 5, 2), 0, 0)
+                .unwrap_or_else(|_| panic!("{} should instantiate", template.name));
+            let attack = e.actors[&id]
+                .first_melee_weapon_action()
+                .unwrap_or_else(|| panic!("{} has no opportunity attack at all", template.name));
+            assert_eq!(
+                attack.name(),
+                *expected,
+                "{} would opportunity-attack with {}",
+                template.name,
+                attack.name()
+            );
+        }
+    }
+
+    /// An opportunity attack is an attack. Shove and Grapple are
+    /// harmful, single-target and reach 1, which put them at the head of
+    /// every action list the picker walks — so before `deals_damage`
+    /// joined the predicate, *every* creature in the game answered a
+    /// provoking step with a shove contest, and the four reach-weapon
+    /// cases above never got as far as their own weapons.
+    #[test]
+    fn an_opportunity_attack_is_a_swing_and_not_a_contest() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attack = e.actors[&g].first_melee_weapon_action().expect("a swing");
+        assert!(attack.deals_damage(), "{} deals no damage", attack.name());
+        assert_ne!(attack.name(), "shove");
+        assert_ne!(attack.name(), "grapple");
+    }
+
     /// The same guarantee for the opportunity-attack lane, which pays
     /// nothing either: an OA runs `side_effects` and consumes only the
-    /// reaction. `first_melee_weapon_action` picks the *first* matching
-    /// entry rather than the longest-reaching one, and templates happen
-    /// to list their weapons before their spells — so the exposure has
-    /// never fired. "Happen to" is the problem: a template that listed
-    /// a touch-range Inflict Wounds first would hand out a free level-1
-    /// slot on every opportunity attack for the rest of the fight, and
-    /// nothing would say so.
+    /// reaction, so a slot spell that reached the picker would be cast
+    /// free once per provoking step for the rest of the fight.
+    ///
+    /// This used to hold by accident — `first_melee_weapon_action`
+    /// compared against `MELEE_REACH`, which happened to exclude the
+    /// Cleric's reach-2 Spiritual Weapon, and templates happened to
+    /// list their weapons before their spells. Widening the gate to the
+    /// melee band turned both accidents into a live exposure and the
+    /// sweep caught it: the baseline Cleric carries no weapon at all,
+    /// so Spiritual Weapon was the first thing on its list that
+    /// matched. The predicate now says "not a spell" outright.
     #[test]
     fn an_opportunity_attack_is_never_something_the_reactor_would_pay_for() {
         use crate::engine::side_effects::spell_slot_level;
@@ -67024,21 +67569,24 @@ mod tests {
     #[test]
     fn once_per_turn_rider_ledger_tags_are_independent() {
         use crate::actions::class_features::{
-            ANCESTRAL_PROTECTORS_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG, DIVINE_FURY_TAG,
-            DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG, FORM_OF_DREAD_TAG,
-            GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG, ONCE_PER_TURN_RIDER_TAGS,
-            PLANAR_WARRIOR_TAG, HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG,
-            SLAYERS_PREY_TAG, SNEAK_ATTACK_TAG,
+            ANCESTRAL_PROTECTORS_TAG, ARCANE_JOLT_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG,
+            DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG,
+            FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG,
+            LIGHTNING_LAUNCHER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
+            HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
+            SNEAK_ATTACK_TAG,
         };
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         // Sanity: the registry lists every named tag we're checking so
         // this test also pins the cohort inventory.
         assert_eq!(
             ONCE_PER_TURN_RIDER_TAGS.len(),
-            16,
+            18,
             "once-per-turn rider tag registry drifted"
         );
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ARCANE_JOLT_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&LIGHTNING_LAUNCHER_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&EMPOWERED_ARMS_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
         assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));

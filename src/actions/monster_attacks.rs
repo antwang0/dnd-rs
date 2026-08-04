@@ -2140,6 +2140,10 @@ impl Action for Multiattack {
         self.display_name
     }
 
+    fn chains_multiple_attacks(&self) -> bool {
+        true
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["multi", "ma"]
     }
@@ -2293,6 +2297,10 @@ pub struct CompoundAttack {
 impl Action for CompoundAttack {
     fn name(&self) -> &str {
         self.display_name
+    }
+
+    fn chains_multiple_attacks(&self) -> bool {
+        true
     }
 
     fn aliases(&self) -> Vec<&str> {
@@ -15124,4 +15132,140 @@ pub static ELK_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 4),
     DamageType::Bludgeoning,
+);
+
+// ─── Artificer ──────────────────────────────────────────────────────
+
+/// Thunder Gauntlets — Armorer Artificer **Arcane Armor: Guardian**
+/// model (subclass level 3, TCE). "Each of the armor's gauntlets counts
+/// as a simple melee weapon while you aren't holding anything in it,
+/// and it deals 1d8 thunder damage on a hit. A creature hit by the
+/// gauntlet has disadvantage on attack rolls against targets other than
+/// you until the end of your next turn."
+///
+/// Intelligence to hit and to damage, because the Armorer's lv3 clause
+/// makes the artificer's armor weapons magical and keyed to the class's
+/// casting stat — the same "your subclass moves your swing onto your
+/// primary" shape the Astral Self Monk's arms and the Battle Smith's
+/// infused weapon both take.
+///
+/// The disadvantage clause is not on the weapon. It is
+/// `THUNDER_GAUNTLETS_TAG` on `ON_HIT_CONDITION_MARKS`, stamping
+/// `Dueled` — the same back-linked condition Compelled Duel and the
+/// Cavalier's Unwavering Mark install, and for the same reason: "you
+/// may swing at me freely and at anyone else at disadvantage" is one
+/// mechanic, and it already had one home. Routing the gauntlets through
+/// the tag rather than the weapon is an approximation with one visible
+/// edge — a Guardian armorer holding some *other* melee weapon would
+/// also stamp the mark — and the chassis closes it by carrying no other
+/// melee weapon at all.
+pub static THUNDER_GAUNTLETS: SimpleWeapon = SimpleWeapon::melee(
+    "thunder gauntlets",
+    &["gauntlets", "tg"],
+    AbilityScoreType::Intelligence,
+    Dice::new(1, 8),
+    DamageType::Thunder,
+);
+
+/// Lightning Launcher — Armorer Artificer **Arcane Armor: Infiltrator**
+/// model (subclass level 3, TCE). "A gemlike node appears on one of
+/// your armored fists or on the chest (your choice). It counts as a
+/// simple ranged weapon, with a normal range of 90 feet and a long
+/// range of 300 feet, and it deals 1d6 lightning damage on a hit. Once
+/// on each of your turns when you hit a creature with it, you can deal
+/// an extra 1d6 lightning damage to that target."
+///
+/// The extra d6 is `LIGHTNING_LAUNCHER_TAG` on
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, which is exactly the cadence RAW
+/// writes — "once on each of your turns" — and is the same lane Colossus
+/// Slayer, Psychic Blades and Planar Warrior ride. So the launcher's
+/// real damage is 2d6 on the turn's first connecting shot and 1d6 on any
+/// after it, which is the difference between the Infiltrator model and
+/// the Guardian's flat d8: one rewards a single good shot, the other
+/// every swing.
+///
+/// 36 tiles normal / 120 tiles max is RAW's 90/300 ft on the 2.5 ft
+/// grid — by a distance the longest reach any PC weapon on the roster
+/// carries, and the reason the Infiltrator plays as an artillery
+/// chassis while its sibling plays as a tank.
+pub static LIGHTNING_LAUNCHER: SimpleWeapon = SimpleWeapon::ranged(
+    "lightning launcher",
+    &["launcher", "ll"],
+    AbilityScoreType::Intelligence,
+    Dice::new(1, 6),
+    DamageType::Lightning,
+    120,
+    36,
+);
+
+/// Arcane Infused Weapon — Battle Smith Artificer **Battle Ready**
+/// (subclass level 3, TCE): "when you attack with a magic weapon, you
+/// can use your Intelligence modifier, instead of Strength or Dexterity,
+/// for the attack and damage rolls."
+///
+/// A weapon rather than an attack-ability override lane, for the reason
+/// `ASTRAL_ARMS_STRIKE` is: the substitution is total on the chassis
+/// that carries it — a Battle Smith swings its infused weapon and
+/// nothing else — so a second `SimpleWeapon` says the whole feature in
+/// the five fields the struct already has, and every consumer that
+/// ranks, chains or names a weapon picks it up for free.
+///
+/// A longsword's 1d8 slashing, with Intelligence doing the work of
+/// Strength. The magic half of "magic weapon" has no separate surface
+/// in this engine (nothing on the roster resists non-magical weapon
+/// damage as a distinct category), so what survives of RAW is the
+/// substitution, which is the half the subclass is played for.
+pub static ARCANE_INFUSED_WEAPON: SimpleWeapon = SimpleWeapon::melee(
+    "arcane infused weapon",
+    &["infused weapon", "aiw"],
+    AbilityScoreType::Intelligence,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+);
+
+/// Force-Empowered Rend — the Battle Smith's **Steel Defender** slam
+/// (subclass level 3, TCE). RAW: "+ (your proficiency bonus + your
+/// Intelligence modifier) to hit, reach 5 ft, one target. Hit: 1d8 +
+/// PB force damage."
+///
+/// The defender's own Strength stands in for the artificer's modifiers,
+/// which is what the engine's stat-block-derived to-hit already
+/// computes — the defender template carries STR 14 and the same
+/// proficiency band the artificer does, so the number lands where RAW
+/// puts it without a bonded-creature modifier lane the engine has no
+/// other user for.
+pub static FORCE_EMPOWERED_REND: SimpleWeapon = SimpleWeapon::melee(
+    "force-empowered rend",
+    &["rend", "fer"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Force,
+);
+
+/// Force Ballista bolt — the **Eldritch Cannon**'s ranged mode
+/// (Artillerist Artificer, subclass level 3, TCE). RAW: "Make a ranged
+/// spell attack, originating from the cannon, at one creature or object
+/// within 120 feet of it. On a hit, the target takes 2d8 force damage,
+/// and if the creature is Large or smaller, it is pushed up to 5 feet
+/// away from the cannon."
+///
+/// The push is dropped and the 2d8 kept: `SimpleWeapon` has no
+/// displacement rider, and the cannon is a stationary turret whose
+/// whole contribution is a second source of damage on the artificer's
+/// team every round. Force typing is the point — nothing on the
+/// bestiary's resistance tables blunts it — so the ballista is the
+/// cannon mode that keeps working against the elemental and undead
+/// matchups that turn the flamethrower off.
+///
+/// 48 tiles is RAW's 120 ft on the 2.5 ft grid, with no long-range
+/// band: RAW gives the attack a flat range rather than a normal/long
+/// pair, which is what `normal_range == reach` means.
+pub static FORCE_BALLISTA_BOLT: SimpleWeapon = SimpleWeapon::ranged(
+    "force ballista",
+    &["ballista", "fbb"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 8),
+    DamageType::Force,
+    48,
+    48,
 );

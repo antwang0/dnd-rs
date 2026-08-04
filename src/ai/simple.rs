@@ -746,6 +746,24 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3n. The engaged self-posture lane — bonus-action, once-per-rest
+        //     buttons whose payout is survivability rather than a rider
+        //     on the next swing. See `ENGAGED_SELF_POSTURES`.
+        //
+        //     Above the prime table below because the two compete for
+        //     the same bonus action and answer different questions: a
+        //     prime makes this turn's swing hit harder, a posture makes
+        //     the next few turns survivable, and a chassis that is about
+        //     to be in contact wants the second one first. Below the
+        //     concentration self-buffs above because those cost a slot
+        //     and these cost a charge, so spending the charge first
+        //     would leave the slot unspent for the rest of the fight.
+        if let Some(aei) = ENGAGED_SELF_POSTURES.iter().find_map(|name| {
+            try_self_action_when_enemy_within(encounter, actor_id, IMMINENT_CONTACT_GAP, name)
+        }) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3o. The melee-adjacent self-prime lane — one ordered table
         //     rather than N near-identical rungs. See
         //     `MELEE_ADJACENT_PRIMES` for the roster and the reasoning
@@ -1969,6 +1987,32 @@ const EXTENDABLE: &[&str] = &[
     "enlarge",
     "shadow blade",
 ];
+
+/// Ordered roster of the "bonus action; spend a per-rest charge on
+/// something that keeps you standing" lane. Walked top-to-bottom by the
+/// ladder at rung 3n; the first entry the actor carries and can afford
+/// wins the bonus action.
+///
+/// The sibling table to `MELEE_ADJACENT_PRIMES` below, split from it on
+/// what the charge buys. A prime is a rider on the swing the actor is
+/// about to make, so it is worth nothing unless that swing happens this
+/// turn — which is why that table's gate is `MELEE_REACH`. A posture is
+/// worth something for as long as it lasts, so it wants to be up on the
+/// turn *before* contact, which is what `IMMINENT_CONTACT_GAP` buys.
+///
+/// **The order is the priority.** Both current entries are artificer
+/// buttons and no chassis carries both, so the order costs nothing
+/// today; it is written down because the next entry will make it matter.
+///
+///   1. `defensive field` — the Armorer's slab of temporary hit points.
+///      A known quantity with no roll attached, which is what puts it
+///      first: the alchemist's flask might come out as an AC bump the
+///      artificer did not need, and this never does.
+///   2. `experimental elixir` — the Alchemist's flask. Rolls for its own
+///      effect, so it is the entry whose value the AI cannot know before
+///      spending the action, which is exactly the position RAW puts the
+///      alchemist in.
+const ENGAGED_SELF_POSTURES: &[&str] = &["defensive field", "experimental elixir"];
 
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "reaper's touch",
@@ -4903,6 +4947,17 @@ fn under_melee_threat(encounter: &EncounterInstance, actor_id: usize) -> bool {
             other.location(),
             get_tiles_from_size(other.size()),
         );
+        // Deliberately `MELEE_REACH` and not `MELEE_BAND_REACH`, which
+        // is the wider gap `first_melee_weapon_action` measures a swing
+        // against. The two questions look identical and are not: that
+        // one asks "could this creature swing at that one", and this
+        // asks "is stepping one tile going to help". Against an ogre's
+        // 10 ft club or a tarrasque's 15 ft bite the answer to the
+        // second is no — the same reasoning rung 2 of the ladder gives
+        // for a 5 ft threat with 30 ft of movement, only more so — so
+        // widening this gate would fire the kiting rung in exactly the
+        // situations where it wastes the turn, and would do it ahead of
+        // every rung that could have answered the threat instead.
         other.actions.iter().any(|a| {
             matches!(a.targeting_schema(), TargetingSchema::SingleActor)
                 && a.reach_tiles()
@@ -6328,18 +6383,38 @@ fn best_attack_against(
         }
     };
 
-    // Best by (matchup score asc, reach desc, expected damage desc).
+    // Best by (matchup score asc, roll mode asc, reach desc, expected
+    // damage desc).
     //
-    // The third key is the one that was missing. Ranking stopped at
-    // reach, so two neutral, equally-reaching melee weapons were
-    // separated by nothing but their order in the actor's action list —
-    // a Knight swung whichever of its two weapons happened to be pushed
-    // first, and a Beast Barbarian's claws, which land three swings a
-    // turn to a greataxe's two, could never be picked at all.
+    // The fourth key is the one that was missing longest. Ranking
+    // stopped at reach, so two neutral, equally-reaching melee weapons
+    // were separated by nothing but their order in the actor's action
+    // list — a Knight swung whichever of its two weapons happened to be
+    // pushed first, and a Beast Barbarian's claws, which land three
+    // swings a turn to a greataxe's two, could never be picked at all.
     //
-    // Reach still outranks damage, and deliberately: a swing that cannot
-    // reach is worth nothing, and the picker is choosing among options
-    // for *this* turn from *this* tile.
+    // **The second key is what makes a melee build swing.** 5e gives a
+    // ranged attack disadvantage while a hostile creature is within 5
+    // feet of the shooter, and the engine has always enforced it — at
+    // the attack site, where the picker could not see it. So a gish
+    // standing in an ogre's reach compared its 1d8 sword against its
+    // Fire Bolt, saw that the bolt reached further, and fired the bolt
+    // at disadvantage every turn for the rest of the fight. Every
+    // Eldritch Knight, Bladesinger, Battle Smith and Booming-Blade
+    // rogue on the roster played that way.
+    //
+    // Asking the mode is strictly better than the obvious alternative
+    // — a special case for "the target is already adjacent" — because
+    // the mode is the actual reason. It also picks up every other
+    // clause that moves it: a Blinded archer, an Invisible target, a
+    // shot into a fog bank, a Prone target that melee wants and ranged
+    // does not. All of those are questions the picker had no way to
+    // ask, and each of them can make the longer-reaching option the
+    // worse one.
+    //
+    // Reach still outranks damage, and deliberately: what a longer
+    // reach buys is the option of not closing, and that is worth more
+    // than a die when the two attacks roll in the same mode.
     //
     // The damage key only decides a tie when *both* sides put a number
     // on themselves, and that restraint is the whole safety argument.
@@ -6351,7 +6426,10 @@ fn best_attack_against(
     // biased toward whichever attacks happened to be annotated. Two
     // unannotated actions, or one of each, fall through to the order
     // they had before this key existed.
-    let mut best: Option<(u8, isize, Option<f32>, &(dyn Action + Send + Sync))> = None;
+    // (matchup, roll mode, reach, damage estimate, the action itself) —
+    // the four sort keys in priority order plus the candidate they rank.
+    type Ranked<'a> = (u8, u8, isize, Option<f32>, &'a (dyn Action + Send + Sync));
+    let mut best: Option<Ranked> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
@@ -6397,24 +6475,36 @@ fn best_attack_against(
         if !aei.validate(encounter) {
             continue;
         }
+        // What this swing would actually roll from where the actor is
+        // standing. `compute_attack_mode` is the shared engine helper
+        // the attack sites use, so the picker and the die agree.
+        let mode = mode_priority(encounter.compute_attack_mode(
+            actor_id,
+            target_id,
+            action.is_melee_attack(),
+        ));
         let damage = action.expected_damage(encounter, actor_id);
         let pick = match &best {
             None => true,
-            Some((bs, br, bd, _)) => match (score.cmp(bs), reach.cmp(br)) {
-                (std::cmp::Ordering::Less, _) => true,
-                (std::cmp::Ordering::Greater, _) => false,
-                (_, std::cmp::Ordering::Greater) => true,
-                (_, std::cmp::Ordering::Less) => false,
-                // Same matchup, same reach: the estimate decides, but
-                // only if both sides have one.
-                _ => matches!((damage, bd), (Some(d), Some(b)) if d > *b),
-            },
+            Some((bs, bm, br, bd, _)) => {
+                match (score.cmp(bs), mode.cmp(bm), reach.cmp(br)) {
+                    (std::cmp::Ordering::Less, _, _) => true,
+                    (std::cmp::Ordering::Greater, _, _) => false,
+                    (_, std::cmp::Ordering::Less, _) => true,
+                    (_, std::cmp::Ordering::Greater, _) => false,
+                    (_, _, std::cmp::Ordering::Greater) => true,
+                    (_, _, std::cmp::Ordering::Less) => false,
+                    // Same matchup, same mode, same reach: the estimate
+                    // decides, but only if both sides have one.
+                    _ => matches!((damage, bd), (Some(d), Some(b)) if d > *b),
+                }
+            }
         };
         if pick {
-            best = Some((score, reach, damage, action));
+            best = Some((score, mode, reach, damage, action));
         }
     }
-    best.map(|(_, r, _, a)| (r, a))
+    best.map(|(_, _, r, _, a)| (r, a))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward
@@ -6788,6 +6878,109 @@ mod tests {
         }
     }
 
+    /// The same guarantee for the two string-matched bonus-action
+    /// tables, and for the same reason: a row naming an action nothing
+    /// carries is not an error anywhere, it is a rung that quietly never
+    /// fires. The two are checked together because they are walked one
+    /// after the other by adjacent rungs and a name that drifted between
+    /// them would look identical from either side.
+    #[test]
+    fn every_bonus_action_table_row_names_an_action_a_template_carries() {
+        use crate::actors::creatures::pc_template_families;
+        let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (_family, templates) in pc_template_families() {
+            for t in templates {
+                for a in &t.actions {
+                    known.insert(a.name());
+                }
+            }
+        }
+        for name in ENGAGED_SELF_POSTURES.iter().chain(MELEE_ADJACENT_PRIMES) {
+            assert!(
+                known.contains(name),
+                "bonus-action table row '{}' names no action on any registered PC template",
+                name
+            );
+        }
+        // The two tables answer different questions with the same
+        // resource — see `ENGAGED_SELF_POSTURES` — so a name on both
+        // would be a posture reconsidered as a prime, or the reverse,
+        // after the first table had already declined it.
+        for posture in ENGAGED_SELF_POSTURES {
+            assert!(
+                !MELEE_ADJACENT_PRIMES.contains(posture),
+                "'{}' is on both bonus-action tables",
+                posture
+            );
+        }
+    }
+
+    /// A melee build carrying an attack cantrip swings the weapon once
+    /// the enemy is already standing next to it.
+    ///
+    /// 5e gives a ranged attack disadvantage while a hostile creature
+    /// is within 5 feet of the shooter, and the engine has always
+    /// enforced it at the attack site — where `best_attack_against`
+    /// could not see it. So an Eldritch Knight standing in an ogre's
+    /// reach compared its longsword against its Fire Bolt, saw that the
+    /// bolt reached further, and fired the bolt at disadvantage every
+    /// turn for the rest of the fight. Every gish on the roster played
+    /// that way.
+    #[test]
+    fn a_melee_build_in_contact_swings_rather_than_casting() {
+        use crate::actors::creatures::fighters::ELDRITCH_KNIGHT_FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let knight = e
+            .instantiate_creature(
+                &ELDRITCH_KNIGHT_FIGHTER_TEMPLATE,
+                Coordinate::new(4, 8),
+                0,
+                0,
+            )
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 8), 1, 0)
+            .unwrap();
+        let actor = &e.actors[&knight];
+
+        // Standing in contact, the picker chooses something that
+        // swings. *Which* swing is a separate question — the knight
+        // carries a longsword and a Booming Blade, both at melee reach
+        // and both rolling normally — and the guarantee this pins is
+        // the one the mode key buys: it is not the thing that would
+        // have rolled at disadvantage.
+        let (_, in_contact) = best_attack_against(knight, actor, &e, ogre).expect("a swing");
+        assert!(
+            in_contact.is_melee_attack(),
+            "in contact the picker chose {}, which shoots",
+            in_contact.name()
+        );
+
+        // The same list from across the room: nothing melee reaches, so
+        // the ranged option wins — and it wins on reach, which is the
+        // key the mode does not displace.
+        e.actors
+            .get_mut(&knight)
+            .unwrap()
+            .set_location(Coordinate::new(14, 8));
+        let actor = &e.actors[&knight];
+        let (_, at_range) = best_attack_against(knight, actor, &e, ogre).expect("a shot");
+        assert!(!at_range.is_melee_attack());
+    }
+
     /// The two cohorts are disjoint. A spell listed on both sides of the
     /// Invoke Duplicity seam would be reconsidered after the Channel
     /// Divinity rung had already declined to fire, which reads as a
@@ -7092,7 +7285,14 @@ mod tests {
         assert_eq!(
             free,
             vec![
+                // The Artillerist's three cannon modes, which share one
+                // charge and so are one summon wearing three names —
+                // see `ELDRITCH_CANNON_TAG`.
+                "eldritch cannon (flamethrower)",
+                "eldritch cannon (force ballista)",
+                "eldritch cannon (protector)",
                 "ranger's companion",
+                "steel defender",
                 "summon wildfire spirit",
                 "tentacle of the deep",
             ],
@@ -11130,9 +11330,14 @@ mod tests {
             CLAW_BEAST_BARBARIAN_TEMPLATE, TAIL_BEAST_BARBARIAN_TEMPLATE,
         };
         use crate::actors::creatures::wizards::BLADESINGER_WIZARD_TEMPLATE;
+        use crate::actors::creatures::artificers::{
+            ALCHEMIST_ARTIFICER_TEMPLATE, ARMORER_ARTIFICER_TEMPLATE,
+            ARTILLERIST_ARTIFICER_TEMPLATE, BATTLE_SMITH_ARTIFICER_TEMPLATE,
+            INFILTRATOR_ARTIFICER_TEMPLATE,
+        };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 32] = [
+        let cases: [(&CreatureTemplate, &str); 38] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -11251,6 +11456,19 @@ mod tests {
             // body can be put on the board.
             (&FATHOMLESS_WARLOCK_TEMPLATE, "tentacle of the deep"),
             (&FATHOMLESS_WARLOCK_TEMPLATE, "tentacle slam"),
+            (&ARTILLERIST_ARTIFICER_TEMPLATE, "eldritch cannon"),
+            (&BATTLE_SMITH_ARTIFICER_TEMPLATE, "steel defender"),
+            // Not the infused weapon or the jolt that rides it: the
+            // Battle Smith opens by summoning a defender, the defender
+            // takes the ogre, and an artificer whose construct is
+            // holding the front line is an artificer who never comes
+            // into contact — which is the subclass playing correctly
+            // rather than a rung failing to fire. Both are pinned
+            // engine-side, where a swing can be made to land.
+            (&ARMORER_ARTIFICER_TEMPLATE, "thunder gauntlets"),
+            (&ARMORER_ARTIFICER_TEMPLATE, "defensive field"),
+            (&INFILTRATOR_ARTIFICER_TEMPLATE, "lightning launcher"),
+            (&ALCHEMIST_ARTIFICER_TEMPLATE, "experimental elixir"),
         ];
 
         for (template, marker) in cases {
@@ -11763,6 +11981,10 @@ mod tests {
             ("ranger's companion", false),
             ("summon wildfire spirit", false),
             ("tentacle of the deep", false),
+            ("eldritch cannon (flamethrower)", false),
+            ("eldritch cannon (force ballista)", false),
+            ("eldritch cannon (protector)", false),
+            ("steel defender", false),
             // Area control.
             ("web", true),
             ("hypnotic pattern", true),

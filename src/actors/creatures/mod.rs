@@ -1,4 +1,7 @@
 pub mod aboleths;
+pub mod artificers;
+pub mod eldritch_cannons;
+pub mod steel_defenders;
 pub mod dragonborn;
 pub mod gnomes;
 pub mod tieflings;
@@ -319,6 +322,17 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*barbarians::BITE_BEAST_BARBARIAN_TEMPLATE,
                     &*barbarians::CLAW_BEAST_BARBARIAN_TEMPLATE,
                     &*barbarians::TAIL_BEAST_BARBARIAN_TEMPLATE,
+                ],
+            ),
+            (
+                "artificer",
+                vec![
+                    &*artificers::ARTIFICER_TEMPLATE,
+                    &*artificers::ALCHEMIST_ARTIFICER_TEMPLATE,
+                    &*artificers::ARMORER_ARTIFICER_TEMPLATE,
+                    &*artificers::INFILTRATOR_ARTIFICER_TEMPLATE,
+                    &*artificers::ARTILLERIST_ARTIFICER_TEMPLATE,
+                    &*artificers::BATTLE_SMITH_ARTIFICER_TEMPLATE,
                 ],
             ),
             (

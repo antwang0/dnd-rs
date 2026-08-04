@@ -5049,26 +5049,60 @@ impl ActorInstance {
     /// 1. `is_harmful()` — excludes touch-range buffs / heals (Cure
     ///    Wounds is `SingleActor` with reach 1 but harmless — an ally
     ///    shouldn't opportunity-heal a fleeing target).
-    /// 2. `SingleActor` schema — excludes AoE / burst / point-target
+    /// 2. `deals_damage()` — excludes Shove and Grapple, which are
+    ///    harmful, `SingleActor` and reach 1, and which every
+    ///    reach-weapon monster in the bestiary was therefore
+    ///    opportunity-attacking with. An opportunity attack that shoves
+    ///    is not an opportunity attack; RAW's trigger text says "melee
+    ///    attack", and a contest is not one.
+    /// 3. `SingleActor` schema — excludes AoE / burst / point-target
     ///    spells; an opportunity attack / riposte hits one creature.
-    /// 3. `reach_tiles() <= MELEE_REACH` — excludes ranged / long-reach
-    ///    actions.
+    /// 4. `is_melee_attack()` — a swing rather than a shot, measured
+    ///    against the whole melee band rather than against an ordinary
+    ///    weapon's reach.
+    /// 5. `!chains_multiple_attacks()` — one swing, not a monster's
+    ///    whole Attack routine. RAW grants "one melee attack"; without
+    ///    this a tarrasque answered a provoking step with bite, two
+    ///    claws and a tail, for free, for each creature that walked
+    ///    past. See `Action::chains_multiple_attacks`.
+    /// 6. `school().is_none()` — not a spell. RAW's trigger grants "one
+    ///    melee attack", and casting is not one without the War Caster
+    ///    feat, which the engine does not model. The clause is also the
+    ///    structural fix for the exposure
+    ///    `an_opportunity_attack_is_never_something_the_reactor_would_pay_for`
+    ///    was written to watch: both reaction dispatchers run
+    ///    `side_effects` directly and charge only the reaction, so a
+    ///    slot spell reaching this list would be cast free, once per
+    ///    provoking step, for the rest of the fight. The old
+    ///    `<= MELEE_REACH` gate held that back by accident — it happened
+    ///    to exclude the Cleric's reach-2 Spiritual Weapon — and
+    ///    widening the band to fix the ogre would have opened it.
+    ///
+    /// Clauses 2 and 4 are both fixes to the same class of bug, and the
+    /// ogre shows both at once. Its greatclub reaches 2 tiles, so the
+    /// old `<= MELEE_REACH` gate skipped it; the next harmful
+    /// `SingleActor` reach-1 action on the list is Shove, so every ogre,
+    /// hill giant, wyvern, treant and dragon in the game answered a
+    /// creature leaving its reach by trying to push it over. See
+    /// `MELEE_BAND_REACH`.
     ///
     /// Returns `None` when the actor has no eligible melee swing. Both
     /// call sites previously open-coded this find-and-filter chain; the
-    /// helper centralizes it so a future tweak (e.g. "excludes
-    /// grapple / shove no-damage actions from the OA cohort") lands in
-    /// one place instead of two.
+    /// helper centralizes it so a fix like the two above lands in one
+    /// place instead of two.
     pub fn first_melee_weapon_action(
         &self,
     ) -> Option<&'static (dyn Action + Send + Sync)> {
-        use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::actions::action_template::TargetingSchema;
         self.actions
             .iter()
             .find(|act| {
                 act.is_harmful()
+                    && act.deals_damage()
+                    && !act.chains_multiple_attacks()
                     && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
-                    && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
+                    && act.school().is_none()
+                    && act.is_melee_attack()
             })
             .copied()
     }

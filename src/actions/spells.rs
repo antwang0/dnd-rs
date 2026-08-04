@@ -3400,6 +3400,17 @@ impl Action for SpiritualWeapon {
         // We model the floating weapon as caster-melee for now.
         Some(crate::actions::action_template::MELEE_REACH)
     }
+    /// Evocation, as written. Nothing reads the school of this spell
+    /// for a school-gated feature; what reads it is
+    /// `first_melee_weapon_action`, whose "not a spell" clause is
+    /// `school().is_none()`. Untagged, this was a level-2 slot spell
+    /// sitting at melee reach on the cleric's action list with no
+    /// weapon in front of it — which made it the swing every cleric
+    /// opportunity-attacked with, cast free, once per provoking step,
+    /// for the rest of the fight.
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Force]
     }

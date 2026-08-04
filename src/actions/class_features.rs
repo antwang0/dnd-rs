@@ -35,6 +35,18 @@ use crate::{
 /// by some registered PC template — a registry entry whose feature has
 /// moved on is invisible otherwise.
 pub const SHORT_REST_FEATURES: &[&str] = &[
+    // 5e Artificer, all five charges. RAW prices four of them off pools
+    // this engine does not track (Arcane Armor uses, the Alchemist's
+    // flask, the Artillerist's cannon uses, the Battle Smith's hour of
+    // rebuilding) and the fifth — Flash of Genius — off the artificer's
+    // Intelligence modifier per long rest. Collapsing all five to one
+    // charge per short rest is the same translation every Channel
+    // Divinity on this list already carries: one press per engagement.
+    FLASH_OF_GENIUS_TAG,
+    DEFENSIVE_FIELD_TAG,
+    EXPERIMENTAL_ELIXIR_TAG,
+    ELDRITCH_CANNON_TAG,
+    STEEL_DEFENDER_TAG,
     SECOND_WIND_TAG,
     ACTION_SURGE_TAG,
     ARCANE_RECOVERY_TAG,
@@ -2762,6 +2774,8 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // the form itself alive across the trigger where
     // `consume_on_trigger` would have ended it.
     FORM_OF_DREAD_TAG,
+    LIGHTNING_LAUNCHER_TAG,
+    ARCANE_JOLT_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -14894,6 +14908,729 @@ pub const FAST_HANDS_TAG: &str = "rogue.fast_hands";
 /// round is two Sneak Attacks, two Cunning Actions and two potions'
 /// worth of action economy, against a table that has had one turn each.
 pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
+
+
+// ─── Artificer ──────────────────────────────────────────────────────
+//
+// The class the roster was missing, and the one whose whole identity is
+// that its power lives in objects rather than in the artificer. Every
+// other caster on the roster answers "what does this class do on its
+// turn"; the Artificer answers "what did this class *build*", and the
+// four subclasses are four different things to have built — a potion, a
+// suit of armour, a turret, and a dog.
+//
+// That shape is why so little of the class needs new engine machinery.
+// A turret and a dog are `FeatureSummon`s. A suit of armour is two
+// `SimpleWeapon`s. A potion is a bonus action that installs a condition.
+// What genuinely had nowhere to go is Flash of Genius — a reaction that
+// fires on somebody *else's* failed save — and that is one new cohort at
+// the save chokepoint, described where it lives.
+
+/// 5e Artificer level-7 feature **Flash of Genius**. "Whenever you or
+/// another creature you can see within 30 feet of you makes an ability
+/// check or a saving throw, you can use your reaction to add your
+/// Intelligence modifier to the roll."
+///
+/// Read at `EncounterInstance::try_flash_of_genius`, the last rung of
+/// the failed-save recovery ladder, and the only one on that ladder
+/// whose source is a *different creature from the one rolling*. Dark
+/// One's Own Luck and Fanatical Focus are things the failing actor is
+/// carrying; this is a thing a nearby artificer chooses to spend a
+/// reaction on, which is why it could not be a row on
+/// `FAILED_SAVE_ADD_DIE_SOURCES` and is a scan of the board instead.
+///
+/// Both halves of the cost are real. The reaction means an artificer
+/// who has already fired one this round has nothing to give, and it
+/// competes with every other reaction the chassis carries. The charge —
+/// RAW gives uses equal to the Intelligence modifier, which we collapse
+/// to one per short rest, the cadence every other charge on this file
+/// uses — means the party gets one rescue per fight rather than one per
+/// save.
+///
+/// The engine spends it the way it spends Legendary Resistance: on any
+/// failed save the modifier could actually rescue, checked against the
+/// shortfall first so a charge is never burned on a save it cannot
+/// reach. RAW lets the artificer add the modifier *before* seeing
+/// whether it helps; holding the charge for a roll it can save is the
+/// same courtesy the add-die cohort already extends.
+///
+/// The ability-check half of RAW has no surface — this engine rolls
+/// saves, not checks.
+pub const FLASH_OF_GENIUS_TAG: &str = "artificer.flash_of_genius";
+
+/// 5e Battle Smith Artificer level-9 feature **Arcane Jolt**, damage
+/// half. "When either you or your steel defender hits a target with an
+/// attack roll, you can channel magical energy through the strike to
+/// create one of the following effects: the target takes an extra 2d6
+/// force damage."
+///
+/// A row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS` — the same lane Colossus
+/// Slayer and Psychic Blades ride — because RAW's cadence is "you can
+/// use this feature a number of times equal to your Intelligence
+/// modifier", which on a chassis that swings twice a turn is
+/// indistinguishable from once per turn for the length of a fight.
+///
+/// The biggest die on the cohort (2d6 against everyone else's 1d6 or
+/// 1d8) and the reason the Battle Smith out-damages the other three
+/// artificers on a single target despite carrying the smallest weapon:
+/// the subclass's whole design is that the artificer's magic is
+/// delivered by whatever is doing the hitting.
+///
+/// RAW's other half — spending the same trigger to heal a creature
+/// within 30 ft for 2d6 instead — is left out. It is a second, opposite
+/// effect on one trigger, and the cohort is a damage lane; a heal-on-hit
+/// would be its own site with its own targeting question, and the
+/// damage half is the one the subclass is played for.
+///
+/// The tag is carried by the artificer, not by the defender. RAW lets
+/// the jolt ride the defender's rend too; that would be a second holder
+/// for one charge, and the engine's rider cohort reads the swinging
+/// actor's own tags.
+pub const ARCANE_JOLT_TAG: &str = "artificer.arcane_jolt";
+
+/// 5e Artillerist Artificer level-5 feature **Arcane Firearm**. "When
+/// you cast an artificer spell through the firearm, roll a d8, and you
+/// gain a bonus to one of the spell's damage rolls equal to the number
+/// rolled."
+///
+/// A row on `FLAT_SPELL_DAMAGE_BONUSES`, and the second on that cohort
+/// to roll rather than to read a modifier — the Wildfire Druid's
+/// Enhanced Bond is the first, and the two are near-twins in shape: a
+/// d8 on a damage roll, gated on something the subclass has set up.
+/// Where they differ is what the gate reads. Enhanced Bond asks where
+/// the druid's spirit is standing; this asks nothing at all beyond "is
+/// this a spell", which makes the Artillerist the most reliable of the
+/// four and the least positional.
+///
+/// The gate is `cast.school.is_some()`, which is the engine's marker for
+/// "this action is a spell" — the same leg `is_cantrip` uses to
+/// separate a cantrip from the level-0 frame every weapon swing opens.
+/// RAW's "artificer spell" narrows it to the class list, which on a
+/// chassis carrying only artificer spells is the same set.
+pub const ARCANE_FIREARM_TAG: &str = "artificer.arcane_firearm";
+
+/// 5e Alchemist Artificer level-5 feature **Alchemical Savant**. "Add
+/// your Intelligence modifier to one roll of the spell's damage or
+/// healing — acid, fire, necrotic, or poison damage, or healing."
+///
+/// A row on `FLAT_SPELL_DAMAGE_BONUSES` gated on the cast's declared
+/// damage types, which is the axis `CastContext::damage_types` exists
+/// for and the same one Elemental Affinity reads. Four types rather
+/// than Elemental Affinity's one, so the Alchemist's bonus lands on
+/// most of what it casts — Tasha's Caustic Brew, Create Bonfire,
+/// Vitriolic Sphere, Fireball — and on none of the force / lightning /
+/// psychic lane.
+///
+/// The healing half is dropped rather than deferred. The heal
+/// chokepoint takes no cast frame, and adding the Intelligence modifier
+/// to a heal would be a second site keyed off the same tag with no
+/// shared body between them; the damage half reads at a site the engine
+/// already has and is the half the subclass's own spell list is built
+/// around.
+pub const ALCHEMICAL_SAVANT_TAG: &str = "artificer.alchemical_savant";
+
+/// 5e Armorer Artificer **Arcane Armor: Guardian** (subclass level 3),
+/// mark half. "A creature hit by the gauntlet has disadvantage on attack
+/// rolls against targets other than you until the end of your next
+/// turn."
+///
+/// A row on `ON_HIT_CONDITION_MARKS` stamping `Dueled` — the condition
+/// Compelled Duel installs and the Cavalier's Unwavering Mark reuses.
+/// The three arrive at the same clause from a spell, a fighter subclass
+/// and an artificer subclass, and the clause is one mechanic: swing at
+/// me freely, swing at anyone else at disadvantage.
+///
+/// `melee_only`, because the gauntlets are a melee weapon and the
+/// Guardian chassis carries no other. See `THUNDER_GAUNTLETS` for why
+/// keying the mark on the holder rather than on the weapon is exact on
+/// this chassis rather than merely close.
+pub const THUNDER_GAUNTLETS_TAG: &str = "artificer.thunder_gauntlets";
+
+/// 5e Armorer Artificer **Arcane Armor: Infiltrator** (subclass level
+/// 3), rider half. "Once on each of your turns when you hit a creature
+/// with it, you can deal an extra 1d6 lightning damage to that target."
+///
+/// A row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, whose cadence is RAW's
+/// wording verbatim. The Infiltrator's launcher is a 1d6 weapon, so the
+/// rider doubles the turn's first connecting shot and leaves every one
+/// after it at the base die — the exact opposite balance of its
+/// Guardian sibling's flat 1d8, and the reason the two models play
+/// differently despite sharing a chassis.
+pub const LIGHTNING_LAUNCHER_TAG: &str = "artificer.lightning_launcher";
+
+/// 5e Armorer Artificer **Defensive Field** (Guardian model, subclass
+/// level 3). "As a bonus action, you gain temporary hit points equal to
+/// your artificer level, replacing any temporary hit points you already
+/// have. You lose these temporary hit points if you doff the armor."
+///
+/// Once per short rest here, where RAW spends a use of Arcane Armor's
+/// own pool; the charge is the engine's translation of a pool it does
+/// not track, and it is the same cadence every other per-fight posture
+/// on this file carries.
+pub const DEFENSIVE_FIELD_TAG: &str = "artificer.defensive_field";
+
+/// 5e Alchemist Artificer level-3 feature **Experimental Elixir**.
+/// "Whenever you finish a long rest, you can magically produce an
+/// experimental elixir in an empty flask you touch. Roll on the
+/// Experimental Elixir table for the effect."
+///
+/// The engine's version keeps the two things that make the feature what
+/// it is — it is a bonus action, and *the alchemist does not choose what
+/// they get* — and drops the six-entry table down to the three rows
+/// with a combat surface: Healing, Swiftness, and Resilience. The other
+/// three (Boldness, Flight, Transformation) are an ability-check bonus,
+/// a movement mode the grid has no third dimension for, and a
+/// stat-swap; none of them reads at a site the engine has.
+///
+/// Rolling for the effect rather than picking it is the point. Every
+/// other bonus-action posture on the roster is a decision made with
+/// full information; this one is a decision to *drink*, and what it
+/// does is the die's business. That makes the Alchemist the only
+/// chassis whose best turn cannot be planned, which is a fair rendering
+/// of what the subclass is for.
+pub const EXPERIMENTAL_ELIXIR_TAG: &str = "artificer.experimental_elixir";
+
+/// 5e Artillerist Artificer level-3 feature **Eldritch Cannon**. "As a
+/// magical action, you can use a spell slot or a use of this feature to
+/// create a Small or Tiny eldritch cannon in an unoccupied space on a
+/// horizontal surface within 5 feet of you. You can have only one
+/// cannon at a time."
+///
+/// One tag shared by all three cannon declarations, which is how "only
+/// one cannon at a time" is spelled: `FeatureSummon` reads the tag on
+/// validate and spends it on resolve, so calling any one of the three
+/// takes the charge the other two would have needed. The choice is
+/// therefore real and one-way — the Artillerist picks a cannon for the
+/// fight, not for the round.
+pub const ELDRITCH_CANNON_TAG: &str = "artificer.eldritch_cannon";
+
+/// 5e Battle Smith Artificer level-3 feature **Steel Defender**. "You've
+/// learned how to build a mechanical creature to aid you in your
+/// exploits."
+///
+/// Once per short rest, like the Artillerist's cannon and the Beast
+/// Master's companion, and for the same reason all three carry a charge
+/// rather than being permanent: RAW rebuilds a destroyed construct over
+/// an hour's work, which is a rest in this engine's units. A Battle
+/// Smith whose defender is killed has lost it for the fight.
+pub const STEEL_DEFENDER_TAG: &str = "artificer.steel_defender";
+
+/// Defensive Field — Armorer Artificer (Guardian) bonus action. Temp HP
+/// equal to the artificer's level, once per short rest.
+///
+/// A bespoke `impl` rather than a row on a chassis because the roster's
+/// self-temp-HP features each compute their amount differently and none
+/// of them is a table today — Rally rolls a d10 and adds Charisma to an
+/// *ally*, Form of Dread and Symbiotic Entity fold temp HP into a
+/// posture that does three other things. What this one is, is the
+/// simplest possible member of that family: no roll, no rider, no
+/// duration, just the level as a number.
+///
+/// That flatness is the feature. An Armorer holding Defensive Field is
+/// holding a known quantity, and the decision it poses is purely one of
+/// timing — spent on round one it is temp HP that soaks the opening
+/// exchange, held to round three it is a second health bar at the point
+/// the first one is running out.
+/// The Defensive Field pool, in temporary hit points.
+///
+/// RAW's amount is "equal to your artificer level", and a constant is
+/// the honest rendering of that here rather than a read of
+/// `ActorInstance::level`. The engine's `level` field is the dungeon
+/// loop's progression counter and starts every instantiated template at
+/// 1 — a template's *character* level is expressed by its stat block,
+/// not by that field — so `level()` would make this action grant one
+/// temporary hit point and cost a charge to do it.
+///
+/// 13 is the artificer level the whole chassis is written to: four
+/// spell slot tiers, Flash of Genius (RAW lv7), Arcane Jolt (lv9). The
+/// same reasoning, and the same shape, as `SYMBIOTIC_ENTITY_TEMP_HP`.
+pub const DEFENSIVE_FIELD_TEMP_HP: u32 = 13;
+
+pub struct DefensiveField {}
+
+impl Action for DefensiveField {
+    fn name(&self) -> &str {
+        "defensive field"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["df", "field"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temp HP is a buffer rather than healing, but the AI's support
+        // pipeline is where "spend a turn on staying alive" is decided,
+        // and that is the decision this action is.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, DEFENSIVE_FIELD_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(DEFENSIVE_FIELD_TAG);
+        }
+        encounter.log(format!(
+            "  defensive field: the armor flares \u{2014} {} temp HP",
+            DEFENSIVE_FIELD_TEMP_HP
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount: DEFENSIVE_FIELD_TEMP_HP,
+        })]
+    }
+}
+
+pub static DEFENSIVE_FIELD: LazyLock<DefensiveField> = LazyLock::new(|| DefensiveField {});
+
+/// The three rows of RAW's Experimental Elixir table that have a combat
+/// surface, in the order the d6 walks them.
+///
+/// Kept as data rather than as a `match` in the action body so the two
+/// things a reader wants to know about the feature — what can come out
+/// of the flask, and with what odds — are one list rather than a
+/// control-flow graph. Adding a fourth row is a row.
+///
+/// Each entry is `(label, effect)`. The effect is applied by
+/// `ExperimentalElixir::side_effects`, which is the only consumer.
+enum ElixirEffect {
+    /// RAW Healing: "The creature regains 2d4 + your Intelligence
+    /// modifier hit points."
+    Heal(Dice),
+    /// RAW Swiftness (`Hasted`) and Resilience (`ShieldOfFaith`, +2 AC
+    /// — RAW's "+1 bonus to AC for 10 minutes" rounded onto the AC
+    /// condition the engine already has). Both are postures the engine
+    /// installs as a timed condition, so they are one row shape.
+    Posture(Condition, ConditionTimer),
+}
+
+/// The elixir table itself. Equal weights, walked by a d6 folded onto
+/// its length — see `ExperimentalElixir::side_effects` for why the roll
+/// is a real roll rather than a pick.
+const EXPERIMENTAL_ELIXIRS: &[(&str, ElixirEffect)] = &[
+    ("healing", ElixirEffect::Heal(Dice::new(2, 4))),
+    (
+        "swiftness",
+        // RAW Swiftness is "+10 ft walking speed for 1 hour", which is
+        // the `Hasted` condition's speed clause; the condition's AC and
+        // DEX-save clauses come along, which makes this row the
+        // strongest of the three and is why it is one roll in three
+        // rather than a choice.
+        ElixirEffect::Posture(Condition::Hasted, ConditionTimer::Rounds(10)),
+    ),
+    (
+        "resilience",
+        ElixirEffect::Posture(Condition::ShieldOfFaith, ConditionTimer::Rounds(10)),
+    ),
+];
+
+/// Experimental Elixir — Alchemist Artificer bonus action, once per
+/// short rest. Rolls one of `EXPERIMENTAL_ELIXIRS` and applies it to the
+/// alchemist.
+///
+/// RAW lets the alchemist hand the flask to somebody else; here the
+/// drinker is always the alchemist, because the interesting half of the
+/// feature is the randomness rather than the targeting, and a random
+/// effect aimed at an ally would ask the AI to answer "who wants an
+/// unknown buff" — a question with no good answer.
+pub struct ExperimentalElixir {}
+
+impl Action for ExperimentalElixir {
+    fn name(&self) -> &str {
+        "experimental elixir"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["elixir", "ee"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // One of the three rows is a heal and the other two are
+        // survivability postures, so the support pipeline is the right
+        // lane for all three — but the AI cannot know which it will get,
+        // which is exactly the position the alchemist is in.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, EXPERIMENTAL_ELIXIR_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // A real roll off the shared seeded roller, so an encounter
+        // replayed from a seed pours the same elixir. `d6 % len` rather
+        // than `d3` because RAW rolls a d6 on a six-row table and the
+        // three rows we keep are the ones with a surface — the fold
+        // keeps the die RAW names while the table stays honest about
+        // what it implements.
+        let face = encounter.roll(&Dice::new(1, 6)) as usize;
+        let (label, effect) = &EXPERIMENTAL_ELIXIRS[(face - 1) % EXPERIMENTAL_ELIXIRS.len()];
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(EXPERIMENTAL_ELIXIR_TAG);
+        }
+        match effect {
+            ElixirEffect::Heal(dice) => {
+                let rolled = encounter.roll(dice);
+                let int_mod = encounter
+                    .actors
+                    .get(&caster_id)
+                    .map(|a| a.ability_modifier(AbilityScoreType::Intelligence))
+                    .unwrap_or(0);
+                let amount = (rolled as i32 + int_mod).max(0) as u32;
+                encounter.log(format!(
+                    "  experimental elixir: {} \u{2014} {}({}){:+} = {} HP",
+                    label, dice, rolled, int_mod, amount
+                ));
+                vec![Box::new(Heal {
+                    actor_id: caster_id,
+                    amount,
+                })]
+            }
+            ElixirEffect::Posture(condition, timer) => {
+                encounter.log(format!("  experimental elixir: {}", label));
+                vec![Box::new(ApplyCondition {
+                    actor_id: caster_id,
+                    condition: *condition,
+                    timer: *timer,
+                })]
+            }
+        }
+    }
+}
+
+pub static EXPERIMENTAL_ELIXIR: LazyLock<ExperimentalElixir> =
+    LazyLock::new(|| ExperimentalElixir {});
+
+/// Eldritch Cannon (Flamethrower) — Artillerist Artificer action, once
+/// per short rest. A Small turret on the artificer's team.
+///
+/// The three cannons share `ELDRITCH_CANNON_TAG`, so summoning this one
+/// spends the charge the other two would have needed: RAW's "you can
+/// have only one cannon at a time", enforced by the charge rather than
+/// by a board scan.
+///
+/// Flamethrower is the crowd cannon. Its 15 ft cone (a 2-tile burst
+/// here) catches everything standing near it and asks for a Dexterity
+/// save, which makes it worth the most in exactly the situation the
+/// other two are worth the least — several enemies converging on one
+/// point. Against a single target it is the weakest of the three.
+pub static SUMMON_FLAMETHROWER_CANNON: FeatureSummon = FeatureSummon {
+    display_name: "eldritch cannon (flamethrower)",
+    aliases: &["flamethrower", "flame cannon", "ecf"],
+    tag: ELDRITCH_CANNON_TAG,
+    template: &crate::actors::creatures::eldritch_cannons::FLAMETHROWER_CANNON_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    search_radius: 2,
+    base_instance_id: 73,
+    cost_resource: Resource::Action,
+};
+
+/// Eldritch Cannon (Force Ballista) — Artillerist Artificer action, once
+/// per short rest. Shares `ELDRITCH_CANNON_TAG` with its two siblings.
+///
+/// The sniper cannon, and the one that keeps working when the others
+/// don't. 2d8 force at 120 ft is the longest reach on the artificer's
+/// side of the board and force is the damage type nothing in the
+/// bestiary resists, so the ballista is the answer to the fire-immune
+/// and the far-away alike.
+pub static SUMMON_FORCE_BALLISTA_CANNON: FeatureSummon = FeatureSummon {
+    display_name: "eldritch cannon (force ballista)",
+    aliases: &["force ballista cannon", "ballista cannon", "ecb"],
+    tag: ELDRITCH_CANNON_TAG,
+    template: &crate::actors::creatures::eldritch_cannons::FORCE_BALLISTA_CANNON_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    search_radius: 2,
+    base_instance_id: 74,
+    cost_resource: Resource::Action,
+};
+
+/// Eldritch Cannon (Protector) — Artillerist Artificer action, once per
+/// short rest. Shares `ELDRITCH_CANNON_TAG` with its two siblings.
+///
+/// The cannon that never attacks. Its whole turn is a pulse of temp HP
+/// over every ally within 10 ft, which makes it the only one of the
+/// three whose value depends on where the *party* is standing rather
+/// than on where the enemy is — a Protector parked behind the front
+/// line pays out every round for the rest of the fight, and one left
+/// behind pays nothing.
+pub static SUMMON_PROTECTOR_CANNON: FeatureSummon = FeatureSummon {
+    display_name: "eldritch cannon (protector)",
+    aliases: &["protector cannon", "protector", "ecp"],
+    tag: ELDRITCH_CANNON_TAG,
+    template: &crate::actors::creatures::eldritch_cannons::PROTECTOR_CANNON_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    search_radius: 2,
+    base_instance_id: 75,
+    cost_resource: Resource::Action,
+};
+
+/// Steel Defender — Battle Smith Artificer action, once per short rest.
+/// A Medium construct on the artificer's team.
+///
+/// The sturdiest body on the feature-summon lane by a distance — more
+/// hit points than the Ranger's companion, AC 15, and immunity to the
+/// poison and charm effects that take a wolf out of a fight. That is
+/// the trade the subclass makes: the Battle Smith's own weapon is a
+/// d8 longsword swung off Intelligence, which is the weakest martial
+/// output of the four artificers, and the defender is where the rest
+/// of it went.
+pub static SUMMON_STEEL_DEFENDER: FeatureSummon = FeatureSummon {
+    display_name: "steel defender",
+    aliases: &["defender", "sd"],
+    tag: STEEL_DEFENDER_TAG,
+    template: &crate::actors::creatures::steel_defenders::STEEL_DEFENDER_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    search_radius: 2,
+    base_instance_id: 76,
+    cost_resource: Resource::Action,
+};
+
+/// Declarative chassis for an **at-will self-centered enemy burst**: an
+/// action that catches every hostile creature around the actor in a
+/// save-for-half blast, every round, with no charge to spend.
+///
+/// Distinct from `TurnBurst` (charged, installs a condition, deals no
+/// damage) and from the monster `BreathWeapon` (charged by a recharge
+/// roll, aimed at a point). What this describes is the thing a *turret*
+/// does: it has one attack, it makes it every turn, and it makes it
+/// where it is standing rather than where it chooses.
+///
+/// The DC is read off the acting creature's own sheet, which for the
+/// Artillerist's cannon is the builder's numbers written onto the
+/// construct — see `eldritch_cannons` for why the engine's summons
+/// carry their summoner's statistics rather than a bond channel back
+/// to them.
+pub struct AtWillEnemyBurst {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Footprint-gap radius of the blast, centered on the actor.
+    pub radius: isize,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    /// Which save the targets roll.
+    pub save_ability: AbilityScoreType,
+    /// Which of the actor's abilities anchors the DC (`8 + prof + mod`).
+    pub dc_ability: AbilityScoreType,
+}
+
+impl Action for AtWillEnemyBurst {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        // Save-for-half against one target averages three quarters of
+        // the pool at even odds, which is the number the attack picker
+        // wants when it is comparing this to a weapon swing.
+        Some(self.damage_dice.average_roll() * 0.75)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = actor.location();
+        let dc = actor.spell_save_dc(self.dc_ability);
+        let rolled = encounter.roll(&self.damage_dice);
+        encounter.log(format!(
+            "  {}: {}({}) {} (DC {} {}, half on save)",
+            self.display_name, self.damage_dice, rolled, self.damage_type, dc, self.save_ability,
+        ));
+        resolve_enemy_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            self.radius,
+            self.save_ability,
+            dc,
+            rolled,
+            self.damage_type,
+            SaveDamagePolicy::HalfOnSave,
+        )
+    }
+}
+
+/// Declarative chassis for an **at-will self-centered ally temp-HP
+/// pulse**: an action that hands every nearby teammate the same
+/// temporary hit points, every round, with no charge to spend.
+///
+/// The mirror image of `AtWillEnemyBurst` on the support lane, and it
+/// exists for one creature — the Artillerist's Protector cannon, whose
+/// entire turn this is. It is written as a chassis rather than as that
+/// creature's bespoke action because the shape is not special: "pulse a
+/// buff over everyone standing near me" is what an aura would be if the
+/// engine had auras that acted, and the next one that lands is a
+/// declaration.
+///
+/// The roll is made once and shared across every recipient, matching how
+/// the engine's area effects roll — see `resolve_burst_save_damage`.
+/// RAW rolls the Protector's die once for the whole pulse too.
+pub struct AtWillAllyTempHpPulse {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Footprint-gap radius of the pulse, centered on the actor.
+    pub radius: isize,
+    pub dice: Dice,
+    /// Ability whose modifier is added to the shared roll.
+    pub bonus_ability: AbilityScoreType,
+}
+
+impl Action for AtWillAllyTempHpPulse {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = actor.location();
+        let bonus = actor.ability_modifier(self.bonus_ability);
+        let rolled = encounter.roll(&self.dice);
+        let amount = (rolled as i32 + bonus).max(0) as u32;
+        let targets = encounter.ally_burst_targets(caster_id, center, self.radius);
+        encounter.log(format!(
+            "  {}: {}({}){:+} = {} temp HP to {} ally(s)",
+            self.display_name,
+            self.dice,
+            rolled,
+            bonus,
+            amount,
+            targets.len()
+        ));
+        targets
+            .into_iter()
+            .map(|id| {
+                Box::new(GainTempHp {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+/// Flamethrower — the Artillerist cannon's action. A 15 ft cone in RAW,
+/// rendered as a 2-tile burst centered on the turret: the engine has no
+/// cone primitive, and a turret that cannot turn is a poor place to
+/// introduce one.
+pub static CANNON_FLAMETHROWER: AtWillEnemyBurst = AtWillEnemyBurst {
+    display_name: "flamethrower",
+    aliases: &["flame", "ft"],
+    // 15 ft on the 2.5 ft grid is 6 tiles of cone length; as a burst
+    // around a stationary turret, 2 tiles is the radius that catches the
+    // same set of bodies without also catching the artificer standing
+    // behind it — the burst is enemy-only, but the radius is still what
+    // decides whether the cannon is worth parking forward.
+    radius: 2,
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc_ability: AbilityScoreType::Intelligence,
+};
+
+/// Protector pulse — the Artillerist cannon's action in Protector mode.
+/// RAW: "each creature of your choice within 10 feet of it gains
+/// temporary hit points equal to 1d8 + your Intelligence modifier."
+///
+/// "Of your choice" becomes "every ally in range", which is the same set
+/// on every board the engine can produce: there is no reason the
+/// artificer would decline to shield a teammate, and the pulse cannot
+/// reach an enemy.
+pub static CANNON_PROTECTOR_PULSE: AtWillAllyTempHpPulse = AtWillAllyTempHpPulse {
+    display_name: "protector pulse",
+    aliases: &["pulse", "pp"],
+    // 10 ft on the 2.5 ft grid.
+    radius: 4,
+    dice: Dice::new(1, 8),
+    bonus_ability: AbilityScoreType::Intelligence,
+};
 
 #[cfg(test)]
 mod tests {
