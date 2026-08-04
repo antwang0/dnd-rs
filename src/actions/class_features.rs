@@ -294,6 +294,68 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // of Pact Magic and of both of these by name.
     TENTACLE_OF_THE_DEEP_TAG,
     GUARDIAN_COIL_TAG,
+    // The three Channel Divinities that were missing from this lane —
+    // see `CHANNEL_DIVINITY_FEATURES`. Cleric **Turn Undead** is the
+    // odd one out in the most literal sense: five comments in this
+    // file cite it as the example of the short-rest cleric CD cadence,
+    // and it was the only cleric CD not on it. Paladin **Sacred
+    // Weapon** and **Vow of Enmity** are the Devotion and Vengeance
+    // oaths' Channel Divinities, sitting beside six other oaths' CDs
+    // that were already here.
+    //
+    // All three ride the baseline templates rather than a subclass
+    // clone, so the cost of the omission landed on the plain Cleric and
+    // the plain Paladin — the two chassis most likely to be picked, and
+    // the two whose Channel Divinity is the whole non-spell half of
+    // their turn.
+    TURN_UNDEAD_TAG,
+    SACRED_WEAPON_TAG,
+    VOW_OF_ENMITY_TAG,
+];
+
+/// Every **Channel Divinity** on the roster: the shared once-per-rest
+/// resource a Cleric or Paladin spends on their domain's or oath's
+/// signature effect.
+///
+/// RAW is unambiguous and identical for both classes — "you must finish
+/// a short or long rest to use your Channel Divinity again" — so this
+/// registry has exactly one rule, and
+/// `every_channel_divinity_comes_back_on_a_short_rest` enforces it.
+///
+/// It exists because the rule was being applied one tag at a time by
+/// whoever added the feature, and three of the eleven had been missed:
+/// the Cleric's Turn Undead and the Paladin's Sacred Weapon and Vow of
+/// Enmity all refreshed on a long rest only. Nothing detected it,
+/// because the charge lane has no notion of which features are supposed
+/// to share a cadence — it is a flat list of tags, and a tag that isn't
+/// in it simply waits for the long rest.
+///
+/// The engine models each CD as its own charge rather than as one
+/// shared pool, which is a deliberate simplification (a paladin with
+/// two oaths' worth of CDs would RAW-illegally get two uses). That does
+/// not change the cadence, which is what this list is about.
+pub const CHANNEL_DIVINITY_FEATURES: &[&str] = &[
+    // Cleric
+    TURN_UNDEAD_TAG,
+    PRESERVE_LIFE_TAG,
+    GUIDED_STRIKE_TAG,
+    RADIANCE_OF_THE_DAWN_TAG,
+    INVOKE_DUPLICITY_TAG,
+    PATH_TO_THE_GRAVE_TAG,
+    ARCANE_ABJURATION_TAG,
+    CHARM_ANIMALS_AND_PLANTS_TAG,
+    REAPERS_TOUCH_TAG,
+    ORDERS_DEMAND_TAG,
+    // Paladin
+    SACRED_WEAPON_TAG,
+    VOW_OF_ENMITY_TAG,
+    ABJURE_ENEMY_TAG,
+    DREADFUL_ASPECT_TAG,
+    NATURES_WRATH_TAG,
+    TURN_THE_FAITHLESS_TAG,
+    CONQUERING_PRESENCE_TAG,
+    CHAMPION_CHALLENGE_TAG,
+    TURN_THE_TIDE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -15016,5 +15078,56 @@ mod tests {
                 s.display_name
             );
         }
+    }
+
+    /// RAW gives a Cleric and a Paladin their Channel Divinity back on
+    /// a short rest, without exception and in the same words for both
+    /// classes. So this is a one-line rule with a registry attached, and
+    /// the registry is the point: the rule was being applied a tag at a
+    /// time by whoever added the feature, and three of the nineteen had
+    /// been missed — Turn Undead, Sacred Weapon and Vow of Enmity, all
+    /// of them on baseline templates rather than subclass clones.
+    ///
+    /// The failure was invisible from the inside. A tag that isn't on
+    /// the short-rest lane doesn't error; it just waits for the long
+    /// rest, and a Cleric who could Turn Undead once a day instead of
+    /// once a fight looks exactly like a Cleric who has already used it.
+    #[test]
+    fn every_channel_divinity_comes_back_on_a_short_rest() {
+        let stranded: Vec<&str> = CHANNEL_DIVINITY_FEATURES
+            .iter()
+            .copied()
+            .filter(|tag| !SHORT_REST_FEATURES.contains(tag))
+            .collect();
+        assert!(
+            stranded.is_empty(),
+            "these Channel Divinities only recharge on a long rest: {stranded:?}"
+        );
+    }
+
+    /// The registry names Channel Divinities that some playable
+    /// template actually carries. A tag listed here but carried by
+    /// nobody proves nothing, and one carried but not listed escapes
+    /// the cadence rule above — which is exactly how the three
+    /// stragglers survived.
+    #[test]
+    fn the_channel_divinity_registry_matches_the_roster() {
+        use crate::actors::creatures::pc_template_families;
+        use std::collections::HashSet;
+
+        let carried: HashSet<&str> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_family, templates)| templates)
+            .flat_map(|t| t.features.iter().copied())
+            .collect();
+        let orphans: Vec<&str> = CHANNEL_DIVINITY_FEATURES
+            .iter()
+            .copied()
+            .filter(|tag| !carried.contains(tag))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "these Channel Divinities are on no playable template: {orphans:?}"
+        );
     }
 }
