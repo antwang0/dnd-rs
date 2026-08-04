@@ -128,7 +128,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CHAIN_LIGHTNING);
     // Latest necromancy / divination additions: lv3 Animate Dead (raise
     // skeleton ally) and lv9 Foresight (single-target apex buff).
-    actions.push(&*crate::actions::spells::ANIMATE_DEAD);
+    actions.push(&crate::actions::spells::ANIMATE_DEAD);
     actions.push(&*crate::actions::spells::FORESIGHT);
     // Latest enchantment / transmutation additions: lv2 Levitate (CON
     // save lift), lv3 Fly (concentration speed buff), lv3 Plant Growth
@@ -553,7 +553,18 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // lockdown); the elemental adds an action-economy multiplier in the
     // same tier. Despawns via the shared `Conjured` cleanup path when
     // concentration drops.
-    actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    actions.push(&crate::actions::spells::CONJURE_ELEMENTAL);
+    // The Tasha's summon family, wizard half — the full spread, because
+    // RAW gives the wizard every one of them. Six rungs from level 3 to
+    // level 6, and at each of 3 and 4 a melee body and a ranged body
+    // with the same price, so the wizard's summon decision is about the
+    // board rather than about the slot.
+    actions.push(&crate::actions::spells::SUMMON_FEY);
+    actions.push(&crate::actions::spells::SUMMON_UNDEAD);
+    actions.push(&crate::actions::spells::SUMMON_ABERRATION);
+    actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
+    actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
+    actions.push(&crate::actions::spells::SUMMON_FIEND);
     // lv5 **Animate Objects** (transmutation): summon ten Tiny Construct
     // minions adjacent to the caster. Trades the per-target damage of
     // Cone of Cold or the single-target lockdown of Hold Monster for

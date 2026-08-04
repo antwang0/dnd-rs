@@ -154,6 +154,21 @@ impl DiceExpr {
         let dice_total = self.dice.map_or(0, |d| roller.roll(&d) as i32);
         dice_total + self.constant
     }
+
+    /// What `eval` returns on average, without a roller.
+    ///
+    /// The `DiceExpr` half of `Dice::average_roll` — same formula, plus
+    /// the constant term. Exists for the questions that are about the
+    /// *expression* rather than about one roll of it: comparing two
+    /// creature templates' hit points, sanity-checking that a stat block
+    /// lands where its CR implies, or reporting an expected value
+    /// without perturbing the encounter's RNG stream. Rolling a throwaway
+    /// sample to answer those is both noisier and, on a seeded encounter,
+    /// actively wrong — every draw from the shared roller shifts every
+    /// subsequent roll in the fight.
+    pub fn average_roll(&self) -> f32 {
+        self.dice.map_or(0.0, |d| d.average_roll()) + self.constant as f32
+    }
 }
 
 impl fmt::Display for DiceExpr {
@@ -407,5 +422,28 @@ mod tests {
                 ceiling
             );
         }
+    }
+
+    /// `DiceExpr::average_roll` agrees with the mean of `eval`, on both
+    /// legs of the expression: the dice term and the constant.
+    ///
+    /// The constant leg is the one worth pinning. `Dice::average_roll`
+    /// has no constant to forget, so the obvious wrong implementation of
+    /// the `DiceExpr` version — delegate and stop — is wrong only for
+    /// expressions like `"5d8+8"`, which is exactly the shape every
+    /// creature template's hit points are written in.
+    #[test]
+    fn dice_expr_average_covers_both_legs_of_the_expression() {
+        // Bare constant: no dice, so the average is the constant.
+        assert_eq!(DiceExpr::constant(7).average_roll(), 7.0);
+        // Bare dice: matches the `Dice` half exactly.
+        let bare: DiceExpr = "2d6".parse().unwrap();
+        assert_eq!(bare.average_roll(), Dice::new(2, 6).average_roll());
+        // Both legs: 5d8 averages 22.5, plus 8.
+        let both: DiceExpr = "5d8+8".parse().unwrap();
+        assert_eq!(both.average_roll(), 30.5);
+        // A negative constant subtracts rather than being dropped.
+        let negative: DiceExpr = "1d4-2".parse().unwrap();
+        assert_eq!(negative.average_roll(), 0.5);
     }
 }

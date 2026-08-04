@@ -39910,6 +39910,170 @@ mod tests {
         );
     }
 
+    /// Every spell in the Tasha's summon family resolves: it puts its
+    /// spirit on the caster's team, tags it `Conjured`, anchors the
+    /// caster's concentration, and takes the spirit with it when that
+    /// concentration drops.
+    ///
+    /// One sweep over `summon_family()` rather than eight copies of the
+    /// Conjure Animals pair above, because the eight are declarations of
+    /// a shared chassis and there is nothing per-spell to test — what
+    /// could break is a wrong field on one declaration, and a sweep
+    /// catches that in whichever spell has it. The one thing the sweep
+    /// deliberately does *not* fix is the arena: each spell gets a fresh
+    /// clear one, so a Large spirit's 2×2 footprint has room and a
+    /// failure here means the declaration is wrong rather than that the
+    /// map was tight.
+    #[test]
+    fn every_summon_in_the_family_arrives_and_leaves_with_the_concentration() {
+        use crate::actions::spells::summon_family;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        for spell in summon_family() {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let caster = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let team = e.actors[&caster].team();
+            let before = e.actors.len();
+
+            for effect in spell.side_effects(&mut e, caster, None, None, None) {
+                effect.apply(&mut e);
+            }
+
+            assert_eq!(
+                e.actors.len(),
+                before + 1,
+                "{} summoned nothing",
+                spell.name()
+            );
+            let (spirit, actor) = e
+                .actors
+                .iter()
+                .find(|(id, _)| **id != caster)
+                .expect("the spirit that just spawned");
+            assert_eq!(
+                actor.team(),
+                team,
+                "{}'s spirit joined the wrong team",
+                spell.name()
+            );
+            assert!(
+                actor.has_condition(Condition::Conjured),
+                "{}'s spirit is untagged, so dropping the spell would strand it",
+                spell.name()
+            );
+            let spirit = *spirit;
+            assert!(
+                e.actors[&caster].is_concentrating(),
+                "{} left the caster's concentration free",
+                spell.name()
+            );
+
+            e.drop_concentration(caster);
+            assert!(
+                !e.actors.contains_key(&spirit),
+                "{}'s spirit outlived the concentration holding it",
+                spell.name()
+            );
+        }
+    }
+
+    /// A summon whose spirit has nowhere to stand fizzles rather than
+    /// half-resolving: no body, and — the part worth pinning — no
+    /// concentration either.
+    ///
+    /// Anchoring an empty cohort would be the worst of both worlds: the
+    /// caster drops whatever they were already holding, and gets
+    /// nothing. `SummonSpell::side_effects` skips the anchor when the
+    /// spawn list comes back empty, and this is the guard on that
+    /// branch. Summon Fiend is the case that matters most — a Large
+    /// footprint is the hardest to place, so it is the summon most
+    /// likely to find no room in a real corridor.
+    #[test]
+    fn a_summon_with_no_room_takes_no_concentration() {
+        use crate::actions::spells::SUMMON_FIEND;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Wall the wizard into a 1-tile pocket: nothing Large fits
+        // anywhere near.
+        let mut e = ei_with_terrain(12, 12, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for x in 0..12isize {
+            for y in 0..12isize {
+                if (5..=6).contains(&x) && (5..=6).contains(&y) {
+                    continue;
+                }
+                let idx = e.idx(Coordinate::new(x, y)).unwrap();
+                e.terrain[idx].terrain_type = TerrainType::Wall;
+            }
+        }
+        assert!(
+            !SUMMON_FIEND.custom_validate_input(&e, wizard, None, None, None),
+            "a walled-in caster shouldn't be offered a Large summon"
+        );
+
+        let before = e.actors.len();
+        for effect in SUMMON_FIEND.side_effects(&mut e, wizard, None, None, None) {
+            effect.apply(&mut e);
+        }
+        assert_eq!(e.actors.len(), before, "nothing had room to appear");
+        assert!(
+            !e.actors[&wizard].is_concentrating(),
+            "a summon that put no body on the board must not take the \
+             caster's concentration for it"
+        );
+    }
+
+    /// The summon family's declarations are internally consistent: the
+    /// slot ladder only ever goes up, no two spells share an
+    /// instance-id band, and no band collides with the summons that
+    /// predate the family.
+    ///
+    /// The instance-id half is the reason this test exists. A duplicated
+    /// `base_instance_id` produces two creatures with the same display
+    /// suffix on the same board — "Fey Spirit 102" twice — which is not
+    /// an error anywhere in the engine, just a map a player can't read.
+    /// The failure is silent by construction, so it has to be swept for.
+    #[test]
+    fn the_summon_family_declares_a_consistent_ladder() {
+        use crate::actions::spells::{
+            ANIMATE_DEAD, CONJURE_ANIMALS, CONJURE_ELEMENTAL, summon_family,
+        };
+        use std::collections::HashMap;
+
+        let mut previous = 0;
+        for spell in summon_family() {
+            assert!(
+                spell.slot_level >= previous,
+                "{} sits below the spell before it in the family list",
+                spell.name()
+            );
+            previous = spell.slot_level;
+        }
+
+        // Every id the summon lane hands out — the family plus the three
+        // spells that predate it. Conjure Animals spawns two, so it
+        // claims its base *and* the id above it.
+        let mut claimed: HashMap<usize, &str> = HashMap::new();
+        let mut claim = |id: usize, who: &'static str| {
+            if let Some(other) = claimed.insert(id, who) {
+                panic!("{} and {} both spawn at instance id {}", who, other, id);
+            }
+        };
+        for spell in summon_family() {
+            for offset in 0..spell.count {
+                claim(spell.base_instance_id + offset, spell.name());
+            }
+        }
+        for legacy in [&CONJURE_ANIMALS, &CONJURE_ELEMENTAL, &ANIMATE_DEAD] {
+            for offset in 0..legacy.count {
+                claim(legacy.base_instance_id + offset, legacy.name());
+            }
+        }
+    }
+
     /// Conjure Elemental's validate gate fizzles when there's no room
     /// to spawn a Large (4-tile) footprint adjacent to the caster.
     /// Mirrors the Conjure Animals validate gate.
@@ -76632,9 +76796,9 @@ mod tests {
     fn every_summoning_action_declares_itself() {
         use crate::actions::action_template::Action;
         let summons: &[&'static (dyn Action + Send + Sync)] = &[
-            &*crate::actions::spells::CONJURE_ANIMALS,
-            &*crate::actions::spells::CONJURE_ELEMENTAL,
-            &*crate::actions::spells::ANIMATE_DEAD,
+            &crate::actions::spells::CONJURE_ANIMALS,
+            &crate::actions::spells::CONJURE_ELEMENTAL,
+            &crate::actions::spells::ANIMATE_DEAD,
             &*crate::actions::spells::ANIMATE_OBJECTS,
             &crate::actions::class_features::RANGERS_COMPANION,
         ];

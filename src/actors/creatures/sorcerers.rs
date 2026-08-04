@@ -436,7 +436,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // summon slot alongside Cone of Cold (burst) and Hold Monster
     // (lockdown). Despawns via the shared `Conjured` cleanup path when
     // concentration drops.
-    actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    actions.push(&crate::actions::spells::CONJURE_ELEMENTAL);
+    // lv5 **Summon Draconic Spirit** (FTD) — the sorcerer's one summon,
+    // and RAW's own choice of which: the spell is on the sorcerer list
+    // precisely because the class's draconic bloodline is the flavour it
+    // was written for. Sits beside Conjure Elemental on the lv5 rung as
+    // the variance option — a recharging area breath instead of a
+    // reliable melee body.
+    actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
     // lv5 **Animate Objects** (transmutation): summon ten Tiny Construct
     // minions adjacent to the caster, concentration-bound. RAW sorcerer
     // spell list — pairs with the sorcerer's metamagic kit, since

@@ -119,6 +119,20 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     locks out future ones for the duration.
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    // The Tasha's summon family, ranger half — RAW gives the ranger
+    // Beast (lv2), Fey (lv3) and Elemental (lv4), one per slot level the
+    // ranger actually reaches.
+    //
+    // These are the ranger's first summons of any kind: before them the
+    // only body the class could put on the board was the Beast Master's
+    // once-per-day companion, which meant eleven of the twelve ranger
+    // builds had no summon lane at all. A Gloom Stalker who spends a
+    // level-2 slot on a Bestial Spirit is trading Pass Without Trace for
+    // a second set of teeth, and that is a decision the class never got
+    // to make before.
+    actions.push(&crate::actions::spells::SUMMON_BEAST);
+    actions.push(&crate::actions::spells::SUMMON_FEY);
+    actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
     // 5e Ranger **Vanish** (class feature, level 14). Bonus-action Hide
     // gated on `VANISH_TAG` — same one-shot attack-advantage rider as
     // the baseline Hide action, at the cheaper bonus-action cost.

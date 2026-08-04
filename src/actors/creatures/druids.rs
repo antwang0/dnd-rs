@@ -69,7 +69,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*HEROES_FEAST);
     // Level 3 — Conjure Animals (summon 2 wolves on caster's team).
     // RAW: druid / ranger; we slot at druid lv3.
-    actions.push(&*crate::actions::spells::CONJURE_ANIMALS);
+    actions.push(&crate::actions::spells::CONJURE_ANIMALS);
     // Level 7 — Fire Storm joins as the druid's big elemental burst.
     actions.push(&*REVERSE_GRAVITY);
     actions.push(&*crate::actions::spells::FIRE_STORM);
@@ -287,7 +287,23 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // higher slot for a single bigger minion with fire immunity and
     // resistance to non-magical physical damage. Dropping concentration
     // despawns the elemental via the shared `Conjured` cleanup path.
-    actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    actions.push(&crate::actions::spells::CONJURE_ELEMENTAL);
+    // The Tasha's summon family, druid half. Three rungs the druid's
+    // existing summon lane didn't have: a level-2 body (Summon Beast) for
+    // the tier where Conjure Animals is still two levels away, a level-4
+    // air elemental (Summon Elemental) whose thunder slams and elemental
+    // condition immunities let it walk through the druid's own Sleet
+    // Storm, and a level-5 dragon (Summon Draconic Spirit) whose
+    // recharging breath is the only area attack any summon brings.
+    //
+    // All three hold concentration, so they compete with Moonbeam, Spike
+    // Growth and Call Lightning rather than stacking on them — which is
+    // the point. The druid's concentration was always the scarce thing;
+    // now there are bodies bidding for it.
+    actions.push(&crate::actions::spells::SUMMON_BEAST);
+    actions.push(&crate::actions::spells::SUMMON_FEY);
+    actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
+    actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
     // lv4 **Dominate Beast** (enchantment): single-target concentration
     // charm + dominate on a Beast-typed enemy. WIS save vs the druid's
     // spell DC; on fail target is Charmed by the druid AND has

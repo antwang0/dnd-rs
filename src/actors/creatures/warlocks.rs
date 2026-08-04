@@ -77,7 +77,23 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*VAMPIRIC_TOUCH);
     actions.push(&*BESTOW_CURSE);
     actions.push(&*FLY);
-    actions.push(&*ANIMATE_DEAD);
+    actions.push(&ANIMATE_DEAD);
+    // The Tasha's summon family, warlock half. RAW gives the warlock
+    // Fey, Undead, Aberration and Fiend, and the shape of that list is
+    // the patron: everything the warlock can call is something that
+    // could plausibly have sent it.
+    //
+    // The warlock is the class these spells change most, because Pact
+    // Magic's slots all cast at the warlock's highest level and come
+    // back on a short rest. A warlock spending one on Summon Fiend is
+    // spending a resource they get again in ten minutes — which makes
+    // them the one caster in the engine for whom "summon a large amount
+    // of monster" is a repeatable opening rather than a daily
+    // centerpiece.
+    actions.push(&crate::actions::spells::SUMMON_FEY);
+    actions.push(&crate::actions::spells::SUMMON_UNDEAD);
+    actions.push(&crate::actions::spells::SUMMON_ABERRATION);
+    actions.push(&crate::actions::spells::SUMMON_FIEND);
     // Level 4 — Banishment (single-target removal), Dimension Door
     // (teleport). Sickening Radiance: enemy-only 30ft burst with
     // Exhausted-on-fail; fits the warlock's "control burst" niche.

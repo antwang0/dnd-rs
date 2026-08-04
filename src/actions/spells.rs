@@ -13228,83 +13228,27 @@ pub static HAIL_OF_THORNS: LazyLock<HailOfThorns> = LazyLock::new(|| HailOfThorn
 /// and acts on its own initiative for the rest of the encounter. We
 /// approximate "raise from a corpse pile" by spawning a fresh
 /// SKELETON_TEMPLATE instance at a footprint-free tile next to the
-/// caster (closest spawnable diagonal / orthogonal neighbor). No
-/// concentration; the minion is permanent for the encounter.
-pub struct AnimateDead {}
-
-impl Action for AnimateDead {
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn name(&self) -> &str {
-        "animate dead"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["raise"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        action_and_slot(3)
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // Need a free adjacent slot to spawn the Medium skeleton.
-        encounter
-            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
-            .is_some()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
-
-        // Single skeleton minion at touch range. Routes through the
-        // shared `spawn_adjacent_summons` helper so the team-lookup,
-        // find_adjacent_spawn search, instantiate + log chain stays
-        // consistent with Conjure Animals / Conjure Elemental. Animate
-        // Dead doesn't use concentration so the minion is permanent for
-        // the encounter and gets no `Conjured` tag.
-        spawn_adjacent_summons(
-            encounter,
-            caster_id,
-            &SKELETON_TEMPLATE,
-            crate::engine::types::Size::Medium,
-            1,
-            2,
-            99,
-            "animate dead",
-        );
-        Vec::new()
-    }
-}
-
-pub static ANIMATE_DEAD: LazyLock<AnimateDead> = LazyLock::new(|| AnimateDead {});
+/// caster (closest spawnable diagonal / orthogonal neighbor).
+///
+/// The one summon spell that holds no concentration, and the exception
+/// is RAW's: a raised skeleton is a *made thing*, not a rented one, and
+/// nothing about it depends on the necromancer still thinking about it.
+/// That makes Animate Dead the only way in the engine to buy a
+/// permanent body with a slot, and the reason a Necromancy wizard can
+/// hold Web *and* keep a skeleton — see `SummonSpell::concentration`.
+pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
+    display_name: "animate dead",
+    aliases: &["raise"],
+    school: SpellSchool::Necromancy,
+    slot_level: 3,
+    template: &crate::actors::creatures::skeletons::SKELETON_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    // Touch range: RAW raises a corpse the caster can reach.
+    search_radius: 2,
+    base_instance_id: 99,
+    concentration: None,
+};
 
 /// Confusion — 5e level-4 enchantment, concentration, action. Targets a
 /// 20ft burst (radius 4) at a point within 90ft (36 tiles). Every
@@ -14705,31 +14649,94 @@ impl Action for Eyebite {
 
 pub static EYEBITE: LazyLock<Eyebite> = LazyLock::new(|| Eyebite {});
 
-/// Conjure Animals — 5e level-3 conjuration, concentration, action.
-/// Summons two CR-1/4 wolves on adjacent tiles to the caster, joining
-/// the caster's team. We collapse the RAW "1 CR-2 / 2 CR-1 / 4 CR-1/2
-/// / 8 CR-1/4" option table to the 2-wolf branch since it's the load-
-/// bearing flavor for a level-3 cast and our wolf is already on the
-/// books. Each conjured wolf gets the Conjured condition so dropping
-/// concentration prunes them via the engine's cleanup hook.
-/// Concentration-bound on the caster.
-pub struct ConjureAnimals {}
+/// Declarative chassis for a **summoning spell**: a spell that spends a
+/// slot to put one or more friendly bodies on the board beside the
+/// caster, and then gets out of the way.
+///
+/// The sibling of `class_features::FeatureSummon`, and the split between
+/// the two is the whole design. A feature summon spends a per-rest
+/// charge, holds no concentration, and leaves a body that outlives
+/// whatever its summoner is thinking about. A summon *spell* spends a
+/// slot and — for all but Animate Dead — rents its minions with the
+/// caster's concentration: break it and they vanish. Neither chassis has
+/// a field for the other's cost, which is what keeps a future summon
+/// from accidentally acquiring both.
+///
+/// Everything past that split was already identical across Conjure
+/// Animals, Conjure Elemental and Animate Dead: the same `NoArgs`
+/// schema, the same "is there a free tile of size S nearby?" validator,
+/// the same `spawn_adjacent_summons` call, the same
+/// `conjured_summon_concentration_effects` tail, and the same
+/// `summons_allies` declaration that the AI's summon rung reads. Those
+/// three were ~90 lines each and differed in nine values. This is those
+/// nine values.
+pub struct SummonSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// The school the cast frame is stamped with. Read by school-gated
+    /// features (the Evoker's Sculpt Spells, the Abjurer's ward) that
+    /// have no business knowing which summon this is.
+    pub school: SpellSchool,
+    /// The slot the spell is written at. Upcasting rides the shared
+    /// `ActionOverride::CastLevel` lane like every other spell; what it
+    /// buys is the higher slot being *spent*, not a bigger minion — see
+    /// the note on `template` about why the stat block is fixed.
+    pub slot_level: u32,
+    /// What appears. A `&'static LazyLock` rather than a
+    /// `&'static CreatureTemplate` because every creature template in
+    /// the engine is lazily built, and the deref happens once, at
+    /// resolution.
+    ///
+    /// One fixed stat block per spell, deliberately. RAW's summons scale
+    /// their hit points and attack count off the slot level, and the
+    /// engine has no channel for "instantiate this template but with 20
+    /// more hit points" — `instantiate_creature` takes a template and
+    /// nothing else. A spell whose minion should be meaningfully bigger
+    /// is a second `SummonSpell` declaration pointing at a second
+    /// template, which is also how RAW's *option tables* (Conjure
+    /// Animals' four CR tiers, the Bestial Spirit's land/sky/water) are
+    /// collapsed here: pick the load-bearing branch and say so.
+    pub template: &'static LazyLock<crate::actors::actor_template::CreatureTemplate>,
+    /// The summon's footprint, which decides what counts as a free tile.
+    pub size: crate::engine::types::Size,
+    /// How many appear. Best-effort: the validator only insists on the
+    /// *first* one fitting, and a cast that finds room for one of two
+    /// wolves still resolves with one wolf rather than refunding the
+    /// slot.
+    pub count: usize,
+    /// How far from the caster to look for free tiles. Sized to the
+    /// spell's RAW range, and widened for large footprints — each spawn
+    /// occupies its anchor, so the second minion needs a wider ring than
+    /// the first.
+    pub search_radius: isize,
+    /// Instance-id band, kept distinct per spell so two summons on one
+    /// board don't collide. Summon *spells* live at 80+; the per-rest
+    /// feature summons live below 80.
+    pub base_instance_id: usize,
+    /// The concentration anchor's display name, or `None` for a summon
+    /// that holds no concentration.
+    ///
+    /// `Some` is the common case and carries two coupled consequences:
+    /// the minions pick up `Condition::Conjured` (so the engine's
+    /// concentration-drop path despawns them rather than merely
+    /// untagging them), and the caster starts concentrating on this
+    /// name. `None` means neither — the minion is permanent for the
+    /// encounter and the caster's concentration stays free for something
+    /// else. Animate Dead is the only `None` today, and RAW agrees:
+    /// nothing about a raised skeleton depends on the necromancer still
+    /// thinking about it.
+    pub concentration: Option<&'static str>,
+}
 
-impl Action for ConjureAnimals {
-    fn holds_concentration(&self) -> bool {
-        true
-    }
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Conjuration)
-    }
+impl Action for SummonSpell {
     fn name(&self) -> &str {
-        "conjure animals"
+        self.display_name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["conjure", "summon"]
+        self.aliases.to_vec()
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(self.school)
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
@@ -14737,8 +14744,14 @@ impl Action for ConjureAnimals {
     fn is_harmful(&self) -> bool {
         false
     }
-    fn deals_damage(&self) -> bool {
-        false
+    // `deals_damage` needs no override: it defaults to `is_harmful()`,
+    // and the summon hurts nobody directly — whatever it does, it does
+    // on its own turns.
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn holds_concentration(&self) -> bool {
+        self.concentration.is_some()
     }
     fn cost(
         &self,
@@ -14748,7 +14761,7 @@ impl Action for ConjureAnimals {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(3)
+        action_and_slot(self.slot_level)
     }
     fn custom_validate_input(
         &self,
@@ -14758,11 +14771,10 @@ impl Action for ConjureAnimals {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Need at least one free Medium slot adjacent to the caster —
-        // the second wolf is best-effort (the spell still resolves with
-        // one conjured ally if only one slot is available).
+        // One free tile of the right footprint is the whole gate. The
+        // rest of the cohort is best-effort by design — see `count`.
         encounter
-            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
+            .find_adjacent_spawn(caster_id, self.size, self.search_radius)
             .is_some()
     }
     fn side_effects(
@@ -14773,29 +14785,51 @@ impl Action for ConjureAnimals {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
-
-        // Two spectral wolves on free adjacent slots (radius 3 — RAW
-        // 30 ft envelope). Shared summon helper handles team lookup,
-        // adjacent-spawn search, instantiate + log chain.
         let spawned = spawn_adjacent_summons(
             encounter,
             caster_id,
-            &WOLF_TEMPLATE,
-            crate::engine::types::Size::Medium,
-            2,
-            3,
-            90,
-            "conjure animals",
+            self.template,
+            self.size,
+            self.count,
+            self.search_radius,
+            self.base_instance_id,
+            self.display_name,
         );
-        if spawned.is_empty() {
-            return Vec::new();
+        // A summon that found no room burns the slot but must not burn
+        // the caster's concentration: anchoring an empty cohort would
+        // drop whatever they were already holding in exchange for
+        // nothing.
+        match self.concentration {
+            Some(anchor) if !spawned.is_empty() => {
+                conjured_summon_concentration_effects(caster_id, &spawned, anchor)
+            }
+            _ => Vec::new(),
         }
-        conjured_summon_concentration_effects(caster_id, &spawned, "Conjure Animals")
     }
 }
 
-pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureAnimals {});
+/// Conjure Animals — 5e level-3 conjuration, concentration, action.
+/// Summons two CR-1/4 wolves on adjacent tiles to the caster, joining
+/// the caster's team. We collapse the RAW "1 CR-2 / 2 CR-1 / 4 CR-1/2
+/// / 8 CR-1/4" option table to the 2-wolf branch since it's the load-
+/// bearing flavor for a level-3 cast and our wolf is already on the
+/// books. Each conjured wolf gets the Conjured condition so dropping
+/// concentration prunes them via the engine's cleanup hook.
+/// Concentration-bound on the caster.
+///
+/// Search radius 3 is RAW's 30 ft envelope on the 2.5 ft grid.
+pub static CONJURE_ANIMALS: SummonSpell = SummonSpell {
+    display_name: "conjure animals",
+    aliases: &["conjure", "summon"],
+    school: SpellSchool::Conjuration,
+    slot_level: 3,
+    template: &crate::actors::creatures::wolves::WOLF_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 2,
+    search_radius: 3,
+    base_instance_id: 90,
+    concentration: Some("Conjure Animals"),
+};
 
 /// Conjure Elemental — 5e level-5 conjuration, concentration, action.
 /// The caster summons a single Large elemental ally. RAW lets the caster
@@ -14809,92 +14843,238 @@ pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureA
 /// lane — Conjure Elemental costs a higher slot for a single
 /// CR-5 Large minion with fire immunity / poison immunity and
 /// resistance to non-magical physical damage. The Conjured-on-drop
-/// despawn path (added in `drop_concentration`) cleans up the
-/// elemental when the caster's concentration ends. Touch range RAW —
-/// the elemental appears in an unoccupied space within 90 ft RAW; we
+/// despawn path cleans up the elemental when the caster's concentration
+/// ends. RAW puts the elemental in an unoccupied space within 90 ft; we
 /// reuse the same adjacent-spawn search the rest of the summon family
-/// uses, search radius widened to 4 to accommodate the Large
-/// footprint.
-pub struct ConjureElemental {}
+/// uses, search radius widened to 4 to accommodate the Large footprint.
+pub static CONJURE_ELEMENTAL: SummonSpell = SummonSpell {
+    display_name: "conjure elemental",
+    aliases: &["conjure-elem", "ce"],
+    school: SpellSchool::Conjuration,
+    slot_level: 5,
+    template: &crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 80,
+    concentration: Some("Conjure Elemental"),
+};
 
-impl Action for ConjureElemental {
-    fn holds_concentration(&self) -> bool {
-        true
-    }
-    fn summons_allies(&self) -> bool {
-        true
-    }
-    fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Conjuration)
-    }
-    fn name(&self) -> &str {
-        "conjure elemental"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["conjure-elem", "ce"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        action_and_slot(5)
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // Need a free Large (4-tile) slot adjacent to the caster.
-        encounter
-            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Large, 4)
-            .is_some()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+// ---------------------------------------------------------------------
+// The Tasha's `summon <type>` family.
+//
+// Eight spells, one declaration each, all riding `SummonSpell`. The
+// stat blocks they call up live together in
+// `actors::creatures::summoned_spirits`, and the module docs there hold
+// the ladder these eight spells are rungs of — read that file to see
+// what a slot level buys.
+//
+// **Why this family rather than more one-off conjurations.** Before it,
+// the engine's whole summon lane was three spells: two wolves at level
+// 3, one fire elemental at level 5, one skeleton at level 3. A caster
+// who wanted a body had one option per slot level and no reason ever to
+// choose differently. These eight give every full caster a summon on
+// every rung from 2 to 6, and — more to the point — give most rungs two
+// summons with opposite shapes, so "should I summon?" becomes "what
+// should I summon?".
+//
+// Instance-id bands run 100..114, two apart, clear of the existing
+// summons (70–72 feature summons, 80 Conjure Elemental, 90–91 Conjure
+// Animals, 99 Animate Dead).
+// ---------------------------------------------------------------------
 
-        // Single Large elemental ally. Shared summon helper handles
-        // team lookup, adjacent-spawn search, instantiate + log.
-        let spawned = spawn_adjacent_summons(
-            encounter,
-            caster_id,
-            &FIRE_ELEMENTAL_TEMPLATE,
-            crate::engine::types::Size::Large,
-            1,
-            4,
-            80,
-            "conjure elemental",
-        );
-        if spawned.is_empty() {
-            return Vec::new();
-        }
-        conjured_summon_concentration_effects(caster_id, &spawned, "Conjure Elemental")
-    }
+/// Summon Beast — 5e level-2 conjuration (TCE), concentration, action.
+/// One Medium Bestial Spirit on a free tile beside the caster.
+///
+/// The cheapest summon in the engine, and the only one a level-3
+/// character can afford. That is the whole design brief: a druid or
+/// ranger whose level-2 slots previously went to Moonbeam or Spike
+/// Growth now has a body to buy with one, and — since Summon Beast
+/// holds concentration like both of those — the choice is genuinely
+/// exclusive rather than additive.
+pub static SUMMON_BEAST: SummonSpell = SummonSpell {
+    display_name: "summon beast",
+    aliases: &["sbeast"],
+    school: SpellSchool::Conjuration,
+    slot_level: 2,
+    template: &crate::actors::creatures::summoned_spirits::BESTIAL_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    // RAW puts the beast in an unoccupied space within 90 ft; the
+    // engine's summon lane looks near the caster, and 3 is the same
+    // envelope Conjure Animals uses for a Medium body.
+    search_radius: 3,
+    base_instance_id: 100,
+    concentration: Some("Summon Beast"),
+};
+
+/// Summon Fey — 5e level-3 conjuration (TCE), concentration, action.
+/// One Medium Fey Spirit, fast and armed with a charming blade.
+///
+/// The melee half of the level-3 pair. Speed 40 and a save-or-Charmed
+/// rider make it a spell about *reaching* something: a Fey Spirit
+/// summoned in the caster's back rank is worth little, one summoned
+/// beside the enemy line takes an attacker out of the fight for a beat
+/// every time it connects.
+pub static SUMMON_FEY: SummonSpell = SummonSpell {
+    display_name: "summon fey",
+    aliases: &["sfey"],
+    school: SpellSchool::Conjuration,
+    slot_level: 3,
+    template: &crate::actors::creatures::summoned_spirits::FEY_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 102,
+    concentration: Some("Summon Fey"),
+};
+
+/// Summon Undead — 5e level-3 necromancy (TCE), concentration, action.
+/// One Medium Undead Spirit that shoots rather than swings.
+///
+/// The ranged half of the level-3 pair, and the reason both are worth
+/// carrying: a caster picks Summon Fey when there is something to close
+/// on and Summon Undead when there is nowhere safe to stand. The one
+/// necromancy spell in the family, which matters to a Necromancy
+/// wizard's school-gated features in a way none of the conjurations do.
+pub static SUMMON_UNDEAD: SummonSpell = SummonSpell {
+    display_name: "summon undead",
+    aliases: &["sundead"],
+    school: SpellSchool::Necromancy,
+    slot_level: 3,
+    template: &crate::actors::creatures::summoned_spirits::UNDEAD_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 104,
+    concentration: Some("Summon Undead"),
+};
+
+/// Summon Aberration — 5e level-4 conjuration (TCE), concentration,
+/// action. One Large Aberrant Spirit firing psychic eye rays.
+///
+/// Level 4 buys the same ranged shape as Summon Undead with half again
+/// the body and a damage type almost nothing resists. It costs a Large
+/// footprint for it: `search_radius` 4 rather than 3, because a 2×2 body
+/// needs a wider ring to find room, and in a tight corridor the spell
+/// may simply refuse to resolve.
+pub static SUMMON_ABERRATION: SummonSpell = SummonSpell {
+    display_name: "summon aberration",
+    aliases: &["saberration"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::summoned_spirits::ABERRANT_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 106,
+    concentration: Some("Summon Aberration"),
+};
+
+/// Summon Elemental — 5e level-4 conjuration (TCE), concentration,
+/// action. One Large Elemental Spirit of air, slamming for thunder.
+///
+/// The melee counterpart to Summon Aberration on the level-4 rung, and
+/// the summon to reach for when the board is already on fire: the
+/// elemental condition-immunity envelope means it walks through the
+/// caster's own Sleet Storm, Stinking Cloud or Cloudkill untouched.
+/// Deliberately *not* a fire spirit — Conjure Elemental one rung up
+/// already summons the Fire Elemental, and a fire branch here would be
+/// a strictly worse version of a spell the same casters carry.
+pub static SUMMON_ELEMENTAL: SummonSpell = SummonSpell {
+    display_name: "summon elemental",
+    aliases: &["selemental"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::summoned_spirits::ELEMENTAL_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 108,
+    concentration: Some("Summon Elemental"),
+};
+
+/// Summon Celestial — 5e level-5 conjuration (TCE), concentration,
+/// action. One Large Celestial Spirit with a radiant bow.
+///
+/// The cleric's and the paladin's only summon, and the only one on the
+/// divine list at all. Both classes fight in the front rank with melee
+/// weapons, so what the spirit adds is not another body in the scrum but
+/// reach: a second attacker that can answer whatever is thirty feet away
+/// killing the wizard. Radiant damage is the second half of the fit —
+/// the undead a cleric spends their day on are worst against it.
+pub static SUMMON_CELESTIAL: SummonSpell = SummonSpell {
+    display_name: "summon celestial",
+    aliases: &["scelestial"],
+    school: SpellSchool::Conjuration,
+    slot_level: 5,
+    template: &crate::actors::creatures::summoned_spirits::CELESTIAL_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 110,
+    concentration: Some("Summon Celestial"),
+};
+
+/// Summon Draconic Spirit — 5e level-5 conjuration (FTD),
+/// concentration, action. One Large Draconic Spirit with a recharging
+/// breath weapon.
+///
+/// The only summon that brings an *area* attack, which makes it the only
+/// one whose value swings round to round: when the breath is up it is a
+/// second Fireball, and when it isn't it is the feeblest attack routine
+/// in the family on a level-5 spell. A caster who summons one has bought
+/// a d6 at the top of each of its turns.
+pub static SUMMON_DRACONIC_SPIRIT: SummonSpell = SummonSpell {
+    display_name: "summon draconic spirit",
+    aliases: &["sdragon"],
+    school: SpellSchool::Conjuration,
+    slot_level: 5,
+    template: &crate::actors::creatures::summoned_spirits::DRACONIC_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 112,
+    concentration: Some("Summon Draconic Spirit"),
+};
+
+/// Summon Fiend — 5e level-6 conjuration (TCE), concentration, action.
+/// One Large Fiendish Spirit, the top of the family's ladder.
+///
+/// AC 17 and ninety hit points behind fire / cold / lightning resistance
+/// make it the one summon that survives being focused, and that is the
+/// purchase: dropped into an enemy back line it buys several rounds of
+/// that back line dealing with it rather than with anyone else. The
+/// usual answer to a summon — drop the area spell on it — mostly doesn't
+/// work.
+pub static SUMMON_FIEND: SummonSpell = SummonSpell {
+    display_name: "summon fiend",
+    aliases: &["sfiend"],
+    school: SpellSchool::Conjuration,
+    slot_level: 6,
+    template: &crate::actors::creatures::summoned_spirits::FIENDISH_SPIRIT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 114,
+    concentration: Some("Summon Fiend"),
+};
+
+/// Every spell in the Tasha's summon family, in ascending slot order.
+/// The list the sweeps read, and the one place a ninth has to be added
+/// for every invariant that holds across the family to cover it.
+pub fn summon_family() -> Vec<&'static SummonSpell> {
+    vec![
+        &SUMMON_BEAST,
+        &SUMMON_FEY,
+        &SUMMON_UNDEAD,
+        &SUMMON_ABERRATION,
+        &SUMMON_ELEMENTAL,
+        &SUMMON_CELESTIAL,
+        &SUMMON_DRACONIC_SPIRIT,
+        &SUMMON_FIEND,
+    ]
 }
-
-pub static CONJURE_ELEMENTAL: LazyLock<ConjureElemental> = LazyLock::new(|| ConjureElemental {});
 
 /// Power Word Pain — 5e level-7 necromancy (XGtE), action,
 /// concentration. Single target within 24 tiles (60 ft); no save, no

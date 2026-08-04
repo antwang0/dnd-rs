@@ -7014,7 +7014,20 @@ mod tests {
             .give_resource(crate::engine::side_effects::Resource::Action);
         let second = try_summon_allies(&e, druid)
             .expect("the slot summon should still be available to a Wildfire druid");
-        assert_eq!(second.action().name(), "conjure animals");
+        // Cheapest slot first, so this is whichever summon on the
+        // druid's list costs the lowest level — Summon Beast at level 2
+        // today, and whatever undercuts it tomorrow. Asserted by cost
+        // rather than by name because the name is the incidental half:
+        // what this leg is pinning is that the rung reached a *slotted*
+        // summon at all after the free one was spent.
+        assert_eq!(
+            crate::engine::side_effects::spell_slot_level(&second.action().cost(
+                &e, druid, None, None, None
+            )),
+            Some(2),
+            "expected the cheapest slotted summon, got {}",
+            second.action().name()
+        );
         for ef in second.execute(&mut e) {
             ef.apply(&mut e);
         }
@@ -11498,12 +11511,23 @@ mod tests {
 
         // (action name, does it take the caster's concentration)
         let expected: &[(&str, bool)] = &[
-            // Summons — three spells anchor their minions to the
-            // caster's concentration, three do not.
+            // Summons. Every spell in the lane anchors its minions to
+            // the caster's concentration except Animate Dead, and every
+            // per-rest *feature* summon does not — see
+            // `spells::SummonSpell::concentration` for why that split is
+            // the design rather than an accident of who wrote what.
             ("conjure animals", true),
             ("conjure elemental", true),
             ("animate objects", true),
             ("animate dead", false),
+            ("summon beast", true),
+            ("summon fey", true),
+            ("summon undead", true),
+            ("summon aberration", true),
+            ("summon elemental", true),
+            ("summon celestial", true),
+            ("summon draconic spirit", true),
+            ("summon fiend", true),
             ("ranger's companion", false),
             ("summon wildfire spirit", false),
             ("tentacle of the deep", false),

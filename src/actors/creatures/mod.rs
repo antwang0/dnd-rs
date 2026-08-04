@@ -260,6 +260,7 @@ pub mod goats;
 pub mod mules;
 pub mod ponies;
 pub mod elks;
+pub mod summoned_spirits;
 
 use crate::actors::actor_template::CreatureTemplate;
 

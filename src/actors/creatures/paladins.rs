@@ -120,6 +120,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the concentration lane — the AI's smite picker steers around it
     // when it's already up.
     actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
+    // lv5 **Summon Celestial** (TCE) — the paladin's only summon, and
+    // the top of their slot table, so it is the most expensive thing a
+    // paladin can do with a turn that isn't a smite. What it buys is the
+    // thing a paladin structurally cannot do: threaten something at
+    // range while staying in the front rank where their auras are worth
+    // having.
+    actions.push(&crate::actions::spells::SUMMON_CELESTIAL);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',

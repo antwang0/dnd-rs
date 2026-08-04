@@ -115,7 +115,13 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Latest cross-school additions: lv3 Animate Dead (necromancy ally
     // spawn) + Spirit Shroud (concentration on-hit cold rider), and the
     // lv8 Holy Aura (concentration save-advantage burst aura).
-    actions.push(&*ANIMATE_DEAD);
+    actions.push(&ANIMATE_DEAD);
+    // lv5 **Summon Celestial** (TCE) — the cleric's only summon, and the
+    // only summon on the divine list at all. The cleric fights in the
+    // front rank with a mace; what the spirit adds is not another body
+    // in the scrum but reach, and radiant damage against exactly the
+    // undead the cleric's kit is otherwise built to turn.
+    actions.push(&crate::actions::spells::SUMMON_CELESTIAL);
     actions.push(&*SPIRIT_SHROUD);
     actions.push(&*HOLY_AURA);
     // Latest druidic-flavored additions for the cleric kit: lv3 Plant

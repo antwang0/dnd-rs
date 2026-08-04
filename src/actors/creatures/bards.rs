@@ -176,6 +176,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // and lv4 Freedom of Movement (ally-buff restraint cleanse).
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    // lv3 **Summon Fey** (TCE) — the bard's one summon, and RAW's own
+    // pick. Fits the chassis better than the number suggests: a Fey
+    // Spirit's charm rider lands on the same axis as Vicious Mockery and
+    // Hypnotic Pattern, so a bard's whole kit points one way, and the
+    // spirit's speed 40 covers the ground a bard would rather not.
+    actions.push(&crate::actions::spells::SUMMON_FEY);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',
