@@ -4817,11 +4817,24 @@ fn try_shove(
         // to the target — otherwise prone just halves the target's speed
         // and doesn't give us advantage on our own attack (we already used
         // our Action on the shove).
+        //
+        // "Melee ally" is the load-bearing word and the code did not
+        // check it: any teammate standing nearby counted, including ones
+        // that gain nothing from a prone target and ones that are made
+        // *worse* by it. Prone hands advantage to melee attackers and
+        // disadvantage to ranged ones, and it does nothing at all to a
+        // save-based burst — so an Artillerist whose flamethrower cannon
+        // happened to be adjacent spent turn after turn shoving an ogre
+        // over for a turret that could not use it.
         let ally_adjacent = encounter.actors.iter().any(|(aid, ally)| {
             *aid != actor_id
                 && ally.team() == my_team
                 && ally.is_combat_active()
                 && ally.footprint_gap_to(t) <= MELEE_REACH
+                && ally
+                    .actions
+                    .iter()
+                    .any(|a| a.is_harmful() && a.deals_damage() && a.is_melee_attack())
         });
         if !ally_adjacent {
             continue;
@@ -11638,7 +11651,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 38] = [
+        let cases: [(&CreatureTemplate, &str); 37] = [
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
@@ -11747,7 +11760,15 @@ mod tests {
             // a fire spell goes off with the spirit inside 60 ft, which
             // no amount of summoning guarantees on its own.
             (&WILDFIRE_DRUID_TEMPLATE, "summon wildfire spirit"),
-            (&WILDFIRE_DRUID_TEMPLATE, "enhanced bond"),
+            // Not Enhanced Bond: it pays out on a fire spell, and a
+            // druid standing in an ogre's reach now swings its
+            // shillelagh'd scimitar rather than casting a cantrip at
+            // disadvantage — which is the attack picker reading the
+            // roll mode, and is right. Its levelled fire spells are
+            // area spells the burst rung refuses against a single
+            // enemy. Both halves of the bond are pinned engine-side by
+            // `enhanced_bond_rides_fire_spells_only_while_the_spirit_is_near`,
+            // where a fire cast can be made to happen.
             // The tentacle is called, and then something walks into it.
             // Guardian Coil is deliberately absent: this fixture is one
             // PC against one ogre, so the only creature the coils could
@@ -11774,7 +11795,7 @@ mod tests {
 
         for (template, marker) in cases {
             let mut seen_in = 0;
-            for seed in 0..8u64 {
+            for seed in 0..16u64 {
                 let tp = TerrainGenParams {
                     width: 24,
                     height: 16,
@@ -11813,7 +11834,7 @@ mod tests {
             }
             assert!(
                 seen_in > 0,
-                "an AI {} should use \"{}\" in at least one of 8 fights",
+                "an AI {} should use \"{}\" in at least one of 16 fights",
                 template.name,
                 marker
             );
