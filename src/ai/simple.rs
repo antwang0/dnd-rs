@@ -7600,6 +7600,92 @@ mod tests {
         );
     }
 
+    /// Every summoned spirit fights when the AI is driving it.
+    ///
+    /// A summon that arrives and then stands there is the worst failure
+    /// mode this family has, and it is completely silent: the spell
+    /// resolves, the body appears, the log looks right, and the spirit
+    /// contributes nothing for the rest of the encounter. Nothing else
+    /// in the suite would catch it — the spawn tests prove the body
+    /// exists, and the AI sweeps drive *casters* rather than the things
+    /// they call up.
+    ///
+    /// So each spirit is put on the board directly, opposite an ogre,
+    /// and driven to the end of the fight. The marker is the spirit's own
+    /// signature action, which is the part that has to survive twenty-odd
+    /// rungs of a ladder written for player characters.
+    ///
+    /// The Draconic Spirit's breath is deliberately not a marker: the
+    /// breath rung wants two clustered enemies and this fixture has one
+    /// ogre. Its recharge wiring is pinned in `summoned_spirits`, and its
+    /// rend is what the fixture can actually show.
+    #[test]
+    fn every_summoned_spirit_fights_when_the_ai_drives_it() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::summoned_spirits::{
+            ABERRANT_SPIRIT_TEMPLATE, BESTIAL_SPIRIT_TEMPLATE, CELESTIAL_SPIRIT_TEMPLATE,
+            DRACONIC_SPIRIT_TEMPLATE, ELEMENTAL_SPIRIT_TEMPLATE, FEY_SPIRIT_TEMPLATE,
+            FIENDISH_SPIRIT_TEMPLATE, UNDEAD_SPIRIT_TEMPLATE,
+        };
+        use crate::actors::actor_template::CreatureTemplate;
+        let cases: &[(&LazyLock<CreatureTemplate>, &str)] = &[
+            (&BESTIAL_SPIRIT_TEMPLATE, "maul"),
+            (&FEY_SPIRIT_TEMPLATE, "fey blade"),
+            (&UNDEAD_SPIRIT_TEMPLATE, "grave bolt"),
+            (&ABERRANT_SPIRIT_TEMPLATE, "eye ray"),
+            (&ELEMENTAL_SPIRIT_TEMPLATE, "elemental slam"),
+            (&CELESTIAL_SPIRIT_TEMPLATE, "radiant bow"),
+            (&DRACONIC_SPIRIT_TEMPLATE, "rend"),
+            (&FIENDISH_SPIRIT_TEMPLATE, "fiendish claws"),
+        ];
+        for (template, marker) in cases {
+            let mut seen_in = 0;
+            for seed in 0..4u64 {
+                let tp = TerrainGenParams {
+                    width: 24,
+                    height: 16,
+                    branch_depth: 0,
+                    branch_prob: 0.0,
+                };
+                let ap = ActorGenParams {
+                    cr_target: 0.0,
+                    n_teams: 0,
+                    pc_template: None,
+                    start_team: 0,
+                };
+                let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+                e.instantiate_creature(template, Coordinate::new(4, 8), 0, 0)
+                    .unwrap_or_else(|_| panic!("{} should instantiate", template.name));
+                e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 8), 1, 0)
+                    .expect("the ogre should instantiate");
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 20_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").contains(marker) {
+                    seen_in += 1;
+                }
+            }
+            assert!(
+                seen_in > 0,
+                "an AI-driven {} never used \"{}\" in 4 fights — it arrived and stood there",
+                template.name,
+                marker
+            );
+        }
+    }
+
     /// Exercise the new spells / creatures in an AI-driven encounter so the
     /// rule changes (Sunbeam / Prayer of Healing / Power Word Heal /
     /// Resurrection in cleric+wizard loadouts; Manticore / Hill Giant /

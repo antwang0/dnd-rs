@@ -11234,6 +11234,15 @@ impl EncounterInstance {
     ///
     /// With no enemy on the board there is nothing to face, and the walk
     /// falls back to plain closest-first.
+    ///
+    /// **Not into the fire.** A tile under a harmful zone — the caster's
+    /// own Web, Spike Growth, Cloudkill — is taken only when the whole
+    /// search finds nothing else, which is why hazard outranks distance
+    /// rather than tie-breaking under it. Standing a body one tile
+    /// further out is close to free; standing it in a Cloudkill costs it
+    /// the fight. `tile_is_hazardous` is the AI's own "is this tile worth
+    /// walking through" predicate, so a summon now declines the same
+    /// ground its summoner's pathfinder does.
     pub fn find_adjacent_spawn(
         &self,
         caster_id: usize,
@@ -11243,12 +11252,6 @@ impl EncounterInstance {
         let caster = self.actors.get(&caster_id)?;
         let loc = caster.location();
         let team = caster.team();
-        let w = get_tiles_from_size(size) as isize;
-        let fits = |anchor: &Coordinate| {
-            (0..w).all(|ox| {
-                (0..w).all(|oy| self.is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy)))
-            })
-        };
         // The nearest hostile footprint, measured from the caster. Read
         // once rather than per candidate tile — which enemy is nearest
         // doesn't change as the search walks outward, only how far the
@@ -11259,15 +11262,45 @@ impl EncounterInstance {
             .filter(|a| a.team() != team && a.is_combat_active())
             .map(|a| a.location())
             .min_by_key(|l| footprint_chebyshev(loc, get_tiles_from_size(caster.size()), *l, 1));
-        let Some(threat) = threat else {
-            return rings_outward(loc, radius).find(fits);
+        self.closest_spawn_facing(loc, size, radius, threat, false)
+            .or_else(|| self.closest_spawn_facing(loc, size, radius, threat, true))
+    }
+
+    /// The half of `find_adjacent_spawn` that actually walks: the
+    /// closest legal anchor for a `size` footprint within `radius` of
+    /// `origin`, ties broken toward `threat`.
+    ///
+    /// Split out so the hazard rule can be expressed as running the walk
+    /// twice — once refusing harmful ground, once accepting it — rather
+    /// than as a sort key, because hazard has to outrank distance and a
+    /// single ring-by-ring walk cannot express that.
+    fn closest_spawn_facing(
+        &self,
+        origin: Coordinate,
+        size: Size,
+        radius: isize,
+        threat: Option<Coordinate>,
+        accept_hazard: bool,
+    ) -> Option<Coordinate> {
+        let w = get_tiles_from_size(size) as isize;
+        let tiles = move |anchor: Coordinate| {
+            (0..w).flat_map(move |ox| {
+                (0..w).map(move |oy| Coordinate::new(anchor.x + ox, anchor.y + oy))
+            })
+        };
+        let usable = |anchor: &Coordinate| {
+            tiles(*anchor).all(|t| self.is_spawnable(t))
+                && (accept_hazard || !tiles(*anchor).any(|t| self.tile_is_hazardous(t)))
         };
         for ring in 1..=radius {
-            if let Some(best) = ring_at(loc, ring)
-                .filter(fits)
-                .min_by_key(|c| footprint_chebyshev(*c, w as usize, threat, 1))
-            {
-                return Some(best);
+            let found = ring_at(origin, ring).filter(usable).min_by_key(|c| {
+                // No enemy on the board means nothing to face, and every
+                // candidate scores 0 — leaving the ring's own row-major
+                // order to decide, deterministically.
+                threat.map_or(0, |t| footprint_chebyshev(*c, w as usize, t, 1))
+            });
+            if found.is_some() {
+                return found;
             }
         }
         None
@@ -40086,6 +40119,55 @@ mod tests {
             anchor.x < e.actors[&wizard].location().x,
             "the summon landed at {anchor}, away from the ogre to the west"
         );
+    }
+
+    /// A summon steps around the caster's own area spell rather than
+    /// landing in it, and takes the hazard only when there is nowhere
+    /// else at all.
+    ///
+    /// Hazard outranks distance here, which is why it is two passes of
+    /// the walk rather than a tie-break inside one: standing a body one
+    /// ring further out is close to free, and standing it inside a
+    /// restraining web costs it the fight. The caster who most wants a
+    /// summon is a caster who has already laid an area spell down, so
+    /// this is the common case rather than a corner one.
+    #[test]
+    fn a_summon_steps_around_the_caster_s_own_web() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+        // A web centred where the summon would otherwise want to be:
+        // east of the wizard, on the side the ogre is on.
+        e.install_zone(restraining_zone(Coordinate::new(13, 10), 2, 13));
+
+        let anchor = e
+            .find_adjacent_spawn(wizard, Size::Medium, 4)
+            .expect("an open arena always has room");
+        assert!(
+            !e.tile_is_hazardous(anchor),
+            "the summon landed at {anchor}, inside the wizard's own web"
+        );
+
+        // With the whole search box under the web there is nothing to
+        // step around, and the summon takes the hazard rather than
+        // refusing — a spell that fizzled because its caster was
+        // standing in a web would be a worse rule than a wolf in a web.
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+        e.install_zone(restraining_zone(Coordinate::new(10, 10), 12, 13));
+        let anchor = e
+            .find_adjacent_spawn(wizard, Size::Medium, 4)
+            .expect("a fully-webbed arena still has to place the body");
+        assert!(e.tile_is_hazardous(anchor));
     }
 
     /// Every spell in the Tasha's summon family resolves: it puts its
