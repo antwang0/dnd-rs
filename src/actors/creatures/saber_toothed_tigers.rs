@@ -39,6 +39,11 @@ pub static SABER_TOOTHED_TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW: when the cat closes at least the clause's distance in a
+        // straight line and then connects with its claws, the hit carries
+        // a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::SABER_TIGER_POUNCE),
         ..CreatureTemplate::defaults()
     }
 });

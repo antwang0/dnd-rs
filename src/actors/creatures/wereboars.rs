@@ -70,6 +70,11 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // envelope as Werewolf / Werebear, approximated as Resistance
         // because we don't track silvered/magical weapon flags.
         damage_modifiers: non_magical_physical_resistances([]),
+        // RAW: when the wereboar closes at least the clause's distance in a
+        // straight line and then connects with its tusks, the hit carries
+        // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::WEREBOAR_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

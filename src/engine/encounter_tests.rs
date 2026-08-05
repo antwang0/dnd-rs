@@ -69648,7 +69648,7 @@ fn every_charge_clause_names_an_attack_its_creature_has() {
         );
     }
     assert!(
-        checked >= 10,
+        checked >= 14,
         "expected the bestiary's charging creatures to be wired up, found {}",
         checked
     );

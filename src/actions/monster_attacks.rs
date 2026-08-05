@@ -470,13 +470,22 @@ pub struct ChargeRider {
     pub knockdown_label: &'static str,
 }
 
-/// Twenty feet, in tiles — the run nearly every charge clause in the
-/// bestiary asks for, at the board's 2.5 ft per tile.
-pub const CHARGE_RUN_TILES: isize = 8;
+/// A charge clause's run-up, converted from the feet the stat block
+/// prints to the tiles the board counts, at 2.5 ft per tile.
+///
+/// The stat blocks do not agree on the distance — twenty feet is the
+/// common case, but the centaur wants thirty, the wereboar fifteen and
+/// the minotaur ten — so each row states its own, and states it in the
+/// units the rulebook uses rather than in a tile count the reader has to
+/// divide back out.
+pub const fn charge_run_tiles(feet: isize) -> isize {
+    feet * 2 / 5
+}
 
-/// Thirty feet: the centaur's longer run-up, and the only clause in the
-/// SRD that asks for more than twenty.
-pub const LONG_CHARGE_RUN_TILES: isize = 12;
+/// Twenty feet, the run nearly every charge clause in the bestiary asks
+/// for. Named because the engine's own tests want to talk about the
+/// common bar without restating the arithmetic.
+pub const CHARGE_RUN_TILES: isize = charge_run_tiles(20);
 
 /// Boar **Charge** (RAW): "extra 3 (1d6) slashing damage. If the target
 /// is a creature, it must succeed on a DC 11 Strength saving throw or be
@@ -560,7 +569,7 @@ pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
     weapon: "pike",
     dice: Dice::new(3, 6),
     damage_type: DamageType::Piercing,
-    run_tiles: LONG_CHARGE_RUN_TILES,
+    run_tiles: charge_run_tiles(30),
     knocks_prone: false,
     label: "centaur charge",
     knockdown_label: "",
@@ -621,6 +630,78 @@ pub const LION_POUNCE: ChargeRider = ChargeRider {
     knocks_prone: true,
     label: "lion pounce",
     knockdown_label: "lion pounce knockdown",
+};
+
+/// Minotaur **Charge** (RAW): "If the minotaur moves at least 10 feet
+/// straight toward a target and then hits it with a gore attack on the
+/// same turn, the target takes an extra 9 (2d8) piercing damage. If the
+/// target is a creature, it must succeed on a DC 14 Strength saving
+/// throw or be pushed up to 10 feet away and knocked prone." The push is
+/// the unmodeled half — the knockdown is what changes the fight, and a
+/// charge row carries one follow-up.
+///
+/// The shortest run-up in the bestiary, which suits the creature: a
+/// minotaur in a labyrinth rarely has twenty feet of corridor to build
+/// up in.
+pub const MINOTAUR_CHARGE: ChargeRider = ChargeRider {
+    weapon: "gore",
+    dice: Dice::new(2, 8),
+    damage_type: DamageType::Piercing,
+    run_tiles: charge_run_tiles(10),
+    knocks_prone: true,
+    label: "minotaur charge",
+    knockdown_label: "minotaur charge knockdown",
+};
+
+/// Wereboar **Charge** (RAW): fifteen feet, extra 7 (2d6) slashing, DC
+/// 13 Strength or prone. Rides the tusks, so a wereboar in humanoid form
+/// swinging its maul charges nobody — which is exactly the distinction
+/// naming the weapon per clause exists to draw.
+pub const WEREBOAR_CHARGE: ChargeRider = ChargeRider {
+    weapon: "wereboar tusks",
+    dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    run_tiles: charge_run_tiles(15),
+    knocks_prone: true,
+    label: "wereboar charge",
+    knockdown_label: "wereboar charge knockdown",
+};
+
+/// Saber-toothed Tiger **Pounce** (RAW): twenty feet, claw attack, DC 14
+/// Strength or prone. The same clause the ordinary tiger and the lion
+/// carry, on a much heavier cat.
+pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
+    weapon: "saber claws",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "saber-toothed pounce",
+    knockdown_label: "saber-toothed pounce knockdown",
+};
+
+/// Mammoth **Trampling Charge** (RAW): twenty feet, gore attack, DC 18
+/// Strength or prone — and then a bonus stomp against a target it
+/// flattens, which is the unmodeled half here as it is on the
+/// triceratops and the warhorse.
+///
+/// This one replaced a bespoke `Action`. The mammoth used to carry a
+/// second, near-duplicate gore called "trampling charge" — same 4d8, a
+/// hand-rolled DC-18 save rider, and a Recharge 5-6 gate standing in for
+/// the movement clause because, as its own comment said, "the engine
+/// can't introspect path geometry at attack time". It can, so the
+/// stand-in is gone: the mammoth has one gore, and the clause fires when
+/// the mammoth has actually thundered twenty feet at somebody. Which is
+/// also stricter than the recharge was — a mammoth standing still could
+/// trample on a lucky d6.
+pub const MAMMOTH_CHARGE: ChargeRider = ChargeRider {
+    weapon: "mammoth gore",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "trampling charge",
+    knockdown_label: "trampling charge knockdown",
 };
 
 /// A vanilla weapon attack: roll d20 + ability mod vs AC, on hit roll
@@ -14048,104 +14129,6 @@ impl Action for MammothStomp {
 }
 
 pub static MAMMOTH_STOMP: LazyLock<MammothStomp> = LazyLock::new(|| MammothStomp {});
-
-/// Mammoth Trampling Charge — STR-based 4d8+STR piercing melee gore
-/// that, on a confirmed hit, knocks the target Prone via the standard
-/// `save_or_condition_rider` chassis. RAW: "If the mammoth moves at
-/// least 20 ft straight toward a target and then hits it with a gore
-/// attack on the same turn, the target must succeed on a DC 18 STR
-/// saving throw or be knocked prone." We collapse the "moved 20 ft
-/// straight" gate to a recharge-style validate (Recharge 5–6 via the
-/// shared `"breath_weapon"`-style key `"trampling_charge"`) so the rider
-/// fires once or twice per fight rather than every Action when the
-/// engine can't introspect path geometry. The Prone install is
-/// permanent (until the target spends movement to stand up via
-/// `StandUp`), opening the door for the standalone `MAMMOTH_STOMP`
-/// follow-up the next round.
-pub struct MammothTramplingCharge {}
-
-impl Action for MammothTramplingCharge {
-    fn name(&self) -> &str {
-        "trampling charge"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["mtcharge", "charge-m"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // Recharge-gated so the high-impact prone rider doesn't fire
-        // every Action. The engine's start-of-turn recharge hook flips
-        // the resource back on automatically (same chassis as the
-        // dragon's breath weapon).
-        actor_has_recharge(encounter, caster_id, "trampling_charge")
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(c) = encounter.actors.get_mut(&caster_id) {
-            c.spend_recharge("trampling_charge");
-        }
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        // Resolve the gore swing first via the shared damage chassis;
-        // returns (effects, damage_dealt) so we can early-return on a
-        // miss (no save-or-prone rider on a no-hit charge).
-        let (mut effects, damage) = weapon_swing_with_damage(
-            encounter,
-            caster_id,
-            target_id,
-            "trampling charge",
-            AbilityScoreType::Strength,
-            Dice::new(4, 8),
-            DamageType::Piercing,
-            true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // DC 18 STR save (RAW) — Prone on fail. The rider is permanent
-        // (until the target stands back up at half-speed cost), so the
-        // `MAMMOTH_STOMP` standalone has a window to follow up.
-        const DC: i32 = 18;
-        save_or_condition_rider(
-            encounter,
-            caster_id,
-            target_id,
-            AbilityScoreType::Strength,
-            DC,
-            Condition::Prone,
-            ConditionTimer::Permanent,
-            "trampling charge: target knocked prone",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static MAMMOTH_TRAMPLING_CHARGE: LazyLock<MammothTramplingCharge> =
-    LazyLock::new(|| MammothTramplingCharge {});
 
 // ─── Dust Mephit ─────────────────────────────────────────────────────
 
