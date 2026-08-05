@@ -447,10 +447,16 @@ pub fn simple_weapon_attack_ranged(
 /// the "did it actually run, and was the run at *this* target" half.
 #[derive(Clone, Copy, Debug)]
 pub struct ChargeRider {
-    /// `display_name` of the attack the clause rides, matched against
-    /// the swing being resolved. A creature with two attacks charges
-    /// with the one RAW names and swings the other normally.
-    pub weapon: &'static str,
+    /// `display_name` of the attack the clause rides, or `None` for a
+    /// clause that rides *any* melee attack.
+    ///
+    /// Almost every clause in the bestiary names one attack — a creature
+    /// with two charges with the one RAW names and swings the other
+    /// normally — but the player-side ones don't: the Cavalier's
+    /// Ferocious Charger fires off "hitting a creature with a weapon
+    /// attack", full stop, and a fighter is carrying whatever the party
+    /// found.
+    pub weapon: Option<&'static str>,
     /// Extra damage on the charging hit. `Dice::new(0, 0)` for the
     /// trampling charges whose whole effect is the knockdown.
     pub dice: Dice,
@@ -468,6 +474,17 @@ pub struct ChargeRider {
     /// Log line for the knockdown half. Ignored when `knocks_prone` is
     /// false.
     pub knockdown_label: &'static str,
+    /// Ledger key for a clause RAW limits to "once on each of your
+    /// turns", or `None` for one that fires on every qualifying swing.
+    ///
+    /// The bestiary's clauses are all the second kind — a boar that
+    /// somehow charges twice has charged twice — but the Cavalier's
+    /// Ferocious Charger is explicit about the limit, and a fighter with
+    /// Extra Attack would otherwise knock a target down twice off one
+    /// run. Shares `ActorInstance`'s once-per-turn ledger with the
+    /// damage riders on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, cleared at
+    /// turn start by `reset_for_new_round`.
+    pub once_per_turn_tag: Option<&'static str>,
 }
 
 /// A charge clause's run-up, converted from the feet the stat block
@@ -491,74 +508,80 @@ pub const CHARGE_RUN_TILES: isize = charge_run_tiles(20);
 /// is a creature, it must succeed on a DC 11 Strength saving throw or be
 /// knocked prone."
 pub const BOAR_CHARGE: ChargeRider = ChargeRider {
-    weapon: "tusks",
+    weapon: Some("tusks"),
     dice: Dice::new(1, 6),
     damage_type: DamageType::Slashing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "boar charge",
     knockdown_label: "boar charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Giant Boar **Charge** (RAW): extra 7 (2d6) slashing, DC 13 Strength
 /// or prone.
 pub const GIANT_BOAR_CHARGE: ChargeRider = ChargeRider {
-    weapon: "giant boar tusks",
+    weapon: Some("giant boar tusks"),
     dice: Dice::new(2, 6),
     damage_type: DamageType::Slashing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "giant boar charge",
     knockdown_label: "giant boar charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Elk **Charge** (RAW): extra 7 (2d6) bludgeoning, DC 13 Strength or
 /// prone.
 pub const ELK_CHARGE: ChargeRider = ChargeRider {
-    weapon: "elk ram",
+    weapon: Some("elk ram"),
     dice: Dice::new(2, 6),
     damage_type: DamageType::Bludgeoning,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "elk charge",
     knockdown_label: "elk charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Goat **Charge** (RAW): extra 2 (1d4) bludgeoning, DC 10 Strength or
 /// prone.
 pub const GOAT_CHARGE: ChargeRider = ChargeRider {
-    weapon: "goat ram",
+    weapon: Some("goat ram"),
     dice: Dice::new(1, 4),
     damage_type: DamageType::Bludgeoning,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "goat charge",
     knockdown_label: "goat charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Giant Goat **Charge** (RAW): extra 5 (2d4) bludgeoning, DC 13
 /// Strength or prone.
 pub const GIANT_GOAT_CHARGE: ChargeRider = ChargeRider {
-    weapon: "giant goat ram",
+    weapon: Some("giant goat ram"),
     dice: Dice::new(2, 4),
     damage_type: DamageType::Bludgeoning,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "giant goat charge",
     knockdown_label: "giant goat charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Unicorn **Charge** (RAW): extra 9 (2d8) piercing, DC 15 Strength or
 /// prone. Rides the horn, which is why the horn and not the hooves is
 /// the limb worth closing distance for.
 pub const UNICORN_CHARGE: ChargeRider = ChargeRider {
-    weapon: "unicorn horn",
+    weapon: Some("unicorn horn"),
     dice: Dice::new(2, 8),
     damage_type: DamageType::Piercing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "unicorn charge",
     knockdown_label: "unicorn charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Centaur **Charge** (RAW): "If the centaur moves at least 30 feet
@@ -566,13 +589,14 @@ pub const UNICORN_CHARGE: ChargeRider = ChargeRider {
 /// same turn, the target takes an extra 10 (3d6) piercing damage." The
 /// one clause in the SRD with a longer run-up and no knockdown.
 pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
-    weapon: "pike",
+    weapon: Some("pike"),
     dice: Dice::new(3, 6),
     damage_type: DamageType::Piercing,
     run_tiles: charge_run_tiles(30),
     knocks_prone: false,
     label: "centaur charge",
     knockdown_label: "",
+    once_per_turn_tag: None,
 };
 
 /// Triceratops **Trampling Charge** (RAW): no extra damage, "that target
@@ -581,26 +605,28 @@ pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
 /// a mid-resolution action-economy grant the damage path has no hook
 /// for.
 pub const TRICERATOPS_CHARGE: ChargeRider = ChargeRider {
-    weapon: "gore",
+    weapon: Some("gore"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Piercing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "trampling charge",
     knockdown_label: "trampling charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Warhorse **Trampling Charge** (RAW): DC 14 Strength or prone, then a
 /// bonus hoof attack against a target it knocks down. Same unmodeled
 /// second half as the triceratops.
 pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
-    weapon: "warhorse hooves",
+    weapon: Some("warhorse hooves"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Bludgeoning,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "warhorse trampling charge",
     knockdown_label: "warhorse trampling charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Tiger **Pounce** (RAW): "If the tiger moves at least 20 feet straight
@@ -609,13 +635,14 @@ pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
 /// knocked prone." The free bite against a flattened target is the
 /// unmodeled half.
 pub const TIGER_POUNCE: ChargeRider = ChargeRider {
-    weapon: "claws",
+    weapon: Some("claws"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Slashing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "tiger pounce",
     knockdown_label: "tiger pounce knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Lion **Pounce** (RAW): identical to the tiger's, on the lion's own
@@ -623,13 +650,14 @@ pub const TIGER_POUNCE: ChargeRider = ChargeRider {
 /// line names the cat, and because the two stat blocks are free to drift
 /// apart the way the boar and the giant boar already have.
 pub const LION_POUNCE: ChargeRider = ChargeRider {
-    weapon: "claws",
+    weapon: Some("claws"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Slashing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "lion pounce",
     knockdown_label: "lion pounce knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Minotaur **Charge** (RAW): "If the minotaur moves at least 10 feet
@@ -644,13 +672,14 @@ pub const LION_POUNCE: ChargeRider = ChargeRider {
 /// minotaur in a labyrinth rarely has twenty feet of corridor to build
 /// up in.
 pub const MINOTAUR_CHARGE: ChargeRider = ChargeRider {
-    weapon: "gore",
+    weapon: Some("gore"),
     dice: Dice::new(2, 8),
     damage_type: DamageType::Piercing,
     run_tiles: charge_run_tiles(10),
     knocks_prone: true,
     label: "minotaur charge",
     knockdown_label: "minotaur charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Wereboar **Charge** (RAW): fifteen feet, extra 7 (2d6) slashing, DC
@@ -658,26 +687,28 @@ pub const MINOTAUR_CHARGE: ChargeRider = ChargeRider {
 /// swinging its maul charges nobody — which is exactly the distinction
 /// naming the weapon per clause exists to draw.
 pub const WEREBOAR_CHARGE: ChargeRider = ChargeRider {
-    weapon: "wereboar tusks",
+    weapon: Some("wereboar tusks"),
     dice: Dice::new(2, 6),
     damage_type: DamageType::Slashing,
     run_tiles: charge_run_tiles(15),
     knocks_prone: true,
     label: "wereboar charge",
     knockdown_label: "wereboar charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Saber-toothed Tiger **Pounce** (RAW): twenty feet, claw attack, DC 14
 /// Strength or prone. The same clause the ordinary tiger and the lion
 /// carry, on a much heavier cat.
 pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
-    weapon: "saber claws",
+    weapon: Some("saber claws"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Slashing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "saber-toothed pounce",
     knockdown_label: "saber-toothed pounce knockdown",
+    once_per_turn_tag: None,
 };
 
 /// Mammoth **Trampling Charge** (RAW): twenty feet, gore attack, DC 18
@@ -695,13 +726,14 @@ pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
 /// also stricter than the recharge was — a mammoth standing still could
 /// trample on a lucky d6.
 pub const MAMMOTH_CHARGE: ChargeRider = ChargeRider {
-    weapon: "mammoth gore",
+    weapon: Some("mammoth gore"),
     dice: Dice::new(0, 0),
     damage_type: DamageType::Piercing,
     run_tiles: CHARGE_RUN_TILES,
     knocks_prone: true,
     label: "trampling charge",
     knockdown_label: "trampling charge knockdown",
+    once_per_turn_tag: None,
 };
 
 /// A vanilla weapon attack: roll d20 + ability mod vs AC, on hit roll

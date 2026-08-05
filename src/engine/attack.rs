@@ -3195,8 +3195,9 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
 ///
 /// Four gates, cheapest first:
 ///   - melee only. Every charge clause in the book is a melee attack.
-///   - the attacker has a charge clause, and this swing is the attack it
-///     names.
+///   - the attacker has a charge clause, this swing is the attack it
+///     names (or the clause names none, and rides any melee swing), and
+///     a once-per-turn clause hasn't already fired this turn.
 ///   - the attacker spent movement of its own this turn. RAW says "if
 ///     the creature *moves*", and a boar shoved twenty feet into a
 ///     bystander by a Thunderwave has not charged anybody.
@@ -3226,7 +3227,14 @@ fn push_charge_rider(
     ) else {
         return 0;
     };
-    let Some(rider) = attacker.charge().filter(|r| r.weapon == p.action_name) else {
+    let Some(rider) = attacker
+        .charge()
+        .filter(|r| r.weapon.is_none_or(|w| w == p.action_name))
+        .filter(|r| {
+            r.once_per_turn_tag
+                .is_none_or(|tag| !attacker.once_per_turn_used(tag))
+        })
+    else {
         return 0;
     };
     if attacker.movement_spent_this_turn() <= 0.0 {
@@ -3241,6 +3249,11 @@ fn push_charge_rider(
         return 0;
     }
 
+    if let Some(tag) = rider.once_per_turn_tag
+        && let Some(a) = encounter.actors.get_mut(&p.caster_id)
+    {
+        a.mark_once_per_turn_used(tag);
+    }
     let rolled = if rider.dice.count > 0 {
         let total = roll_rider(encounter, rider.dice, is_crit);
         encounter.log(format!(

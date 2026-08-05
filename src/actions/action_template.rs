@@ -678,7 +678,7 @@ pub fn weapon_expected_damage_named(
     let caster = encounter.actors.get(&caster_id)?;
     let charge_bonus = caster
         .charge()
-        .filter(|c| c.weapon == weapon_name)
+        .filter(|c| c.weapon.is_none_or(|w| w == weapon_name))
         .filter(|c| caster.straight_run_tiles().is_some_and(|n| n >= c.run_tiles))
         .map(|c| c.dice.average_roll())
         .unwrap_or(0.0);

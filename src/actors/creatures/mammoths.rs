@@ -130,7 +130,7 @@ mod tests {
         assert!(a.find_action("mammoth gore").is_some());
         assert!(a.find_action("mammoth stomp").is_some());
         let charge = a.charge().expect("the mammoth tramples");
-        assert_eq!(charge.weapon, "mammoth gore");
+        assert_eq!(charge.weapon, Some("mammoth gore"));
         assert!(charge.knocks_prone);
     }
 

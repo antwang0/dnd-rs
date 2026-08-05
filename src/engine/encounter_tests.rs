@@ -55658,7 +55658,7 @@ fn once_per_turn_rider_ledger_tags_are_independent() {
     use crate::actions::class_features::{
         ANCESTRAL_PROTECTORS_TAG, ARCANE_JOLT_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG,
         DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG,
-        FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG,
+        FEROCIOUS_CHARGER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG,
         LIGHTNING_LAUNCHER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
         HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
         SNEAK_ATTACK_TAG,
@@ -55668,10 +55668,11 @@ fn once_per_turn_rider_ledger_tags_are_independent() {
     // this test also pins the cohort inventory.
     assert_eq!(
         ONCE_PER_TURN_RIDER_TAGS.len(),
-        18,
+        19,
         "once-per-turn rider tag registry drifted"
     );
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
+    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FEROCIOUS_CHARGER_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ARCANE_JOLT_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&LIGHTNING_LAUNCHER_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&EMPOWERED_ARMS_TAG));
@@ -69630,12 +69631,17 @@ fn every_charge_clause_names_an_attack_its_creature_has() {
             continue;
         };
         checked += 1;
-        assert!(
-            template.actions.iter().any(|a| a.name() == charge.weapon),
-            "{} charges with \"{}\" but has no such attack",
-            template.name,
-            charge.weapon
-        );
+        // A clause that names no weapon rides any melee swing, so there
+        // is nothing to join it against — the player-side riders are all
+        // of that kind.
+        if let Some(weapon) = charge.weapon {
+            assert!(
+                template.actions.iter().any(|a| a.name() == weapon),
+                "{} charges with \"{}\" but has no such attack",
+                template.name,
+                weapon
+            );
+        }
         assert!(
             charge.run_tiles > 0,
             "{}'s charge asks for a run of zero tiles",
@@ -70050,5 +70056,98 @@ fn a_charging_minotaur_values_the_horn_higher_than_it_did_standing_still() {
         estimate(&e, "greataxe"),
         axe,
         "and the axe is unaffected — the clause names the gore"
+    );
+}
+
+/// The Cavalier's Ferocious Charger rides any weapon it happens to be
+/// swinging, and rides it once per turn.
+///
+/// Both halves are the two fields `ChargeRider` grew to carry a
+/// player-side clause. RAW names no limb — "hit it with the attack" —
+/// so `weapon: None` has to admit a swing the clause never mentions.
+/// And a Cavalier has Extra Attack, so without the once-per-turn ledger
+/// key one ten-foot run would flatten the same target twice.
+#[test]
+fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
+    use crate::actions::class_features::FEROCIOUS_CHARGER_TAG;
+    use crate::actions::monster_attacks::SCIMITAR;
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    use crate::engine::side_effects::{MoveActor, Resource};
+
+    let clause = CAVALIER_FIGHTER_TEMPLATE
+        .charge
+        .expect("the Cavalier rides down its foes");
+    assert_eq!(
+        clause.weapon, None,
+        "RAW names no weapon, and a fighter carries what it found"
+    );
+
+    // The swing the Cavalier actually holds is a scimitar, which no
+    // charge clause anywhere names — that is the point of `weapon: None`.
+    let mut knocked = 0;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(30, 12, &[], seed);
+        let cavalier = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(3, 6), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 6), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&cavalier).unwrap().reset_for_new_round();
+        e.actors
+            .get_mut(&cavalier)
+            .unwrap()
+            .consume_resource(Resource::Movement(25.0));
+        MoveActor {
+            actor_id: cavalier,
+            path: (1..=9).map(|n| Coordinate::new(3 + n, 6)).collect(),
+        }
+        .apply(&mut e);
+
+        let swing = |e: &mut EncounterInstance| {
+            let effects = resolve_attack(
+                e,
+                AttackParams {
+                    caster_id: cavalier,
+                    target_id: ogre,
+                    action_name: SCIMITAR.display_name,
+                    attack_bonus: 20,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(e);
+            }
+        };
+        swing(&mut e);
+        assert!(
+            e.actors[&cavalier].once_per_turn_used(FEROCIOUS_CHARGER_TAG),
+            "the first swing after the run should cash the clause"
+        );
+        if e.actors[&ogre].has_condition(Condition::Prone) {
+            knocked += 1;
+        }
+        // Stand the ogre back up and swing again: the ledger is spent,
+        // so nothing should put it down a second time this turn.
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .remove_condition(Condition::Prone);
+        swing(&mut e);
+        assert!(
+            !e.actors[&ogre].has_condition(Condition::Prone),
+            "the clause is once per turn, and Extra Attack must not cash it twice"
+        );
+    }
+    assert!(
+        knocked > 0,
+        "across forty seeds the ogre should have failed the save at least once"
     );
 }

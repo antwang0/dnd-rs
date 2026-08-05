@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
     DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELDRITCH_STRIKE_TAG,
-    ELEGANT_COURTIER_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
+    ELEGANT_COURTIER_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, FEROCIOUS_CHARGER,
+    FEROCIOUS_CHARGER_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
     INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
     MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PROTECTIVE_FIELD_TAG,
     PSIONIC_STRIKE_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG,
@@ -698,6 +699,7 @@ pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     let mut features = FIGHTER_TEMPLATE.features.clone();
     features.insert(UNWAVERING_MARK_TAG);
     features.insert(WARDING_MANEUVER_TAG);
+    features.insert(FEROCIOUS_CHARGER_TAG);
     CreatureTemplate {
         name: "Cavalier",
         glyph: 'V',
@@ -705,6 +707,13 @@ pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         // the build's whole plan is to be the one getting hit.
         constitution: 16,
         features,
+        // 5e Cavalier **Ferocious Charger** — ten straight feet and a
+        // connecting swing knocks the target down, once per turn. The
+        // one player-side rider on the same charge lane the boar and the
+        // minotaur ride, and the reason `ChargeRider::weapon` is an
+        // `Option`: RAW names no limb, because a fighter swings whatever
+        // it is holding.
+        charge: Some(FEROCIOUS_CHARGER),
         ..FIGHTER_TEMPLATE.clone()
     }
 });

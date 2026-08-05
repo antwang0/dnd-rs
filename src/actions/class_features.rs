@@ -2837,6 +2837,7 @@ pub const WAILS_FROM_THE_GRAVE_TAG: &str = "rogue.wails_from_the_grave";
 /// of `SHORT_REST_FEATURES` / `LETHAL_DAMAGE_ABSORBER_FEATURES`.
 pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     SNEAK_ATTACK_TAG,
+    FEROCIOUS_CHARGER_TAG,
     COLOSSUS_SLAYER_TAG,
     FOE_SLAYER_TAG,
     DIVINE_FURY_TAG,
@@ -3327,6 +3328,43 @@ pub const DAMPEN_ELEMENTS_TAG: &str = "cleric.dampen_elements";
 pub const ARCANE_ABJURATION_TAG: &str = "cleric.arcane_abjuration";
 
 pub const UNWAVERING_MARK_TAG: &str = "fighter.unwavering_mark";
+
+/// 5e Cavalier Fighter **Ferocious Charger** (subclass level 10, XGtE):
+/// "you can ride down your foes: if you move at least 10 feet in a
+/// straight line right before attacking a creature and you hit it with
+/// the attack, that target must succeed on a Strength saving throw or be
+/// knocked prone. You can use this feature only once on each of your
+/// turns."
+///
+/// The ledger key for the once-per-turn half. A Cavalier has Extra
+/// Attack, so without it one run would flatten a target twice.
+pub const FEROCIOUS_CHARGER_TAG: &str = "fighter.ferocious_charger";
+
+/// Ferocious Charger as a `ChargeRider` — the same lane the bestiary's
+/// Charge and Pounce clauses ride.
+///
+/// The two player-facing differences from a boar's are exactly the two
+/// fields the struct grew to hold them. `weapon: None`, because RAW says
+/// "hit it with the attack" rather than naming a limb, and a fighter is
+/// carrying whatever the party found. And a once-per-turn ledger key,
+/// because RAW says so and Extra Attack would otherwise cash the same
+/// run twice.
+///
+/// No bonus damage: RAW's clause is knockdown only. Ships on the CR-1
+/// Cavalier chassis above its strict lv10 gate for the same reason every
+/// other subclass template here runs above its own — class templates
+/// target a balanced playable level, not lockstep PHB progression.
+pub const FEROCIOUS_CHARGER: crate::actions::monster_attacks::ChargeRider =
+    crate::actions::monster_attacks::ChargeRider {
+        weapon: None,
+        dice: Dice::new(0, 0),
+        damage_type: DamageType::Bludgeoning,
+        run_tiles: crate::actions::monster_attacks::charge_run_tiles(10),
+        knocks_prone: true,
+        label: "ferocious charger",
+        knockdown_label: "ferocious charger knockdown",
+        once_per_turn_tag: Some(FEROCIOUS_CHARGER_TAG),
+    };
 
 /// 5e Fighter **Cavalier** subclass — **Warding Maneuver** (level 7,
 /// XGtE). Reactive damage clamp: when the cavalier or a creature within
