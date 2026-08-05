@@ -30167,83 +30167,163 @@ fn divine_strike_primes_caster_and_consumes_feature() {
     );
 }
 
-/// Trip Attack (Fighter): bonus-action prime applies the
-/// TripAttacking condition and consumes the once-per-rest feature.
+/// Every self-priming Battle Master maneuver installs its own prime
+/// condition and spends exactly one superiority die.
+///
+/// One table where there used to be eight copy-pasted tests — trip,
+/// menacing, disarming, pushing, goading, precision, sweeping and
+/// distracting each had a fifteen-line fixture that differed only in
+/// which `ManeuverPrime` static it named. The prime struct already
+/// carries its own tag and prime condition, so the table doesn't even
+/// restate them: adding a ninth maneuver to `SELF_PRIMING_MANEUVERS`
+/// is one line, and the shape it has to satisfy is written once.
+///
+/// The die count is the half that copy-paste could not have caught.
+/// Each of the eight old tests asserted the maneuver was *unavailable*
+/// afterwards, which was true when every maneuver had a private charge
+/// of one and is false now that they share a pool of four — the
+/// assertion that passed was the one describing the bug.
 #[test]
-fn trip_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{TRIP_ATTACK, TRIP_ATTACK_TAG};
+fn every_maneuver_prime_installs_its_condition_and_spends_one_die() {
+    use crate::actions::class_features::{
+        DISARMING_ATTACK, DISTRACTING_ATTACK, GOADING_ATTACK, MENACING_ATTACK, ManeuverPrime,
+        PRECISION_ATTACK, PUSHING_ATTACK, SWEEPING_ATTACK, TRIP_ATTACK,
+    };
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(TRIP_ATTACK_TAG));
-    let effects = TRIP_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
+
+    let self_priming: [&ManeuverPrime; 8] = [
+        &TRIP_ATTACK,
+        &MENACING_ATTACK,
+        &DISARMING_ATTACK,
+        &PUSHING_ATTACK,
+        &GOADING_ATTACK,
+        &PRECISION_ATTACK,
+        &SWEEPING_ATTACK,
+        &DISTRACTING_ATTACK,
+    ];
+
+    for prime in self_priming {
+        // A fresh fighter per maneuver: the point is one prime out of a
+        // full pool, not eight primes out of one pool (which would run
+        // dry after the fourth and prove nothing about the fifth).
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&f].feature_charges_remaining(prime.tag);
+        assert!(
+            before > 0,
+            "{} starts with no superiority die to spend",
+            prime.name
+        );
+        for ef in prime.side_effects(&mut e, f, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&f].has_condition(prime.prime_condition),
+            "{} did not install {:?}",
+            prime.name,
+            prime.prime_condition
+        );
+        assert_eq!(
+            e.actors[&f].feature_charges_remaining(prime.tag),
+            before - 1,
+            "{} should cost exactly one superiority die",
+            prime.name
+        );
     }
-    assert!(e.actors[&f].has_condition(Condition::TripAttacking));
-    assert!(!e.actors[&f].feature_available(TRIP_ATTACK_TAG));
 }
 
-/// Menacing Attack (Fighter Battle Master): bonus-action prime
-/// applies the MenacingAttacking condition and consumes the
-/// once-per-rest feature. Mirrors the Trip Attack shape.
+/// Spending one maneuver spends the pool, so every *other* maneuver the
+/// fighter knows reports one fewer die too.
+///
+/// This is the whole reason the pool exists, and it is invisible from
+/// any single-maneuver test: fourteen tags each reporting "I still have
+/// a charge" after thirteen maneuvers have fired is exactly the shape
+/// the old per-tag charges had.
 #[test]
-fn menacing_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{MENACING_ATTACK, MENACING_ATTACK_TAG};
+fn one_maneuver_spends_the_die_every_other_maneuver_was_counting_on() {
+    use crate::actions::class_features::{BATTLE_MASTER_MANEUVERS, TRIP_ATTACK, TRIP_ATTACK_TAG};
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
     let f = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    assert!(e.actors[&f].feature_available(MENACING_ATTACK_TAG));
-    let effects = MENACING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
+    let before: Vec<u32> = BATTLE_MASTER_MANEUVERS
+        .iter()
+        .map(|&tag| e.actors[&f].feature_charges_remaining(tag))
+        .collect();
+    assert!(
+        before.iter().all(|&n| n == before[0] && n > 0),
+        "every maneuver should read the same non-empty pool: {:?}",
+        before
+    );
+    for ef in TRIP_ATTACK.side_effects(&mut e, f, None, None, None) {
         ef.apply(&mut e);
     }
-    assert!(e.actors[&f].has_condition(Condition::MenacingAttacking));
-    assert!(!e.actors[&f].feature_available(MENACING_ATTACK_TAG));
+    for (&tag, was) in BATTLE_MASTER_MANEUVERS.iter().zip(before) {
+        assert_eq!(
+            e.actors[&f].feature_charges_remaining(tag),
+            was - 1,
+            "{} kept a die the trip attack already spent",
+            tag
+        );
+    }
+    assert_ne!(
+        TRIP_ATTACK_TAG, "",
+        "tag const is referenced so a rename reaches this test"
+    );
 }
 
-/// Disarming Attack (Fighter Battle Master): bonus-action prime
-/// applies the DisarmingAttacking condition and consumes the
-/// once-per-rest feature.
+/// The pool is four dice deep and comes back whole on a short rest.
+///
+/// The count is the load-bearing half. A fighter who could fire every
+/// maneuver it knows once per rest had fourteen uses of a four-use
+/// subclass feature, and no per-maneuver test could see it: each one
+/// only ever looked at its own tag.
 #[test]
-fn disarming_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{DISARMING_ATTACK, DISARMING_ATTACK_TAG};
+fn the_superiority_pool_is_four_dice_and_refreshes_on_a_short_rest() {
+    use crate::actions::class_features::{
+        BATTLE_MASTER_MANEUVERS, SUPERIORITY_DICE_TAG, TRIP_ATTACK_TAG, feature_charges,
+    };
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
     let mut e = ei_with_terrain(10, 10, &[]);
     let f = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    assert!(e.actors[&f].feature_available(DISARMING_ATTACK_TAG));
-    let effects = DISARMING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(e.actors[&f].has_condition(Condition::DisarmingAttacking));
-    assert!(!e.actors[&f].feature_available(DISARMING_ATTACK_TAG));
-}
+    assert_eq!(feature_charges(SUPERIORITY_DICE_TAG), 4, "RAW: four dice");
+    assert_eq!(e.actors[&f].feature_charges_remaining(TRIP_ATTACK_TAG), 4);
 
-/// Pushing Attack (Fighter Battle Master): bonus-action prime
-/// applies the PushingAttacking condition and consumes the
-/// once-per-rest feature.
-#[test]
-fn pushing_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{PUSHING_ATTACK, PUSHING_ATTACK_TAG};
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(PUSHING_ATTACK_TAG));
-    let effects = PUSHING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
+    // Spend the pool dry through four *different* maneuvers, then check
+    // the fifth has nothing left — the collapse the old per-tag charges
+    // could not express.
+    let actor = e.actors.get_mut(&f).unwrap();
+    let mut spent = 0;
+    for &tag in BATTLE_MASTER_MANEUVERS {
+        if actor.spend_feature(tag) {
+            spent += 1;
+        }
     }
-    assert!(e.actors[&f].has_condition(Condition::PushingAttacking));
-    assert!(!e.actors[&f].feature_available(PUSHING_ATTACK_TAG));
+    assert_eq!(spent, 4, "the pool should have run dry after four maneuvers");
+    for &tag in BATTLE_MASTER_MANEUVERS {
+        assert!(
+            !actor.feature_available(tag),
+            "{} still available with an empty pool",
+            tag
+        );
+    }
+
+    let mut roller = FastRandRoller::with_seed(1);
+    e.actors.get_mut(&f).unwrap().short_rest(&mut roller);
+    for &tag in BATTLE_MASTER_MANEUVERS {
+        assert_eq!(
+            e.actors[&f].feature_charges_remaining(tag),
+            4,
+            "{} should read a full pool after a short rest",
+            tag
+        );
+    }
 }
 
 /// Disarmed condition imposes disadvantage on the holder's attack
@@ -30253,26 +30333,6 @@ fn pushing_attack_primes_caster_and_consumes_feature() {
 #[test]
 fn disarmed_imposes_attacker_disadvantage() {
     assert!(Condition::Disarmed.imposes_attacker_disadvantage());
-}
-
-/// Precision Attack (Fighter Battle Master): bonus-action prime
-/// applies the PrecisionAttacking condition and consumes the
-/// once-per-rest feature. Mirrors the Trip Attack shape.
-#[test]
-fn precision_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{PRECISION_ATTACK, PRECISION_ATTACK_TAG};
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(PRECISION_ATTACK_TAG));
-    let effects = PRECISION_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(e.actors[&f].has_condition(Condition::PrecisionAttacking));
-    assert!(!e.actors[&f].feature_available(PRECISION_ATTACK_TAG));
 }
 
 /// Precision Attack's +4 attack-roll bonus flows through the
@@ -30324,26 +30384,6 @@ fn precision_attack_consumed_on_attack() {
     );
 }
 
-/// Sweeping Attack (Fighter Battle Master): bonus-action prime
-/// applies the SweepingAttacking condition and consumes the
-/// once-per-rest feature. Mirrors the Trip Attack shape.
-#[test]
-fn sweeping_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{SWEEPING_ATTACK, SWEEPING_ATTACK_TAG};
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(SWEEPING_ATTACK_TAG));
-    let effects = SWEEPING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(e.actors[&f].has_condition(Condition::SweepingAttacking));
-    assert!(!e.actors[&f].feature_available(SWEEPING_ATTACK_TAG));
-}
-
 /// Feinting Attack (Fighter Battle Master): bonus-action targeting an
 /// enemy in melee reach. The fighter installs a self-help-grant
 /// against the feinted target so the next attack vs that target gets
@@ -30360,7 +30400,8 @@ fn feinting_attack_grants_self_advantage_and_consumes_feature() {
     let g = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
         .unwrap();
-    assert!(e.actors[&f].feature_available(FEINTING_ATTACK_TAG));
+    let dice_before = e.actors[&f].feature_charges_remaining(FEINTING_ATTACK_TAG);
+    assert!(dice_before > 0);
     let tv = vec![g];
     let effects = FEINTING_ATTACK.side_effects(&mut e, f, Some(&tv), None, None);
     for ef in effects {
@@ -30370,7 +30411,11 @@ fn feinting_attack_grants_self_advantage_and_consumes_feature() {
         e.actors[&f].help_grant(g),
         "feint should install a self-help-grant against the feinted enemy"
     );
-    assert!(!e.actors[&f].feature_available(FEINTING_ATTACK_TAG));
+    assert_eq!(
+        e.actors[&f].feature_charges_remaining(FEINTING_ATTACK_TAG),
+        dice_before - 1,
+        "the feint should cost one superiority die"
+    );
     // The follow-up attack pops the grant via consume_help_for.
     let mode = e.attack_mode_with_riders(f, g, true);
     assert_eq!(
@@ -30575,73 +30620,6 @@ fn pushing_attack_displaces_target_on_failed_save() {
     );
 }
 
-/// Battle Master maneuvers all refresh on a short rest, mirroring
-/// the RAW superiority-die pool. Verifies that taking a short rest
-/// repopulates each maneuver flag after they were spent.
-#[test]
-fn battle_master_maneuvers_refresh_on_short_rest() {
-    use crate::actions::class_features::{
-        DISARMING_ATTACK_TAG, GOADING_ATTACK_TAG, MENACING_ATTACK_TAG, PUSHING_ATTACK_TAG,
-        TRIP_ATTACK_TAG,
-    };
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::engine::dice::FastRandRoller;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    // Spend every maneuver charge.
-    let actor = e.actors.get_mut(&f).unwrap();
-    for tag in [
-        TRIP_ATTACK_TAG,
-        MENACING_ATTACK_TAG,
-        DISARMING_ATTACK_TAG,
-        PUSHING_ATTACK_TAG,
-        GOADING_ATTACK_TAG,
-        crate::actions::class_features::DISTRACTING_ATTACK_TAG,
-    ] {
-        actor.spend_feature(tag);
-        assert!(!actor.feature_available(tag), "{} should be spent", tag);
-    }
-    // Short rest — superiority dice refresh per RAW.
-    let mut roller = FastRandRoller::with_seed(1);
-    e.actors.get_mut(&f).unwrap().short_rest(&mut roller);
-    let actor = &e.actors[&f];
-    for tag in [
-        TRIP_ATTACK_TAG,
-        MENACING_ATTACK_TAG,
-        DISARMING_ATTACK_TAG,
-        PUSHING_ATTACK_TAG,
-        GOADING_ATTACK_TAG,
-        crate::actions::class_features::DISTRACTING_ATTACK_TAG,
-    ] {
-        assert!(
-            actor.feature_available(tag),
-            "{} should refresh on short rest",
-            tag
-        );
-    }
-}
-
-/// Goading Attack primes GoadingAttacking and consumes the once-
-/// per-rest feature. Mirrors the Trip Attack / Menacing Attack tests.
-#[test]
-fn goading_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{GOADING_ATTACK, GOADING_ATTACK_TAG};
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(GOADING_ATTACK_TAG));
-    let effects = GOADING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(e.actors[&f].has_condition(Condition::GoadingAttacking));
-    assert!(!e.actors[&f].feature_available(GOADING_ATTACK_TAG));
-}
-
 /// Goaded condition + Goaded back-link force disadvantage on attacks
 /// against anyone other than the goader. Verifies the
 /// `compute_attack_mode` clause and the link auto-clear when the
@@ -30687,26 +30665,6 @@ fn goaded_attack_mode_imposes_disadvantage_on_off_target() {
         .unwrap()
         .remove_condition(Condition::Goaded);
     assert!(e.actors[&goblin].linked_by(Condition::Goaded).is_none());
-}
-
-/// Distracting Strike primes DistractingAttacking on the fighter and
-/// consumes the once-per-rest feature. Mirrors the Goading Attack
-/// shape — bonus-action prime, no-stack gate on the prime condition.
-#[test]
-fn distracting_attack_primes_caster_and_consumes_feature() {
-    use crate::actions::class_features::{DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG};
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    assert!(e.actors[&f].feature_available(DISTRACTING_ATTACK_TAG));
-    let effects = DISTRACTING_ATTACK.side_effects(&mut e, f, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(e.actors[&f].has_condition(Condition::DistractingAttacking));
-    assert!(!e.actors[&f].feature_available(DISTRACTING_ATTACK_TAG));
 }
 
 /// Distracting Strike primed + a melee swing that lands tags the
@@ -36123,10 +36081,11 @@ fn parry_reduces_melee_damage_and_consumes_charge() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
         .unwrap();
     assert!(e.actors[&fighter].has_parry());
-    assert!(e.actors[&fighter].feature_available(PARRY_TAG));
+    let dice_before = e.actors[&fighter].feature_charges_remaining(PARRY_TAG);
+    assert!(dice_before > 0);
     // Search until we find a hit — Parry should fire on the first
-    // one that deals damage, consuming both the reaction and the
-    // per-rest charge.
+    // one that deals damage, consuming both the reaction and one
+    // superiority die.
     let mut fired = false;
     for _ in 0..200 {
         e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
@@ -36159,9 +36118,10 @@ fn parry_reduces_melee_damage_and_consumes_charge() {
                 !e.actors[&fighter].has_reaction(),
                 "Parry should consume the fighter's reaction"
             );
-            assert!(
-                !e.actors[&fighter].feature_available(PARRY_TAG),
-                "Parry should spend the per-rest charge"
+            assert_eq!(
+                e.actors[&fighter].feature_charges_remaining(PARRY_TAG),
+                dice_before - 1,
+                "Parry should spend exactly one superiority die"
             );
             break;
         }
@@ -36220,9 +36180,11 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
             );
         }
     }
-    // Now spend the charge manually and verify Parry no longer
-    // fires on subsequent melee hits (the charge gate holds).
-    e.actors.get_mut(&fighter).unwrap().spend_feature(PARRY_TAG);
+    // Now drain the superiority pool and verify Parry no longer fires
+    // on subsequent melee hits (the charge gate holds). Draining, not
+    // spending once: Parry shares its dice with thirteen other
+    // maneuvers, so one spend leaves three.
+    while e.actors.get_mut(&fighter).unwrap().spend_feature(PARRY_TAG) {}
     assert!(!e.actors[&fighter].feature_available(PARRY_TAG));
     for _ in 0..80 {
         e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
@@ -36250,7 +36212,7 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
         if e.actors[&fighter].hitpoints() < starting_hp {
             assert!(
                 e.actors[&fighter].has_reaction(),
-                "Parry must not fire when the per-rest charge is spent"
+                "Parry must not fire with an empty superiority pool"
             );
         }
     }
@@ -36273,7 +36235,8 @@ fn riposte_fires_on_melee_miss_and_consumes_charge() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
         .unwrap();
     assert!(e.actors[&fighter].has_riposte());
-    assert!(e.actors[&fighter].feature_available(RIPOSTE_TAG));
+    let dice_before = e.actors[&fighter].feature_charges_remaining(RIPOSTE_TAG);
+    assert!(dice_before > 0);
     // Force a very high AC on the goblin so the fighter's counter-
     // attack has meaning, and force the goblin's attack to fail so
     // Riposte's miss branch fires. Use a low attack bonus (0)
@@ -36300,9 +36263,10 @@ fn riposte_fires_on_melee_miss_and_consumes_charge() {
         );
         if !e.actors[&fighter].has_reaction() {
             fired = true;
-            assert!(
-                !e.actors[&fighter].feature_available(RIPOSTE_TAG),
-                "Riposte should spend the per-rest charge"
+            assert_eq!(
+                e.actors[&fighter].feature_charges_remaining(RIPOSTE_TAG),
+                dice_before - 1,
+                "Riposte should spend exactly one superiority die"
             );
             break;
         }
@@ -38634,14 +38598,19 @@ fn rally_grants_ally_temp_hp_and_consumes_feature() {
     let ally = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
         .unwrap();
-    assert!(e.actors[&f].feature_available(RALLY_TAG));
+    let dice_before = e.actors[&f].feature_charges_remaining(RALLY_TAG);
+    assert!(dice_before > 0);
     assert_eq!(e.actors[&ally].temp_hp(), 0);
     let effects = RALLY.execute(&mut e, f, Some(&vec![ally]), None, None);
     for ef in effects {
         ef.apply(&mut e);
     }
     assert!(e.actors[&ally].temp_hp() > 0, "ally should gain temp HP");
-    assert!(!e.actors[&f].feature_available(RALLY_TAG), "feature consumed");
+    assert_eq!(
+        e.actors[&f].feature_charges_remaining(RALLY_TAG),
+        dice_before - 1,
+        "one superiority die consumed"
+    );
 }
 
 /// Rally must reject an enemy as the target — RAW: friendly only.
@@ -38690,12 +38659,16 @@ fn lunging_attack_extends_melee_reach_by_one_tile() {
         "scimitar should not reach 2-tile-gap target by default"
     );
     // Prime the lunge.
+    let dice_before = e.actors[&f].feature_charges_remaining(LUNGING_ATTACK_TAG);
     let effects = LUNGING_ATTACK.side_effects(&mut e, f, None, None, None);
     for ef in effects {
         ef.apply(&mut e);
     }
     assert!(e.actors[&f].has_condition(Condition::LungingAttacking));
-    assert!(!e.actors[&f].feature_available(LUNGING_ATTACK_TAG));
+    assert_eq!(
+        e.actors[&f].feature_charges_remaining(LUNGING_ATTACK_TAG),
+        dice_before - 1
+    );
     // Now the swing should reach.
     assert!(
         SCIMITAR.validate_input(&e, f, Some(&tv), None, None),
@@ -38756,11 +38729,15 @@ fn commanders_strike_makes_the_ally_swing_now() {
         .get_mut(&ally)
         .unwrap()
         .consume_resource(crate::engine::side_effects::Resource::Reaction);
-    assert!(e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
+    let dice_before = e.actors[&f].feature_charges_remaining(COMMANDERS_STRIKE_TAG);
+    assert!(dice_before > 0);
     for ef in COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None) {
         ef.apply(&mut e);
     }
-    assert!(!e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
+    assert_eq!(
+        e.actors[&f].feature_charges_remaining(COMMANDERS_STRIKE_TAG),
+        dice_before - 1
+    );
     let log = e.messages().join("\n");
     assert!(
         log.contains("at Fighter 0's command"),
@@ -53888,12 +53865,14 @@ fn parry_clamps_melee_spell_attacks() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
     assert!(e.actors[&fighter].has_parry());
-    assert!(e.actors[&fighter].feature_available(PARRY_TAG));
+    let dice_before = e.actors[&fighter].feature_charges_remaining(PARRY_TAG);
+    assert!(dice_before > 0);
     let reduced = apply_reactive_damage_clamps(&mut e, wizard, fighter, 20, true, true, DamageType::Slashing);
     assert!(reduced < 20, "parry clamps a melee spell attack");
-    assert!(
-        !e.actors[&fighter].feature_available(PARRY_TAG),
-        "the clamp must burn the parry charge"
+    assert_eq!(
+        e.actors[&fighter].feature_charges_remaining(PARRY_TAG),
+        dice_before - 1,
+        "the clamp must burn one superiority die"
     );
     assert!(!e.actors[&fighter].can_consume_resource(Resource::Reaction));
 }
@@ -64626,8 +64605,8 @@ fn charmed_creature_does_not_opportunity_attack_its_charmer() {
 /// their charmer — but the purely defensive reactions that share its
 /// eligibility gate (Uncanny Dodge, Deflect Missiles, Parry) stay
 /// available, because RAW forbids attacking the charmer, not
-/// surviving them. Pins the charge, which is the observable the
-/// riposte spends.
+/// surviving them. Pins the superiority die, which is the observable
+/// the riposte spends.
 #[test]
 fn charmed_fighter_does_not_riposte_its_charmer() {
     use crate::actions::class_features::RIPOSTE_TAG;
@@ -64654,9 +64633,10 @@ fn charmed_fighter_does_not_riposte_its_charmer() {
                 .unwrap()
                 .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
         }
-        assert!(e.actors[&fighter].feature_available(RIPOSTE_TAG));
+        let before = e.actors[&fighter].feature_charges_remaining(RIPOSTE_TAG);
+        assert!(before > 0);
         crate::engine::attack::try_fire_riposte(&mut e, fighter, attacker);
-        !e.actors[&fighter].feature_available(RIPOSTE_TAG)
+        e.actors[&fighter].feature_charges_remaining(RIPOSTE_TAG) < before
     };
     assert!(charge_spent(false), "the baseline riposte fires");
     assert!(

@@ -9672,12 +9672,14 @@ mod tests {
             .unwrap();
         // Burn the template-level heal features (Second Wind, Rally) so
         // the consumable lane is the only heal left, then drop the
-        // fighter below 50% so the heal pipeline triggers.
+        // fighter below 50% so the heal pipeline triggers. Rally spends
+        // from the shared superiority pool, so it takes the whole pool
+        // to close that lane rather than one charge.
         {
             use crate::actions::class_features::RALLY_TAG;
             let a = e.actors.get_mut(&fighter).unwrap();
             assert!(a.spend_feature(SECOND_WIND_TAG));
-            a.spend_feature(RALLY_TAG);
+            while a.spend_feature(RALLY_TAG) {}
             a.pickup_item(&POTION_OF_HEALING);
             let max = a.max_hitpoints();
             a.take_damage(max - 1);
@@ -9715,7 +9717,9 @@ mod tests {
         {
             let a = e.actors.get_mut(&fighter).unwrap();
             assert!(a.spend_feature(SECOND_WIND_TAG));
-            a.spend_feature(RALLY_TAG);
+            // Rally draws on the superiority pool — drain it, not one
+            // charge of it, or the fighter still has a heal in hand.
+            while a.spend_feature(RALLY_TAG) {}
             a.pickup_item(&SCROLL_OF_AID);
             let max = a.max_hitpoints();
             a.take_damage(max - 1);

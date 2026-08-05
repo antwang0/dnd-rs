@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 use crate::actions::class_features::{
-    BARDIC_INSPIRATION_TAG, BATTLE_MASTER_MANEUVERS, FONT_OF_INSPIRATION_TAG,
-    LETHAL_DAMAGE_ABSORBER_FEATURES, SHORT_REST_FEATURES, SORCEROUS_RESTORATION_TAG,
+    BARDIC_INSPIRATION_TAG, FONT_OF_INSPIRATION_TAG, LETHAL_DAMAGE_ABSORBER_FEATURES,
+    SHORT_REST_FEATURES, SORCEROUS_RESTORATION_TAG,
 };
 
 /// Conditions whose RAW duration clause is bounded by the temporary hit
@@ -5438,7 +5438,12 @@ impl ActorInstance {
         let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
         self.heal(heal);
 
-        for &tag in SHORT_REST_FEATURES.iter().chain(BATTLE_MASTER_MANEUVERS.iter()) {
+        // The Battle Master maneuvers used to be chained on here as a
+        // second registry. They aren't any more: they spend from
+        // `SUPERIORITY_DICE_TAG`, which is a row on `SHORT_REST_FEATURES`
+        // like any other feature, so the one refill below restores the
+        // whole suite.
+        for &tag in SHORT_REST_FEATURES.iter() {
             // Read through the `has_passive_feature` accessor rather than
             // the private `features_max` set directly — same lane the
             // Sorcerous Restoration / Tiger Totem / Fast Movement sites
@@ -7925,15 +7930,53 @@ impl ActorInstance {
         self.feature_charges_remaining(tag) > 0
     }
 
+    /// Which counter in `features_remaining` / `features_max` actually
+    /// backs `tag` for *this* actor.
+    ///
+    /// Almost always `tag` itself. The exception is a member of a shared
+    /// pool (`class_features::SHARED_FEATURE_POOLS` — the Battle Master
+    /// maneuvers and their superiority dice today): if this actor also
+    /// carries the pool tag, every read and write for the member is
+    /// redirected onto the pool, so fourteen maneuvers spend from one
+    /// count of four rather than from fourteen counts of one.
+    ///
+    /// The `features_max.contains_key(pool)` guard is what makes the
+    /// redirect opt-in per actor rather than per tag. A chassis that
+    /// picks up a maneuver without the pool — a monster given Trip
+    /// Attack, a test fixture grafting one on — keeps the plain per-tag
+    /// charge it would have had before pools existed, instead of
+    /// reading a counter it does not own and finding the feature
+    /// permanently unusable. Shipping a maneuver without its pool is
+    /// still a mistake, just a loud one: `every_pool_member_ships_with_its_pool`
+    /// fails on it.
+    fn charge_counter_for(&self, tag: &'static str) -> &'static str {
+        match crate::actions::class_features::shared_pool_for(tag) {
+            Some(pool) if self.features_max.contains_key(pool) => pool,
+            _ => tag,
+        }
+    }
+
     /// How many charges of `tag` are left. `0` covers both "spent" and
     /// "never had it", which is what every caller wants — the two are
     /// distinguished by `has_passive_feature`.
+    ///
+    /// For a shared-pool member this reports the *pool's* remaining
+    /// count, so a fighter who has spent three superiority dice reads 1
+    /// through every maneuver they know rather than 1 through the one
+    /// they last used. The `features_max` gate keeps "never had it"
+    /// answering 0: knowing the pool is not knowing the maneuver.
     ///
     /// Public because the multi-charge features are exactly the ones
     /// whose tests need to see the pool draining a charge at a time
     /// rather than flipping a bit.
     pub fn feature_charges_remaining(&self, tag: &'static str) -> u32 {
-        self.features_remaining.get(tag).copied().unwrap_or(0)
+        if !self.features_max.contains_key(tag) {
+            return 0;
+        }
+        self.features_remaining
+            .get(self.charge_counter_for(tag))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Spend one charge of `tag`. Returns `true` if a charge was
@@ -7941,8 +7984,16 @@ impl ActorInstance {
     /// `feature_available` first can ignore the result, and the ones
     /// that don't (the lethal-damage absorber cohort) use it as the
     /// gate itself.
+    ///
+    /// Spending a shared-pool member debits the pool, which is the whole
+    /// point: a Trip Attack and a Riposte cost the same one die out of
+    /// the same four.
     pub fn spend_feature(&mut self, tag: &'static str) -> bool {
-        match self.features_remaining.get_mut(tag) {
+        if !self.features_max.contains_key(tag) {
+            return false;
+        }
+        let counter = self.charge_counter_for(tag);
+        match self.features_remaining.get_mut(counter) {
             Some(remaining) if *remaining > 0 => {
                 *remaining -= 1;
                 true
@@ -7968,11 +8019,20 @@ impl ActorInstance {
     /// Refills one charge, not the pool: a feature whose recharge
     /// trigger fires twice hands back two charges, which is the RAW
     /// reading of every event-driven recharge in the book.
+    ///
+    /// Handing a charge back to a shared-pool member credits the pool,
+    /// symmetric with `spend_feature` debiting it — otherwise a
+    /// hypothetical "regain the die you spent" trigger would top up a
+    /// counter nothing reads and leave the pool empty.
     pub fn restore_feature_charge(&mut self, tag: &'static str) -> bool {
-        let Some(&max) = self.features_max.get(tag) else {
+        if !self.features_max.contains_key(tag) {
+            return false;
+        }
+        let counter = self.charge_counter_for(tag);
+        let Some(&max) = self.features_max.get(counter) else {
             return false;
         };
-        let remaining = self.features_remaining.entry(tag).or_insert(0);
+        let remaining = self.features_remaining.entry(counter).or_insert(0);
         if *remaining >= max {
             return false;
         }

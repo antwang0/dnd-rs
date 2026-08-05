@@ -22,18 +22,19 @@ use crate::{
 };
 
 /// Class-feature tags that refresh on a 5e short rest. Read by
-/// `ActorInstance::short_rest`, which walks this registry chained with
-/// `BATTLE_MASTER_MANEUVERS` and repopulates `features_remaining` for
-/// every matching tag the actor carries. The remaining tags in this
-/// module are long-rest features and only restore via `long_rest`.
+/// `ActorInstance::short_rest`, which walks this registry and
+/// repopulates `features_remaining` for every matching tag the actor
+/// carries. The remaining tags in this module are long-rest features and
+/// only restore via `long_rest`.
 ///
-/// The two registries are kept disjoint: the maneuvers have their own
-/// list because `ActorInstance` needs to enumerate them independently,
-/// and duplicating them here would mean two places to forget. See
-/// `the_short_rest_registry_matches_the_templates_that_use_it`, which
-/// pins the disjointness and checks that every row is actually carried
-/// by some registered PC template — a registry entry whose feature has
-/// moved on is invisible otherwise.
+/// The Battle Master maneuvers are absent on purpose and are *not* an
+/// omission: they spend from a shared counter (`SUPERIORITY_DICE_TAG`,
+/// which is on this list), so refilling their individual — and unread —
+/// per-tag charges here would be dead work. See `SHARED_FEATURE_POOLS`.
+/// `the_short_rest_registry_matches_the_templates_that_use_it` pins the
+/// disjointness and checks that every row is actually carried by some
+/// registered PC template — a registry entry whose feature has moved on
+/// is invisible otherwise.
 pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Artificer, all five charges. RAW prices four of them off pools
     // this engine does not track (Arcane Armor uses, the Alchemist's
@@ -49,6 +50,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     STEEL_DEFENDER_TAG,
     SECOND_WIND_TAG,
     ACTION_SURGE_TAG,
+    // 5e Fighter Battle Master: "You regain all of your expended
+    // superiority dice when you finish a short or long rest." One entry
+    // refills the whole maneuver suite, because one counter backs it —
+    // see `SHARED_FEATURE_POOLS`.
+    SUPERIORITY_DICE_TAG,
     ARCANE_RECOVERY_TAG,
     NATURAL_RECOVERY_TAG,
     // 5e Circle of Stars Druid — Starry Form. RAW spends a Wild Shape
@@ -370,16 +376,31 @@ pub const CHANNEL_DIVINITY_FEATURES: &[&str] = &[
     TURN_THE_TIDE_TAG,
 ];
 
-/// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
-/// which refresh on a short or long rest. We collapse the dice pool to
-/// per-tag once-per-rest charges so the gating stays uniform with the
-/// other class features.
+/// Battle Master maneuver tags — the membership list of the superiority
+/// dice pool.
 ///
-/// Deliberately *not* duplicated into `SHORT_REST_FEATURES`:
-/// `ActorInstance::short_rest` chains the two registries, so listing a
-/// maneuver in both would refresh it twice and give two places to
-/// forget it. This list exists separately because the maneuver cohort
-/// is enumerated on its own elsewhere.
+/// RAW, a Battle Master does not have fourteen independent per-rest
+/// charges; it has **one pool of superiority dice** and every maneuver
+/// spends from it. This list used to be exactly that collapse — a tag
+/// per maneuver, one charge each, refreshed side-by-side with
+/// `SHORT_REST_FEATURES` — which meant a level-3 fighter could fire all
+/// fourteen maneuvers in a single fight and still walk into the next one
+/// with a full sheet. That is four times the resource RAW hands out, on
+/// the class whose entire identity is spending it well.
+///
+/// The list now names the *members of a shared pool* rather than
+/// fourteen separate resources: `SHARED_FEATURE_POOLS` points every tag
+/// here at `SUPERIORITY_DICE_TAG`, and `ActorInstance::spend_feature` /
+/// `feature_charges_remaining` redirect the accounting there. Each
+/// maneuver still needs its own tag — the template says *which*
+/// maneuvers the fighter knows, and the AI gates each option on the tag
+/// it is about to spend — but the count behind all of them is one
+/// number.
+///
+/// Deliberately *not* duplicated into `SHORT_REST_FEATURES`: the pool
+/// tag is what refreshes, and refilling the (now unread) per-maneuver
+/// counters alongside it would be dead work plus a second place to
+/// forget a maneuver.
 pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     TRIP_ATTACK_TAG,
     MENACING_ATTACK_TAG,
@@ -395,12 +416,74 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     DISTRACTING_ATTACK_TAG,
     // Reaction maneuvers — both fire automatically on an incoming melee
     // swing (no active action to spend on the fighter's turn), gated on
-    // the per-rest charge below and the target's reaction slot. Listed
-    // here so a short rest refreshes them uniformly with the bonus-
-    // action primes above.
+    // a superiority die and the holder's reaction slot. RAW spends a die
+    // for each exactly like the bonus-action primes above, so they draw
+    // from the same pool: a fighter who burned the pool on Trip and
+    // Menacing has nothing left to Parry with, which is the trade the
+    // pool exists to force.
     PARRY_TAG,
     RIPOSTE_TAG,
 ];
+
+/// The Fighter Battle Master's **superiority dice** pool.
+///
+/// RAW (PHB, Martial Archetype: Battle Master, level 3): "You have four
+/// superiority dice, which are d8s. A superiority die is expended when
+/// you use it. You regain all of your expended superiority dice when you
+/// finish a short or long rest."
+///
+/// Unlike every other tag in this file, this one names no action of its
+/// own. It is a *counter* that the fourteen tags in
+/// `BATTLE_MASTER_MANEUVERS` share: a template carries it alongside the
+/// maneuvers it knows, `FEATURE_CHARGES` sizes it at four, and
+/// `SHORT_REST_FEATURES` refills it. Nothing looks it up by name at an
+/// action site — the redirect in `ActorInstance` does that.
+pub const SUPERIORITY_DICE_TAG: &str = "fighter.superiority_dice";
+
+/// The die a spent superiority die rolls, RAW a d8 at every Battle
+/// Master level this engine's chassis represent (it grows to d10 at
+/// fighter 10 and d12 at 18).
+///
+/// Named rather than written `Dice::new(1, 8)` at each of the seven
+/// maneuver rows that roll it, because "the superiority die" is one
+/// quantity in the rules and seven copies of a literal is seven places
+/// for a future d10 to be half-applied.
+pub const SUPERIORITY_DIE: Dice = Dice::new(1, 8);
+
+/// Feature tags whose charges are drawn from a **shared pool** rather
+/// than from a counter of their own, as `(pool tag, member tags)`.
+///
+/// The per-tag charge lane in `ActorInstance` answers "how many times
+/// can this actor use *this* feature", which is the right question for
+/// almost every feature in the book: Action Surge and Second Wind are
+/// genuinely separate resources. A handful of features aren't. The
+/// Battle Master's maneuvers are the canonical case — fourteen distinct
+/// abilities priced out of one pool of four dice — and modeling them as
+/// fourteen independent charges was not a rounding error but a
+/// quadrupling of the subclass's whole resource budget.
+///
+/// The redirect is deliberately **opt-in per actor**: a member tag only
+/// reads the pool if its holder also carries the pool tag. A template
+/// that picks up a maneuver without the pool keeps the old one-charge-
+/// per-tag behavior rather than silently reading someone else's empty
+/// counter and finding the feature unusable. `every_pool_member_ships_with_its_pool`
+/// makes that omission a test failure rather than a balance surprise.
+pub const SHARED_FEATURE_POOLS: &[(&str, &[&str])] =
+    &[(SUPERIORITY_DICE_TAG, BATTLE_MASTER_MANEUVERS)];
+
+/// The shared pool `tag` spends from, or `None` if it has a counter of
+/// its own.
+///
+/// A nested linear scan over a table with one row and fourteen members;
+/// it runs on the charge-check path, which is hot enough to notice a
+/// hash but nowhere near hot enough to notice fourteen pointer
+/// comparisons.
+pub fn shared_pool_for(tag: &str) -> Option<&'static str> {
+    SHARED_FEATURE_POOLS
+        .iter()
+        .find(|(_, members)| members.contains(&tag))
+        .map(|(pool, _)| *pool)
+}
 
 /// Features whose RAW resource is a *pool* rather than a single use,
 /// and how many charges that pool holds here. Read once per actor at
@@ -439,6 +522,10 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // die to hand out for the whole fight was the collapse that cost
     // the most.
     (BARDIC_INSPIRATION_TAG, 3),
+    // 5e Fighter Battle Master **Superiority Dice**: "You have four
+    // superiority dice." RAW to the number, and the number is the whole
+    // subclass — every maneuver on the chassis is priced against it.
+    (SUPERIORITY_DICE_TAG, 4),
     // 5e Circle of the Moon Druid **Combat Wild Shape**: two uses per
     // short rest, and RAW is explicit about the count in a way most
     // pools are not. Two is also what makes the Moon druid's second
@@ -15789,6 +15876,73 @@ mod tests {
             "given a charge pool but on no instantiable template: {:?}",
             orphans
         );
+    }
+
+    /// Every template that knows a shared-pool member also carries the
+    /// pool that member spends from.
+    ///
+    /// The redirect in `ActorInstance::charge_counter_for` is opt-in per
+    /// actor: a maneuver whose holder lacks `SUPERIORITY_DICE_TAG` falls
+    /// back to a private charge of its own. That fallback is the right
+    /// behavior for a fixture grafting one feature onto an unrelated
+    /// chassis, and exactly the wrong thing to ship — a Battle Master
+    /// missing the pool row is a Battle Master with fourteen uses of a
+    /// four-use feature, and every other test in the suite passes while
+    /// it is true.
+    ///
+    /// The pool itself is allowed to ride alone: a chassis could carry
+    /// dice it has no maneuver to spend them on (nothing does today, and
+    /// the reverse direction is the one that changes what a fight looks
+    /// like).
+    #[test]
+    fn every_pool_member_ships_with_its_pool() {
+        use crate::actors::creatures::pc_template_families;
+        use crate::engine::encounter::EncounterInstance;
+
+        let templates: Vec<&'static crate::actors::actor_template::CreatureTemplate> =
+            pc_template_families()
+                .into_iter()
+                .flat_map(|(_family, templates)| templates)
+                .chain(EncounterInstance::template_pool())
+                .collect();
+        for &(pool, members) in SHARED_FEATURE_POOLS {
+            for template in &templates {
+                let known: Vec<&str> = members
+                    .iter()
+                    .copied()
+                    .filter(|tag| template.features.contains(tag))
+                    .collect();
+                assert!(
+                    known.is_empty() || template.features.contains(&pool),
+                    "{} knows {:?} but carries no {} to spend on them",
+                    template.name,
+                    known,
+                    pool
+                );
+            }
+        }
+    }
+
+    /// No tag belongs to two pools, and no pool is a member of itself.
+    ///
+    /// `shared_pool_for` takes the first match, so a tag on two rows
+    /// would silently spend from whichever row was written first — and a
+    /// pool listing itself would make `charge_counter_for` resolve the
+    /// pool to the pool, which happens to terminate today only because
+    /// the lookup is one level deep.
+    #[test]
+    fn the_shared_pools_partition_their_members() {
+        let mut seen: Set<&str> = Set::new();
+        for &(pool, members) in SHARED_FEATURE_POOLS {
+            for &tag in members {
+                assert!(
+                    seen.insert(tag),
+                    "{} is a member of more than one shared pool",
+                    tag
+                );
+                assert_ne!(tag, pool, "{} lists itself as one of its members", pool);
+            }
+        }
     }
 
     /// The feature summons don't collide.

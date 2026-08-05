@@ -1,3 +1,4 @@
+use crate::actions::class_features::SUPERIORITY_DIE;
 use crate::actors::actor_template::ActorInstance;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, RollMode};
@@ -3622,16 +3623,19 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Trip Attack maneuver. No bonus damage in our
-        // model (RAW: +superiority die damage; we skip the die since the
-        // existing dice infra doesn't carry a per-class scaling pool);
-        // the prone-on-fail-STR-save IS the effect. Mirrors Stunning
-        // Strike's "zero-damage rider with a save follow-up" shape.
+        // 5e Battle Master Trip Attack maneuver. RAW: "you add the
+        // superiority die to the attack's damage roll, and the target
+        // must make a Strength saving throw" or be knocked Prone. Both
+        // halves land — the die via `SUPERIORITY_DIE`, the knockdown via
+        // the follow-up. Damage type is the fighter's weapon type RAW;
+        // the rider table carries a fixed type per row, so these rows
+        // declare Slashing to match the scimitar and longsword every
+        // maneuver-carrying chassis in the engine swings.
         OnHitRider {
             condition: Condition::TripAttacking,
-            dice: Dice::new(0, 1),
+            dice: SUPERIORITY_DIE,
             label: "trip attack",
-            damage_type: DamageType::Bludgeoning,
+            damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
@@ -3928,18 +3932,16 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Menacing Attack maneuver. Zero rider damage
-        // (RAW: +1 superiority die; we collapse the die since the engine
-        // has no per-class scaling pool). On the consuming melee hit the
-        // target makes a WIS save vs the fighter's STR-based maneuver DC
-        // (8 + prof + STR); on fail, they're Frightened until the end of
-        // the fighter's next turn (we model as 1 round). Mirrors Stunning
-        // Strike's "no rider damage, save-or-condition" shape.
+        // 5e Battle Master Menacing Attack maneuver. +1 superiority die
+        // on the consuming melee hit; the target makes a WIS save vs the
+        // fighter's STR-based maneuver DC (8 + prof + STR) and on a fail
+        // is Frightened until the end of the fighter's next turn (we
+        // model as 1 round).
         OnHitRider {
             condition: Condition::MenacingAttacking,
-            dice: Dice::new(0, 1),
+            dice: SUPERIORITY_DIE,
             label: "menacing attack",
-            damage_type: DamageType::Bludgeoning,
+            damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
@@ -3954,17 +3956,17 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Disarming Attack maneuver. Zero rider damage
-        // (same caveat as Menacing / Trip). On the consuming melee hit the
+        // 5e Battle Master Disarming Attack maneuver. +1 superiority die
+        // on the consuming melee hit, same as its siblings. The
         // target makes a STR save vs the fighter's STR-based maneuver DC;
         // on fail, they're Disarmed — attack rolls have disadvantage
         // until the start of their next turn (`UntilStartOfNextTurn`
         // mirrors how Mocked / Dodging clear). One-shot.
         OnHitRider {
             condition: Condition::DisarmingAttacking,
-            dice: Dice::new(0, 1),
+            dice: SUPERIORITY_DIE,
             label: "disarming attack",
-            damage_type: DamageType::Bludgeoning,
+            damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
@@ -3979,8 +3981,8 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Pushing Attack maneuver. Zero rider damage
-        // (same caveat as Menacing / Disarming). On the consuming melee
+        // 5e Battle Master Pushing Attack maneuver. +1 superiority die
+        // on the consuming melee hit. On that same melee
         // hit the target makes a STR save vs the fighter's STR-based
         // maneuver DC; on fail, they're shoved 15 ft (4 tiles in our
         // 2.5ft grid — round 15ft/2.5 = 6, but we cap at the engine's
@@ -3989,9 +3991,9 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // `FollowUpEffect` — no condition apply, just forced movement.
         OnHitRider {
             condition: Condition::PushingAttacking,
-            dice: Dice::new(0, 1),
+            dice: SUPERIORITY_DIE,
             label: "pushing attack",
-            damage_type: DamageType::Bludgeoning,
+            damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
@@ -4003,9 +4005,9 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Goading Attack maneuver. Zero rider damage
-        // (same caveat as Menacing / Disarming / Pushing). On the
-        // consuming melee hit the target makes a WIS save vs the
+        // 5e Battle Master Goading Attack maneuver. +1 superiority die
+        // on the consuming melee hit, and on that same hit the
+        // target makes a WIS save vs the
         // fighter's STR-based maneuver DC; on fail, they're Goaded —
         // attack rolls against anyone *other* than the goading fighter
         // are at disadvantage. The follow-up handler also wires the
@@ -4014,9 +4016,9 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // envelope, but is per-rest rather than concentration-bound.
         OnHitRider {
             condition: Condition::GoadingAttacking,
-            dice: Dice::new(0, 1),
+            dice: SUPERIORITY_DIE,
             label: "goading attack",
-            damage_type: DamageType::Bludgeoning,
+            damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
@@ -4033,8 +4035,9 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         },
         // 5e Battle Master Sweeping Attack maneuver. Zero rider damage on
         // the primary target (RAW: damage goes to the secondary creature,
-        // not the original); the follow-up's `Splash` variant deals 1d8
-        // slashing to one footprint-adjacent enemy of the primary target.
+        // not the original); the follow-up's `Splash` variant deals one
+        // superiority die of slashing to one footprint-adjacent enemy of
+        // the primary target.
         // `save_ability: None` makes the follow-up auto-apply on hit —
         // RAW: the splash uses the original attack roll, which already
         // hit. If no adjacent enemy exists, the splash is a no-op
@@ -4050,7 +4053,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 save_ability: None,
                 dc_ability: AbilityScoreType::Strength,
                 effect: FollowUpEffect::Splash {
-                    dice: Dice::new(1, 8),
+                    dice: SUPERIORITY_DIE,
                     damage_type: DamageType::Slashing,
                 },
                 label: "sweeping attack splash",
@@ -4058,8 +4061,8 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
-        // 5e Battle Master Distracting Strike maneuver. +1d6 bonus damage
-        // on the consuming melee hit (RAW: add the superiority die to
+        // 5e Battle Master Distracting Strike maneuver. +1 superiority
+        // die on the consuming melee hit (RAW: add the superiority die to
         // the damage roll) plus a no-save auto-apply Distracted tag on
         // the target. The Distracted condition itself carries the
         // load-bearing rider — `compute_attack_mode` grants advantage
@@ -4071,7 +4074,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // with Goaded / Mocked / Helped.
         OnHitRider {
             condition: Condition::DistractingAttacking,
-            dice: Dice::new(1, 6),
+            dice: SUPERIORITY_DIE,
             label: "distracting strike",
             damage_type: DamageType::Slashing,
             lane: RiderLane::MeleeWeapon,

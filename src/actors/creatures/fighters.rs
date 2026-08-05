@@ -5,7 +5,7 @@ use crate::actions::class_features::{
     INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
     MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PROTECTIVE_FIELD_TAG,
     PSIONIC_STRIKE_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG,
-    SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG,
+    SECOND_WIND, SECOND_WIND_TAG, SUPERIORITY_DICE_TAG, SURVIVOR_TAG,
     SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG, UNWAVERING_MARK_TAG,
     WAR_MAGIC_STRIKE, WAR_MAGIC_TAG, WARDING_MANEUVER_TAG, WEAPON_BOND_TAG,
 };
@@ -230,11 +230,19 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // Reactive maneuvers — no active action to spend, fire
             // automatically at the melee-attack chokepoint. Parry
             // (1d8 + DEX damage reducer on hit) and Riposte (counter-
-            // attack on miss) each burn one per-rest charge + reaction
+            // attack on miss) each burn one superiority die + a reaction
             // when they land, giving the fighter a defensive lane the
-            // active-only maneuvers above don't cover.
+            // active-only maneuvers above don't cover — and competing
+            // for the same four dice, so a fighter who opened with three
+            // primes has one Parry left in the tank.
             PARRY_TAG,
             RIPOSTE_TAG,
+            // The pool all fourteen tags above spend from: four d8s,
+            // back on a short rest. Without this row every maneuver
+            // falls back to a private charge of its own, which is
+            // fourteen uses per rest instead of four — see
+            // `SHARED_FEATURE_POOLS`.
+            SUPERIORITY_DICE_TAG,
         ]),
         // 5e Fighter Battle Master reactive maneuvers. The `has_parry`
         // flag opts into the `1d8 + DEX` melee-damage reducer at the
