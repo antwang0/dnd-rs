@@ -69628,6 +69628,7 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
     use crate::actors::creatures::boars::BOAR_TEMPLATE;
     use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
     use crate::engine::attack::{AttackParams, resolve_attack};
+    use crate::engine::side_effects::Resource;
 
     // `ran` picks up the boar at the far end of a straight lane and
     // walks it in; the control drops it on the doorstep and gives it a
@@ -69644,20 +69645,20 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
                 .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(14, 5), 0, 0)
                 .unwrap();
             e.actors.get_mut(&boar).unwrap().reset_for_new_round();
-            if ran {
+            {
+                let a = e.actors.get_mut(&boar).unwrap();
                 // Straight down the lane, ten tiles — comfortably past
-                // the eight-tile (20 ft) threshold.
-                e.actors
-                    .get_mut(&boar)
-                    .unwrap()
-                    .set_location(Coordinate::new(12, 5));
-            } else {
-                e.actors
-                    .get_mut(&boar)
-                    .unwrap()
-                    .set_location(Coordinate::new(12, 5));
-                // Same tile, but the turn starts here: no run.
-                e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+                // the eight-tile (20 ft) threshold — and paid for out of
+                // the boar's own budget, because a charge is something
+                // the creature does rather than something done to it.
+                a.consume_resource(Resource::Movement(25.0));
+                a.set_location(Coordinate::new(12, 5));
+                if !ran {
+                    // Same tile, same feet spent, but the turn starts
+                    // here: no run to measure.
+                    a.reset_for_new_round();
+                    a.consume_resource(Resource::Movement(2.5));
+                }
             }
             let before = e.actors[&victim].hitpoints();
             let effects = resolve_attack(
@@ -69812,5 +69813,67 @@ fn every_charge_clause_names_an_attack_its_creature_has() {
         checked >= 10,
         "expected the bestiary's charging creatures to be wired up, found {}",
         checked
+    );
+}
+
+/// "Has this creature moved yet" survives everything that used to break
+/// it: a Dash that refills the budget, a Haste that raises the speed the
+/// budget was filled from, and a shove that moves the creature without
+/// its consent.
+///
+/// The gate used to be `movement < speed()`, which is a comparison
+/// between two numbers that can each change mid-turn for unrelated
+/// reasons. Every case below is one it got wrong.
+#[test]
+fn moving_is_measured_by_feet_spent_not_by_budget_left() {
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::side_effects::Resource;
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+
+    let actor = e.actors.get_mut(&rogue).unwrap();
+    actor.reset_for_new_round();
+    assert!(!actor.has_moved_this_turn(), "a fresh turn is a still one");
+
+    // Dash, then walk the whole original budget. The budget lands back
+    // where it started, and the rogue has very much moved.
+    let speed = actor.speed();
+    actor.give_resource(Resource::Movement(speed));
+    assert!(
+        !actor.has_moved_this_turn(),
+        "dashing is not moving — no feet have been spent"
+    );
+    actor.consume_resource(Resource::Movement(speed));
+    assert!(
+        actor.has_moved_this_turn(),
+        "a dashed rogue that walked its full speed has moved"
+    );
+
+    // A Haste landing mid-turn doubles `speed()` without touching the
+    // budget, which used to read as movement out of thin air.
+    actor.reset_for_new_round();
+    actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+    assert!(
+        actor.speed() > 0.0,
+        "sanity: the haste has to change the speed for this to prove anything"
+    );
+    assert!(
+        !actor.has_moved_this_turn(),
+        "a haste that lands on a standing rogue does not move them"
+    );
+    actor.remove_condition(Condition::Hasted);
+
+    // Forced movement is something that happens to you: RAW's "if you
+    // move" clauses don't fire on a shove.
+    actor.reset_for_new_round();
+    let there = Coordinate::new(15, 5);
+    actor.set_location(there);
+    assert_eq!(actor.location(), there);
+    assert!(
+        !actor.has_moved_this_turn(),
+        "being put somewhere else is not moving"
     );
 }

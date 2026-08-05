@@ -3693,8 +3693,22 @@ fn feature_charge_map(features: &HashSet<&'static str>) -> HashMap<&'static str,
 pub struct ActorInstance {
     name: String,
     location: Coordinate,
+    /// Feet of movement this actor has actually spent on its current
+    /// turn, written by `consume_resource` and cleared by
+    /// `reset_for_new_round`.
+    ///
+    /// Exists because "has this creature moved yet" cannot be recovered
+    /// from the remaining budget, which is what it used to be inferred
+    /// from. `movement < speed()` is wrong three ways: a Dash refills
+    /// the budget, so a rogue who dashed and then walked its whole speed
+    /// reads as standing still; a Haste that lands mid-turn raises
+    /// `speed()` out from under a budget that was filled at the old
+    /// value, so an actor that has not moved reads as having moved; and
+    /// a Slow does the same in the other direction. A counter that only
+    /// ever goes up when feet are spent has none of those failure modes.
+    movement_spent_this_turn: f32,
     /// Where this actor stood when its current turn began, written by
-    /// `reset_for_new_round` and read by `charge_run`.
+    /// `reset_for_new_round` and read by `straight_run_tiles`.
     ///
     /// The board only ever knows where a creature *is*. A whole family
     /// of 5e riders keys off where it came from — "if the creature moves
@@ -4192,6 +4206,7 @@ impl ActorInstance {
         Ok(ActorInstance {
             name,
             location,
+            movement_spent_this_turn: 0.0,
             // A creature that has not yet taken a turn has not moved, so
             // its run starts where it is. `reset_for_new_round`
             // overwrites this at the top of every turn.
@@ -6761,7 +6776,10 @@ impl ActorInstance {
             return false;
         }
         match resource {
-            Resource::Movement(amt) => self.movement -= amt,
+            Resource::Movement(amt) => {
+                self.movement -= amt;
+                self.movement_spent_this_turn += amt;
+            }
             Resource::SpellSlot(lvl) => {
                 self.spell_slot_manager.consume_spell_slot(lvl);
             }
@@ -7186,14 +7204,25 @@ impl ActorInstance {
     }
 
     /// 5e Tasha's Rogue Steady Aim gate. True iff the actor has spent any
-    /// movement this turn. Compares the raw movement budget (unfiltered
-    /// by Prone / `zeros_movement`) against the actor's current `speed()`
-    /// — those filters are aim-irrelevant (a grappled rogue with budget
-    /// intact still hasn't moved; a prone rogue still has their full
-    /// budget, the halving is a per-step cost). A small float tolerance
-    /// absorbs FP drift from the Haste / Slow factor in `speed()`.
+    /// movement this turn.
+    ///
+    /// Reads the spend counter rather than comparing the remaining
+    /// budget against `speed()`, which is what it used to do and which
+    /// disagreed with itself the moment anything touched either side of
+    /// that comparison mid-turn — see `movement_spent_this_turn`.
+    ///
+    /// "Spent", not "displaced": a creature shoved across the board by
+    /// Thunderwave has not moved for this purpose, and RAW agrees —
+    /// forced movement is something that happens to you.
     pub fn has_moved_this_turn(&self) -> bool {
-        self.movement + 0.01 < self.speed()
+        self.movement_spent_this_turn > 0.0
+    }
+
+    /// Feet of movement spent so far this turn. Public for the charge
+    /// gate, which needs "did it run" separately from "where did it end
+    /// up".
+    pub fn movement_spent_this_turn(&self) -> f32 {
+        self.movement_spent_this_turn
     }
 
     /// Drain the actor's remaining movement budget to zero. Used by
@@ -7202,6 +7231,13 @@ impl ActorInstance {
     /// `consume_resource(Resource::Movement(remaining))` chain so the
     /// "zero everything regardless of conditions" semantics is explicit.
     pub fn zero_movement(&mut self) {
+        // Booked as spent rather than simply discarded. The budget is
+        // gone either way, and every gate that asks `has_moved_this_turn`
+        // is really asking "can this actor still be somewhere else by the
+        // end of the turn" — for which a drained budget and a walked one
+        // are the same answer. Steady Aim, the one caller, relies on it:
+        // RAW locks the rogue in place for the rest of the turn.
+        self.movement_spent_this_turn += self.movement.max(0.0);
         self.movement = 0.0;
     }
 
@@ -7449,6 +7485,7 @@ impl ActorInstance {
         // has this creature come *this turn*", so the anchor moves once
         // per turn and never inside one.
         self.turn_start_location = self.location;
+        self.movement_spent_this_turn = 0.0;
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;

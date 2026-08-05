@@ -3197,6 +3197,9 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
 ///   - melee only. Every charge clause in the book is a melee attack.
 ///   - the attacker has a charge clause, and this swing is the attack it
 ///     names.
+///   - the attacker spent movement of its own this turn. RAW says "if
+///     the creature *moves*", and a boar shoved twenty feet into a
+///     bystander by a Thunderwave has not charged anybody.
 ///   - the attacker covered `run_tiles` in a straight line this turn
 ///     (`straight_run_tiles`).
 ///   - the run was *toward this target*. Without this clause a boar that
@@ -3223,6 +3226,9 @@ fn push_charge_rider(
     let Some(rider) = attacker.charge().filter(|r| r.weapon == p.action_name) else {
         return 0;
     };
+    if attacker.movement_spent_this_turn() <= 0.0 {
+        return 0;
+    }
     let Some(run) = attacker.straight_run_tiles().filter(|&n| n >= rider.run_tiles) else {
         return 0;
     };
