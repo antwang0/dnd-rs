@@ -70001,3 +70001,54 @@ fn the_ai_lines_up_first_and_runs_the_rest_straight() {
         rows
     );
 }
+
+/// A minotaur's gore is worth more once it has thundered across the
+/// room, and its greataxe is worth exactly the same.
+///
+/// The picker's damage estimate is what arbitrates two attacks that tie
+/// on matchup, roll mode and reach — which the minotaur's two melee
+/// swings do — so an estimate blind to the charge would rank the same
+/// way whether the minotaur had ten feet of run behind it or none. Both
+/// halves are the point: the clause names the gore, so the axe must not
+/// move.
+#[test]
+fn a_charging_minotaur_values_the_horn_higher_than_it_did_standing_still() {
+    use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
+    use crate::engine::side_effects::{MoveActor, Resource};
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let bull = e
+        .instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(4, 10), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&bull).unwrap().reset_for_new_round();
+
+    let estimate = |e: &EncounterInstance, name: &str| -> f32 {
+        e.actors[&bull]
+            .find_action(name)
+            .and_then(|a| a.expected_damage(e, bull))
+            .unwrap_or_else(|| panic!("{} should carry a damage estimate", name))
+    };
+    let axe = estimate(&e, "greataxe");
+    let standing_gore = estimate(&e, "gore");
+
+    e.actors
+        .get_mut(&bull)
+        .unwrap()
+        .consume_resource(Resource::Movement(25.0));
+    MoveActor {
+        actor_id: bull,
+        path: (1..=8).map(|n| Coordinate::new(4 + n, 10)).collect(),
+    }
+    .apply(&mut e);
+    let charging_gore = estimate(&e, "gore");
+    assert!(
+        charging_gore > standing_gore,
+        "the run should be worth two more d8 to the gore: {} vs {}",
+        charging_gore,
+        standing_gore
+    );
+    assert_eq!(
+        estimate(&e, "greataxe"),
+        axe,
+        "and the axe is unaffected — the clause names the gore"
+    );
+}

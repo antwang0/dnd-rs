@@ -640,8 +640,50 @@ pub fn weapon_expected_damage(
     cost_resource: Resource,
     extra_swings: u32,
 ) -> Option<f32> {
+    weapon_expected_damage_named(
+        encounter,
+        caster_id,
+        "",
+        dice,
+        damage_ability,
+        cost_resource,
+        extra_swings,
+    )
+}
+
+/// `weapon_expected_damage` for a swing that knows its own name, so the
+/// estimate can include the creature's charge clause when one is riding
+/// this particular attack and the run behind it already qualifies.
+///
+/// The name is what a charge is keyed on — a minotaur's clause names its
+/// gore and says nothing about the greataxe in its other hand — and the
+/// picker is exactly where knowing costs something: gore and greataxe
+/// tie on matchup, roll mode and reach, so the damage estimate is what
+/// decides between them, and a minotaur that has just thundered ten feet
+/// at somebody should be putting its head down rather than swinging.
+///
+/// The run is read live rather than predicted, which is the right order:
+/// the AI moves and then picks its attack, so by the time this is asked
+/// the ground is already covered. A creature that hasn't run gets the
+/// plain estimate and the greataxe wins, which is also correct.
+pub fn weapon_expected_damage_named(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    weapon_name: &str,
+    dice: crate::engine::dice::Dice,
+    damage_ability: Option<AbilityScoreType>,
+    cost_resource: Resource,
+    extra_swings: u32,
+) -> Option<f32> {
     let caster = encounter.actors.get(&caster_id)?;
+    let charge_bonus = caster
+        .charge()
+        .filter(|c| c.weapon == weapon_name)
+        .filter(|c| caster.straight_run_tiles().is_some_and(|n| n >= c.run_tiles))
+        .map(|c| c.dice.average_roll())
+        .unwrap_or(0.0);
     let per_swing = dice.average_roll()
+        + charge_bonus
         + damage_ability
             .map(|a| caster.ability_modifier(a) as f32)
             .unwrap_or(0.0);

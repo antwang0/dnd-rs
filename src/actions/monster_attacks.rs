@@ -969,9 +969,10 @@ impl Action for SimpleWeapon {
             .is_some_and(|a| a.has_condition(required))
     }
     fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
-        crate::actions::action_template::weapon_expected_damage(
+        crate::actions::action_template::weapon_expected_damage_named(
             encounter,
             caster_id,
+            self.display_name,
             self.damage_dice,
             self.damage_ability,
             self.cost_resource,
@@ -3945,6 +3946,22 @@ impl Action for MinotaurGore {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
+    }
+    /// Annotated so the picker can weigh the gore against the greataxe
+    /// the same minotaur carries. Without an estimate on both, the
+    /// comparison falls through to declaration order — and once the
+    /// minotaur has ten feet of run behind it, the charge clause on this
+    /// swing is worth two more d8 than the axe.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        crate::actions::action_template::weapon_expected_damage_named(
+            encounter,
+            caster_id,
+            self.name(),
+            Dice::new(2, 8),
+            Some(AbilityScoreType::Strength),
+            Resource::Action,
+            0,
+        )
     }
     fn side_effects(
         &self,
