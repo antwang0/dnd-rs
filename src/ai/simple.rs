@@ -8794,6 +8794,34 @@ mod tests {
             // Wild Heal being the only thing those slots can still buy.
             use crate::actors::creatures::druids::MOON_DRUID_TEMPLATE;
             let _ = e.instantiate_creature(&MOON_DRUID_TEMPLATE, Coordinate::new(6, 14), 0, 34);
+            // The swarm bench, one on each team. Two paths nothing else
+            // on this board reaches:
+            //
+            //   - On team 0, the insect swarm is an ally the healers
+            //     cannot heal. The support rung has to notice that and
+            //     spend its turn on something else — a swarm that stays
+            //     bloodied forever is precisely the shape that would
+            //     otherwise pin a cleric on a no-op Cure Wounds every
+            //     round for the rest of the fight.
+            //   - On team 1, the quipper swarm is a target whose damage
+            //     output *changes* as it dies, through the
+            //     attacker-scoped lane, and whose Blood Frenzy pulls the
+            //     other way at the same time.
+            //
+            // The poisonous-snake swarm brings the save rider on the
+            // same chassis so the thinning halves a two-part swing.
+            use crate::actors::creatures::swarms::{
+                SWARM_OF_INSECTS_TEMPLATE, SWARM_OF_POISONOUS_SNAKES_TEMPLATE,
+                SWARM_OF_QUIPPERS_TEMPLATE,
+            };
+            let _ = e.instantiate_creature(&SWARM_OF_INSECTS_TEMPLATE, Coordinate::new(6, 16), 0, 35);
+            let _ = e.instantiate_creature(&SWARM_OF_QUIPPERS_TEMPLATE, Coordinate::new(8, 8), 1, 73);
+            let _ = e.instantiate_creature(
+                &SWARM_OF_POISONOUS_SNAKES_TEMPLATE,
+                Coordinate::new(8, 10),
+                1,
+                74,
+            );
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
