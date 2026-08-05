@@ -69388,3 +69388,28 @@ fn a_circle_of_power_turns_a_made_save_into_nothing() {
     );
     e.exit_cast();
 }
+
+/// The AI's self-centred burst picker admits a `NoArgs` harmful action
+/// only if it either declares a damage type or explicitly says it deals
+/// none — the filter that keeps Dodge and Disengage out of the lane.
+/// Divine Word is a burst whose whole point is that it damages, so it
+/// has to declare a type or no AI will ever cast it.
+#[test]
+fn the_no_args_bursts_are_visible_to_the_picker_that_looks_for_them() {
+    use crate::actions::action_template::TargetingSchema;
+    use crate::actions::spells::{DIVINE_WORD, HOLY_WORD, THUNDERWAVE};
+
+    for action in [
+        &*DIVINE_WORD as &(dyn Action + Send + Sync),
+        &*HOLY_WORD,
+        &*THUNDERWAVE,
+    ] {
+        assert!(
+            action.is_harmful()
+                && matches!(action.targeting_schema(), TargetingSchema::NoArgs)
+                && (!action.damage_types().is_empty() || !action.deals_damage()),
+            "{} is invisible to the self-centred burst picker",
+            action.name()
+        );
+    }
+}

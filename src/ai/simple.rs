@@ -1780,6 +1780,19 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         engage_gap: 8,
         allies_within: None,
     },
+    // Level-5 paladin: advantage on saves against spells for everyone
+    // in the 30 ft circle, and no damage at all on one that is made.
+    // Below the two lv4 auras and Holy Weapon rather than above them
+    // because its value is entirely conditional on the other side
+    // casting — the auras and the weapon buff pay off against any
+    // board. The ally gate is 12 tiles, the circle's own radius,
+    // rather than the paladin auras' 6.
+    SelfBuffPick {
+        name: "circle of power",
+        condition: Condition::PowerCircled,
+        engage_gap: 60,
+        allies_within: Some(12),
+    },
     // Level-2 druid / ranger: disadvantage on attacks against anyone in
     // the 30 ft sphere. No ally gate despite being an aura — the caster
     // is inside their own sphere, so a solo druid still collects it,

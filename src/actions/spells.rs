@@ -29255,6 +29255,14 @@ pub static IMMOLATION: LazyLock<Immolation> = LazyLock::new(|| Immolation {});
 /// enforce cleanly is the one about casting, and that is the clause it
 /// enforces. A field is a place where no new magic happens, not yet a
 /// place where old magic stops.
+///
+/// **Deliberately absent from the AI's self-buff cohort.** Every row on
+/// that table is a buff the caster wants standing; this one costs the
+/// caster their entire spell list for as long as it is up, and is worth
+/// its slot only against a board whose threat is a caster — a judgement
+/// the AI has no way to make, since it cannot read an enemy's action
+/// list for spells it has not seen cast. Left as a human player's
+/// option rather than handed to the AI to misfire with.
 pub struct AntimagicField {}
 
 impl AntimagicField {
@@ -29355,10 +29363,17 @@ pub static ANTIMAGIC_FIELD: LazyLock<AntimagicField> = LazyLock::new(|| Antimagi
 /// which rolls one number and shares it.
 ///
 /// Instant death rather than dying: RAW says "dies", not "drops to 0",
-/// and there is no death save to make. Routed as damage equal to the
-/// target's remaining hit points so every ledger the engine keeps about
-/// a kill — the log line, the concentration drop, the team's liveness
-/// check — sees it the same way it sees any other lethal blow.
+/// and there is no death save to make. Routed as radiant damage equal
+/// to the target's remaining hit points, which is the shape Power Word
+/// Kill already uses for the same sentence, and for the same reason:
+/// every ledger the engine keeps about a kill — the log line, the
+/// concentration drop, the team's liveness check — then sees it the
+/// way it sees any other lethal blow.
+///
+/// The cost of that shape is that a creature resistant to the typing
+/// survives a word RAW says kills it. Radiant is the least bad typing
+/// available for a cleric's word of creation, and the trade is the one
+/// the engine already made at the ninth level.
 ///
 /// **Not modeled.** RAW's second paragraph banishes celestials,
 /// elementals, fey and fiends to their home plane. The engine has no
@@ -29403,11 +29418,13 @@ impl Action for DivineWord {
         TargetingSchema::NoArgs
     }
     fn damage_types(&self) -> Vec<DamageType> {
-        // The kill rung is routed as damage but has no type in RAW —
-        // the creature simply dies. Declaring none keeps every
-        // damage-type-keyed feature (Elemental Affinity, Transmuted
-        // Spell) off a spell that has no element to bend.
-        Vec::new()
+        // Radiant, matching the typing the kill rung actually deals —
+        // see the note on the kill in the docstring. Declared rather
+        // than left empty because the AI's self-centred burst picker
+        // reads exactly this to tell a burst from a utility action:
+        // an untyped harmful NoArgs spell is invisible to it, and a
+        // seventh-level finisher no AI ever casts is not a feature.
+        vec![DamageType::Radiant]
     }
     fn cost(
         &self,
