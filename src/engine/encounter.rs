@@ -7270,7 +7270,7 @@ impl EncounterInstance {
     /// an orphan if *nothing* instantiable carries it, and half the tags
     /// in the registry are carried by monsters.
     pub fn template_pool() -> Vec<&'static CreatureTemplate> {
-        vec![
+        let mut pool: Vec<&'static CreatureTemplate> = vec![
             &ANKHEG_TEMPLATE,
             &ANIMATED_ARMOR_TEMPLATE,
             &BANDIT_TEMPLATE,
@@ -8184,7 +8184,21 @@ impl EncounterInstance {
             &crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE,
             &crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE,
             &crate::actors::creatures::gnomes::GNOME_TEMPLATE,
-        ]
+            // The five SRD swarms (CR ¼ – 2). The first entries in the
+            // pool that answer "hit it with a sword" with "that will
+            // not work" — four of the five resist all three physical
+            // damage types, none of them can be healed, and none can be
+            // knocked prone, grappled, or frightened out of the fight.
+            // A party used to reaching for the fighter has to reach for
+            // the fireball instead.
+            //
+            // Rolled in as a family through `all_swarm_templates` so
+            // the pool inherits a sixth swarm the day one is written,
+            // rather than needing a line here that someone has to
+            // remember.
+        ];
+        pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
+        pool
     }
 
     /// Drop an item onto a tile. Multiple items can stack on the same

@@ -2494,6 +2494,35 @@ pub struct CreatureTemplate {
     /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
     /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
     pub has_pack_tactics: bool,
+    /// 5e **Swarm** (Swarm of Bats, Swarm of Rats, Swarm of Insects,
+    /// Swarm of Poisonous Snakes, Swarm of Quippers): this "creature" is
+    /// a cloud of Tiny ones sharing one HP pool and one initiative slot.
+    ///
+    /// Most of the statblock's swarm identity is already expressible
+    /// with fields that exist — `damage_modifiers` carries the
+    /// bludgeoning / piercing / slashing resistance (a sword swing
+    /// scatters bats rather than cutting them), and
+    /// `condition_immunities` carries the eight conditions a cloud can't
+    /// be put in (you cannot knock a swarm prone). Those need no flag.
+    ///
+    /// This flag is for the two clauses that have nowhere else to live:
+    ///
+    ///   - **The swarm thins as it dies.** RAW writes it into the attack
+    ///     line — "21 (6d4+6) piercing damage, or 10 (3d4+3) piercing
+    ///     damage if the swarm has half of its hit points or fewer" —
+    ///     because there are fewer mouths left to bite with. Read at
+    ///     `attack::attacker_scoped_damage_reduction`, which is the lane
+    ///     for damage that depends on who is swinging.
+    ///   - **"The swarm can't regain hit points or gain temporary hit
+    ///     points."** Dead bats don't come back, so the cleric's Cure
+    ///     Wounds and the bard's inspiration-shaped temp HP both bounce.
+    ///     Read at `heal` and `gain_temp_hp`, the two chokepoints every
+    ///     source of either funnels through.
+    ///
+    /// Not modelled: "the swarm can occupy another creature's space".
+    /// `actor_map` is one id per tile, and multi-occupancy is a change
+    /// to the board rather than to a creature.
+    pub is_swarm: bool,
     /// 5e Magic Resistance (Balor, Lich, Pit Fiend, etc.): advantage on
     /// saving throws against spells and other magical effects. Read by
     /// `compute_save_mode` — applies to every save the creature rolls
@@ -3357,6 +3386,7 @@ impl CreatureTemplate {
             has_displacement: false,
             has_danger_sense: false,
             has_pack_tactics: false,
+            is_swarm: false,
             has_magic_resistance: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
@@ -3872,6 +3902,7 @@ pub struct ActorInstance {
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
+    is_swarm: bool,
     has_magic_resistance: bool,
     /// Recharge tracking: maps action name → (min_roll, is_available).
     /// At start-of-turn the engine rolls a d6 for each exhausted ability;
@@ -4137,6 +4168,7 @@ impl ActorInstance {
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
+            is_swarm: ct.is_swarm,
             has_magic_resistance: ct.has_magic_resistance,
             recharge_abilities: ct
                 .recharge_abilities
@@ -4322,6 +4354,29 @@ impl ActorInstance {
 
     pub fn has_pack_tactics(&self) -> bool {
         self.has_pack_tactics
+    }
+
+    /// True if this actor is a 5e **swarm** — see the template field for
+    /// the two clauses the flag carries and the ones it doesn't.
+    pub fn is_swarm(&self) -> bool {
+        self.is_swarm
+    }
+
+    /// True while a swarm has been thinned to half its hit points or
+    /// fewer — the gate on the halved-bite clause every swarm statblock
+    /// writes into its attack line.
+    ///
+    /// False for anything that isn't a swarm, at any HP: this is the
+    /// swarm's own "there are fewer of me now" rule and not a general
+    /// bloodied threshold, so a wounded ogre hits exactly as hard as a
+    /// fresh one.
+    ///
+    /// Reads current HP against max, so a swarm healed back over the
+    /// line would bite in full again — which no swarm can be, since
+    /// `heal` refuses them, but the predicate stays honest about what it
+    /// measures rather than latching.
+    pub fn is_thinned_swarm(&self) -> bool {
+        self.is_swarm && self.hitpoints * 2 <= self.max_hitpoints()
     }
 
     pub fn has_magic_resistance(&self) -> bool {
@@ -5327,7 +5382,15 @@ impl ActorInstance {
     /// "did it change?" boolean can diff against `temp_hp()` from before
     /// the call, or compare against `amount` (a no-op leaves the prior
     /// pool, which is `>= amount`).
+    ///
+    /// A **swarm** takes none: RAW's "the swarm can't regain hit points
+    /// or gain temporary hit points". Refused here rather than at each
+    /// of the dozen sources so a new temp-HP grant inherits the rule for
+    /// free — the same reason `heal` carries the other half.
     pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        if self.is_swarm {
+            return self.temp_hp;
+        }
         if amount > self.temp_hp {
             self.temp_hp = amount;
         }
@@ -7299,9 +7362,20 @@ impl ActorInstance {
     /// Heal HP. A Dying or Stable actor with `amount > 0` snaps back to
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you
     /// to the new value). Active actors heal up to their max.
+    ///
+    /// A **swarm** regains nothing: RAW's "the swarm can't regain hit
+    /// points or gain temporary hit points" — the bats a fireball killed
+    /// are not brought back by a Cure Wounds on the ones that lived.
+    /// Reported as `NoOp` rather than `AlreadyFull` so a caller that
+    /// spends a resource on the heal can tell "this did nothing" from
+    /// "this target was topped off", which is the same distinction the
+    /// `Dead` arm above draws.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
+        }
+        if self.is_swarm {
+            return HealOutcome::NoOp;
         }
         let cap = self.max_hitpoints();
         match self.hp_state {

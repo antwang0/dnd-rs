@@ -264,6 +264,7 @@ pub mod mules;
 pub mod ponies;
 pub mod elks;
 pub mod summoned_spirits;
+pub mod swarms;
 
 use crate::actors::actor_template::CreatureTemplate;
 

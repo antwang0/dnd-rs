@@ -68592,6 +68592,58 @@ fn enfeebled_halves_weapon_damage_but_not_spell_damage() {
     );
 }
 
+/// A swarm's bite halves once half the swarm is dead, and the halving
+/// stacks with the other attacker-scoped reductions rather than
+/// replacing them.
+///
+/// Both directions matter. The stacking is what "three independent
+/// halvings" means everywhere else in the engine — an enfeebled,
+/// half-dead swarm deals a quarter — and the not-a-swarm case is the
+/// guard that this is the swarm's own thinning rule and not a general
+/// bloodied threshold that would quietly nerf every wounded creature
+/// on the board.
+#[test]
+fn a_thinned_swarm_bites_for_half_and_stacks_with_enfeeblement() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::swarms::SWARM_OF_INSECTS_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let swarm = e
+        .instantiate_creature(&SWARM_OF_INSECTS_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    assert_eq!(
+        crate::engine::attack::attacker_scoped_damage_reduction(&mut e, swarm, victim, 20, true),
+        20,
+        "a full swarm bites with every mouth it has"
+    );
+    // Down to exactly half — the threshold is inclusive.
+    let max = e.actors[&swarm].max_hitpoints();
+    e.actors.get_mut(&swarm).unwrap().take_damage(max - max / 2);
+    assert!(e.actors[&swarm].is_thinned_swarm());
+    assert_eq!(
+        crate::engine::attack::attacker_scoped_damage_reduction(&mut e, swarm, victim, 20, true),
+        10,
+        "half the swarm is dead, so half the damage arrives"
+    );
+    assert_eq!(
+        crate::engine::attack::attacker_scoped_damage_reduction(&mut e, swarm, victim, 20, false),
+        10,
+        "a swarm has one attack and it is the swarm, so the lane doesn't matter"
+    );
+    e.actors
+        .get_mut(&swarm)
+        .unwrap()
+        .add_condition(Condition::Enfeebled, ConditionTimer::Rounds(1));
+    assert_eq!(
+        crate::engine::attack::attacker_scoped_damage_reduction(&mut e, swarm, victim, 20, true),
+        5,
+        "two independent halvings are a quarter"
+    );
+}
+
 /// A missed-attack charge is not spent on a miss it could never
 /// rescue.
 ///

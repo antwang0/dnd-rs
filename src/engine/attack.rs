@@ -971,22 +971,6 @@ fn fire_clamp(
     reduced
 }
 
-/// Walk `REACTIVE_DAMAGE_CLAMPS` over a landed swing and return the
-/// damage that survives. Called from both attack chokepoints once the
-/// hit is confirmed and the base damage line is logged, so every clamp
-/// applies uniformly to weapon and spell attacks (subject to each row's
-/// `ClampLane`).
-///
-/// `is_melee` / `is_spell` / `damage_type` describe the swing; `damage`
-/// is the pre-resistance total (target-side resistance / immunity is
-/// applied later, at `DealDamage::apply`) — matching RAW, where these
-/// features reduce the attack's damage before the target's damage types
-/// are consulted. `damage_type` is only read by rows that carry a
-/// `damage_types` filter.
-///
-/// Short-circuits as soon as the damage hits 0: a clamp that can't
-/// shave anything off shouldn't burn its holder's reaction (or a
-/// per-rest charge) for nothing.
 /// Damage reductions that depend on who is *swinging* rather than on who
 /// is being hit or on anyone spending a reaction.
 ///
@@ -997,10 +981,18 @@ fn fire_clamp(
 /// reaction, which this costs nobody. So it sits between the two, called
 /// from both attack chokepoints with both ids in hand.
 ///
-/// Two rules today, and they halve in sequence — a haunted, enfeebled
-/// attacker deals a quarter, which is what two independent halvings
-/// mean everywhere else in the engine.
+/// Three rules today, and they halve in sequence — a haunted, enfeebled
+/// attacker deals a quarter, which is what independent halvings mean
+/// everywhere else in the engine.
 ///
+///   - A **thinned swarm**'s bite. Every swarm statblock writes the
+///     rule into its own attack line ("…or 10 (3d4+3) piercing damage
+///     if the swarm has half of its hit points or fewer") because
+///     there are fewer mouths left to bite with. Purely a property of
+///     the swinger, so it belongs here rather than duplicated across
+///     five statblocks' damage expressions. Not gated on `is_weapon`:
+///     a swarm has one attack and it is the swarm, so every point it
+///     deals thins with it.
 ///   - The Ancestral Guardian's half of **Ancestral Protectors**. RAW
 ///     words it as the *victim* gaining resistance, but the gate is
 ///     entirely on the attacker (are they haunted, and is their target
@@ -1022,10 +1014,30 @@ pub fn attacker_scoped_damage_reduction(
         return 0;
     }
     let mut damage = damage;
-    // 5e Enfeebling Arrow. Checked first so the log reads in the order
-    // the reductions were imposed on the attacker rather than in the
-    // order this function happens to test them; the arithmetic is the
-    // same either way, since halving twice commutes up to the rounding
+    // 5e Swarm. Checked first because it is the only row that is a
+    // property of the attacker alone — no target to compare against, no
+    // condition to have been imposed — so it reads as the base rate the
+    // other two reduce from.
+    if encounter
+        .actors
+        .get(&attacker_id)
+        .is_some_and(|a| a.is_thinned_swarm())
+    {
+        let thinned = damage / 2;
+        encounter.log(format!(
+            "  swarm: half the swarm is already dead ({} -> {})",
+            damage, thinned
+        ));
+        damage = thinned;
+        if damage == 0 {
+            return 0;
+        }
+    }
+    // 5e Enfeebling Arrow. Checked ahead of Ancestral Protectors so the
+    // log reads in the order the reductions were imposed on the attacker
+    // rather than in the order this function happens to test them; the
+    // arithmetic is the same either way, since halving twice commutes up
+    // to the rounding
     // that both orders share.
     if is_weapon
         && encounter
@@ -1067,6 +1079,22 @@ pub fn attacker_scoped_damage_reduction(
     reduced
 }
 
+/// Walk `REACTIVE_DAMAGE_CLAMPS` over a landed swing and return the
+/// damage that survives. Called from both attack chokepoints once the
+/// hit is confirmed and the base damage line is logged, so every clamp
+/// applies uniformly to weapon and spell attacks (subject to each row's
+/// `ClampLane`).
+///
+/// `is_melee` / `is_spell` / `damage_type` describe the swing; `damage`
+/// is the pre-resistance total (target-side resistance / immunity is
+/// applied later, at `DealDamage::apply`) — matching RAW, where these
+/// features reduce the attack's damage before the target's damage types
+/// are consulted. `damage_type` is only read by rows that carry a
+/// `damage_types` filter.
+///
+/// Short-circuits as soon as the damage hits 0: a clamp that can't
+/// shave anything off shouldn't burn its holder's reaction (or a
+/// per-rest charge) for nothing.
 pub fn apply_reactive_damage_clamps(
     encounter: &mut EncounterInstance,
     attacker_id: usize,

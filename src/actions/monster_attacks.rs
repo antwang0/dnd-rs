@@ -15269,3 +15269,115 @@ pub static FORCE_BALLISTA_BOLT: SimpleWeapon = SimpleWeapon::ranged(
     48,
     48,
 );
+
+// ─── Swarms ─────────────────────────────────────────────────────────
+//
+// Every swarm's Action is one "Bites" line, and every one of them
+// carries the same second clause: "…or half as much damage if the
+// swarm has half of its hit points or fewer." None of the statics
+// below encode that half. It lives once, on the swinger, at
+// `attack::attacker_scoped_damage_reduction`, gated on
+// `ActorInstance::is_thinned_swarm` — writing it into five damage
+// expressions instead would have meant five places to get the
+// threshold wrong.
+//
+// RAW's reach on all five is 0 ft ("one creature in the swarm's
+// space"), which only parses if the swarm is standing in your square.
+// The engine's `actor_map` is one id per tile, so a swarm stands
+// beside you instead and bites at ordinary melee reach — the closest
+// the board can get to being inside your armour.
+
+/// Swarm of Bats Bites — DEX-based 2d4 piercing melee. RAW: "+4 to
+/// hit, reach 0 ft., one creature in the swarm's space. Hit: 5 (2d4)
+/// piercing damage, or 2 (1d4) piercing damage if the swarm has half
+/// of its hit points or fewer."
+///
+/// The lightest swarm bite on the bench and the only airborne one —
+/// the cloud's threat is that it arrives from anywhere on a fly-30
+/// speed with blindsight 60, not that any single bat's teeth matter.
+pub static SWARM_OF_BATS_BITES: SimpleWeapon = SimpleWeapon::melee(
+    "swarm of bats bites",
+    &["sbb", "bat-swarm", "bats"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 4),
+    DamageType::Piercing,
+);
+
+/// Swarm of Rats Bites — STR-based 2d6 piercing melee. RAW: "+2 to
+/// hit, reach 0 ft., one target in the swarm's space. Hit: 7 (2d6)
+/// piercing damage, or 3 (1d6) piercing damage if the swarm has half
+/// of its hit points or fewer."
+///
+/// The ground-bound cousin of the bat swarm: fatter dice, no flight,
+/// no resistances (RAW gives the rat swarm none — a sword swing does
+/// cut through rats), which makes it the swarm that actually dies to
+/// being hit.
+pub static SWARM_OF_RATS_BITES: SimpleWeapon = SimpleWeapon::melee(
+    "swarm of rats bites",
+    &["srb", "rat-swarm", "rats"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Swarm of Insects Bites — DEX-based 4d4 piercing melee. RAW: "+3 to
+/// hit, reach 0 ft., one target in the swarm's space. Hit: 10 (4d4)
+/// piercing damage, or 5 (2d4) piercing damage if the swarm has half
+/// of its hit points or fewer."
+///
+/// Four dice on a CR-½ frame — the highest damage-per-CR bite in the
+/// swarm family, and the reason a spellcaster who lets one reach them
+/// is in real trouble. Four small dice rather than two large ones is
+/// also the flattest damage curve on the bench: the insect swarm
+/// almost never rolls low.
+pub static SWARM_OF_INSECTS_BITES: SimpleWeapon = SimpleWeapon::melee(
+    "swarm of insects bites",
+    &["sib", "insect-swarm", "insects"],
+    AbilityScoreType::Dexterity,
+    Dice::new(4, 4),
+    DamageType::Piercing,
+);
+
+/// Swarm of Quippers Bites — DEX-based 4d6 piercing melee. RAW: "+5
+/// to hit, reach 0 ft., one creature in the swarm's space. Hit: 14
+/// (4d6) piercing damage, or 7 (2d6) piercing damage if the swarm has
+/// has half of its hit points or fewer."
+///
+/// The heaviest swarm bite, and the one that compounds: the quipper
+/// swarm's Blood Frenzy hands it advantage against anything already
+/// wounded, so the first bite that lands makes the second likelier.
+pub static SWARM_OF_QUIPPERS_BITES: SimpleWeapon = SimpleWeapon::melee(
+    "swarm of quippers bites",
+    &["sqb", "quipper-swarm", "quippers"],
+    AbilityScoreType::Dexterity,
+    Dice::new(4, 6),
+    DamageType::Piercing,
+);
+
+/// Swarm of Poisonous Snakes Bites — DEX-based 2d6 piercing melee
+/// with a DC 10 CON save-or-4d6-poison rider. RAW: "+6 to hit, reach 0
+/// ft., one creature in the swarm's space. Hit: 7 (2d6) piercing
+/// damage, or 3 (1d6) piercing damage if the swarm has half of its hit
+/// points or fewer. The target must make a DC 10 Constitution saving
+/// throw, taking 14 (4d6) poison damage on a failed save, or half as
+/// much damage on a successful one."
+///
+/// The only swarm whose bite carries a second damage type, and the
+/// reason it sits three CR rungs above the bat swarm on nearly the
+/// same piercing die. Both halves thin together — RAW attaches the
+/// half-strength clause to the piercing line only, but the venom comes
+/// out of the same dwindling supply of snakes, and the engine's
+/// attacker-scoped lane halves the whole swing rather than picking one
+/// damage line out of it.
+pub static SWARM_OF_POISONOUS_SNAKES_BITES: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "swarm of poisonous snakes bites",
+    &["spsb", "snake-swarm", "snakes"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    10,
+    Dice::new(4, 6),
+    DamageType::Poison,
+    "a knot of venom",
+);
