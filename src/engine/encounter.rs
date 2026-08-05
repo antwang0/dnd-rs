@@ -5369,9 +5369,8 @@ impl EncounterInstance {
             .any(|z| z.effect.suppresses_magic && self.actor_in_zone(actor_id, z))
     }
 
-    /// The gate 5e's Antimagic Field closes, in the one direction that
-    /// matters to a cast: **may this caster reach this place with a
-    /// spell?**
+    /// The gate 5e's Antimagic Field closes: **may this caster reach
+    /// what they are aiming at with a spell?**
     ///
     /// RAW is symmetric and this predicate is too. "Spells … are
     /// suppressed in the sphere and can't protrude into it" forbids
@@ -5382,22 +5381,42 @@ impl EncounterInstance {
     ///   - a caster outside reaching a target inside,
     ///   - a caster inside reaching a target outside.
     ///
-    /// So: blocked whenever *either* end is under a suppressing zone.
-    /// `to` is `None` for a self-targeted or untargeted spell, which
-    /// leaves only the caster's own square to ask about — and that is
-    /// the first clause, so Misty Step out of a field fails as surely
-    /// as Fire Bolt into one.
+    /// So: blocked whenever *any* end is under a suppressing zone. A
+    /// spell that names nobody leaves only the caster's own square to
+    /// ask about, which is the first clause — so Misty Step out of a
+    /// field fails as surely as Fire Bolt into one.
+    ///
+    /// Every named target is asked, not just the primary. The reach and
+    /// line-of-sight clauses beside this one in `validate_input` are
+    /// deliberately first-target-only, because a multi-target action
+    /// measures its envelope off its primary; "no spell reaches into
+    /// the sphere" binds on each name independently, the same way the
+    /// charm gate does.
+    ///
+    /// Named actors are asked by footprint and bare points by tile,
+    /// which is the difference between the two arguments rather than an
+    /// inconsistency: a Huge creature with one claw inside the sphere
+    /// is inside it, and a point is a point.
     ///
     /// Deliberately *not* a walk of the tiles between the two ends. A
     /// fireball arcing over a sphere it never lands in is not
     /// protruding into anything, and the line-walk would also have made
     /// the field a wall — which it is not; it stops magic, not arrows.
-    pub fn magic_suppressed_between(&self, caster_id: usize, to: Option<Coordinate>) -> bool {
+    pub fn magic_suppressed_for_cast(
+        &self,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+    ) -> bool {
         if self.zones.iter().all(|z| !z.effect.suppresses_magic) {
             return false;
         }
         self.actor_suppresses_magic(caster_id)
-            || to.is_some_and(|c| self.tile_suppresses_magic(c))
+            || target_ids.is_some_and(|ids| {
+                ids.iter().any(|&id| self.actor_suppresses_magic(id))
+            })
+            || target_locations
+                .is_some_and(|locs| locs.iter().any(|&c| self.tile_suppresses_magic(c)))
     }
 
     /// The movement-cost multiplier the zone layer adds at `coord`: 2.0

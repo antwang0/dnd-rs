@@ -184,27 +184,6 @@ pub fn resolve_enemy_burst_save_damage(
     .0
 }
 
-/// The square an action is aimed at, whichever way it was aimed.
-///
-/// An action names its target as a list of actor ids, as a list of
-/// points, or as neither; the first entry is the primary in both list
-/// shapes, which is the convention every reach and line-of-sight check
-/// in `validate_input` already follows. `None` means the action is
-/// aimed at nobody but its caster — a self-buff, a Dodge, a Rage.
-///
-/// Exists for the zone layer's location questions, which need one
-/// coordinate and do not care which of the two schemas produced it.
-pub fn aimed_at_point(
-    encounter: &EncounterInstance,
-    target_ids: Option<&Vec<usize>>,
-    target_locations: Option<&Vec<Coordinate>>,
-) -> Option<Coordinate> {
-    if let Some(&id) = target_ids.and_then(|ids| ids.first()) {
-        return encounter.actors.get(&id).map(|a| a.location());
-    }
-    target_locations.and_then(|locs| locs.first()).copied()
-}
-
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
 /// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /
 /// reach weapons would be 2. Ranged actions return their max range here.
@@ -1039,11 +1018,9 @@ pub trait Action {
         // Where the two differ is that this one is about a *place*
         // rather than about the caster's own state, so it needs the
         // aimed-at end as well: a caster outside the sphere may not
-        // reach into it. `zone_target_point` resolves that end for
-        // either targeting shape.
+        // reach into it, and one inside may not reach out.
         if self.school().is_some()
-            && encounter
-                .magic_suppressed_between(caster_id, aimed_at_point(encounter, target_ids, target_locations))
+            && encounter.magic_suppressed_for_cast(caster_id, target_ids, target_locations)
         {
             return false;
         }

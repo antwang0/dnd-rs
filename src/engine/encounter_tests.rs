@@ -69413,3 +69413,46 @@ fn the_no_args_bursts_are_visible_to_the_picker_that_looks_for_them() {
         );
     }
 }
+
+/// "Can't protrude into it" binds on every name in the target list, not
+/// just the primary — and it asks a creature's whole body, so a Huge
+/// one with a corner in the sphere is inside it.
+#[test]
+fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
+    use crate::actions::spells::MAGIC_MISSILE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let clear = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+        .unwrap();
+    // The ogre's anchor tile sits outside the sphere; its Large
+    // footprint reaches in.
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 13), 1, 1)
+        .unwrap();
+    e.install_zone(test_zone(
+        Coordinate::new(10, 10),
+        2,
+        ZoneEffect::NULLIFYING,
+    ));
+    assert!(
+        !e.zones()[0].covers(Coordinate::new(13, 13)),
+        "the fixture needs the ogre's anchor tile outside the sphere"
+    );
+
+    assert!(MAGIC_MISSILE.validate_input(&e, wiz, Some(&vec![clear]), None, None));
+    assert!(
+        !MAGIC_MISSILE.validate_input(&e, wiz, Some(&vec![ogre]), None, None),
+        "a body reaching into the sphere is inside it"
+    );
+    assert!(
+        !MAGIC_MISSILE.validate_input(&e, wiz, Some(&vec![clear, ogre]), None, None),
+        "the second name in the list is asked too"
+    );
+}
