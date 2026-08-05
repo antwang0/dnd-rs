@@ -7060,22 +7060,63 @@ impl EncounterInstance {
     /// movement budget (the AI may need several turns to close in). Returns
     /// `None` if already adjacent or no path exists.
     ///
-    /// Tried twice: once refusing to route through any tile a persistent
-    /// area would hurt the walker on, and — only if that finds nothing —
+    /// Tried twice: once refusing to route through any tile that is bad
+    /// ground *for this walker*, and — only if that finds nothing —
     /// once without the refusal. That is the whole of the engine's
     /// answer to "should I walk through the web", and it is the right
     /// shape for it: a creature goes around a hazard when going around
     /// is possible, and walks through it when the alternative is not
     /// reaching the fight at all. Skipped entirely on a board with no
-    /// harmful area on it, which is nearly every board.
+    /// bad ground on it, which is nearly every board.
     pub fn step_toward_actor(&self, actor_id: usize, target_id: usize) -> Option<Coordinate> {
-        let hazards = self.zones.iter().any(|z| z.effect.is_harmful());
-        if hazards
+        if self.has_bad_ground_for(actor_id)
             && let Some(step) = self.step_toward_actor_inner(actor_id, target_id, true)
         {
             return Some(step);
         }
         self.step_toward_actor_inner(actor_id, target_id, false)
+    }
+
+    /// True if any persistent area on the board is worth `actor_id`
+    /// walking around. The cheap board-level pre-check that lets the
+    /// pathfinder skip its first pass entirely on the common board.
+    fn has_bad_ground_for(&self, actor_id: usize) -> bool {
+        self.zones.iter().any(|z| {
+            z.effect.is_harmful() || (z.effect.suppresses_magic && self.actor_casts_spells(actor_id))
+        })
+    }
+
+    /// Is this tile bad ground to stand on, for a walker who casts if
+    /// and only if `casts`?
+    ///
+    /// Two different senses of bad, and the second is why the walker's
+    /// nature is a parameter rather than something the tile knows:
+    ///
+    ///   - it can hurt anybody who stands there (`tile_is_hazardous`);
+    ///   - it is an Antimagic Field and the walker casts. Nothing lands
+    ///     on a caster standing in dead magic — it simply loses its
+    ///     turn, which for a wizard is worse than a web. For everybody
+    ///     else the same tile is open ground, and telling a barbarian
+    ///     to walk around it would be strictly worse pathing.
+    ///
+    /// `casts` is passed in rather than looked up because the caller is
+    /// a per-tile inner loop and the answer is a scan of an action
+    /// list — see `step_toward_actor_inner`, which reads it once.
+    fn tile_is_bad_ground(&self, coord: Coordinate, casts: bool) -> bool {
+        self.tile_is_hazardous(coord) || (casts && self.tile_suppresses_magic(coord))
+    }
+
+    /// True if `actor_id` has anything on its action list that is a
+    /// spell — `Action::school()`, the same marker the casting gates
+    /// read.
+    ///
+    /// Asked of the action list rather than of a spell-slot table
+    /// because cantrips have no slots, and a creature whose only magic
+    /// is a cantrip still loses it to an Antimagic Field.
+    pub fn actor_casts_spells(&self, actor_id: usize) -> bool {
+        self.actors
+            .get(&actor_id)
+            .is_some_and(|a| a.actions.iter().any(|act| act.school().is_some()))
     }
 
     fn step_toward_actor_inner(
@@ -7092,6 +7133,11 @@ impl EncounterInstance {
         let my_size = get_tiles_from_size(actor.size());
         let t_loc = target.location();
         let t_size = get_tiles_from_size(target.size());
+
+        // Read once for the whole walk rather than per candidate tile:
+        // whether the walker casts does not change as the BFS spreads,
+        // and the answer is a scan of its action list.
+        let casts = avoid_hazards && self.actor_casts_spells(actor_id);
 
         let in_melee =
             |c: Coordinate| -> bool { footprint_chebyshev(c, my_size, t_loc, t_size) <= 1 };
@@ -7125,7 +7171,7 @@ impl EncounterInstance {
                     if !self.can_move_to(actor_id, next) {
                         continue;
                     }
-                    if avoid_hazards && self.tile_is_hazardous(next) {
+                    if avoid_hazards && self.tile_is_bad_ground(next, casts) {
                         continue;
                     }
                     parent.insert(next, coord);

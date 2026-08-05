@@ -69545,3 +69545,46 @@ fn scatter_moves_bodies_without_touching_hit_points() {
         "no seed in the sweep landed a failed save — the fixture proves nothing"
     );
 }
+
+/// A caster walks around dead magic; a creature with no magic to lose
+/// walks straight through it. Same tile, same board, different answer —
+/// which is why the pathfinder's bad-ground question takes the walker
+/// rather than only the tile.
+#[test]
+fn dead_magic_is_bad_ground_only_for_the_creatures_that_cast() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // A corridor four tiles tall — wide enough for a Medium creature's
+    // 2x2 footprint to sit in it at more than one height, which is what
+    // makes a detour possible at all. Walls close it top and bottom.
+    let walls: Vec<(isize, isize)> = (0..14).flat_map(|x| [(x, 4), (x, 9)]).collect();
+
+    let first_step = |template: &'static crate::actors::actor_template::CreatureTemplate| {
+        let mut e = ei_with_terrain(16, 16, &walls);
+        let walker = e
+            .instantiate_creature(template, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 5), 1, 0)
+            .unwrap();
+        // A single-tile sphere sitting on the anchor square the direct
+        // route steps onto first.
+        e.install_zone(test_zone(Coordinate::new(3, 5), 0, ZoneEffect::NULLIFYING));
+        e.step_toward_actor(walker, quarry)
+    };
+
+    let barbarian = first_step(&BARBARIAN_TEMPLATE).expect("the barbarian can reach the goblin");
+    let wizard = first_step(&WIZARD_TEMPLATE).expect("the wizard can reach the goblin");
+    assert_eq!(
+        barbarian,
+        Coordinate::new(3, 5),
+        "nothing on that tile can touch a barbarian — it walks the short way"
+    );
+    assert_ne!(
+        wizard,
+        Coordinate::new(3, 5),
+        "a caster's whole turn is what the field costs, so it goes around"
+    );
+}
