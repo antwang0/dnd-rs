@@ -27243,21 +27243,25 @@ impl Action for Earthbind {
         if save.passed() {
             return Vec::new();
         }
-        // Strip both flight sources on a failed save. RemoveCondition is
-        // a no-op if the target wasn't holding the flag, so casting on a
-        // grounded target consumes the slot but produces no visible
-        // change — matching RAW's "if the target isn't flying, nothing
-        // happens" clause.
-        vec![
-            Box::new(RemoveCondition {
-                actor_id: target_id,
-                condition: Condition::Flying,
-            }) as Box<dyn ApplicableSideEffect>,
-            Box::new(RemoveCondition {
-                actor_id: target_id,
-                condition: Condition::InvestedInWind,
-            }),
-        ]
+        // Strip every flight source on a failed save — RAW's "the
+        // target's flying speed (if any) becomes 0 feet" only means
+        // anything if the spell knows all the ways a flying speed can
+        // have been granted. Driven off the shared
+        // `MAGICAL_FLIGHT_CONDITIONS` cohort rather than a list written
+        // out here, which is how Otherworldly Guise came to be missing
+        // from it. RemoveCondition is a no-op if the target wasn't
+        // holding the flag, so casting on a grounded target consumes
+        // the slot but produces no visible change — matching RAW's "if
+        // the target isn't flying, nothing happens" clause.
+        crate::actors::actor_template::MAGICAL_FLIGHT_CONDITIONS
+            .iter()
+            .map(|&condition| {
+                Box::new(RemoveCondition {
+                    actor_id: target_id,
+                    condition,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
     }
 }
 

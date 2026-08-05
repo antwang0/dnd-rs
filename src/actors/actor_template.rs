@@ -1420,6 +1420,33 @@ struct ConditionSpeedBonus {
     bonus_ft: f32,
 }
 
+/// Every condition that puts an actor in the air under its own power.
+///
+/// Read by `ActorInstance::has_magical_flight` to ask "is this actor
+/// flying?", and by the **Earthbind** spell to make one stop — RAW's
+/// "the target's flying speed (if any) becomes 0 feet", which only
+/// means anything if the spell knows every way a flying speed can have
+/// been granted.
+///
+/// That second consumer is why this is a list rather than three `||`s
+/// inside the predicate. Earthbind used to name `Flying` and
+/// `InvestedInWind` and stop, with a comment calling them "both flight
+/// sources" — so a warlock aloft on **Otherworldly Guise** simply
+/// ignored the spell. The two lanes could disagree because there was
+/// nothing for them to disagree *with*. Now a fourth flight source is
+/// one row here and both lanes pick it up.
+///
+/// `Lifted` (Telekinesis) is deliberately absent: it is someone else's
+/// concentration holding the target up, not a flying speed of their
+/// own, so Earthbind has nothing to strip. It joins this cohort only at
+/// `is_grounded`, which asks the different question of whether the
+/// actor's feet are on the floor.
+pub const MAGICAL_FLIGHT_CONDITIONS: &[Condition] = &[
+    Condition::Flying,
+    Condition::InvestedInWind,
+    Condition::OtherworldlyGuised,
+];
+
 /// Condition-driven speed-bonus cohort read by
 /// `ActorInstance::condition_speed_bonus`. Every row is summed (with
 /// an OR-of-flags predicate); adding a fresh condition-driven speed
@@ -6404,15 +6431,16 @@ impl ActorInstance {
     /// concentration spells one caster can't stack, so they're an OR
     /// rather than a sum.
     ///
-    /// Named rather than inlined because three separate lanes ask it
+    /// Named rather than inlined because four separate lanes ask it
     /// and must never disagree about the answer — the +60 ft speed row
     /// in `CONDITION_SPEED_BONUSES`, the difficult-terrain waiver in
-    /// `DIFFICULT_TERRAIN_IMMUNITIES`, and the ground-contact gate on
-    /// tremorsense (`is_grounded`).
+    /// `DIFFICULT_TERRAIN_IMMUNITIES`, the ground-contact gate on
+    /// tremorsense (`is_grounded`), and the Earthbind spell, which has
+    /// to strip every one of them.
     pub fn has_magical_flight(&self) -> bool {
-        self.has_condition(Condition::Flying)
-            || self.has_condition(Condition::InvestedInWind)
-            || self.has_condition(Condition::OtherworldlyGuised)
+        MAGICAL_FLIGHT_CONDITIONS
+            .iter()
+            .any(|&c| self.has_condition(c))
     }
 
     /// True while this actor is in contact with the ground — the

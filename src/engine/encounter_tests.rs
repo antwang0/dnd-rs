@@ -26480,8 +26480,77 @@ fn speed_buff_conditions_stack_additively() {
     );
 }
 
-/// Earthbind: on a failed STR save, strips both Flying and
-/// InvestedInWind from the target, reducing their speed back to base.
+/// Earthbind: on a failed STR save, strips *every* source of magical
+/// flight from the target, reducing their speed back to base.
+///
+/// Every source, not two of them. The spell used to name `Flying` and
+/// `InvestedInWind` and stop, so a warlock aloft on Otherworldly Guise
+/// walked through it — the failure mode a hand-written list of a cohort
+/// invites. The loop below asserts one condition at a time so the test
+/// fails on the one that was forgotten rather than on a summary flag,
+/// and reads `MAGICAL_FLIGHT_CONDITIONS` so a fourth flight source is
+/// covered the day it is added.
+#[test]
+fn earthbind_grounds_every_source_of_flight() {
+    use crate::actions::spells::EARTHBIND;
+    use crate::actors::actor_template::MAGICAL_FLIGHT_CONDITIONS;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    // Pin the membership before looping over it. Without this the
+    // sweep below is self-referential — a cohort that lost a member
+    // and a spell derived from that cohort would agree with each
+    // other and both be wrong. Otherworldly Guise is named explicitly
+    // because it is the one that was missing.
+    for expected in [
+        Condition::Flying,
+        Condition::InvestedInWind,
+        Condition::OtherworldlyGuised,
+    ] {
+        assert!(
+            MAGICAL_FLIGHT_CONDITIONS.contains(&expected),
+            "{expected:?} grants a flying speed, so Earthbind must know about it"
+        );
+    }
+
+    for &flight in MAGICAL_FLIGHT_CONDITIONS {
+        let mut grounded = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .add_condition(flight, ConditionTimer::Rounds(10));
+            assert!(e.actors[&g].has_magical_flight());
+            let tv = vec![g];
+            let effs = EARTHBIND.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&g].has_magical_flight() {
+                grounded = true;
+                break;
+            }
+        }
+        assert!(
+            grounded,
+            "earthbind never grounded a target flying on {flight:?} across 30 attempts"
+        );
+    }
+}
+
+/// The baseline case, kept separate because it also pins that the
+/// speed bump goes away with the condition rather than lingering.
 #[test]
 fn earthbind_grounds_flying_target() {
     use crate::actions::spells::EARTHBIND;
