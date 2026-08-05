@@ -55,6 +55,14 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // refills the whole maneuver suite, because one counter backs it —
     // see `SHARED_FEATURE_POOLS`.
     SUPERIORITY_DICE_TAG,
+    // 5e Channel Divinity, both classes: "you must finish a short or
+    // long rest to use your Channel Divinity again." One row per class
+    // rather than one per option, because one counter backs each — see
+    // `SHARED_FEATURE_POOLS`. The nineteen individual options used to be
+    // listed here, which was nineteen chances to forget a tag and three
+    // taken.
+    CLERIC_CHANNEL_DIVINITY_TAG,
+    PALADIN_CHANNEL_DIVINITY_TAG,
     ARCANE_RECOVERY_TAG,
     NATURAL_RECOVERY_TAG,
     // 5e Circle of Stars Druid — Starry Form. RAW spends a Wild Shape
@@ -66,7 +74,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // charges come back, which is what the pool-sized refill in
     // `short_rest` is for.
     ARCANE_SHOT_TAG,
-    PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     // 5e College of Eloquence Bard lv3 — Unsettling Words. RAW spends a
     // Bardic Inspiration use, and the bard's inspiration pool itself
@@ -87,18 +94,14 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Oath of the Crown Paladin Channel Divinity — Champion Challenge
     // and Turn the Tide. Same short-rest cadence as every other Channel
     // Divinity on the roster.
-    CHAMPION_CHALLENGE_TAG,
-    TURN_THE_TIDE_TAG,
     // 5e War Domain Cleric features — both refresh on a short rest.
     // WAR_PRIEST is the once-per-rest bonus-action extra swing; GUIDED
     // STRIKE is the Channel Divinity +10 accuracy prime.
     WAR_PRIEST_TAG,
-    GUIDED_STRIKE_TAG,
     // 5e Light Domain Cleric Channel Divinity — Radiance of the Dawn:
     // once-per-short-rest 30ft radiant burst. Shares the RAW "Channel
     // Divinity" resource lane with Turn Undead / Preserve Life / Guided
     // Strike, but each tag is a distinct per-rest charge in our model.
-    RADIANCE_OF_THE_DAWN_TAG,
     // 5e Light Domain Cleric level-1 feature — Warding Flare: passive
     // reaction that imposes disadvantage on an incoming attack roll.
     // RAW: uses per long rest equal to WIS mod (min 1), refreshed on a
@@ -131,7 +134,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // (1 minute RAW). Sibling to Turn Undead — RAW Channel Divinity
     // refreshes on short rest, same as Guided Strike / Radiance of the
     // Dawn.
-    TURN_THE_FAITHLESS_TAG,
     // 5e Berserker Barbarian level-10 subclass feature — Intimidating
     // Presence. Single-target Frighten via WIS save vs the barbarian's
     // CHA-anchored DC. Refreshed on short rest so a raging Berserker
@@ -143,7 +145,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // anchored DC. Refreshed on short rest alongside the other paladin
     // CD family (Turn the Faithless, Guided Strike, Radiance of the
     // Dawn) — RAW Channel Divinity is once per short rest.
-    NATURES_WRATH_TAG,
     // 5e Tempest Domain Cleric level-1 subclass feature — Wrath of the
     // Storm. Single-target 2d8 lightning damage burst via DEX save vs
     // the cleric's WIS-anchored DC. Refreshed on short rest alongside
@@ -167,7 +168,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // paladin CD family (Turn the Faithless, Nature's Wrath, Guided
     // Strike, Radiance of the Dawn) — RAW Channel Divinity is once
     // per short rest.
-    ABJURE_ENEMY_TAG,
     // 5e Devotion Paladin level-15 subclass feature — Rebuke the
     // Violent. Single-target 4d10 radiant damage burst via WIS save
     // vs the paladin's CHA-anchored DC. Refreshed on short rest to
@@ -194,7 +194,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // match the paladin CD family (Turn the Faithless / Nature's
     // Wrath / Abjure Enemy / Guided Strike / Radiance of the Dawn) —
     // RAW Channel Divinity is once per short rest.
-    DREADFUL_ASPECT_TAG,
     // 5e Divine Soul Sorcerer level-1 subclass feature — Favored by
     // the Gods. Auto-fire "add 2d4 to a failed save" gate. RAW:
     // refreshes on a short or long rest — sibling to Dark One's Own
@@ -217,7 +216,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // once per short rest — sibling cadence to every other Cleric CD
     // (Turn Undead / Preserve Life / Guided Strike / Radiance of the
     // Dawn / Warding Flare / Wrath of the Storm).
-    PATH_TO_THE_GRAVE_TAG,
     // 5e Illusion Wizard level-10 subclass feature — Illusory Self.
     // Reactive per-rest auto-miss on an incoming attack roll that
     // would otherwise connect. RAW: refreshes on a short or long rest
@@ -252,7 +250,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // 5e Arcana Domain Cleric Channel Divinity — Arcane Abjuration.
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
-    ARCANE_ABJURATION_TAG,
     // 5e Nature Domain Cleric **Dampen Elements** — RAW costs only the
     // reaction with no per-rest cap; the engine's single charge lands on
     // the short-rest cadence the rest of the reactive per-rest family
@@ -260,11 +257,9 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     DAMPEN_ELEMENTS_TAG,
     // 5e Nature Domain Cleric Channel Divinity — Charm Animals and
     // Plants. RAW Channel Divinity is once per short rest.
-    CHARM_ANIMALS_AND_PLANTS_TAG,
     // 5e Trickery Domain Cleric Channel Divinity — Invoke Duplicity.
     // RAW Channel Divinity is once per short rest, the same cadence as
     // every sibling CD charge above.
-    INVOKE_DUPLICITY_TAG,
     // 5e Undead Warlock **Form of Dread** — RAW grants proficiency-bonus
     // uses per long rest; the single charge lands on the short-rest
     // lane, matching the warlock's own Pact Magic refresh.
@@ -278,7 +273,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // Conquering Presence. Refreshed on short rest alongside the rest
     // of the paladin CD family (Dreadful Aspect, Abjure Enemy, Nature's
     // Wrath, Turn the Faithless).
-    CONQUERING_PRESENCE_TAG,
     // 5e Circle of Spores Druid **Symbiotic Entity** — RAW spends a
     // Wild Shape use, and Wild Shape itself recharges on a short rest,
     // so the charge lands on the short-rest lane rather than the
@@ -296,10 +290,8 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // "Touch of Death"). Same short-rest cadence as the rest of the
     // cleric CD family (Turn Undead, Preserve Life, Guided Strike,
     // Radiance of the Dawn).
-    REAPERS_TOUCH_TAG,
     // 5e Order Domain Cleric Channel Divinity — Order's Demand. Same
     // short-rest cadence as the rest of the cleric CD family.
-    ORDERS_DEMAND_TAG,
     // 5e Soulknife Rogue **Homing Strikes**. RAW recovers Psionic Energy
     // dice on a short rest, which is the cadence this registry carries.
     HOMING_STRIKES_TAG,
@@ -326,21 +318,18 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the plain Paladin — the two chassis most likely to be picked, and
     // the two whose Channel Divinity is the whole non-spell half of
     // their turn.
-    TURN_UNDEAD_TAG,
-    SACRED_WEAPON_TAG,
-    VOW_OF_ENMITY_TAG,
 ];
 
-/// Every **Channel Divinity** on the roster: the shared once-per-rest
-/// resource a Cleric or Paladin spends on their domain's or oath's
-/// signature effect.
+/// Every **Channel Divinity** on the roster: the once-per-rest resource
+/// a Cleric or Paladin spends on their domain's or oath's signature
+/// effect.
 ///
 /// RAW is unambiguous and identical for both classes — "you must finish
 /// a short or long rest to use your Channel Divinity again" — so this
-/// registry has exactly one rule, and
+/// this has exactly one rule, and
 /// `every_channel_divinity_comes_back_on_a_short_rest` enforces it.
 ///
-/// It exists because the rule was being applied one tag at a time by
+/// It exists because the cadence was being applied one tag at a time by
 /// whoever added the feature, and three of the eleven had been missed:
 /// the Cleric's Turn Undead and the Paladin's Sacred Weapon and Vow of
 /// Enmity all refreshed on a long rest only. Nothing detected it,
@@ -348,12 +337,28 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
 /// to share a cadence — it is a flat list of tags, and a tag that isn't
 /// in it simply waits for the long rest.
 ///
-/// The engine models each CD as its own charge rather than as one
-/// shared pool, which is a deliberate simplification (a paladin with
-/// two oaths' worth of CDs would RAW-illegally get two uses). That does
-/// not change the cadence, which is what this list is about.
-pub const CHANNEL_DIVINITY_FEATURES: &[&str] = &[
-    // Cleric
+/// Split by class because the *pool* is per class even though the
+/// cadence isn't: see `CLERIC_CHANNEL_DIVINITY` and
+/// `PALADIN_CHANNEL_DIVINITY`, which each hold their own count and draw
+/// from their own half of this list. The whole list is what the cadence
+/// rule reads.
+pub fn channel_divinity_features() -> impl Iterator<Item = &'static str> {
+    CLERIC_CHANNEL_DIVINITIES
+        .into_iter()
+        .chain(PALADIN_CHANNEL_DIVINITIES)
+}
+
+/// The Cleric's Channel Divinity options — the membership list of
+/// `CLERIC_CHANNEL_DIVINITY`.
+///
+/// A cleric knows Turn Undead plus whatever their domain grants, and RAW
+/// spends both out of one pool. Modeling each as its own charge, which
+/// is what this engine did until the pool lane existed, handed a War
+/// Cleric three presses of a two-press feature and a Light Cleric four —
+/// the same over-count the Battle Master's maneuvers had, one class
+/// over. The comment here used to say so and call it "a deliberate
+/// simplification".
+pub const CLERIC_CHANNEL_DIVINITIES: [&str; 10] = [
     TURN_UNDEAD_TAG,
     PRESERVE_LIFE_TAG,
     GUIDED_STRIKE_TAG,
@@ -364,7 +369,18 @@ pub const CHANNEL_DIVINITY_FEATURES: &[&str] = &[
     CHARM_ANIMALS_AND_PLANTS_TAG,
     REAPERS_TOUCH_TAG,
     ORDERS_DEMAND_TAG,
-    // Paladin
+];
+
+/// The Paladin's Channel Divinity options — the membership list of
+/// `PALADIN_CHANNEL_DIVINITY`.
+///
+/// Separate from the cleric's because the two classes hand out different
+/// numbers of presses, not because the rule differs: RAW a paladin has
+/// exactly one Channel Divinity use per rest at every level this
+/// engine's chassis represent, where a cleric of the same tier has two.
+/// One pool per class keeps that difference in the one place a pool
+/// records anything — its size.
+pub const PALADIN_CHANNEL_DIVINITIES: [&str; 9] = [
     SACRED_WEAPON_TAG,
     VOW_OF_ENMITY_TAG,
     ABJURE_ENEMY_TAG,
@@ -375,6 +391,15 @@ pub const CHANNEL_DIVINITY_FEATURES: &[&str] = &[
     CHAMPION_CHALLENGE_TAG,
     TURN_THE_TIDE_TAG,
 ];
+
+/// The Cleric's Channel Divinity pool. RAW: one use at cleric level 2,
+/// two from level 6, three from 18. The cleric templates on the roster
+/// sit at level 5-9, so two is the number for the chassis they are.
+pub const CLERIC_CHANNEL_DIVINITY_TAG: &str = "cleric.channel_divinity";
+
+/// The Paladin's Channel Divinity pool. RAW: one use, regained on a
+/// short or long rest, at every level below 18.
+pub const PALADIN_CHANNEL_DIVINITY_TAG: &str = "paladin.channel_divinity";
 
 /// Battle Master maneuver tags — the membership list of the superiority
 /// dice pool.
@@ -468,8 +493,16 @@ pub const SUPERIORITY_DIE: Dice = Dice::new(1, 8);
 /// per-tag behavior rather than silently reading someone else's empty
 /// counter and finding the feature unusable. `every_pool_member_ships_with_its_pool`
 /// makes that omission a test failure rather than a balance surprise.
-pub const SHARED_FEATURE_POOLS: &[(&str, &[&str])] =
-    &[(SUPERIORITY_DICE_TAG, BATTLE_MASTER_MANEUVERS)];
+pub const SHARED_FEATURE_POOLS: &[(&str, &[&str])] = &[
+    (SUPERIORITY_DICE_TAG, BATTLE_MASTER_MANEUVERS),
+    // Channel Divinity is the same story one class over, and the reason
+    // the pool lane is a general mechanism rather than a Battle Master
+    // special case. A cleric spends Turn Undead and their domain's
+    // option out of one pool; modeling them as separate charges gave a
+    // War Cleric three presses of a two-press feature.
+    (CLERIC_CHANNEL_DIVINITY_TAG, &CLERIC_CHANNEL_DIVINITIES),
+    (PALADIN_CHANNEL_DIVINITY_TAG, &PALADIN_CHANNEL_DIVINITIES),
+];
 
 /// The shared pool `tag` spends from, or `None` if it has a counter of
 /// its own.
@@ -526,6 +559,12 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // superiority dice." RAW to the number, and the number is the whole
     // subclass — every maneuver on the chassis is priced against it.
     (SUPERIORITY_DICE_TAG, 4),
+    // 5e Cleric **Channel Divinity**: one use at level 2, two from level
+    // 6. The cleric templates sit at level 5-9, and two is what makes
+    // the domains playable — a Light Cleric with one press has to choose
+    // between turning the undead in front of it and the Radiance of the
+    // Dawn that is the domain's whole tell.
+    (CLERIC_CHANNEL_DIVINITY_TAG, 2),
     // 5e Circle of the Moon Druid **Combat Wild Shape**: two uses per
     // short rest, and RAW is explicit about the count in a way most
     // pools are not. Two is also what makes the Moon druid's second
@@ -16048,10 +16087,13 @@ mod tests {
     /// once a fight looks exactly like a Cleric who has already used it.
     #[test]
     fn every_channel_divinity_comes_back_on_a_short_rest() {
-        let stranded: Vec<&str> = CHANNEL_DIVINITY_FEATURES
-            .iter()
-            .copied()
-            .filter(|tag| !SHORT_REST_FEATURES.contains(tag))
+        // Each option draws on its class's pool, and the pool is what
+        // the rest refills — so the cadence rule is now "every option
+        // belongs to a pool, and every pool refreshes on a short rest".
+        let stranded: Vec<&str> = channel_divinity_features()
+            .filter(|tag| {
+                shared_pool_for(tag).is_none_or(|pool| !SHORT_REST_FEATURES.contains(&pool))
+            })
             .collect();
         assert!(
             stranded.is_empty(),
@@ -16074,9 +16116,7 @@ mod tests {
             .flat_map(|(_family, templates)| templates)
             .flat_map(|t| t.features.iter().copied())
             .collect();
-        let orphans: Vec<&str> = CHANNEL_DIVINITY_FEATURES
-            .iter()
-            .copied()
+        let orphans: Vec<&str> = channel_divinity_features()
             .filter(|tag| !carried.contains(tag))
             .collect();
         assert!(

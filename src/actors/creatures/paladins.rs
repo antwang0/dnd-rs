@@ -2,7 +2,8 @@ use crate::actions::class_features::{
     ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, AURA_OF_THE_SENTINEL_TAG,
     CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, DREADFUL_ASPECT, DREADFUL_ASPECT_TAG,
     FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH,
-    NATURES_WRATH_TAG, REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    NATURES_WRATH_TAG, PALADIN_CHANNEL_DIVINITY_TAG, REBUKE_THE_VIOLENT,
+    REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
     TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
     VOW_OF_ENMITY_TAG,
 };
@@ -163,6 +164,11 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             LAY_ON_HANDS_TAG,
             SACRED_WEAPON_TAG,
             CLEANSING_TOUCH_TAG,
+            // The pool Sacred Weapon and every oath's Channel Divinity
+            // spend from — one press per rest between all of them, which
+            // is RAW at every level this chassis represents. Inherited
+            // by every oath template through `..PALADIN_TEMPLATE.clone()`.
+            PALADIN_CHANNEL_DIVINITY_TAG,
             // Improved Divine Smite (level 11+): passive +1d8 radiant
             // on every melee weapon hit. The rider fires in
             // `engine::attack::resolve_attack_outcome` right after the

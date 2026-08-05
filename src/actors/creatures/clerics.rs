@@ -6,7 +6,8 @@ use crate::actions::class_features::{
     POTENT_SPELLCASTING_TAG,
     DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PATH_TO_THE_GRAVE, PATH_TO_THE_GRAVE_TAG,
     PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG,
-    SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, VIGILANT_BLESSING_TAG, WAR_PRIEST,
+    CLERIC_CHANNEL_DIVINITY_TAG, SOUL_OF_THE_FORGE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
+    VIGILANT_BLESSING_TAG, WAR_PRIEST,
     WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
@@ -268,6 +269,13 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DIVINE_STRIKE_TAG,
             PRESERVE_LIFE_TAG,
             DESTROY_UNDEAD_TAG,
+            // The pool Turn Undead, Preserve Life and every domain's
+            // option spend from — two presses per rest, not one each.
+            // Inherited by every domain template through
+            // `..CLERIC_TEMPLATE.clone()`, which is what keeps a domain
+            // from quietly shipping its Channel Divinity as a free extra
+            // press. See `SHARED_FEATURE_POOLS`.
+            CLERIC_CHANNEL_DIVINITY_TAG,
         ]),
         ..CreatureTemplate::defaults()
     }

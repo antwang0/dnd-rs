@@ -23423,13 +23423,17 @@ fn turn_undead_targets_only_undead_proxy() {
         let g = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 1)
             .unwrap();
-        assert!(e.actors[&c].feature_available(TURN_UNDEAD_TAG));
+        let presses_before = e.actors[&c].feature_charges_remaining(TURN_UNDEAD_TAG);
+    assert!(presses_before > 0);
         let effects = TURN_UNDEAD.side_effects(&mut e, c, None, None, None);
         for ef in effects {
             ef.apply(&mut e);
         }
         // Feature consumed unconditionally.
-        assert!(!e.actors[&c].feature_available(TURN_UNDEAD_TAG));
+        assert_eq!(
+        e.actors[&c].feature_charges_remaining(TURN_UNDEAD_TAG),
+        presses_before - 1
+    );
         // Goblin (non-undead-proxy) is never targeted — the
         // creature-type filter bounces it before the save.
         assert!(
@@ -24298,8 +24302,8 @@ fn preserve_life_heals_wounded_allies_up_to_half() {
     let half = max / 2 + (max % 2);
     assert!(after <= half + 1, "preserve life caps at half max HP (got {} vs half {})", after, half);
     assert!(
-        !e.actors[&c].feature_available(PRESERVE_LIFE_TAG),
-        "the feature should be spent after use"
+        e.actors[&c].feature_charges_remaining(PRESERVE_LIFE_TAG) < 2,
+        "one Channel Divinity press should be spent after use"
     );
 }
 
@@ -36875,7 +36879,9 @@ fn short_rest_restores_path_to_the_grave() {
     )
     .unwrap();
     assert!(cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
-    cleric.spend_feature(PATH_TO_THE_GRAVE_TAG);
+    // Drain the pool rather than one press — Path to the Grave shares
+    // the cleric's Channel Divinity with Turn Undead and Preserve Life.
+    while cleric.spend_feature(PATH_TO_THE_GRAVE_TAG) {}
     assert!(!cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
     cleric.short_rest(&mut roller);
     assert!(cleric.feature_available(PATH_TO_THE_GRAVE_TAG));
@@ -53130,8 +53136,11 @@ fn guided_strike_primes_caster_and_grants_plus_ten() {
         before + 10,
         "guided strike should add +10 to condition_attack_bonus"
     );
-    // Feature charge consumed — a re-prime attempt bounces.
-    assert!(!e.actors[&cleric].feature_available(GUIDED_STRIKE_TAG));
+    // One Channel Divinity press spent. The re-prime bounces on the
+    // no-stack gate rather than on an empty pool — the war cleric still
+    // has its second press, and RAW it could spend that one on Turn
+    // Undead instead.
+    assert!(e.actors[&cleric].feature_charges_remaining(GUIDED_STRIKE_TAG) < 2);
     assert!(!action.custom_validate_input(&e, cleric, None, None, None));
 }
 
@@ -53224,8 +53233,8 @@ fn path_to_the_grave_curses_target_and_attacker_gets_advantage() {
         "goblin should be marked after path to the grave lands"
     );
     assert!(
-        !e.actors[&cleric].feature_available(PATH_TO_THE_GRAVE_TAG),
-        "grave cleric should have burned the charge"
+        e.actors[&cleric].feature_charges_remaining(PATH_TO_THE_GRAVE_TAG) < 2,
+        "grave cleric should have burned a Channel Divinity press"
     );
     // A third-party attacker rolling against the cursed goblin
     // gets advantage via the shared `grants_advantage_to_attackers`
@@ -53542,8 +53551,22 @@ fn radiance_of_the_dawn_hits_enemies_only_and_consumes_feature() {
         far_hp_before,
         "enemy out of range (chebyshev>12) should be spared"
     );
-    // Charge consumed — re-fire attempt bounces.
-    assert!(!e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
+    // One Channel Divinity press consumed — and only one. A Light
+    // Cleric of this tier has two, so the burst is still on the table
+    // for a second round (or the press can go to Turn Undead instead,
+    // which is the choice the shared pool exists to force). It stops
+    // validating once the pool is actually dry.
+    assert_eq!(
+        e.actors[&cleric].feature_charges_remaining(RADIANCE_OF_THE_DAWN_TAG),
+        1
+    );
+    assert!(action.custom_validate_input(&e, cleric, None, None, None));
+    while e
+        .actors
+        .get_mut(&cleric)
+        .unwrap()
+        .spend_feature(RADIANCE_OF_THE_DAWN_TAG)
+    {}
     assert!(!action.custom_validate_input(&e, cleric, None, None, None));
 }
 
@@ -53560,10 +53583,15 @@ fn radiance_of_the_dawn_refreshes_on_short_rest() {
         .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert!(e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
-    e.actors
+    // Drain the pool, not one press of it: Radiance shares the cleric's
+    // Channel Divinity with Turn Undead and Preserve Life, so a single
+    // spend leaves a press behind.
+    while e
+        .actors
         .get_mut(&cleric)
         .unwrap()
-        .spend_feature(RADIANCE_OF_THE_DAWN_TAG);
+        .spend_feature(RADIANCE_OF_THE_DAWN_TAG)
+    {}
     assert!(!e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
     let mut r = FastRandRoller::with_seed(1);
     e.actors.get_mut(&cleric).unwrap().short_rest(&mut r);
@@ -55054,7 +55082,7 @@ fn charm_animals_and_plants_charms_a_beast_with_its_link() {
         for eff in effects {
             eff.apply(&mut e);
         }
-        assert!(!e.actors[&cleric].feature_available(CHARM_ANIMALS_AND_PLANTS_TAG));
+        assert!(e.actors[&cleric].feature_charges_remaining(CHARM_ANIMALS_AND_PLANTS_TAG) < 2);
         assert!(
             !e.actors[&goblin].has_condition(Condition::Charmed),
             "a humanoid is outside the beast/plant filter"
@@ -55193,8 +55221,8 @@ fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
             eff.apply(&mut e);
         }
         assert!(
-            !e.actors[&cleric].feature_available(ARCANE_ABJURATION_TAG),
-            "the burst must spend its charge"
+            e.actors[&cleric].feature_charges_remaining(ARCANE_ABJURATION_TAG) < 2,
+            "the burst must spend a Channel Divinity press"
         );
         assert!(
             !e.actors[&goblin].has_condition(Condition::Frightened),
@@ -57038,15 +57066,22 @@ fn natures_wrath_rejects_ally_target() {
 #[test]
 fn intimidating_presence_and_natures_wrath_short_rest_registered() {
     use crate::actions::class_features::{
-        INTIMIDATING_PRESENCE_TAG, NATURES_WRATH_TAG, SHORT_REST_FEATURES,
+        INTIMIDATING_PRESENCE_TAG, NATURES_WRATH_TAG, PALADIN_CHANNEL_DIVINITY_TAG,
+        SHORT_REST_FEATURES, shared_pool_for,
     };
     assert!(
         SHORT_REST_FEATURES.contains(&INTIMIDATING_PRESENCE_TAG),
         "Intimidating Presence tag must live on SHORT_REST_FEATURES"
     );
+    // Nature's Wrath is a Channel Divinity, so the pool carries its
+    // cadence rather than the option carrying one of its own.
+    assert_eq!(
+        shared_pool_for(NATURES_WRATH_TAG),
+        Some(PALADIN_CHANNEL_DIVINITY_TAG)
+    );
     assert!(
-        SHORT_REST_FEATURES.contains(&NATURES_WRATH_TAG),
-        "Nature's Wrath tag must live on SHORT_REST_FEATURES"
+        SHORT_REST_FEATURES.contains(&PALADIN_CHANNEL_DIVINITY_TAG),
+        "the paladin's Channel Divinity pool must live on SHORT_REST_FEATURES"
     );
 }
 
@@ -57392,10 +57427,19 @@ fn abjure_enemy_rejects_already_frightened_target() {
 /// Dawn).
 #[test]
 fn abjure_enemy_short_rest_registered() {
-    use crate::actions::class_features::{ABJURE_ENEMY_TAG, SHORT_REST_FEATURES};
+    use crate::actions::class_features::{
+        ABJURE_ENEMY_TAG, PALADIN_CHANNEL_DIVINITY_TAG, SHORT_REST_FEATURES, shared_pool_for,
+    };
+    // The option itself is not on the short-rest lane and shouldn't be:
+    // it spends from the paladin's Channel Divinity pool, and the pool
+    // is what a rest refills.
+    assert_eq!(
+        shared_pool_for(ABJURE_ENEMY_TAG),
+        Some(PALADIN_CHANNEL_DIVINITY_TAG)
+    );
     assert!(
-        SHORT_REST_FEATURES.contains(&ABJURE_ENEMY_TAG),
-        "Abjure Enemy tag must live on SHORT_REST_FEATURES"
+        SHORT_REST_FEATURES.contains(&PALADIN_CHANNEL_DIVINITY_TAG),
+        "the paladin's Channel Divinity pool must live on SHORT_REST_FEATURES"
     );
 }
 
@@ -65087,7 +65131,7 @@ fn invoke_duplicity_grants_persistent_attack_advantage() {
         ef.apply(&mut e);
     }
     assert!(e.actors[&cleric].has_condition(Condition::Duplicity));
-    assert!(!e.actors[&cleric].feature_available(INVOKE_DUPLICITY_TAG));
+    assert!(e.actors[&cleric].feature_charges_remaining(INVOKE_DUPLICITY_TAG) < 2);
     assert_eq!(e.compute_attack_mode(cleric, goblin, true), RollMode::Advantage);
     // Re-priming a live illusion is refused, so the charge can't be
     // burned refreshing a timer.
@@ -70149,5 +70193,90 @@ fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
     assert!(
         knocked > 0,
         "across forty seeds the ogre should have failed the save at least once"
+    );
+}
+
+/// A War Cleric has two Channel Divinity presses between Turn Undead,
+/// Preserve Life and Guided Strike — not one each.
+///
+/// This was three, and the comment on the registry said so: "the engine
+/// models each CD as its own charge rather than as one shared pool,
+/// which is a deliberate simplification". It was the same over-count the
+/// Battle Master's maneuvers had, one class over, and the same shared-
+/// pool lane fixes it.
+#[test]
+fn a_clerics_channel_divinities_come_out_of_one_pool() {
+    use crate::actions::class_features::{
+        CLERIC_CHANNEL_DIVINITY_TAG, GUIDED_STRIKE_TAG, PRESERVE_LIFE_TAG, TURN_UNDEAD_TAG,
+        feature_charges,
+    };
+    use crate::actors::creatures::clerics::WAR_CLERIC_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let options = [TURN_UNDEAD_TAG, PRESERVE_LIFE_TAG, GUIDED_STRIKE_TAG];
+    assert_eq!(feature_charges(CLERIC_CHANNEL_DIVINITY_TAG), 2);
+    for tag in options {
+        assert_eq!(
+            e.actors[&cleric].feature_charges_remaining(tag),
+            2,
+            "{} should read the pool, not a charge of its own",
+            tag
+        );
+    }
+
+    // Turning the undead costs the press Guided Strike was counting on.
+    let actor = e.actors.get_mut(&cleric).unwrap();
+    assert!(actor.spend_feature(TURN_UNDEAD_TAG));
+    for tag in options {
+        assert_eq!(e.actors[&cleric].feature_charges_remaining(tag), 1);
+    }
+    let actor = e.actors.get_mut(&cleric).unwrap();
+    assert!(actor.spend_feature(GUIDED_STRIKE_TAG));
+    for tag in options {
+        assert!(
+            !e.actors[&cleric].feature_available(tag),
+            "{} should be out with the pool empty",
+            tag
+        );
+    }
+
+    let mut r = FastRandRoller::with_seed(1);
+    e.actors.get_mut(&cleric).unwrap().short_rest(&mut r);
+    for tag in options {
+        assert_eq!(
+            e.actors[&cleric].feature_charges_remaining(tag),
+            2,
+            "a short rest should restore the whole pool"
+        );
+    }
+}
+
+/// A Paladin's oath Channel Divinity and Sacred Weapon share one press,
+/// because RAW a paladin has one at every level this roster represents.
+#[test]
+fn a_paladins_channel_divinity_is_a_single_press() {
+    use crate::actions::class_features::{
+        PALADIN_CHANNEL_DIVINITY_TAG, SACRED_WEAPON_TAG, VOW_OF_ENMITY_TAG, feature_charges,
+    };
+    use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let pal = e
+        .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert_eq!(feature_charges(PALADIN_CHANNEL_DIVINITY_TAG), 1);
+    assert!(e.actors[&pal].feature_available(SACRED_WEAPON_TAG));
+    assert!(e.actors[&pal].feature_available(VOW_OF_ENMITY_TAG));
+    assert!(
+        e.actors
+            .get_mut(&pal)
+            .unwrap()
+            .spend_feature(SACRED_WEAPON_TAG)
+    );
+    assert!(
+        !e.actors[&pal].feature_available(VOW_OF_ENMITY_TAG),
+        "swearing the vow and blessing the weapon are the same press"
     );
 }
