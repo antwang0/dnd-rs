@@ -1081,7 +1081,8 @@ pub enum ConcealmentPiercing {
     /// the Divination Wizard's Third Eye.
     Invisibility,
     /// Sees through the whole illusion cohort — Truesight, Feral
-    /// Senses, Blindsense in range, Blind Fighting in range.
+    /// Senses, and every range-gated non-visual sense in
+    /// `nonvisual_sense_reaches` that reaches the subject.
     All,
 }
 
@@ -1098,6 +1099,83 @@ impl ConcealmentPiercing {
             ConcealmentPiercing::All => c.countered_by_truesight(),
         }
     }
+}
+
+/// Envelope, in tiles, of the two 10-ft class-granted blindsight
+/// analogues — Rogue **Blindsense** (lv14) and the **Blind Fighting**
+/// Fighting Style. 10 ft is 4 tiles on the 2.5-ft grid.
+///
+/// Named because both features quote the same radius from RAW and a
+/// bare `4` at two `.max()` terms reads as a coincidence rather than as
+/// the one number it is.
+const CLASS_BLINDSIGHT_TILES: isize = 4;
+
+/// True if some non-visual sense of `viewer`'s reaches `subject` — the
+/// one question both sight gates ask, and the one place a new
+/// non-visual sense has to land to be read by all of them.
+///
+/// The gates it answers for:
+///
+///   - **`obscurement_blinds`** — can the viewer pick the subject out
+///     of a fog bank? RAW's heavily-obscured area "blocks vision", and
+///     a sense that doesn't rely on vision is untouched by it.
+///   - **`concealment_piercing_of`** — can the viewer pick the subject
+///     out from under an illusion? Same clause, same answer: a bat
+///     doesn't care that the mage went Invisible.
+///
+/// Both used to keep their own list, and the lists disagreed —
+/// blindsight pierced fog but not invisibility, Blind Fighting pierced
+/// invisibility but not fog, and RAW grants both from the same
+/// sentence. One helper, one answer.
+///
+/// The sources, and what gates each:
+///
+///   - **Blindsight** (`SpecialSense::Blindsight`) — a bat's 60 ft is
+///     24 tiles, a constrictor's 10 ft is 4, so a wide enough fog bank
+///     still hides an archer from the snake. No further gate.
+///   - **Tremorsense** (`SpecialSense::Tremorsense`) — gated on the
+///     *subject* standing on the floor (`is_grounded`). This is the
+///     only source with a subject-side gate, and the only reason this
+///     helper takes the subject rather than returning a bare radius:
+///     RAW's "provided that the creature and the source of the
+///     vibrations are in contact with the same ground" means a purple
+///     worm feels the invisible rogue and loses the flying wizard.
+///   - **Blindsense** (Rogue lv14) — `CLASS_BLINDSIGHT_TILES`, gated
+///     on the viewer not being Deafened (RAW "while able to hear", so
+///     the Silence cohort suppresses it).
+///   - **Blind Fighting** (Tasha Fighting Style) — the same envelope
+///     with no hearing gate (RAW "even if you're blinded or in
+///     darkness" carries no hearing clause).
+///
+/// Distance is footprint-Chebyshev so a Large / Huge subject's *edge*
+/// counts: a Huge creature 6 ft away is in a 10-ft envelope even
+/// though its origin tile is 15+ ft off.
+///
+/// Unbounded piercers — Truesight, Ranger Feral Senses — deliberately
+/// aren't here. They have no radius to compare, so their callers
+/// short-circuit before the distance read rather than passing an
+/// `isize::MAX` through it.
+fn nonvisual_sense_reaches(viewer: &ActorInstance, subject: &ActorInstance) -> bool {
+    let mut envelope = viewer.blindsight_tiles();
+    if subject.is_grounded() {
+        envelope = envelope.max(viewer.tremorsense_tiles());
+    }
+    if viewer.has_blindsense() && !viewer.has_condition(Condition::Deafened) {
+        envelope = envelope.max(CLASS_BLINDSIGHT_TILES);
+    }
+    if viewer.has_blind_fighting_style() {
+        envelope = envelope.max(CLASS_BLINDSIGHT_TILES);
+    }
+    if envelope == 0 {
+        return false;
+    }
+    let dist = footprint_chebyshev(
+        viewer.location(),
+        get_tiles_from_size(viewer.size()),
+        subject.location(),
+        get_tiles_from_size(subject.size()),
+    );
+    dist <= envelope
 }
 
 /// Lowest foretold face a Divination Wizard will spend on a d20 they
@@ -3282,14 +3360,9 @@ impl EncounterInstance {
     /// the archer — so the geometry check (`obscured_between`) includes
     /// both endpoints as well as the tiles in between.
     ///
-    /// Two senses get around it, and they are the two RAW says do:
-    ///
-    ///   - **Blindsight** — "can perceive its surroundings without
-    ///     relying on sight." Range-gated: a bat's 60 ft is 24 tiles,
-    ///     and a constrictor's 10 ft is 4, so a fog bank wide enough
-    ///     still hides an archer from the snake.
-    ///   - **Truesight** — which RAW grants blindsight's envelope and
-    ///     more, and which the engine already models as unbounded.
+    /// The senses that get around it are the ones RAW says do — the
+    /// unbounded `Truesight` short-circuit, plus every range-gated
+    /// non-visual sense in `nonvisual_sense_reaches`.
     ///
     /// Darkvision deliberately does *not*: RAW it upgrades darkness by
     /// one step, and a fog cloud is not darkness. A creature with
@@ -3308,17 +3381,8 @@ impl EncounterInstance {
         if viewer.has_truesight() {
             return false;
         }
-        let blindsight = viewer.blindsight_tiles();
-        if blindsight > 0 {
-            let dist = footprint_chebyshev(
-                viewer.location(),
-                get_tiles_from_size(viewer.size()),
-                subject.location(),
-                get_tiles_from_size(subject.size()),
-            );
-            if dist <= blindsight {
-                return false;
-            }
+        if nonvisual_sense_reaches(viewer, subject) {
+            return false;
         }
         self.obscured_between(viewer.location(), subject.location())
     }
@@ -3352,11 +3416,10 @@ impl EncounterInstance {
     ///     transient `TrueSighted` condition (True Seeing spell / Eyes
     ///     of Truth trinket). Unbounded range.
     ///   - **Feral Senses** (Ranger lv18 class feature). Unbounded range.
-    ///   - **Blindsense** (Rogue lv14 class feature). 10-ft footprint-
-    ///     Chebyshev envelope; gated on the viewer not being Deafened
-    ///     (RAW: "while able to hear").
-    ///   - **Blind Fighting** (Tasha Fighting Style). Same 10-ft
-    ///     envelope, no hearing gate.
+    ///   - Every range-gated non-visual sense — Blindsight,
+    ///     Tremorsense, Rogue Blindsense, Blind Fighting — through the
+    ///     shared `nonvisual_sense_reaches` envelope. See that helper
+    ///     for each one's radius and gate.
     ///
     /// **`Invisibility`** — the `countered_by_see_invisibility` cohort
     /// only (`Invisible`; Blur and Displacement still fool the viewer):
@@ -3394,61 +3457,29 @@ impl EncounterInstance {
         if viewer.has_truesight() || viewer.has_feral_senses() {
             return ConcealmentPiercing::All;
         }
-        // Range-gated piercers — Blindsense (Rogue lv14) and Blind
-        // Fighting (Tasha Fighting Style) both project a 10-ft
-        // (footprint Chebyshev ≤ 4 tiles on the 2.5-ft grid)
-        // blindsight envelope. They differ only on the "while able to
-        // hear" clause:
-        //   - Blindsense: gated on !Deafened (RAW "while able to
-        //     hear" — Silenced-cohort suppresses the sense).
-        //   - Blind Fighting: no hearing gate (RAW "even if you're
-        //     blinded or in darkness" — no hearing clause).
-        // We compute the effective envelope up front — the widest
-        // 10-ft piercer that survives its own gate — then a single
-        // footprint distance read decides. Adding a further range-
-        // gated piercer (a hypothetical wider Ranger Feral Senses
-        // envelope, a Rune Knight's runic sight) drops in as a new
-        // `.max()` term rather than a duplicated distance read.
-        let mut envelope: isize = 0;
-        if viewer.has_blindsense() && !viewer.has_condition(Condition::Deafened) {
-            envelope = envelope.max(4);
-        }
-        if viewer.has_blind_fighting_style() {
-            envelope = envelope.max(4);
-        }
-        // The invisibility-only tier is unbounded-range too, so it can
-        // be answered before the distance read. It sits *below* the
+        // The invisibility-only tier is unbounded-range, so it can be
+        // answered without looking the subject up. It sits *below* the
         // range-gated `All` sources: a rogue's Blindsense inside its
         // envelope is strictly better than See Invisibility, so the
         // envelope check has to come first and only fall through to
         // this tier on a miss.
         let sees_invisible = viewer.has_condition(Condition::SeeingInvisible)
             || viewer.has_passive_feature(crate::actions::class_features::THIRD_EYE_TAG);
-        if envelope == 0 {
-            return if sees_invisible {
-                ConcealmentPiercing::Invisibility
-            } else {
-                ConcealmentPiercing::None
-            };
-        }
-        let Some(subject) = self.actors.get(&subject_id) else {
-            return ConcealmentPiercing::None;
-        };
-        // Uses footprint distance so a Large / Huge subject's edge
-        // counts (a Huge invisible creature 6 ft away pierces even
-        // though its origin tile is 15+ ft off).
-        let dist = footprint_chebyshev(
-            viewer.location(),
-            get_tiles_from_size(viewer.size()),
-            subject.location(),
-            get_tiles_from_size(subject.size()),
-        );
-        if dist <= envelope {
-            ConcealmentPiercing::All
-        } else if sees_invisible {
+        let fallback = if sees_invisible {
             ConcealmentPiercing::Invisibility
         } else {
             ConcealmentPiercing::None
+        };
+        // An unknown subject id (an actor removed mid-resolution) has
+        // no position to measure against, so the range-gated tier
+        // can't fire and the unbounded answer stands.
+        let Some(subject) = self.actors.get(&subject_id) else {
+            return fallback;
+        };
+        if nonvisual_sense_reaches(viewer, subject) {
+            ConcealmentPiercing::All
+        } else {
+            fallback
         }
     }
 

@@ -1438,8 +1438,9 @@ struct ConditionSpeedBonus {
 ///   - **Fly / Investiture of Wind / Otherworldly Guise**: +60 ft
 ///     flying speed. Any one is sufficient (RAW: the three effects
 ///     don't stack — they're separate concentration spells the caster
-///     can't both maintain), so the row's flag closure is a triple-OR
-///     rather than three separate rows with matching magnitudes.
+///     can't both maintain), so the row reads the shared
+///     `has_magical_flight` predicate rather than three separate rows
+///     with matching magnitudes.
 ///   - **Spider Climb**: +30 ft. RAW grants a climbing speed equal to
 ///     walking speed; the engine doesn't model 3D terrain, so the
 ///     bonus surfaces as a flat repositioning boost.
@@ -1449,11 +1450,7 @@ struct ConditionSpeedBonus {
 ///   - **Ashardalon's Stride** (Fizban's transmutation): +20 ft.
 const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     ConditionSpeedBonus {
-        flag: |a| {
-            a.has_condition(Condition::Flying)
-                || a.has_condition(Condition::InvestedInWind)
-                || a.has_condition(Condition::OtherworldlyGuised)
-        },
+        flag: ActorInstance::has_magical_flight,
         bonus_ft: 60.0,
     },
     ConditionSpeedBonus {
@@ -1531,11 +1528,11 @@ struct DifficultTerrainImmunity {
 ///     the movement half.
 ///   - **Magical flight** (`Flying` / `InvestedInWind` /
 ///     `OtherworldlyGuised`): a creature in the air doesn't wade
-///     through the mud under it. Deliberately the same triple-OR
-///     predicate the `CONDITION_SPEED_BONUSES` flight row uses, so the
-///     two lanes can never disagree about what counts as flying — an
-///     actor getting the +60 ft flying-speed bump is exactly an actor
-///     that skips the terrain tax.
+///     through the mud under it. Deliberately the same
+///     `has_magical_flight` predicate the `CONDITION_SPEED_BONUSES`
+///     flight row uses, so the two lanes can never disagree about what
+///     counts as flying — an actor getting the +60 ft flying-speed
+///     bump is exactly an actor that skips the terrain tax.
 ///   - **Land's Stride** (`LANDS_STRIDE_TAG`, Ranger lv8 / Land Druid
 ///     lv6): the class-feature row, and the first one that is a build
 ///     choice rather than a spell effect. See the tag's docstring for
@@ -1545,11 +1542,7 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[DifficultTerrainImmunity] = &[
         flag: |a| a.has_condition(Condition::Footloose),
     },
     DifficultTerrainImmunity {
-        flag: |a| {
-            a.has_condition(Condition::Flying)
-                || a.has_condition(Condition::InvestedInWind)
-                || a.has_condition(Condition::OtherworldlyGuised)
-        },
+        flag: ActorInstance::has_magical_flight,
     },
     DifficultTerrainImmunity {
         flag: |a| a.has_passive_feature(crate::actions::class_features::LANDS_STRIDE_TAG),
@@ -6264,36 +6257,121 @@ impl ActorInstance {
     /// any-of accessor the engine quietly let a Pit Fiend miss an
     /// invisible mage at disadvantage even though RAW the fiend should
     /// see right through the spell.
-    /// The widest **blindsight** envelope this creature has, converted
-    /// from the template's feet to grid tiles. `0` for a creature
-    /// without the sense.
-    ///
-    /// 5e: "A creature with blindsight can perceive its surroundings
-    /// without relying on sight, within a specific radius." The engine
-    /// carried `SpecialSense::Blindsight(_)` on thirty-odd templates —
-    /// bats, oozes, dragons, animated armor — and read it nowhere, so
-    /// the sense that defines a bat was decoration. It now answers the
-    /// one question in the engine that sight can fail on its own terms:
-    /// whether heavy obscurement stops you seeing (`viewer_can_see`).
-    ///
-    /// Rounded down, so a 10-ft blindsight is 4 tiles on the 2.5-ft
-    /// grid rather than 4.5 of one.
-    pub fn blindsight_tiles(&self) -> isize {
-        self.senses
-            .iter()
-            .filter_map(|s| match s {
-                SpecialSense::Blindsight(feet) => Some((*feet as f32 / 2.5) as isize),
-                _ => None,
-            })
-            .max()
-            .unwrap_or(0)
-    }
-
     pub fn has_truesight(&self) -> bool {
         self.senses
             .iter()
             .any(|s| matches!(s, SpecialSense::Truesight(_)))
             || self.has_condition(Condition::TrueSighted)
+    }
+
+    /// The widest envelope of `sense` this creature has, converted from
+    /// the template's feet to grid tiles. `0` for a creature without
+    /// the sense.
+    ///
+    /// Rounded down, so a 10-ft envelope is 4 tiles on the 2.5-ft grid
+    /// rather than 4.5 of one. Takes a *matcher* rather than a
+    /// `SpecialSense` value because the radius rides inside the enum
+    /// variant — `SpecialSense::Blindsight(60)` and
+    /// `SpecialSense::Blindsight(30)` are different values of the same
+    /// sense, so equality is the wrong question and "which variant, and
+    /// what radius" is the right one.
+    fn sense_tiles(&self, extract: fn(&SpecialSense) -> Option<u32>) -> isize {
+        self.senses
+            .iter()
+            .filter_map(|s| extract(s).map(|feet| (feet as f32 / 2.5) as isize))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The widest **blindsight** envelope this creature has, in tiles.
+    ///
+    /// 5e: "A creature with blindsight can perceive its surroundings
+    /// without relying on sight, within a specific radius." The engine
+    /// carried `SpecialSense::Blindsight(_)` on thirty-odd templates —
+    /// bats, oozes, dragons, animated armor — and read it nowhere, so
+    /// the sense that defines a bat was decoration.
+    ///
+    /// It now answers both questions in the engine that sight can fail
+    /// on its own terms: whether heavy obscurement stops you seeing
+    /// (`obscurement_blinds`), and whether an illusion does
+    /// (`concealment_piercing_of`). The second is the RAW half that was
+    /// missing — "without relying on sight" is exactly the clause that
+    /// makes Invisibility useless against a bat, and the engine used to
+    /// let an invisible mage walk past one.
+    pub fn blindsight_tiles(&self) -> isize {
+        self.sense_tiles(|s| match s {
+            SpecialSense::Blindsight(feet) => Some(*feet),
+            _ => None,
+        })
+    }
+
+    /// The widest **tremorsense** envelope this creature has, in tiles.
+    ///
+    /// 5e: "A creature with tremorsense can detect and pinpoint the
+    /// origin of vibrations within a specific radius, provided that the
+    /// creature and the source of the vibrations are in contact with
+    /// the same ground."
+    ///
+    /// The trailing clause is the whole character of the sense and the
+    /// reason it isn't just a second blindsight: it reads the floor, so
+    /// anything off the floor is invisible to it. Callers pair this
+    /// radius with `is_grounded` on the *subject* — a purple worm's
+    /// 60-ft tremorsense pinpoints the invisible rogue standing on the
+    /// sand and loses the wizard who cast Fly, which is the tactical
+    /// answer RAW gives and the one the board should reward.
+    ///
+    /// Carried by the burrowers and the buried ambushers — Purple Worm,
+    /// Tarrasque, Ankheg, Umber Hulk, Xorn, Chuul, Galeb Duhr — where
+    /// it was declared and read nowhere until this accessor.
+    pub fn tremorsense_tiles(&self) -> isize {
+        self.sense_tiles(|s| match s {
+            SpecialSense::Tremorsense(feet) => Some(*feet),
+            _ => None,
+        })
+    }
+
+    /// True while this actor is held aloft by magic — the `Fly` /
+    /// `Investiture of Wind` / `Otherworldly Guise` cohort.
+    ///
+    /// The engine models no natural flight (a creature template's fly
+    /// speed is folded into its single walking speed), so magical
+    /// flight is the only way an actor leaves the floor under its own
+    /// power, and this predicate is the whole of "airborne" on that
+    /// axis. Any one source is sufficient: RAW the three are separate
+    /// concentration spells one caster can't stack, so they're an OR
+    /// rather than a sum.
+    ///
+    /// Named rather than inlined because three separate lanes ask it
+    /// and must never disagree about the answer — the +60 ft speed row
+    /// in `CONDITION_SPEED_BONUSES`, the difficult-terrain waiver in
+    /// `DIFFICULT_TERRAIN_IMMUNITIES`, and the ground-contact gate on
+    /// tremorsense (`is_grounded`).
+    pub fn has_magical_flight(&self) -> bool {
+        self.has_condition(Condition::Flying)
+            || self.has_condition(Condition::InvestedInWind)
+            || self.has_condition(Condition::OtherworldlyGuised)
+    }
+
+    /// True while this actor is in contact with the ground — the
+    /// subject-side gate on tremorsense.
+    ///
+    /// Two ways off the floor, and they are the two the engine models:
+    ///
+    ///   - **Magical flight** (`has_magical_flight`) — the actor is
+    ///     flying under its own concentration.
+    ///   - **`Lifted`** (Telekinesis) — the actor is suspended in the
+    ///     air by someone else's. RAW the spell "moves the creature up
+    ///     to 30 feet in any direction, including upward", and the
+    ///     condition's own docstring says "suspended in the air", so a
+    ///     telekinetically-held target is exactly as unreadable to a
+    ///     tremorsensing burrower as a flying one.
+    ///
+    /// Deliberately *not* gated on being Prone, Unconscious, or
+    /// Restrained: all three leave the creature very much in contact
+    /// with the ground, and a prone target is if anything easier to
+    /// feel.
+    pub fn is_grounded(&self) -> bool {
+        !self.has_magical_flight() && !self.has_condition(Condition::Lifted)
     }
 
     pub fn team(&self) -> usize {

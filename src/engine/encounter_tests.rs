@@ -32906,6 +32906,106 @@ fn blindsight_sees_through_fog_and_darkvision_does_not() {
     assert!(!e.viewer_can_see(bat, distant));
 }
 
+/// Blindsight is "perceive its surroundings without relying on sight",
+/// so the Invisibility that beats every eye on the board does nothing
+/// to it — inside the envelope. Outside it the bat is as fooled as
+/// anyone.
+#[test]
+fn blindsight_pierces_invisibility_inside_its_envelope() {
+    use crate::actors::creatures::bats::BAT_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 20, &[]);
+    // Bats have 60-ft blindsight = 24 tiles.
+    let bat = e
+        .instantiate_creature(&BAT_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 10), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(50, 10), 1, 0)
+        .unwrap();
+    for hider in [near, far] {
+        e.actors
+            .get_mut(&hider)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    }
+    // A plain pair of darkvision eyes is beaten by the spell.
+    assert!(!e.viewer_can_see(goblin, near));
+    // The bat's blindsight is not, inside its envelope…
+    assert_eq!(
+        e.concealment_piercing_of(bat, near),
+        ConcealmentPiercing::All
+    );
+    assert!(e.viewer_can_see(bat, near));
+    // …and is, outside it.
+    assert_eq!(
+        e.concealment_piercing_of(bat, far),
+        ConcealmentPiercing::None
+    );
+    assert!(!e.viewer_can_see(bat, far));
+}
+
+/// Tremorsense reads the floor: it pinpoints a grounded creature
+/// through both fog and invisibility, and loses the same creature the
+/// moment it leaves the ground.
+#[test]
+fn tremorsense_finds_the_grounded_and_loses_the_airborne() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 20, &[]);
+    // Ankhegs have 60-ft tremorsense = 24 tiles, and no blindsight.
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    assert_eq!(e.actors[&ankheg].tremorsense_tiles(), 24);
+    assert_eq!(e.actors[&ankheg].blindsight_tiles(), 0);
+    let near = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(50, 10), 1, 0)
+        .unwrap();
+    for hider in [near, far] {
+        e.actors
+            .get_mut(&hider)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    }
+    // Feet on the sand, inside the envelope: pinpointed.
+    assert!(e.viewer_can_see(ankheg, near));
+    // Outside the envelope the sense has nothing to say.
+    assert!(!e.viewer_can_see(ankheg, far));
+    // Fog is no help to the near one either — the ankheg was never
+    // looking.
+    e.install_zone(test_zone(
+        Coordinate::new(12, 10),
+        3,
+        ZoneEffect::OBSCURING,
+    ));
+    assert!(e.viewer_can_see(ankheg, near));
+    // Off the ground, and the vibrations stop. Both ways off the floor
+    // work, and each on its own.
+    for airborne in [Condition::Flying, Condition::Lifted] {
+        e.actors
+            .get_mut(&near)
+            .unwrap()
+            .add_condition(airborne, ConditionTimer::Permanent);
+        assert!(
+            !e.viewer_can_see(ankheg, near),
+            "{airborne:?} should break the ankheg's ground contact"
+        );
+        e.actors.get_mut(&near).unwrap().remove_condition(airborne);
+        assert!(e.viewer_can_see(ankheg, near));
+    }
+}
+
 /// Zones expire on their own timer, and a concentration-held one
 /// goes when its owner does.
 #[test]
