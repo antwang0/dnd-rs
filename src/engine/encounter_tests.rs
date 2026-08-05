@@ -69924,3 +69924,80 @@ fn a_run_that_went_the_other_way_is_not_a_charge() {
         "a target behind where the run started fails it"
     );
 }
+
+/// The AI's approach walker takes the straight line when one exists.
+///
+/// `step_toward_actor` is the one-tile-at-a-time walk the AI uses to
+/// close on a target, and every route it can pick between two points on
+/// an eight-connected board takes the same number of steps. Nothing
+/// about length distinguishes a straight run from a staircase, so until
+/// `steps_toward` gave the search an opinion, the winner was whichever
+/// offset a `-1..=1` nesting happened to try first — which meant a
+/// creature crossing open ground toward a target due east arrived by
+/// wobbling up and down a row at a time.
+///
+/// Two things are better about the straight line. It looks like what a
+/// creature would do, on a game whose entire output is a picture of a
+/// board. And 5e pays for straight movement specifically: the Charge and
+/// Pounce clauses on a dozen stat blocks collect nothing from a wobble.
+#[test]
+fn the_ai_walks_the_straight_line_when_there_is_one() {
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let walker = e
+        .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(4, 10), 1, 0)
+        .unwrap();
+    let east = e
+        .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(18, 10), 0, 0)
+        .unwrap();
+    let mut steps = 0;
+    while let Some(step) = e.step_toward_actor(walker, east) {
+        assert_eq!(step.y, 10, "a due-east approach should never leave its row");
+        e.place_actor_at(walker, step).unwrap();
+        steps += 1;
+        assert!(steps < 30, "the walk should terminate at melee reach");
+    }
+    let arrived = e.actors[&walker].location();
+    assert_eq!(arrived.y, 10);
+    assert!(
+        arrived.x > 4 && arrived.x < 18,
+        "the walker should have closed the gap without overshooting: {:?}",
+        arrived
+    );
+}
+
+/// Off the axis, the walker lines itself up first and runs the rest of
+/// the way straight — rather than saving the diagonal for last, which
+/// would put the turn immediately before the blow and leave a charger
+/// with a one-tile run.
+#[test]
+fn the_ai_lines_up_first_and_runs_the_rest_straight() {
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let walker = e
+        .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(4, 10), 1, 0)
+        .unwrap();
+    let offset = e
+        .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(18, 13), 0, 0)
+        .unwrap();
+    let mut rows = Vec::new();
+    for _ in 0..14 {
+        let Some(step) = e.step_toward_actor(walker, offset) else {
+            break;
+        };
+        rows.push(step.y);
+        e.place_actor_at(walker, step).unwrap();
+    }
+    let settled = rows
+        .iter()
+        .position(|&y| y == 13)
+        .expect("the walk has to reach the target's row");
+    assert_eq!(settled, 2, "three diagonal steps close the three-row gap");
+    assert!(
+        rows[settled..].iter().all(|&y| y == 13),
+        "and the rest of the approach stays on it: {:?}",
+        rows
+    );
+}

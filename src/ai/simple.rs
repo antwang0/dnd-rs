@@ -8231,6 +8231,86 @@ mod tests {
     /// Treant / Fire Elemental / Gelatinous Cube in the monster pool)
     /// don't crash the AI's action picker or stall the process_stack
     /// loop. Also keeps the prior "new content" coverage on the lineup.
+    /// The AI, left to close the distance on its own, produces runs the
+    /// charge clauses can see.
+    ///
+    /// The rule can be perfectly implemented and still never fire in
+    /// play: the AI approaches a tile at a time down whatever path the
+    /// pathfinder hands back, and until `steps_toward` existed that path
+    /// was a staircase of diagonals that collected almost no straight
+    /// run at all. This is the test that says the two halves meet.
+    #[test]
+    fn the_ai_closes_straight_enough_to_charge() {
+        use crate::actors::creatures::boars::BOAR_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = open_field(40, 11);
+        // Twelve tiles apart on a shared row: past the eight-tile bar,
+        // and close enough that the boar can still reach and swing on
+        // the same turn. A charger that has to Dash to arrive spends its
+        // Action getting there and attacks a turn later, standing still.
+        let boar = e
+            .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let _ = e.instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(17, 5), 0, 0);
+        let ai = SimpleAi;
+        for _ in 0..40 {
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(prompt) = e.peek_prompt() else { break };
+            if prompt.actor_id() != boar {
+                break;
+            }
+            match ai.decide(&e, boar) {
+                ControllerDecision::AwaitInput => {
+                    panic!("SimpleAi returned AwaitInput unexpectedly")
+                }
+                ControllerDecision::Act(aei) => {
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+            }
+        }
+        e.process_stack();
+        let run = e.actors[&boar].straight_run_tiles().unwrap_or(0);
+        assert!(
+            run >= crate::actions::monster_attacks::CHARGE_RUN_TILES,
+            "the boar closed twelve open tiles and finished with a run of {}",
+            run
+        );
+    }
+
+    /// An arena of nothing but floor, so a pathing assertion is about the
+    /// pathfinder rather than about what the terrain generator happened
+    /// to put in the way.
+    fn open_field(width: usize, height: usize) -> EncounterInstance {
+        let tp = TerrainGenParams {
+            width,
+            height,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        for y in 0..height as isize {
+            for x in 0..width as isize {
+                e.set_terrain_at(
+                    Coordinate::new(x, y),
+                    crate::engine::terrain::TerrainType::Floor,
+                );
+            }
+        }
+        e
+    }
+
     #[test]
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;

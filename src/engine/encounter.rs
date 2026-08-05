@@ -7119,6 +7119,59 @@ impl EncounterInstance {
             .is_some_and(|a| a.actions.iter().any(|act| act.school().is_some()))
     }
 
+    /// The eight neighbour offsets, ordered by how directly they head at
+    /// `toward`.
+    ///
+    /// Every one of them is a legal step and the BFS will consider them all;
+    /// the order decides which of several equally-short paths it finds
+    /// *first*, because `parent` is written on first visit. Walking them in
+    /// raw `-1..=1` nesting order — which is what this replaces — meant
+    /// "up-and-left" was always tried first, so a creature crossing open
+    /// ground toward a target due east arrived by a staircase of diagonals
+    /// and cardinals rather than by walking east.
+    ///
+    /// Nothing was wrong with those paths: they cost the same and end in the
+    /// same place. Two things are better about straight ones. They look like
+    /// what a creature would do, which matters in a game whose whole output
+    /// is a picture of a board. And 5e has a family of rules that pay for
+    /// straight movement specifically — the Charge and Pounce clauses on a
+    /// dozen stat blocks — which a staircase collects almost none of.
+    ///
+    /// The key is Chebyshev distance to the target after the step, then
+    /// Manhattan distance as the tie-break. Chebyshev alone is what the
+    /// board charges for — a diagonal costs one step like a cardinal —
+    /// so on an eight-connected grid it ties three different steps
+    /// whenever the target is due east, and picking among them by
+    /// declaration order is exactly the staircase this exists to avoid.
+    /// Manhattan breaks the tie the way a creature would: of the steps
+    /// that close the distance equally, take the one that doesn't also
+    /// drift off the line.
+    ///
+    /// Together they give diagonals first and then a straight tail —
+    /// which is both the shortest path and the one that collects the
+    /// charge.
+    ///
+    /// `sort_by_key` is stable, so genuinely equivalent steps keep their
+    /// declaration order and the walk stays deterministic.
+    fn steps_toward(from: Coordinate, toward: Coordinate) -> [(isize, isize); 8] {
+        let mut steps = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ];
+        steps.sort_by_key(|(dx, dy)| {
+            let gap_x = (from.x + dx - toward.x).abs();
+            let gap_y = (from.y + dy - toward.y).abs();
+            (gap_x.max(gap_y), gap_x + gap_y)
+        });
+        steps
+    }
+
     fn step_toward_actor_inner(
         &self,
         actor_id: usize,
@@ -7159,24 +7212,19 @@ impl EncounterInstance {
                 }
                 return Some(cur);
             }
-            for dy in -1..=1isize {
-                for dx in -1..=1isize {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-                    let next = Coordinate::new(coord.x + dx, coord.y + dy);
-                    if parent.contains_key(&next) {
-                        continue;
-                    }
-                    if !self.can_move_to(actor_id, next) {
-                        continue;
-                    }
-                    if avoid_hazards && self.tile_is_bad_ground(next, casts) {
-                        continue;
-                    }
-                    parent.insert(next, coord);
-                    queue.push_back(next);
+            for (dx, dy) in Self::steps_toward(coord, t_loc) {
+                let next = Coordinate::new(coord.x + dx, coord.y + dy);
+                if parent.contains_key(&next) {
+                    continue;
                 }
+                if !self.can_move_to(actor_id, next) {
+                    continue;
+                }
+                if avoid_hazards && self.tile_is_bad_ground(next, casts) {
+                    continue;
+                }
+                parent.insert(next, coord);
+                queue.push_back(next);
             }
         }
         None
