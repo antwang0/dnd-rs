@@ -69456,3 +69456,92 @@ fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
         "the second name in the list is asked too"
     );
 }
+
+/// The two-clause contact shape: a made save halves the damage *and*
+/// escapes the rider; a failed one pays both. Whirlwind is the first
+/// zone in the engine that wants it, so the constructor is pinned here
+/// rather than through a die roll.
+#[test]
+fn a_half_on_save_zone_still_gates_its_rider_on_the_save() {
+    use crate::engine::dice::Dice;
+
+    let contact = ZoneContact::save_for_half_or_suffer(
+        AbilityScoreType::Dexterity,
+        15,
+        Dice::new(10, 6),
+        DamageType::Bludgeoning,
+        Condition::Prone,
+        ConditionTimer::UntilStartOfNextTurn,
+    );
+    assert!(contact.save.is_some_and(|s| s.half_on_success));
+    assert!(contact.condition.is_some());
+    assert!(contact.is_harmful());
+    // Distinct from its two neighbours: `save_or_suffer` negates the
+    // damage outright, `save_for_half` carries no rider.
+    let negating = ZoneContact::save_or_suffer(
+        AbilityScoreType::Dexterity,
+        15,
+        Dice::new(10, 6),
+        DamageType::Bludgeoning,
+        Condition::Prone,
+        ConditionTimer::UntilStartOfNextTurn,
+    );
+    assert!(negating.save.is_some_and(|s| !s.half_on_success));
+    let riderless = ZoneContact::save_for_half(
+        AbilityScoreType::Dexterity,
+        15,
+        Dice::new(10, 6),
+        DamageType::Bludgeoning,
+    );
+    assert!(riderless.condition.is_none());
+}
+
+/// Scatter is displacement and nothing else: nobody it catches loses a
+/// hit point, and the ones it catches do not end up where they started.
+#[test]
+fn scatter_moves_bodies_without_touching_hit_points() {
+    use crate::actions::spells::SCATTER;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut moved_somebody = false;
+    for seed in 0..24u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let mut goblins = Vec::new();
+        for (i, x) in (12..16).enumerate() {
+            goblins.push(
+                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(x, 10), 1, i)
+                    .unwrap(),
+            );
+        }
+        let before: Vec<(u32, Coordinate)> = goblins
+            .iter()
+            .map(|g| (e.actors[g].hitpoints(), e.actors[g].location()))
+            .collect();
+
+        let effects =
+            SCATTER.side_effects(&mut e, wiz, None, Some(&vec![Coordinate::new(13, 10)]), None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+
+        for (g, (hp, at)) in goblins.iter().zip(before) {
+            assert_eq!(
+                e.actors[g].hitpoints(),
+                hp,
+                "seed {}: scatter deals no damage",
+                seed
+            );
+            if e.actors[g].location() != at {
+                moved_somebody = true;
+            }
+        }
+    }
+    assert!(
+        moved_somebody,
+        "no seed in the sweep landed a failed save — the fixture proves nothing"
+    );
+}

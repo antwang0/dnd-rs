@@ -103,6 +103,13 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Enervation — lv5 necromancy, concentration. A draining tether:
     // 4d8 necrotic a round with half of it fed back to the wizard.
     actions.push(&*crate::actions::spells::ENERVATION);
+    // Whirlwind — lv7 evocation, concentration. A standing column that
+    // bills 10d6 to anything walking through it and knocks down what it
+    // does not kill. The wizard's answer to a doorway.
+    actions.push(&*crate::actions::spells::WHIRLWIND);
+    // Scatter — lv6 conjuration. No damage at all: it takes an enemy
+    // line apart and drops the pieces across the board.
+    actions.push(&*crate::actions::spells::SCATTER);
     // Newly added wizard spells (lv4 Dimension Door / Wall of Fire / Fire
     // Shield; lv5 Cloudkill / Wall of Force).
     actions.push(&*DIMENSION_DOOR);

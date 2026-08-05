@@ -242,6 +242,36 @@ impl ZoneContact {
         }
     }
 
+    /// The two-clause shape 5e's hazardous *moving* areas use: the save
+    /// softens the blow rather than dodging it, but only a made save
+    /// escapes the rider. Whirlwind's "10d6 bludgeoning and flung away,
+    /// or half as much and not flung" is the sentence.
+    ///
+    /// Distinct from `save_or_suffer`, whose save negates both halves,
+    /// and from `save_for_half`, which has no rider to negate. The
+    /// engine's contact resolver already handles the combination — a
+    /// made save halves the damage and skips the condition — so this is
+    /// the constructor that was missing rather than a new rule.
+    pub const fn save_for_half_or_suffer(
+        ability: AbilityScoreType,
+        dc: i32,
+        dice: Dice,
+        damage_type: DamageType,
+        condition: Condition,
+        timer: ConditionTimer,
+    ) -> Self {
+        Self {
+            save: Some(ZoneSave {
+                ability,
+                dc,
+                half_on_success: true,
+            }),
+            damage: Some((dice, damage_type)),
+            condition: Some((condition, timer)),
+            breaks_concentration: false,
+        }
+    }
+
     /// A save that negates the damage outright rather than halving it:
     /// Hunger of Hadar's acid, whose Dexterity save is all-or-nothing.
     pub const fn save_or_take(

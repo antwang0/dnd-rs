@@ -96,6 +96,10 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // top-tier burst, and above it against a soft, wet board: no
     // Dexterity save to dodge with, and plants save at disadvantage.
     actions.push(&*crate::actions::spells::HORRID_WILTING);
+    // Whirlwind — lv7 evocation, concentration. Shared with the wizard
+    // and the druid RAW; the sorcerer's only standing hazard above
+    // Wall of Fire's tier.
+    actions.push(&*crate::actions::spells::WHIRLWIND);
     // Latest spell additions: lv2 Acid Arrow, lv3 Tidal Wave, lv5 Dawn,
     // lv6 Investiture of Flame. Round out the sorcerer's mid-tier
     // blaster lineup with the new water / radiant / self-buff options.

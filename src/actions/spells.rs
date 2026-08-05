@@ -29858,3 +29858,237 @@ impl Action for CircleOfPower {
 }
 
 pub static CIRCLE_OF_POWER: LazyLock<CircleOfPower> = LazyLock::new(|| CircleOfPower {});
+
+/// Whirlwind — level-7 evocation, concentration. A roaring column of
+/// wind stands where the caster points it: 10d6 bludgeoning to anything
+/// that walks in or starts its turn there, Dexterity save for half.
+///
+/// The first zone in the engine to use `save_for_half_or_suffer` — a
+/// made save softens the blow but does not escape the rider, which is
+/// the two-clause shape RAW gives its hazardous columns and which the
+/// zone layer's contact resolver could already run.
+///
+/// RAW's rider is "flung up to 10 feet away from the center". The zone
+/// layer has no push — a contact clause installs a condition, it does
+/// not move anybody — so the fling lands as Prone: a creature picked up
+/// by a column of wind and dropped. It costs the victim its movement
+/// and hands every melee attacker advantage, which is roughly what
+/// being thrown across a room is worth, and it is honest about being
+/// the nearest thing the layer can say.
+pub struct Whirlwind {}
+
+impl Whirlwind {
+    /// 10-ft radius = 4 tile-gaps.
+    const RADIUS: isize = 4;
+    const DICE: Dice = Dice::new(10, 6);
+}
+
+impl Action for Whirlwind {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "whirlwind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ww", "cyclone"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft = 120 tiles — further than any board the generator
+        // makes, which is RAW's point: the column is placed anywhere
+        // the caster can see.
+        Some(120)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(dc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spellcasting_save_dc())
+        else {
+            return Vec::new();
+        };
+        encounter.log("  whirlwind: a column of wind roars into being");
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "whirlwind",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::hazard(ZoneContact::save_for_half_or_suffer(
+                    AbilityScoreType::Dexterity,
+                    dc,
+                    Self::DICE,
+                    DamageType::Bludgeoning,
+                    Condition::Prone,
+                    // Being thrown down is not a lasting state — the
+                    // victim stands up on its own turn for the usual
+                    // half its movement, and the column knocks it back
+                    // over if it is still inside.
+                    ConditionTimer::UntilStartOfNextTurn,
+                )),
+                // 10 rounds ≈ RAW's 1 minute; concentration is what
+                // usually ends it first.
+                rounds_remaining: 10,
+                concentration: true,
+                motion: ZoneMotion::Fixed,
+            },
+            // The column drops on whoever is already standing there.
+            catch_present: true,
+        })]
+    }
+}
+
+pub static WHIRLWIND: LazyLock<Whirlwind> = LazyLock::new(|| Whirlwind {});
+
+/// Scatter — level-6 conjuration. A wave of conjuration energy picks up
+/// every enemy in a 30-ft radius that fails a Wisdom save and drops
+/// each of them somewhere else entirely.
+///
+/// The engine's only mass teleport, and the only spell that uses the
+/// board rather than a die as its randomness: each victim is re-placed
+/// through `get_random_spawn`, the same legal-position search the
+/// encounter generator uses to seat creatures at the start of a fight.
+/// That is the honest reading of RAW's "an unoccupied space you can
+/// see" for an engine whose caster has no way to point at five separate
+/// squares in one action — and it makes the spell what it is at a
+/// table: not damage, but the sudden loss of a formation.
+///
+/// No concentration and no duration. The creatures stay where they land.
+///
+/// A victim for whom the board has no legal position simply stays put.
+/// That is a board too full for the spell rather than an error, and
+/// the log says which creature it happened to.
+pub struct Scatter {}
+
+impl Scatter {
+    /// 30-ft radius = 12 tile-gaps.
+    const RADIUS: isize = 12;
+    /// RAW: "choose up to five creatures".
+    const MAX_TARGETS: usize = 5;
+}
+
+impl Action for Scatter {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
+    fn name(&self) -> &str {
+        "scatter"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["scat"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self-range in RAW; the burst is centred on the caster's own
+        // 30 ft. Kept as a placed burst so a caster standing at the
+        // edge of a cluster can still catch it, and bounded at the
+        // radius so it cannot be thrown across the map.
+        Some(Self::RADIUS)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        // Pure displacement. Says so, so the AI's focus-fire pipeline
+        // doesn't rank it against attacks that whittle hit points.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(dc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spellcasting_save_dc())
+        else {
+            return Vec::new();
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter
+            .enemy_burst_targets(caster_id, point, Self::RADIUS)
+            .into_iter()
+            .take(Self::MAX_TARGETS)
+        {
+            if encounter
+                .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id)
+                .passed()
+            {
+                continue;
+            }
+            let Some(size) = encounter.actors.get(&target_id).map(|a| a.size()) else {
+                continue;
+            };
+            let name = encounter.actor_name(target_id);
+            match encounter.get_random_spawn(size) {
+                Ok(dest) => effects.push(Box::new(crate::engine::side_effects::TeleportActor {
+                    actor_id: target_id,
+                    dest,
+                })),
+                Err(_) => encounter.log(format!(
+                    "  scatter: nowhere on the board to put {}",
+                    name
+                )),
+            }
+        }
+        effects
+    }
+}
+
+pub static SCATTER: LazyLock<Scatter> = LazyLock::new(|| Scatter {});
