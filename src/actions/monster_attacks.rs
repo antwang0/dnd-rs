@@ -429,6 +429,200 @@ pub fn simple_weapon_attack_ranged(
     )
 }
 
+/// A 5e **Charge** / **Pounce** / **Trampling Charge** clause: what a
+/// creature adds to a melee hit when it closed on the target in a
+/// straight line first.
+///
+/// Carried on `CreatureTemplate`, not on `SimpleWeapon`, because that is
+/// where the rules put it: "if the *boar* moves at least 20 feet
+/// straight toward a target and then hits it with a tusk attack". The
+/// weapon is named by the clause, not the owner of it. Keying the clause
+/// off the weapon instead looked like the obvious design and is broken
+/// on contact with the bestiary — the tiger and the lion both call their
+/// attack `"claws"`, so one of the two pounces would be unreachable, and
+/// every bear and ape swinging a weapon of the same name would inherit
+/// whichever row won the lookup.
+///
+/// Read at the melee attack chokepoint by `engine::attack`, which owns
+/// the "did it actually run, and was the run at *this* target" half.
+#[derive(Clone, Copy, Debug)]
+pub struct ChargeRider {
+    /// `display_name` of the attack the clause rides, matched against
+    /// the swing being resolved. A creature with two attacks charges
+    /// with the one RAW names and swings the other normally.
+    pub weapon: &'static str,
+    /// Extra damage on the charging hit. `Dice::new(0, 0)` for the
+    /// trampling charges whose whole effect is the knockdown.
+    pub dice: Dice,
+    pub damage_type: DamageType,
+    /// How far the run has to be, in tiles. `CHARGE_RUN_TILES` for all
+    /// but the centaur, whose pike wants thirty feet.
+    pub run_tiles: isize,
+    /// True for the clauses that end in "or be knocked prone". The save
+    /// (Strength, against the charger's own derived DC) is assembled at
+    /// the attack chokepoint — the bestiary shouldn't have to know how
+    /// the engine spells a follow-up.
+    pub knocks_prone: bool,
+    /// Log line for the damage / run half ("boar charge").
+    pub label: &'static str,
+    /// Log line for the knockdown half. Ignored when `knocks_prone` is
+    /// false.
+    pub knockdown_label: &'static str,
+}
+
+/// Twenty feet, in tiles — the run nearly every charge clause in the
+/// bestiary asks for, at the board's 2.5 ft per tile.
+pub const CHARGE_RUN_TILES: isize = 8;
+
+/// Thirty feet: the centaur's longer run-up, and the only clause in the
+/// SRD that asks for more than twenty.
+pub const LONG_CHARGE_RUN_TILES: isize = 12;
+
+/// Boar **Charge** (RAW): "extra 3 (1d6) slashing damage. If the target
+/// is a creature, it must succeed on a DC 11 Strength saving throw or be
+/// knocked prone."
+pub const BOAR_CHARGE: ChargeRider = ChargeRider {
+    weapon: "tusks",
+    dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "boar charge",
+    knockdown_label: "boar charge knockdown",
+};
+
+/// Giant Boar **Charge** (RAW): extra 7 (2d6) slashing, DC 13 Strength
+/// or prone.
+pub const GIANT_BOAR_CHARGE: ChargeRider = ChargeRider {
+    weapon: "giant boar tusks",
+    dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "giant boar charge",
+    knockdown_label: "giant boar charge knockdown",
+};
+
+/// Elk **Charge** (RAW): extra 7 (2d6) bludgeoning, DC 13 Strength or
+/// prone.
+pub const ELK_CHARGE: ChargeRider = ChargeRider {
+    weapon: "elk ram",
+    dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "elk charge",
+    knockdown_label: "elk charge knockdown",
+};
+
+/// Goat **Charge** (RAW): extra 2 (1d4) bludgeoning, DC 10 Strength or
+/// prone.
+pub const GOAT_CHARGE: ChargeRider = ChargeRider {
+    weapon: "goat ram",
+    dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "goat charge",
+    knockdown_label: "goat charge knockdown",
+};
+
+/// Giant Goat **Charge** (RAW): extra 5 (2d4) bludgeoning, DC 13
+/// Strength or prone.
+pub const GIANT_GOAT_CHARGE: ChargeRider = ChargeRider {
+    weapon: "giant goat ram",
+    dice: Dice::new(2, 4),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "giant goat charge",
+    knockdown_label: "giant goat charge knockdown",
+};
+
+/// Unicorn **Charge** (RAW): extra 9 (2d8) piercing, DC 15 Strength or
+/// prone. Rides the horn, which is why the horn and not the hooves is
+/// the limb worth closing distance for.
+pub const UNICORN_CHARGE: ChargeRider = ChargeRider {
+    weapon: "unicorn horn",
+    dice: Dice::new(2, 8),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "unicorn charge",
+    knockdown_label: "unicorn charge knockdown",
+};
+
+/// Centaur **Charge** (RAW): "If the centaur moves at least 30 feet
+/// straight toward a target and then hits it with a pike attack on the
+/// same turn, the target takes an extra 10 (3d6) piercing damage." The
+/// one clause in the SRD with a longer run-up and no knockdown.
+pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
+    weapon: "pike",
+    dice: Dice::new(3, 6),
+    damage_type: DamageType::Piercing,
+    run_tiles: LONG_CHARGE_RUN_TILES,
+    knocks_prone: false,
+    label: "centaur charge",
+    knockdown_label: "",
+};
+
+/// Triceratops **Trampling Charge** (RAW): no extra damage, "that target
+/// must succeed on a DC 13 Strength saving throw or be knocked prone."
+/// The bonus stomp against a target it flattens is the unmodeled half —
+/// a mid-resolution action-economy grant the damage path has no hook
+/// for.
+pub const TRICERATOPS_CHARGE: ChargeRider = ChargeRider {
+    weapon: "gore",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "trampling charge",
+    knockdown_label: "trampling charge knockdown",
+};
+
+/// Warhorse **Trampling Charge** (RAW): DC 14 Strength or prone, then a
+/// bonus hoof attack against a target it knocks down. Same unmodeled
+/// second half as the triceratops.
+pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
+    weapon: "warhorse hooves",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "warhorse trampling charge",
+    knockdown_label: "warhorse trampling charge knockdown",
+};
+
+/// Tiger **Pounce** (RAW): "If the tiger moves at least 20 feet straight
+/// toward a creature and then hits it with a claw attack on the same
+/// turn, that target must succeed on a DC 13 Strength saving throw or be
+/// knocked prone." The free bite against a flattened target is the
+/// unmodeled half.
+pub const TIGER_POUNCE: ChargeRider = ChargeRider {
+    weapon: "claws",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "tiger pounce",
+    knockdown_label: "tiger pounce knockdown",
+};
+
+/// Lion **Pounce** (RAW): identical to the tiger's, on the lion's own
+/// claw. Two constants rather than one shared `POUNCE` because the log
+/// line names the cat, and because the two stat blocks are free to drift
+/// apart the way the boar and the giant boar already have.
+pub const LION_POUNCE: ChargeRider = ChargeRider {
+    weapon: "claws",
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "lion pounce",
+    knockdown_label: "lion pounce knockdown",
+};
+
 /// A vanilla weapon attack: roll d20 + ability mod vs AC, on hit roll
 /// `damage_dice` + (optional) ability mod of `damage_type`. Crit on raw 20
 /// doubles the dice. No riders, no splash, no AoE — everything that fits
@@ -8144,7 +8338,9 @@ pub static GIANT_APE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack
 
 /// Centaur pike — STR-based 1d10 piercing, reach 2 (10 ft polearm).
 /// Outranges every other martial weapon in the centaur's kit and slots
-/// neatly into the multi as the heavier of the two limbs.
+/// neatly into the multi as the heavier of the two limbs. Carries RAW's
+/// **Charge** rider (+3d6 piercing) through `CHARGE_RIDERS`, and is the
+/// one row there that wants a thirty-foot run-up rather than twenty.
 pub static CENTAUR_PIKE: SimpleWeapon = SimpleWeapon::reach_melee(
     "pike",
     &["polearm", "p"],
@@ -8208,7 +8404,10 @@ pub static TIGER_BITE: SimpleWeapon = SimpleWeapon::melee(
 );
 
 /// Tiger claws — STR 1d8+5 slashing. The lighter half of the multi
-/// pair; the rake after the bite lands.
+/// pair; the rake after the bite lands. Carries RAW's **Pounce** — a
+/// STR save vs Prone when the cat reaches the target across a
+/// straight-line run — through `CHARGE_RIDERS`. The free bite RAW
+/// grants against a target it flattens is the unmodeled half.
 pub static TIGER_CLAWS: SimpleWeapon = SimpleWeapon::melee(
     "claws",
     &["c", "rake"],
@@ -8224,10 +8423,11 @@ pub static TIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
 });
 
 /// Boar tusks — STR 1d6+1 slashing. The CR-1/4 boar's only swing.
-/// RAW has a Charge rider (extra 1d6 + DC-11 STR save vs Prone after
-/// a 20 ft straight-line dash); not modeled here — the boar still
-/// behaves correctly without it, and the engine's movement layer
-/// doesn't track "this turn's move was straight."
+/// RAW's **Charge** rider — extra 1d6 plus a STR save vs Prone after a
+/// 20 ft straight-line run — rides this weapon through `CHARGE_RIDERS`
+/// in `engine::attack`, which reads the run off the attacker's
+/// turn-start tile. Nothing on this struct expresses it: a charge is a
+/// fact about the board, not about the weapon.
 pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
     "tusks",
     &["t", "tusk", "gore"],
@@ -8704,10 +8904,11 @@ pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
 
 /// Triceratops Gore — STR-based 4d8+STR piercing, reach 2 (10 ft). The
 /// huge ceratopsian's signature charge: high single-die damage that
-/// rewards reach over multi-strike spam. RAW also has a Trampling
-/// Charge rider on a straight-line move-then-hit (Prone on STR save);
-/// we collapse to the vanilla high-damage hit since the engine doesn't
-/// track straight-line movement for trampling-style triggers.
+/// rewards reach over multi-strike spam. RAW's **Trampling Charge** —
+/// Prone on a failed STR save after a straight-line move-then-hit —
+/// rides this weapon through `CHARGE_RIDERS` in `engine::attack`. The
+/// bonus stomp against a target it knocks down is the half that stays
+/// unmodeled.
 pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
     "gore",
     &["gr", "horn-charge"],
@@ -10860,9 +11061,8 @@ pub static ANDROSPHINX_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// Unicorn Hooves — STR-based 2d6+STR bludgeoning melee. The kicking
 /// half of the unicorn's multi; pairs with the horn for the standard
 /// "kick + gore" double-tap. Vanilla `SimpleWeapon` — no rider effects,
-/// the load-bearing combat clauses live on the horn (charge-bonus is
-/// outside the engine's per-action chassis) and the Healing Touch
-/// action.
+/// the load-bearing combat clauses live on the horn (which carries the
+/// charge rider) and the Healing Touch action.
 pub static UNICORN_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "unicorn hooves",
     &["uh", "hooves-u"],
@@ -10873,15 +11073,13 @@ pub static UNICORN_HOOVES: SimpleWeapon = SimpleWeapon::melee(
 
 /// Unicorn Horn — STR-based 1d8+STR piercing melee. The piercing half
 /// of the unicorn's multi — paired with the hooves in
-/// `UNICORN_MULTI`. RAW also includes a "Charge" rider (when the
-/// unicorn moves 20+ feet in a straight line and hits, +2d8 piercing +
-/// STR save or knocked prone); we collapse the per-turn-movement gate
-/// since the engine doesn't track distance moved this turn for melee
-/// attack riders (only the AI's pathfinding sees it). The simpler
-/// "horn" hit lane preserves the unicorn's tactical identity — the
-/// horn is the high-damage limb, the hooves are the low-damage limb,
-/// the multi puts them together. The full charge clause could be a
-/// follow-up: add a per-actor `moved_this_turn_distance` accessor.
+/// `UNICORN_MULTI`. RAW's **Charge** rider — +2d8 piercing and a STR
+/// save vs Prone when the unicorn covers 20+ feet in a straight line
+/// first — rides this weapon through `CHARGE_RIDERS` in
+/// `engine::attack`, which measures the run off the attacker's
+/// turn-start tile. The horn stays the high-damage limb and the hooves
+/// the low-damage one; the charge is what makes closing the distance
+/// worth more than standing and swinging.
 pub static UNICORN_HORN: SimpleWeapon = SimpleWeapon::melee(
     "unicorn horn",
     &["horn", "uhorn"],

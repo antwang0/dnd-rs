@@ -1,4 +1,5 @@
 use crate::actions::action_template::Action;
+use crate::actions::monster_attacks::ChargeRider;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
 use crate::engine::side_effects::Resource;
@@ -2468,6 +2469,14 @@ pub struct CreatureTemplate {
     /// Conditions this creature is immune to (e.g. zombies vs Charm,
     /// elementals vs Poisoned).
     pub condition_immunities: HashSet<Condition>,
+    /// 5e **Charge** / **Pounce** / **Trampling Charge**, or `None` for
+    /// the overwhelming majority of creatures that just walk up and
+    /// swing.
+    ///
+    /// A creature-level trait rather than a weapon-level one because
+    /// that is how the rules phrase it, and because weapon names are not
+    /// unique across the bestiary — see `ChargeRider`.
+    pub charge: Option<ChargeRider>,
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -3455,6 +3464,7 @@ impl CreatureTemplate {
             damage_modifiers: HashMap::new(),
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
+            charge: None,
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
@@ -3683,6 +3693,18 @@ fn feature_charge_map(features: &HashSet<&'static str>) -> HashMap<&'static str,
 pub struct ActorInstance {
     name: String,
     location: Coordinate,
+    /// Where this actor stood when its current turn began, written by
+    /// `reset_for_new_round` and read by `charge_run`.
+    ///
+    /// The board only ever knows where a creature *is*. A whole family
+    /// of 5e riders keys off where it came from — "if the creature moves
+    /// at least 20 feet straight toward a target and then hits it" is
+    /// the Boar's Charge, the Rhinoceros's, the Triceratops's, the
+    /// Centaur's, the Unicorn's, and the Tiger's Pounce — and every one
+    /// of those stat blocks shipped here with the clause dropped and a
+    /// comment saying the engine could not see the movement. It can now,
+    /// with one `Coordinate` per actor.
+    turn_start_location: Coordinate,
     team_id: usize,
     base_ac: u32,
     base_hitpoints: u32,
@@ -3818,6 +3840,9 @@ pub struct ActorInstance {
     proficient_saves: HashSet<AbilityScoreType>,
     /// Conditions the actor is wholly immune to.
     condition_immunities: HashSet<Condition>,
+    /// This creature's charge clause, copied from its template. See
+    /// `CreatureTemplate::charge`.
+    charge: Option<ChargeRider>,
     /// Class-feature charges currently unspent, keyed by feature tag
     /// (decremented on use, refilled to `features_max` on long rest and
     /// — for the short-rest cohorts — on short rest).
@@ -4167,6 +4192,10 @@ impl ActorInstance {
         Ok(ActorInstance {
             name,
             location,
+            // A creature that has not yet taken a turn has not moved, so
+            // its run starts where it is. `reset_for_new_round`
+            // overwrites this at the top of every turn.
+            turn_start_location: location,
             team_id,
             base_ac: ct.ac,
             base_hitpoints: hp_roll_val,
@@ -4223,6 +4252,7 @@ impl ActorInstance {
             xp: 0,
             proficient_saves: ct.proficient_saves.clone(),
             condition_immunities: ct.condition_immunities.clone(),
+            charge: ct.charge,
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             attack_bonus_buff: 0,
@@ -7242,6 +7272,49 @@ impl ActorInstance {
         self.location
     }
 
+    /// Where this actor's turn started. Public for the charge gate,
+    /// which has to measure a run the board itself does not record.
+    pub fn turn_start_location(&self) -> Coordinate {
+        self.turn_start_location
+    }
+
+    /// This creature's 5e Charge / Pounce clause, if it has one.
+    pub fn charge(&self) -> Option<ChargeRider> {
+        self.charge
+    }
+
+    /// How far this actor has come this turn **in a straight line**, in
+    /// tiles, or `None` if it hasn't run straight.
+    ///
+    /// 5e's charge clauses all read "if the creature moves at least 20
+    /// feet straight toward a target and then hits it". Two of those
+    /// three words are answered here; "toward a target" is the caller's,
+    /// because only the caller knows who got hit.
+    ///
+    /// **Straight** is judged from the displacement, not the path: the
+    /// run counts if the actor's turn-start tile and its current tile
+    /// lie on a shared row, column, or exact diagonal. A creature that
+    /// took a dogleg and happened to finish on that line reads as having
+    /// charged, which is a deliberate lean. The alternative — comparing
+    /// movement spent against the straight-line cost — is exact on open
+    /// ground and wrong the moment a charging boar crosses one tile of
+    /// mud, because difficult terrain inflates the cost of a perfectly
+    /// straight run. Between a rule that occasionally credits a dogleg
+    /// and one that cancels a real charge for the ground it crossed, the
+    /// first is the one a table would recognize.
+    ///
+    /// Returns tiles rather than feet so the caller compares against the
+    /// board's own units; `CHARGE_RUN_TILES` is the 20-foot threshold in
+    /// those units.
+    pub fn straight_run_tiles(&self) -> Option<isize> {
+        let delta = self.location - self.turn_start_location;
+        if delta.x == 0 && delta.y == 0 {
+            return None;
+        }
+        let straight = delta.x == 0 || delta.y == 0 || delta.x.abs() == delta.y.abs();
+        straight.then(|| delta.x.abs().max(delta.y.abs()))
+    }
+
     /// Footprint-Chebyshev gap (in tiles) to another actor, accounting
     /// for both creatures' size categories. 0 means touching/adjacent.
     /// Free-standing analogue of `EncounterInstance::footprint_distance`
@@ -7371,6 +7444,11 @@ impl ActorInstance {
     /// Returns the conditions that were cleared so the engine can log them.
     pub fn reset_for_new_round(&mut self) -> Vec<Condition> {
         self.movement = self.speed();
+        // Anchor the charge run. Everything that reads it — the Charge /
+        // Pounce riders at the attack chokepoint — is asking "how far
+        // has this creature come *this turn*", so the anchor moves once
+        // per turn and never inside one.
+        self.turn_start_location = self.location;
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;

@@ -1855,6 +1855,11 @@ pub fn resolve_attack_outcome_with_rider(
             damage_so_far: damage,
         },
     ));
+    // Charge / Pounce / Trampling Charge — the bestiary's "moved twenty
+    // feet straight at you and then hit you" clauses. Keyed on the
+    // weapon and on where the attacker's turn started rather than on any
+    // condition, so it walks its own table beside the rider one.
+    damage = damage.saturating_add(push_charge_rider(encounter, &mut effects, &p, is_crit));
     // 5e Paladin Improved Divine Smite (level 11+) — passive feature.
     // Every melee weapon hit lays +1d8 radiant on the target, independent
     // of any Smite-prime burn. Lives outside the ON_HIT_RIDERS table
@@ -3149,6 +3154,110 @@ fn fire_missed_attack_boost(
         "  {}: +{}({}) to the missed roll",
         source.label, source.dice, rolled
     ));
+    rolled
+}
+
+/// Build the Strength-save-or-prone follow-up every knockdown charge
+/// shares. `Permanent` because prone has no clock — you stay down until
+/// something stands you up, which is what `Condition::Prone` already
+/// means everywhere else it is applied.
+///
+/// The DC is the charger's own `8 + prof + STR`, the same derivation
+/// every other monster save in the engine uses. RAW prints a fixed DC
+/// per stat block and the two agree within a point or so on most of
+/// these creatures; a derived DC that tracks the template's actual
+/// Strength is worth more than a literal that quietly stops matching the
+/// stat line it was copied beside.
+fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
+    SmiteFollowUp {
+        save_ability: Some(AbilityScoreType::Strength),
+        dc_ability: AbilityScoreType::Strength,
+        effect: FollowUpEffect::Condition {
+            condition: Condition::Prone,
+            timer: ConditionTimer::Permanent,
+        },
+        label,
+        hp_threshold: None,
+    }
+}
+
+/// Queue the Charge / Pounce / Trampling Charge rider this swing earns,
+/// if any. Returns the extra damage so the caller's running total stays
+/// honest, the same contract `push_on_hit_riders` has.
+///
+/// The clause is read off the *attacker*, not off a table keyed by
+/// weapon name, because that is where 5e puts it: "if the boar moves at
+/// least 20 feet straight toward a target and then hits it with a tusk
+/// attack". Keying on the weapon looked tempting and was wrong — the
+/// tiger and the lion both call their attack "claws", so one of the two
+/// pounces would have been unreachable and every bear and ape in the
+/// bestiary would have inherited whichever row won.
+///
+/// Four gates, cheapest first:
+///   - melee only. Every charge clause in the book is a melee attack.
+///   - the attacker has a charge clause, and this swing is the attack it
+///     names.
+///   - the attacker covered `run_tiles` in a straight line this turn
+///     (`straight_run_tiles`).
+///   - the run was *toward this target*. Without this clause a boar that
+///     sprinted north past a bystander and then gored someone beside it
+///     would be charging. Judged by the sign of the dot product between
+///     the run and the line from where the run started to the target:
+///     positive means the target was ahead of the boar rather than
+///     behind it.
+fn push_charge_rider(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    p: &AttackParams,
+    is_crit: bool,
+) -> u32 {
+    if !p.is_melee {
+        return 0;
+    }
+    let (Some(attacker), Some(target)) = (
+        encounter.actors.get(&p.caster_id),
+        encounter.actors.get(&p.target_id),
+    ) else {
+        return 0;
+    };
+    let Some(rider) = attacker.charge().filter(|r| r.weapon == p.action_name) else {
+        return 0;
+    };
+    let Some(run) = attacker.straight_run_tiles().filter(|&n| n >= rider.run_tiles) else {
+        return 0;
+    };
+    let delta = attacker.location() - attacker.turn_start_location();
+    let to_target = target.location() - attacker.turn_start_location();
+    if delta.x * to_target.x + delta.y * to_target.y <= 0 {
+        return 0;
+    }
+
+    let rolled = if rider.dice.count > 0 {
+        let total = roll_rider(encounter, rider.dice, is_crit);
+        encounter.log(format!(
+            "  {}: {} tiles of run, +{} {:?}",
+            rider.label, run, total, rider.damage_type
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: total,
+            damage_type: rider.damage_type,
+        }));
+        total
+    } else {
+        encounter.log(format!("  {}: {} tiles of run", rider.label, run));
+        0
+    };
+    if rider.knocks_prone {
+        apply_smite_follow_up(
+            encounter,
+            effects,
+            p.caster_id,
+            p.target_id,
+            charge_knockdown(rider.knockdown_label),
+            rolled,
+        );
+    }
     rolled
 }
 

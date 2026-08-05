@@ -38,6 +38,11 @@ pub static LION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Beast,
         actions,
         has_pack_tactics: true,
+        // RAW: when the lion closes at least the clause's distance in a
+        // straight line and then connects with its claws, the hit carries
+        // a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::LION_POUNCE),
         ..CreatureTemplate::defaults()
     }
 });

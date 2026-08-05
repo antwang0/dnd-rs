@@ -38,6 +38,11 @@ pub static CENTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Monstrosity,
         actions,
+        // RAW: when the centaur closes at least the clause's distance in a
+        // straight line and then connects with its pike, the hit carries
+        // extra 3d6 piercing off a thirty-foot run-up. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::CENTAUR_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

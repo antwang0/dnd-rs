@@ -59,6 +59,11 @@ pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW: when the giant goat closes at least the clause's distance in a
+        // straight line and then connects with its ram, the hit carries
+        // extra 2d4 bludgeoning and a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::GIANT_GOAT_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

@@ -80,6 +80,11 @@ pub static WARHORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW: when the warhorse closes at least the clause's distance in a
+        // straight line and then connects with its hooves, the hit carries
+        // a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::WARHORSE_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

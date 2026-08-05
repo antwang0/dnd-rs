@@ -103,6 +103,11 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // approximation. Initially available (instantiate_creature flags
         // every recharge ability as `available=true`).
         recharge_abilities: vec![("healing_touch", 5)],
+        // RAW: when the unicorn closes at least the clause's distance in a
+        // straight line and then connects with its horn, the hit carries
+        // extra 2d8 piercing and a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::UNICORN_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

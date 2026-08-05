@@ -63,6 +63,11 @@ pub static GIANT_BOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW: when the giant boar closes at least the clause's distance in a
+        // straight line and then connects with its tusks, the hit carries
+        // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::GIANT_BOAR_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

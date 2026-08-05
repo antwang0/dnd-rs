@@ -34,6 +34,11 @@ pub static TRICERATOPS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW: when the triceratops closes at least the clause's distance in a
+        // straight line and then connects with its gore, the hit carries
+        // a Strength save vs prone. Read at the melee attack
+        // chokepoint off `ActorInstance::charge`.
+        charge: Some(crate::actions::monster_attacks::TRICERATOPS_CHARGE),
         ..CreatureTemplate::defaults()
     }
 });

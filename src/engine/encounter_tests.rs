@@ -69612,3 +69612,205 @@ fn an_ai_caster_inside_a_field_still_finds_something_to_do() {
         }
     }
 }
+
+/// A boar that closes twenty feet in a straight line and connects deals
+/// its Charge damage; the same boar swinging from where it stood does
+/// not.
+///
+/// Both halves matter. The rider firing proves the run is measured at
+/// all — every stat block on `CHARGE_RIDERS` shipped with the clause
+/// dropped because nothing could see the movement. The rider *not*
+/// firing on a standing swing is what keeps it a charge rather than a
+/// damage buff.
+#[test]
+fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
+    use crate::actions::monster_attacks::BOAR_TUSKS;
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+
+    // `ran` picks up the boar at the far end of a straight lane and
+    // walks it in; the control drops it on the doorstep and gives it a
+    // fresh turn there.
+    let charge_damage = |ran: bool| -> u32 {
+        let mut total = 0;
+        let mut hits = 0;
+        for seed in 0..60 {
+            let mut e = ei_with_terrain_seeded(30, 10, &[], seed);
+            let boar = e
+                .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(14, 5), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+            if ran {
+                // Straight down the lane, ten tiles — comfortably past
+                // the eight-tile (20 ft) threshold.
+                e.actors
+                    .get_mut(&boar)
+                    .unwrap()
+                    .set_location(Coordinate::new(12, 5));
+            } else {
+                e.actors
+                    .get_mut(&boar)
+                    .unwrap()
+                    .set_location(Coordinate::new(12, 5));
+                // Same tile, but the turn starts here: no run.
+                e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+            }
+            let before = e.actors[&victim].hitpoints();
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: boar,
+                    target_id: victim,
+                    action_name: BOAR_TUSKS.display_name,
+                    attack_bonus: 20,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 1,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let after = e.actors.get(&victim).map_or(0, |a| a.hitpoints());
+            if after < before {
+                total += before - after;
+                hits += 1;
+            }
+        }
+        assert!(hits > 0, "expected the +20 attack bonus to connect");
+        total / hits
+    };
+
+    let charged = charge_damage(true);
+    let standing = charge_damage(false);
+    assert!(
+        charged > standing,
+        "a charging boar ({} avg) should out-damage a standing one ({} avg)",
+        charged,
+        standing
+    );
+}
+
+/// The run has to point at the target. A boar that sprinted past its
+/// victim and gored someone off to the side has not charged them.
+#[test]
+fn a_run_that_went_the_other_way_is_not_a_charge() {
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let boar = e
+        .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    // The boar's turn starts at (20, 5) and it runs *west* to (8, 5).
+    e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+    e.actors
+        .get_mut(&boar)
+        .unwrap()
+        .set_location(Coordinate::new(8, 5));
+    let behind = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.actors[&boar].straight_run_tiles(),
+        Some(12),
+        "the run itself is straight and long enough"
+    );
+    // ...but the victim standing one tile *behind* the boar was never
+    // charged: the dot product of the run and the line to them is
+    // negative.
+    let run = e.actors[&boar].location() - e.actors[&boar].turn_start_location();
+    let to_target = e.actors[&behind].location() - e.actors[&boar].turn_start_location();
+    assert!(
+        run.x * to_target.x + run.y * to_target.y > 0,
+        "sanity: a target ahead of the run passes the gate"
+    );
+    let ahead = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(21, 5), 0, 1)
+        .unwrap();
+    let to_ahead = e.actors[&ahead].location() - e.actors[&boar].turn_start_location();
+    assert!(
+        run.x * to_ahead.x + run.y * to_ahead.y <= 0,
+        "a target behind where the run started fails the gate"
+    );
+}
+
+/// `straight_run_tiles` reports a run only when the displacement lies on
+/// a row, a column, or an exact diagonal — and never on the turn a
+/// creature hasn't moved.
+#[test]
+fn a_run_counts_only_along_a_row_a_column_or_a_true_diagonal() {
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let boar = e
+        .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+        .unwrap();
+    // Each probe re-anchors the boar at (20, 20) and then walks it to
+    // the tile under test, so every run is measured from the same
+    // origin rather than from wherever the previous probe left it.
+    let run_to = |e: &mut EncounterInstance, x: isize, y: isize| -> Option<isize> {
+        e.actors
+            .get_mut(&boar)
+            .unwrap()
+            .set_location(Coordinate::new(20, 20));
+        e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+        e.actors
+            .get_mut(&boar)
+            .unwrap()
+            .set_location(Coordinate::new(x, y));
+        e.actors[&boar].straight_run_tiles()
+    };
+    assert_eq!(run_to(&mut e, 30, 20), Some(10), "along a row");
+    assert_eq!(run_to(&mut e, 30, 30), Some(10), "along a diagonal");
+    assert_eq!(run_to(&mut e, 10, 30), Some(10), "the other diagonal");
+    assert_eq!(run_to(&mut e, 20, 31), Some(11), "along a column");
+    assert_eq!(run_to(&mut e, 29, 30), None, "a dogleg is not a run");
+    assert_eq!(run_to(&mut e, 20, 20), None, "standing still is not a run");
+}
+
+/// Every charge clause names an attack its own creature actually
+/// swings.
+///
+/// The clause matches the swing by `display_name`, so a weapon renamed
+/// out from under its charge — or a clause pasted onto the wrong
+/// template — is a rule that silently never fires, which is
+/// indistinguishable from the state all eleven of these creatures were
+/// already in. A string on one side and a `SimpleWeapon` on the other is
+/// exactly the join nothing else in the build checks.
+#[test]
+fn every_charge_clause_names_an_attack_its_creature_has() {
+    let mut checked = 0;
+    for template in EncounterInstance::template_pool() {
+        let Some(charge) = template.charge else {
+            continue;
+        };
+        checked += 1;
+        assert!(
+            template.actions.iter().any(|a| a.name() == charge.weapon),
+            "{} charges with \"{}\" but has no such attack",
+            template.name,
+            charge.weapon
+        );
+        assert!(
+            charge.run_tiles > 0,
+            "{}'s charge asks for a run of zero tiles",
+            template.name
+        );
+        assert!(
+            !charge.knocks_prone || !charge.knockdown_label.is_empty(),
+            "{}'s charge knocks prone with no label to log it under",
+            template.name
+        );
+    }
+    assert!(
+        checked >= 10,
+        "expected the bestiary's charging creatures to be wired up, found {}",
+        checked
+    );
+}
