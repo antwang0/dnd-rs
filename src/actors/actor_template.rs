@@ -3707,18 +3707,27 @@ pub struct ActorInstance {
     /// a Slow does the same in the other direction. A counter that only
     /// ever goes up when feet are spent has none of those failure modes.
     movement_spent_this_turn: f32,
-    /// Where this actor stood when its current turn began, written by
-    /// `reset_for_new_round` and read by `straight_run_tiles`.
+    /// Where the actor's current straight run began, and the unit
+    /// direction it is running in — `None` between runs.
     ///
     /// The board only ever knows where a creature *is*. A whole family
-    /// of 5e riders keys off where it came from — "if the creature moves
+    /// of 5e riders keys off where it came from: "if the creature moves
     /// at least 20 feet straight toward a target and then hits it" is
-    /// the Boar's Charge, the Rhinoceros's, the Triceratops's, the
-    /// Centaur's, the Unicorn's, and the Tiger's Pounce — and every one
-    /// of those stat blocks shipped here with the clause dropped and a
-    /// comment saying the engine could not see the movement. It can now,
-    /// with one `Coordinate` per actor.
-    turn_start_location: Coordinate,
+    /// the Boar's Charge, the Triceratops's Trampling Charge, the
+    /// Centaur's, the Unicorn's, and both big cats' Pounce, and every
+    /// one of those stat blocks shipped here with the clause dropped and
+    /// a comment saying the engine could not see the movement.
+    ///
+    /// A *run*, not the turn's net displacement. RAW asks for twenty
+    /// straight feet before the blow, not for a whole turn spent in one
+    /// direction — a boar that sidesteps a rock and then puts its head
+    /// down has charged. So the pair is maintained step by step by
+    /// `note_walked_step`: a step that continues the run leaves the
+    /// origin where it is, and one that turns re-anchors it. Anything
+    /// that is not the creature walking — a shove, a teleport, the top
+    /// of a new turn — calls `break_run` and the count starts over.
+    run_origin: Coordinate,
+    run_step: Option<Coordinate>,
     team_id: usize,
     base_ac: u32,
     base_hitpoints: u32,
@@ -4207,10 +4216,9 @@ impl ActorInstance {
             name,
             location,
             movement_spent_this_turn: 0.0,
-            // A creature that has not yet taken a turn has not moved, so
-            // its run starts where it is. `reset_for_new_round`
-            // overwrites this at the top of every turn.
-            turn_start_location: location,
+            // A creature that has not yet moved is not running.
+            run_origin: location,
+            run_step: None,
             team_id,
             base_ac: ct.ac,
             base_hitpoints: hp_roll_val,
@@ -7300,18 +7308,66 @@ impl ActorInstance {
         self.creature_type
     }
 
+    /// Raw location write. Ends any straight run: a creature that is
+    /// simply *put* somewhere has not walked there, and the charge
+    /// clauses that read the run all say "if the creature moves".
+    ///
+    /// Failing closed here rather than at the handful of shove / pull /
+    /// teleport sites is the whole reason the break lives on the setter:
+    /// the cost of a site that forgets is a charge fired off movement
+    /// the creature never made, and the cost of one break too many is a
+    /// charge that doesn't fire.
     pub fn set_location(&mut self, target: Coordinate) {
         self.location = target;
+        self.break_run();
+    }
+
+    /// One tile travelled under the creature's own power, extending the
+    /// straight run rather than ending it. The sibling of
+    /// `set_location`, and the narrower of the two: `EncounterInstance`
+    /// routes only `MoveActor`'s per-tile walk here.
+    pub fn walk_to(&mut self, target: Coordinate) {
+        let from = self.location;
+        self.location = target;
+        self.note_walked_step(from, target);
     }
 
     pub fn location(&self) -> Coordinate {
         self.location
     }
 
-    /// Where this actor's turn started. Public for the charge gate,
-    /// which has to measure a run the board itself does not record.
-    pub fn turn_start_location(&self) -> Coordinate {
-        self.turn_start_location
+    /// Where the actor's current straight run began. Equal to its
+    /// location whenever it isn't running.
+    pub fn run_origin(&self) -> Coordinate {
+        self.run_origin
+    }
+
+    /// End any run in progress. Called at the top of every turn and by
+    /// every location change that isn't the creature walking — a shove,
+    /// a pull, a teleport, a summon's placement.
+    ///
+    /// Failing *closed* is the point: the cost of forgetting to call
+    /// this somewhere is a charge that fires off movement the creature
+    /// didn't make, and the cost of calling it once too often is a
+    /// charge that doesn't fire. Between those, the second.
+    pub fn break_run(&mut self) {
+        self.run_origin = self.location;
+        self.run_step = None;
+    }
+
+    /// Record one walked tile, extending the current straight run or
+    /// starting a new one. `from` and `to` are adjacent on the one path
+    /// that calls this; anything else re-anchors rather than trying to
+    /// interpret a jump.
+    fn note_walked_step(&mut self, from: Coordinate, to: Coordinate) {
+        let delta = to - from;
+        let unit = Coordinate::new(delta.x.signum(), delta.y.signum());
+        if delta == unit && self.run_step == Some(unit) {
+            return;
+        }
+        // A turn, or a jump: this step is the first of a new run.
+        self.run_origin = from;
+        self.run_step = if delta == unit { Some(unit) } else { None };
     }
 
     /// This creature's 5e Charge / Pounce clause, if it has one.
@@ -7319,36 +7375,29 @@ impl ActorInstance {
         self.charge
     }
 
-    /// How far this actor has come this turn **in a straight line**, in
-    /// tiles, or `None` if it hasn't run straight.
+    /// How many tiles the actor has walked in an unbroken straight line,
+    /// or `None` if it isn't running.
     ///
     /// 5e's charge clauses all read "if the creature moves at least 20
     /// feet straight toward a target and then hits it". Two of those
     /// three words are answered here; "toward a target" is the caller's,
     /// because only the caller knows who got hit.
     ///
-    /// **Straight** is judged from the displacement, not the path: the
-    /// run counts if the actor's turn-start tile and its current tile
-    /// lie on a shared row, column, or exact diagonal. A creature that
-    /// took a dogleg and happened to finish on that line reads as having
-    /// charged, which is a deliberate lean. The alternative — comparing
-    /// movement spent against the straight-line cost — is exact on open
-    /// ground and wrong the moment a charging boar crosses one tile of
-    /// mud, because difficult terrain inflates the cost of a perfectly
-    /// straight run. Between a rule that occasionally credits a dogleg
-    /// and one that cancels a real charge for the ground it crossed, the
-    /// first is the one a table would recognize.
+    /// The count is the run's own length, so a boar that steps around a
+    /// boulder and then puts its head down for twenty feet is charging —
+    /// the sidestep ends one run and begins another rather than
+    /// disqualifying the turn. Difficult ground doesn't disqualify it
+    /// either: the run is counted in tiles crossed, not in feet spent,
+    /// so mud slows the charge without cancelling it.
     ///
     /// Returns tiles rather than feet so the caller compares against the
     /// board's own units; `CHARGE_RUN_TILES` is the 20-foot threshold in
     /// those units.
     pub fn straight_run_tiles(&self) -> Option<isize> {
-        let delta = self.location - self.turn_start_location;
-        if delta.x == 0 && delta.y == 0 {
-            return None;
-        }
-        let straight = delta.x == 0 || delta.y == 0 || delta.x.abs() == delta.y.abs();
-        straight.then(|| delta.x.abs().max(delta.y.abs()))
+        self.run_step?;
+        let delta = self.location - self.run_origin;
+        let tiles = delta.x.abs().max(delta.y.abs());
+        (tiles > 0).then_some(tiles)
     }
 
     /// Footprint-Chebyshev gap (in tiles) to another actor, accounting
@@ -7480,11 +7529,9 @@ impl ActorInstance {
     /// Returns the conditions that were cleared so the engine can log them.
     pub fn reset_for_new_round(&mut self) -> Vec<Condition> {
         self.movement = self.speed();
-        // Anchor the charge run. Everything that reads it — the Charge /
-        // Pounce riders at the attack chokepoint — is asking "how far
-        // has this creature come *this turn*", so the anchor moves once
-        // per turn and never inside one.
-        self.turn_start_location = self.location;
+        // A run does not survive the turn boundary: RAW's charge clauses
+        // all end in "on the same turn".
+        self.break_run();
         self.movement_spent_this_turn = 0.0;
         self.action_slots = 1;
         self.bonus_action_slots = 1;

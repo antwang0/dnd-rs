@@ -365,7 +365,11 @@ impl ApplicableSideEffect for MoveActor {
             {
                 return;
             }
-            if let Err(e) = ei.place_actor_at(self.actor_id, dest) {
+            // `walk_actor_to` rather than `place_actor_at`: this is the
+            // one path a creature travels under its own power, and so
+            // the one that can extend the straight run the charge
+            // clauses measure.
+            if let Err(e) = ei.walk_actor_to(self.actor_id, dest) {
                 ei.log(format!("MoveActor failed: {}", e));
                 return;
             }

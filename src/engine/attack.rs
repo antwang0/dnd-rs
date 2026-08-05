@@ -3207,7 +3207,10 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
 ///     would be charging. Judged by the sign of the dot product between
 ///     the run and the line from where the run started to the target:
 ///     positive means the target was ahead of the boar rather than
-///     behind it.
+///     behind it. Deliberately looser than "the target is on the line" —
+///     a creature the boar closed on diagonally is one it charged, and
+///     insisting on exact collinearity would make the rule fire almost
+///     nowhere on an eight-connected board.
 fn push_charge_rider(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
@@ -3232,8 +3235,8 @@ fn push_charge_rider(
     let Some(run) = attacker.straight_run_tiles().filter(|&n| n >= rider.run_tiles) else {
         return 0;
     };
-    let delta = attacker.location() - attacker.turn_start_location();
-    let to_target = target.location() - attacker.turn_start_location();
+    let delta = attacker.location() - attacker.run_origin();
+    let to_target = target.location() - attacker.run_origin();
     if delta.x * to_target.x + delta.y * to_target.y <= 0 {
         return 0;
     }

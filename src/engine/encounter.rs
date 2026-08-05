@@ -11728,9 +11728,43 @@ impl EncounterInstance {
         actor_id: usize,
         coord: Coordinate,
     ) -> Result<(), Box<dyn Error>> {
+        self.relocate_actor(actor_id, coord, false)
+    }
+
+    /// Move an actor one tile *under its own power*, extending whatever
+    /// straight run it has going.
+    ///
+    /// The only difference from `place_actor_at` is which side of that
+    /// distinction the step falls on, and the distinction is load-bearing
+    /// for exactly one rule family: 5e's charge clauses fire on "if the
+    /// creature moves at least 20 feet straight toward a target", and a
+    /// creature shoved twenty feet has not moved — it has been moved.
+    ///
+    /// Called from `MoveActor::apply`, which is the one path a creature
+    /// walks. Everything else on the board — shoves, pulls, teleports,
+    /// summon placement, the repositioning half of a dozen spells — goes
+    /// through `place_actor_at` and ends the run.
+    pub fn walk_actor_to(
+        &mut self,
+        actor_id: usize,
+        coord: Coordinate,
+    ) -> Result<(), Box<dyn Error>> {
+        self.relocate_actor(actor_id, coord, true)
+    }
+
+    fn relocate_actor(
+        &mut self,
+        actor_id: usize,
+        coord: Coordinate,
+        walked: bool,
+    ) -> Result<(), Box<dyn Error>> {
         self.set_actor_map(actor_id, coord)?;
         if let Some(a) = self.get_actor(actor_id) {
-            a.set_location(coord);
+            if walked {
+                a.walk_to(coord);
+            } else {
+                a.set_location(coord);
+            }
         }
         Ok(())
     }
