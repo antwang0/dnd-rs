@@ -11708,11 +11708,21 @@ pub const PATH_TO_THE_GRAVE_TAG: &str = "cleric.path_to_the_grave";
 /// Applies the `MarkedForGrave` curse to a single target within 30 ft
 /// (12 tiles on our 2.5 ft grid). No save, no attack roll — the
 /// curse installs the moment the cleric spends their once-per-short-
-/// rest Channel Divinity charge. The next attack against the cursed
-/// target has advantage via the shared
-/// `Condition::grants_advantage_to_attackers` cohort; the curse
-/// expires at the start of the cleric's next turn via the
-/// `UntilStartOfNextTurn` timer.
+/// rest Channel Divinity charge.
+///
+/// The next attack against the cursed target has advantage via the
+/// shared `Condition::grants_advantage_to_attackers` cohort, and lands
+/// against **vulnerability to every damage type** via the
+/// `TYPED_VULNERABILITY_CONDITIONS` cohort — RAW's "the creature has
+/// vulnerability to all of that attack's damage". The attack that
+/// cashes the curse in also spends it; the `UntilStartOfNextTurn`
+/// timer is the backstop for a curse nobody cashes in.
+///
+/// The doubling is the feature's whole point at the table: a Channel
+/// Divinity charge spent here is worth roughly the party's biggest
+/// single hit of the round, so the cleric's read is "who is about to
+/// swing hardest, and can they reach?" rather than "who do I want to
+/// hit more often".
 ///
 /// Sibling to `GuidingBolt` on the "install a target-side attack-
 /// advantage rider" lane — Guiding Bolt lands the rider AS A HIT

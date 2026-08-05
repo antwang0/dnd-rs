@@ -2012,7 +2012,46 @@ pub fn resolve_attack_outcome_with_rider(
     // chain off `damage_dealt` (a half-damage self-heal, a max-HP drain)
     // see the whole hit.
     damage = damage.saturating_add(rider.apply(encounter, &p, mode, is_crit, &mut effects));
+    push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
     (effects, damage)
+}
+
+/// Queue the removal of every one-shot vulnerability the target holds —
+/// RAW's "and then the curse ends" on Path to the Grave.
+///
+/// **Called last**, after every `DealDamage` the swing produced, and
+/// that ordering is the feature. RAW gives the curse "vulnerability to
+/// all of that attack's damage", and a single 5e attack routinely lands
+/// three or four separate typed instances — the weapon die, a smite,
+/// Hunter's Mark, a rider. Effects apply in the order they were queued,
+/// so a removal appended here doubles all of them and a removal queued
+/// any earlier would double the first and lose the rest.
+///
+/// Shared by the weapon and spell chokepoints because RAW's trigger is
+/// "hits the cursed creature with an attack" and a spell attack is one.
+/// A save-based spell is not, and never reaches either chokepoint, so
+/// a Fireball does not spend the curse — it does still get doubled by
+/// it, which is the one place this lands more generously than RAW:
+/// the vulnerability is a property of the cursed creature for as long
+/// as the curse is on it, rather than a property of one attack. The
+/// curse's `UntilStartOfNextTurn` timer bounds the difference to a
+/// single round.
+pub fn push_spent_vulnerability_removals(
+    encounter: &EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    target_id: usize,
+) {
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return;
+    };
+    for &condition in crate::actors::actor_template::VULNERABILITIES_SPENT_BY_THE_ATTACK {
+        if target.has_condition(condition) {
+            effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                actor_id: target_id,
+                condition,
+            }));
+        }
+    }
 }
 
 /// The bits of a landed attack an on-hit rider needs to know about.

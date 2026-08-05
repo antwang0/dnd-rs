@@ -164,6 +164,63 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
     },
 ];
 
+/// One row in the `TYPED_VULNERABILITY_CONDITIONS` cohort — a single
+/// held condition whose presence makes the holder take *double* damage
+/// of every type in `types`.
+///
+/// The mirror of `ConditionDrivenTypedImmunity` /
+/// `ConditionDrivenTypedResistance` on the other side of the ledger,
+/// and the last of the three to get a lane. Vulnerability used to be
+/// readable only off a creature's own `damage_modifiers` map, which
+/// meant every 5e effect of the form "the target is vulnerable to X
+/// until Y" had nowhere to land — the reason the Grave Domain Cleric's
+/// Path to the Grave shipped as an attack-advantage grant with its own
+/// docstring flagging the missing half.
+struct ConditionDrivenTypedVulnerability {
+    source: Condition,
+    types: &'static [DamageType],
+}
+
+/// Conditions whose presence makes the holder vulnerable. Read by
+/// `has_condition_vulnerability`, which `effective_damage` ORs with the
+/// template's own `damage_modifiers` entry — so a curse-granted
+/// vulnerability and a template-granted resistance to the same type
+/// still cancel, per PHB p.197.
+///
+/// One row today:
+///
+///   - **Path to the Grave** (Grave Domain Cleric Channel Divinity,
+///     lv2): "the next time you or an ally of yours hits the cursed
+///     creature with an attack, the creature has vulnerability to all
+///     of that attack's damage, and then the curse ends." *All* of the
+///     attack's damage, hence `DamageType::ALL` rather than a curated
+///     slice — the curse doesn't care what the blow was made of.
+///
+/// The "and then the curse ends" clause is not here: this cohort
+/// answers what the condition *does*, and the attack chokepoints answer
+/// when it goes, by queueing a `RemoveCondition` behind the last of the
+/// swing's damage effects. That placement is what makes "all of that
+/// attack's damage" true for a swing that lands piercing and radiant
+/// and necrotic in three separate instances.
+const TYPED_VULNERABILITY_CONDITIONS: &[ConditionDrivenTypedVulnerability] = &[
+    ConditionDrivenTypedVulnerability {
+        source: Condition::MarkedForGrave,
+        types: &DamageType::ALL,
+    },
+];
+
+/// Every condition on `TYPED_VULNERABILITY_CONDITIONS` that RAW says is
+/// spent by the attack it doubles.
+///
+/// Read by the weapon- and spell-attack chokepoints, which append a
+/// removal for each of these behind the swing's damage. Kept as its own
+/// list rather than a `consumed: bool` on the row because a
+/// vulnerability that simply runs out on its timer (a hypothetical
+/// Hex-style "vulnerable to cold for a minute") needs no attack-side
+/// machinery at all, and pairing the two in one struct would put a
+/// field on every future row that most of them would set to `false`.
+pub const VULNERABILITIES_SPENT_BY_THE_ATTACK: &[Condition] = &[Condition::MarkedForGrave];
+
 /// One row in the `RAGE_GATED_BROAD_RESISTANCES` cohort — a single
 /// passive-feature tag whose presence, combined with an active `Raging`
 /// condition, grants resistance to every damage type EXCEPT those in
@@ -5659,7 +5716,8 @@ impl ActorInstance {
             return 0;
         }
         let template_modifier = self.damage_modifiers.get(&dt).copied();
-        let vulnerable = matches!(template_modifier, Some(DamageModifier::Vulnerability));
+        let vulnerable = matches!(template_modifier, Some(DamageModifier::Vulnerability))
+            || self.has_condition_vulnerability(dt);
         let resistant = matches!(template_modifier, Some(DamageModifier::Resistance))
             || self.has_passive_typed_resistance(dt)
             || self.has_condition_resistance(dt)
@@ -5681,6 +5739,21 @@ impl ActorInstance {
     /// struct-literal entry.
     pub fn has_condition_immunity(&self, dt: DamageType) -> bool {
         TYPED_IMMUNITY_CONDITIONS
+            .iter()
+            .any(|row| self.has_condition(row.source) && row.types.contains(&dt))
+    }
+
+    /// True iff the actor holds a condition that makes it vulnerable to
+    /// damage of type `dt`. Walks `TYPED_VULNERABILITY_CONDITIONS`, the
+    /// mirror of the immunity and resistance cohorts above.
+    ///
+    /// OR'd with the template's own `Vulnerability` entry rather than
+    /// checked after it, so `effective_damage`'s resistance-cancels-
+    /// vulnerability rule holds however the vulnerability arrived: a
+    /// fire-resistant creature cursed by Path to the Grave takes full
+    /// fire damage, not double and not half.
+    pub fn has_condition_vulnerability(&self, dt: DamageType) -> bool {
+        TYPED_VULNERABILITY_CONDITIONS
             .iter()
             .any(|row| self.has_condition(row.source) && row.types.contains(&dt))
     }

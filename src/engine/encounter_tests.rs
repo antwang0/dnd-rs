@@ -53271,6 +53271,109 @@ fn path_to_the_grave_curses_target_and_attacker_gets_advantage() {
     );
 }
 
+/// The curse doubles damage of *every* type, cancels against the
+/// target's own resistance rather than beating it, and is spent by the
+/// attack that cashes it in.
+///
+/// The all-types sweep is the load-bearing half: RAW says
+/// "vulnerability to all of that attack's damage", so a curse that only
+/// doubled physical damage would quietly stop working the moment the
+/// party's biggest hit was a Fire Bolt.
+#[test]
+fn path_to_the_grave_doubles_every_damage_type_and_cancels_with_resistance() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::types::{DamageModifier, DamageType};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    for damage_type in DamageType::ALL {
+        assert_eq!(
+            e.actors[&goblin].effective_damage(10, damage_type),
+            10,
+            "an uncursed goblin takes {damage_type:?} damage straight"
+        );
+    }
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::MarkedForGrave, ConditionTimer::UntilStartOfNextTurn);
+    for damage_type in DamageType::ALL {
+        assert_eq!(
+            e.actors[&goblin].effective_damage(10, damage_type),
+            20,
+            "the curse doubles {damage_type:?} like every other type"
+        );
+    }
+    // PHB p.197: resistance and vulnerability to the same type cancel,
+    // however the vulnerability arrived. Not double, and not half.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+    assert_eq!(e.actors[&goblin].effective_damage(10, DamageType::Fire), 10);
+    assert_eq!(e.actors[&goblin].effective_damage(10, DamageType::Cold), 20);
+    // Immunity still beats everything.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .set_damage_modifier(DamageType::Poison, DamageModifier::Immunity);
+    assert_eq!(e.actors[&goblin].effective_damage(10, DamageType::Poison), 0);
+}
+
+/// "And then the curse ends" — the swing that cashes the curse in
+/// spends it, and every damage instance of that one swing is still
+/// doubled.
+///
+/// The second half is why the removal is queued behind the swing's
+/// damage rather than applied when the vulnerability is read: a 5e
+/// attack routinely lands several typed instances, and a curse spent
+/// on the first would leave the rest at face value.
+#[test]
+fn the_attack_that_cashes_the_grave_curse_spends_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .add_condition(Condition::MarkedForGrave, ConditionTimer::UntilStartOfNextTurn);
+    // Swing until one lands — a miss produces no damage and so has no
+    // curse to spend.
+    let scimitar = e.actors[&fighter].find_action("scimitar").unwrap();
+    let targets = vec![ogre];
+    let mut landed = false;
+    for _ in 0..40 {
+        let before = e.actors[&ogre].hitpoints();
+        for eff in scimitar.side_effects(&mut e, fighter, Some(&targets), None, None) {
+            eff.apply(&mut e);
+        }
+        if e.actors[&ogre].hitpoints() < before {
+            landed = true;
+            break;
+        }
+        assert!(
+            e.actors[&ogre].has_condition(Condition::MarkedForGrave),
+            "a miss should leave the curse standing"
+        );
+    }
+    assert!(landed, "40 swings should have produced at least one hit");
+    assert!(
+        !e.actors[&ogre].has_condition(Condition::MarkedForGrave),
+        "the hit that cashed the curse in should have spent it"
+    );
+}
+
 /// The baseline Cleric template does NOT ship Path to the Grave —
 /// that feature is Grave Domain subclass-only. Sibling to the
 /// baseline_cleric_does_not_ship_war_domain_features guard above,

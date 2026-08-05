@@ -1607,22 +1607,37 @@ pub enum Condition {
     GuidedStriking,
     /// Marked for the Grave (5e Grave Domain Cleric Channel Divinity,
     /// lv2 subclass — Path to the Grave, XGtE). The cleric has cursed
-    /// this target for a killing blow — the next attack against the
-    /// holder before the end of the cleric's next turn is made with
-    /// advantage. RAW's clause reads "vulnerability to all of that
-    /// attack's damage, and then the curse ends" — collapsed to the
-    /// attack-advantage grant on the target-side lane so the mechanic
-    /// rides the shared `grants_advantage_to_attackers` chokepoint next
-    /// to `GuidingBoltLit` / `Outlined`; the "curse ends after the
-    /// attack" clause is collapsed to the `UntilStartOfNextTurn` timer
-    /// (matches RAW's "end of your next turn" cadence for the caster).
+    /// this target for a killing blow. RAW: "the next time you or an
+    /// ally of yours hits the cursed creature with an attack, the
+    /// creature has vulnerability to all of that attack's damage, and
+    /// then the curse ends."
+    ///
+    /// All three clauses ship:
+    ///
+    ///   - **Advantage** on attacks against the holder, via the shared
+    ///     `grants_advantage_to_attackers` cohort next to
+    ///     `GuidingBoltLit` / `Outlined`. (Strictly a house addition —
+    ///     RAW grants no advantage — kept because it is what makes the
+    ///     curse worth a Channel Divinity in a fight the cleric might
+    ///     not otherwise land a hit in.)
+    ///   - **Vulnerability to every damage type**, via the
+    ///     `TYPED_VULNERABILITY_CONDITIONS` cohort, which
+    ///     `effective_damage` reads alongside the target's own
+    ///     `damage_modifiers`. "All of that attack's damage" is why the
+    ///     row lists `DamageType::ALL`: the curse does not care what
+    ///     the blow was made of, and a swing that lands piercing plus
+    ///     radiant plus necrotic doubles all three.
+    ///   - **"And then the curse ends"**, via
+    ///     `VULNERABILITIES_SPENT_BY_THE_ATTACK`, which both attack
+    ///     chokepoints queue a removal for behind the swing's last
+    ///     damage effect. The `UntilStartOfNextTurn` timer is the
+    ///     backstop for a curse nobody cashes in.
+    ///
     /// Distinct from `GuidingBoltLit` semantically (Cleric CD curse
     /// vs. spell-mark) even though they overlap on the next-attack-
     /// advantage mechanic — kept as a separate condition so combat log
-    /// lines identify the curse source and future refinements (RAW's
-    /// vulnerability clause modeled as a damage-doubling target-side
-    /// hook, or a resistance-piercing rider) can attach to this
-    /// condition specifically without disturbing Guiding Bolt's lane.
+    /// lines identify the curse source, and so the vulnerability half
+    /// attaches here without touching Guiding Bolt's lane.
     MarkedForGrave,
     /// Power Word Pain (5e level-7 necromancy, XGtE). The target's body
     /// is racked with excruciating pain: attack rolls suffer

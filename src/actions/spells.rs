@@ -483,6 +483,10 @@ pub fn spell_attack_outcome(
         caster_id,
         target_id,
     );
+    // "And then the curse ends" — see the weapon chokepoint's twin
+    // call. Last, so every damage instance the spell attack queued is
+    // still doubled when it applies.
+    crate::engine::attack::push_spent_vulnerability_removals(encounter, &mut effects, target_id);
     (effects, total_dmg)
 }
 
