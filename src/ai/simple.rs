@@ -8277,7 +8277,7 @@ mod tests {
         e.process_stack();
         let run = e.actors[&boar].straight_run_tiles().unwrap_or(0);
         assert!(
-            run >= crate::actions::monster_attacks::CHARGE_RUN_TILES,
+            run >= crate::engine::attack::CHARGE_RUN_TILES,
             "the boar closed twelve open tiles and finished with a run of {}",
             run
         );

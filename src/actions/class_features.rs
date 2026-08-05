@@ -3354,12 +3354,12 @@ pub const FEROCIOUS_CHARGER_TAG: &str = "fighter.ferocious_charger";
 /// Cavalier chassis above its strict lv10 gate for the same reason every
 /// other subclass template here runs above its own — class templates
 /// target a balanced playable level, not lockstep PHB progression.
-pub const FEROCIOUS_CHARGER: crate::actions::monster_attacks::ChargeRider =
-    crate::actions::monster_attacks::ChargeRider {
+pub const FEROCIOUS_CHARGER: crate::engine::attack::ChargeRider =
+    crate::engine::attack::ChargeRider {
         weapon: None,
         dice: Dice::new(0, 0),
         damage_type: DamageType::Bludgeoning,
-        run_tiles: crate::actions::monster_attacks::charge_run_tiles(10),
+        run_tiles: crate::engine::attack::charge_run_tiles(10),
         knocks_prone: true,
         label: "ferocious charger",
         knockdown_label: "ferocious charger knockdown",

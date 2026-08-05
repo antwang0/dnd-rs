@@ -3157,6 +3157,86 @@ fn fire_missed_attack_boost(
     rolled
 }
 
+/// A 5e **Charge** / **Pounce** / **Trampling Charge** clause: what a
+/// creature adds to a melee hit when it closed on the target in a
+/// straight line first.
+///
+/// Carried on `CreatureTemplate`, not on `SimpleWeapon`, because that is
+/// where the rules put it: "if the *boar* moves at least 20 feet
+/// straight toward a target and then hits it with a tusk attack". The
+/// weapon is named by the clause, not the owner of it. Keying the clause
+/// off the weapon instead looked like the obvious design and is broken
+/// on contact with the bestiary — the tiger and the lion both call their
+/// attack `"claws"`, so one of the two pounces would be unreachable, and
+/// every bear and ape swinging a weapon of the same name would inherit
+/// whichever row won the lookup.
+///
+/// Lives here rather than beside the bestiary's rows because the clause
+/// is no longer a monster's: the Cavalier's Ferocious Charger is the
+/// same rule with two fields set differently, and `push_charge_rider`
+/// below is the one place that reads any of them. The rows themselves
+/// stay where their creatures are — the bestiary's in
+/// `actions::monster_attacks`, the class's in
+/// `actions::class_features`.
+#[derive(Clone, Copy, Debug)]
+pub struct ChargeRider {
+    /// `display_name` of the attack the clause rides, or `None` for a
+    /// clause that rides *any* melee attack.
+    ///
+    /// Almost every clause in the bestiary names one attack — a creature
+    /// with two charges with the one RAW names and swings the other
+    /// normally — but the player-side ones don't: the Cavalier's
+    /// Ferocious Charger fires off "hitting a creature with a weapon
+    /// attack", full stop, and a fighter is carrying whatever the party
+    /// found.
+    pub weapon: Option<&'static str>,
+    /// Extra damage on the charging hit. `Dice::new(0, 0)` for the
+    /// trampling charges whose whole effect is the knockdown.
+    pub dice: Dice,
+    pub damage_type: DamageType,
+    /// How far the run has to be, in tiles. `CHARGE_RUN_TILES` for all
+    /// but the centaur, whose pike wants thirty feet.
+    pub run_tiles: isize,
+    /// True for the clauses that end in "or be knocked prone". The save
+    /// (Strength, against the charger's own derived DC) is assembled at
+    /// the attack chokepoint — the bestiary shouldn't have to know how
+    /// the engine spells a follow-up.
+    pub knocks_prone: bool,
+    /// Log line for the damage / run half ("boar charge").
+    pub label: &'static str,
+    /// Log line for the knockdown half. Ignored when `knocks_prone` is
+    /// false.
+    pub knockdown_label: &'static str,
+    /// Ledger key for a clause RAW limits to "once on each of your
+    /// turns", or `None` for one that fires on every qualifying swing.
+    ///
+    /// The bestiary's clauses are all the second kind — a boar that
+    /// somehow charges twice has charged twice — but the Cavalier's
+    /// Ferocious Charger is explicit about the limit, and a fighter with
+    /// Extra Attack would otherwise knock a target down twice off one
+    /// run. Shares `ActorInstance`'s once-per-turn ledger with the
+    /// damage riders on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, cleared at
+    /// turn start by `reset_for_new_round`.
+    pub once_per_turn_tag: Option<&'static str>,
+}
+
+/// A charge clause's run-up, converted from the feet the stat block
+/// prints to the tiles the board counts, at 2.5 ft per tile.
+///
+/// The stat blocks do not agree on the distance — twenty feet is the
+/// common case, but the centaur wants thirty, the wereboar fifteen and
+/// the minotaur ten — so each row states its own, and states it in the
+/// units the rulebook uses rather than in a tile count the reader has to
+/// divide back out.
+pub const fn charge_run_tiles(feet: isize) -> isize {
+    feet * 2 / 5
+}
+
+/// Twenty feet, the run nearly every charge clause in the bestiary asks
+/// for. Named because the engine's own tests want to talk about the
+/// common bar without restating the arithmetic.
+pub const CHARGE_RUN_TILES: isize = charge_run_tiles(20);
+
 /// Build the Strength-save-or-prone follow-up every knockdown charge
 /// shares. `Permanent` because prone has no clock — you stay down until
 /// something stands you up, which is what `Condition::Prone` already

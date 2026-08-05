@@ -680,6 +680,14 @@ pub fn weapon_expected_damage_named(
         .charge()
         .filter(|c| c.weapon.is_none_or(|w| w == weapon_name))
         .filter(|c| caster.straight_run_tiles().is_some_and(|n| n >= c.run_tiles))
+        // A once-per-turn clause already cashed is worth nothing to the
+        // swing being weighed — the same gate the resolution path reads,
+        // so the estimate and the die agree about the second swing of an
+        // Extra Attack.
+        .filter(|c| {
+            c.once_per_turn_tag
+                .is_none_or(|tag| !caster.once_per_turn_used(tag))
+        })
         .map(|c| c.dice.average_roll())
         .unwrap_or(0.0);
     let per_swing = dice.average_roll()

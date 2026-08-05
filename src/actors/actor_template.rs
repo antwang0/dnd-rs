@@ -1,5 +1,5 @@
 use crate::actions::action_template::Action;
-use crate::actions::monster_attacks::ChargeRider;
+use crate::engine::attack::ChargeRider;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
 use crate::engine::side_effects::Resource;

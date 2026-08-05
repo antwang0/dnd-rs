@@ -69834,7 +69834,7 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
 /// head down has charged, and one that walks a long arc has not.
 #[test]
 fn a_run_is_the_straight_tail_of_the_walk() {
-    use crate::actions::monster_attacks::CHARGE_RUN_TILES;
+    use crate::engine::attack::CHARGE_RUN_TILES;
     use crate::actors::creatures::boars::BOAR_TEMPLATE;
     let mut e = ei_with_terrain(40, 40, &[]);
     let boar = e
