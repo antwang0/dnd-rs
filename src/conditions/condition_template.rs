@@ -1605,6 +1605,29 @@ pub enum Condition {
     /// doesn't dangle across rounds when the swing whiffs the reach
     /// window.
     GuidedStriking,
+    /// Chilled by **Chill Touch** (5e necromancy cantrip). RAW: "the
+    /// target can't regain hit points until the start of your next
+    /// turn." The ghostly hand closes the wound off; the target keeps
+    /// fighting, but the cleric behind them stops mattering.
+    ///
+    /// Read by `ActorInstance::can_regain_hitpoints`, which `heal`
+    /// consults — so every heal in the engine, from Cure Wounds to a
+    /// potion to a Life Cleric's aura, bounces off it without any of
+    /// them knowing the condition exists.
+    ///
+    /// **Hit points only.** Temporary hit points are not hit points,
+    /// and RAW's clause names only the former, so a chilled target can
+    /// still be handed a False Life pool or Bardic-Inspiration-shaped
+    /// temp HP. That is the whole difference between this condition and
+    /// the swarm's version of the same rule, which names both — see
+    /// `gain_temp_hp`, which the swarm gates and this does not.
+    ///
+    /// The cantrip's other RAW rider — undead targets also take
+    /// disadvantage on attacks against the caster — is not shipped: it
+    /// needs a creature-type-gated attacker-side back-link, which is a
+    /// different mechanism from this one and no other content asks for
+    /// it yet.
+    ChillTouched,
     /// Marked for the Grave (5e Grave Domain Cleric Channel Divinity,
     /// lv2 subclass — Path to the Grave, XGtE). The cleric has cursed
     /// this target for a killing blow. RAW: "the next time you or an
@@ -2168,6 +2191,7 @@ impl Condition {
             Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
             Condition::GuidedStriking => "primed with a guided strike",
+            Condition::ChillTouched => "chilled by the grave's touch",
             Condition::HexbladeCursed => "cursed by a hexblade",
         }
     }

@@ -4446,6 +4446,32 @@ impl ActorInstance {
         self.is_swarm
     }
 
+    /// True if a heal aimed at this actor would do anything at all.
+    ///
+    /// The single gate `heal` consults, so every source of healing in
+    /// the engine — Cure Wounds, a potion, a Life Cleric's aura, a
+    /// Paladin's Lay on Hands, Aura of Vitality's per-round tick —
+    /// respects a no-heal rule without any of them knowing it exists.
+    /// Also read by the AI's support rung, which will not offer a heal
+    /// to an ally that cannot take one.
+    ///
+    /// Two sources say no:
+    ///
+    ///   - **Swarm** — "the swarm can't regain hit points or gain
+    ///     temporary hit points". Permanent, and it also covers temp HP
+    ///     (see `gain_temp_hp`).
+    ///   - **Chill Touch** (`ChillTouched`) — "the target can't regain
+    ///     hit points until the start of your next turn". A round long,
+    ///     and hit points only.
+    ///
+    /// Deliberately *not* a bar on being revived from Dying: RAW's
+    /// no-heal clauses stop the HP going up, and the `Dead` /
+    /// `HpState` arms in `heal` already own the question of who can be
+    /// brought back at all.
+    pub fn can_regain_hitpoints(&self) -> bool {
+        !self.is_swarm && !self.has_condition(Condition::ChillTouched)
+    }
+
     /// True while a swarm has been thinned to half its hit points or
     /// fewer — the gate on the halved-bite clause every swarm statblock
     /// writes into its attack line.
@@ -5471,6 +5497,15 @@ impl ActorInstance {
     /// or gain temporary hit points". Refused here rather than at each
     /// of the dozen sources so a new temp-HP grant inherits the rule for
     /// free — the same reason `heal` carries the other half.
+    ///
+    /// Gated on `is_swarm` directly rather than on
+    /// `can_regain_hitpoints`, and the difference is deliberate: that
+    /// predicate also answers for **Chill Touch**, whose RAW clause
+    /// names hit points and stops there. Temporary hit points are not
+    /// hit points, so a chilled fighter can still be handed a False Life
+    /// pool while a swarm cannot. Two rules that overlap on one lane and
+    /// diverge on the other, which is exactly the case a shared
+    /// predicate would have papered over.
     pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
         if self.is_swarm {
             return self.temp_hp;
@@ -7464,18 +7499,17 @@ impl ActorInstance {
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you
     /// to the new value). Active actors heal up to their max.
     ///
-    /// A **swarm** regains nothing: RAW's "the swarm can't regain hit
-    /// points or gain temporary hit points" — the bats a fireball killed
-    /// are not brought back by a Cure Wounds on the ones that lived.
+    /// A target that `can_regain_hitpoints` says no to regains nothing.
     /// Reported as `NoOp` rather than `AlreadyFull` so a caller that
     /// spends a resource on the heal can tell "this did nothing" from
     /// "this target was topped off", which is the same distinction the
-    /// `Dead` arm above draws.
+    /// `Dead` arm above draws — and which the AI's heal rung reads to
+    /// avoid offering a heal that would be thrown away.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
-        if self.is_swarm {
+        if !self.can_regain_hitpoints() {
             return HealOutcome::NoOp;
         }
         let cap = self.max_hitpoints();

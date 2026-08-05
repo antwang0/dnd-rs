@@ -5722,6 +5722,20 @@ fn try_support_heal(
         };
 
         for &support in &support_actions {
+            // A heal aimed at something that can't regain hit points is
+            // an action and often a slot thrown away — a swarm, or an
+            // ally under Chill Touch. The buffs in this same list still
+            // land, so the gate is on the heal rather than on the ally:
+            // Shield of Faith on a chilled fighter is a fine use of the
+            // turn, and Cure Wounds on the same fighter is not.
+            if support.is_heal()
+                && !encounter
+                    .actors
+                    .get(&ally_id)
+                    .is_some_and(|a| a.can_regain_hitpoints())
+            {
+                continue;
+            }
             let aei =
                 ActionExecutionInfo::new(support, actor_id, Some(vec![ally_id]), None, None);
             if !aei.validate(encounter) {

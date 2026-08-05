@@ -68901,3 +68901,132 @@ fn curving_shot_adds_a_die_to_a_missed_bow_shot() {
         "40 seeds should have produced at least one miss for Curving Shot to rescue"
     );
 }
+
+/// Chill Touch's second clause: a landed spectral hand closes the
+/// wound off, so nothing can heal the target until it fades.
+///
+/// Three things worth pinning separately. The block is on hit points
+/// only — RAW names hit points and stops, so temp HP still lands, which
+/// is the whole difference between this and the swarm's version of the
+/// same rule. It sits at `heal`, so every source in the engine
+/// inherits it without knowing it exists. And a miss installs nothing:
+/// the cantrip has to connect.
+#[test]
+fn chill_touch_shuts_off_healing_but_not_temp_hp() {
+    use crate::actions::spells::CHILL_TOUCH;
+    use crate::actors::actor_template::HealOutcome;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // An ogre rather than a ogre: the fixture casts the cantrip up to
+    // forty times to guarantee a hit, and a target that could die to
+    // one of them would end the test on `Dead` rather than on the
+    // clause under test.
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    // Hurt the ogre so a heal has somewhere to go, and confirm one
+    // lands before the chill.
+    let half = e.actors[&ogre].max_hitpoints() / 2;
+    e.actors.get_mut(&ogre).unwrap().take_damage(half);
+    let wounded = e.actors[&ogre].hitpoints();
+    assert!(wounded > 0, "the fixture needs a hurt target, not a dead one");
+    assert_eq!(e.actors.get_mut(&ogre).unwrap().heal(1), HealOutcome::Healed);
+    assert_eq!(e.actors[&ogre].hitpoints(), wounded + 1);
+    e.actors.get_mut(&ogre).unwrap().take_damage(1);
+
+    // Cast until one connects — a miss leaves the ogre unchilled,
+    // which is itself the assertion inside the loop.
+    let targets = vec![ogre];
+    let mut landed = false;
+    for _ in 0..40 {
+        let effects = CHILL_TOUCH.side_effects(&mut e, wizard, Some(&targets), None, None);
+        let hit = !effects.is_empty();
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        if hit {
+            landed = true;
+            break;
+        }
+        assert!(
+            !e.actors[&ogre].has_condition(Condition::ChillTouched),
+            "a missed chill touch should chill nothing"
+        );
+        assert!(e.actors[&ogre].is_combat_active());
+    }
+    assert!(landed, "40 casts should have produced at least one hit");
+    assert!(e.actors[&ogre].is_combat_active(), "and left it standing");
+    assert!(e.actors[&ogre].has_condition(Condition::ChillTouched));
+    assert!(!e.actors[&ogre].can_regain_hitpoints());
+
+    // Hit points: nothing gets through, whatever the source.
+    let chilled_hp = e.actors[&ogre].hitpoints();
+    assert_eq!(e.actors.get_mut(&ogre).unwrap().heal(5), HealOutcome::NoOp);
+    assert_eq!(e.actors[&ogre].hitpoints(), chilled_hp);
+    // Temporary hit points are not hit points. RAW names only the
+    // latter, so this still lands.
+    assert_eq!(e.actors.get_mut(&ogre).unwrap().gain_temp_hp(5), 5);
+
+    // And it lifts on its own.
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .remove_condition(Condition::ChillTouched);
+    assert_eq!(e.actors.get_mut(&ogre).unwrap().heal(5), HealOutcome::Healed);
+}
+
+/// The AI does not spend a heal on an ally that cannot take one, and
+/// still spends a buff on the same ally.
+///
+/// The gate is on the heal rather than on the ally because those are
+/// different questions: Shield of Faith on a chilled fighter is a fine
+/// use of the turn and Cure Wounds on the same fighter is not.
+#[test]
+fn the_ai_does_not_heal_an_ally_that_cannot_be_healed() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::ai::{Controller, ControllerDecision, SimpleAi};
+    use crate::conditions::ConditionTimer;
+
+    // A bloodied ally beside a cleric, with an enemy on the board so
+    // the AI has something else it could plausibly be doing.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+        .unwrap();
+    let max = e.actors[&ally].max_hitpoints();
+    e.actors.get_mut(&ally).unwrap().take_damage(max * 3 / 4);
+    assert!(e.actors[&ally].is_combat_active());
+
+    // Asked as "is it a heal?" rather than "is it Cure Wounds?" — the
+    // cleric carries several, and which one the support rung reaches
+    // for is a tiebreak this test has no opinion about.
+    let picks_a_heal = |e: &EncounterInstance| match SimpleAi.decide(e, cleric) {
+        ControllerDecision::Act(aei) => aei.action().is_heal(),
+        ControllerDecision::AwaitInput => false,
+    };
+    assert!(
+        picks_a_heal(&e),
+        "the fixture only proves anything if the AI would otherwise heal"
+    );
+
+    e.actors
+        .get_mut(&ally)
+        .unwrap()
+        .add_condition(Condition::ChillTouched, ConditionTimer::Rounds(1));
+    assert!(
+        !picks_a_heal(&e),
+        "a heal on a chilled ally is an action thrown away"
+    );
+}

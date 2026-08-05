@@ -3429,9 +3429,18 @@ impl Action for AcidSplash {
 pub static ACID_SPLASH: LazyLock<AcidSplash> = LazyLock::new(|| AcidSplash {});
 
 /// Chill Touch — wizard cantrip. Ranged spell attack: d20 + INT vs AC.
-/// On hit: 1d8 necrotic. Auxiliary RAW rider (target can't regain HP
-/// until the start of caster's next turn) is omitted for now — the
-/// engine doesn't yet model "no-heal" gates. Crit doubles the dice.
+/// On hit: 1d8 necrotic (crit doubles the dice), plus RAW's "the target
+/// can't regain hit points until the start of your next turn" as the
+/// `ChillTouched` condition.
+///
+/// That second clause is the reason to cast this over Fire Bolt: it is
+/// the party's answer to a troll's regeneration, a vampire's bite-heal,
+/// or an enemy cleric who keeps topping their frontline back up — a
+/// cantrip that turns off the other side's healing for a round.
+///
+/// Not shipped: the undead-only rider ("it also has disadvantage on
+/// attack rolls against you until the end of your next turn"), which
+/// needs a creature-type-gated attacker-side back-link.
 pub struct ChillTouch {}
 
 impl Action for ChillTouch {
@@ -3473,7 +3482,7 @@ impl Action for ChillTouch {
         };
         let attack_bonus = caster.spellcasting_attack_modifier();
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        spell_attack(
+        let mut effects = spell_attack(
             encounter,
             caster_id,
             target_id,
@@ -3482,7 +3491,19 @@ impl Action for ChillTouch {
             Dice::new(n, 8),
             DamageType::Necrotic,
             false,
-        )
+        );
+        // "The target can't regain hit points until the start of your
+        // next turn." An empty effect list is a miss, and a missed
+        // spectral hand closes nothing — same on-hit gate Guiding Bolt
+        // uses to decide whether its mark lands.
+        if !effects.is_empty() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::ChillTouched,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
     }
 }
 
