@@ -69588,3 +69588,47 @@ fn dead_magic_is_bad_ground_only_for_the_creatures_that_cast() {
         "a caster's whole turn is what the field costs, so it goes around"
     );
 }
+
+/// A caster standing in dead magic still takes a turn. Every spell on
+/// its list is refused by the casting gate, so the AI has to fall
+/// through to something that isn't one — and the decision it returns
+/// has to be one the engine will actually accept.
+#[test]
+fn an_ai_caster_inside_a_field_still_finds_something_to_do() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::ai::Controller as _;
+    use crate::ai::{ControllerDecision, SimpleAi};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    // A sphere big enough that the wizard cannot simply step out of it
+    // and cast from the edge.
+    e.install_zone(test_zone(
+        Coordinate::new(10, 10),
+        8,
+        ZoneEffect::NULLIFYING,
+    ));
+    e.start_turn_for(wiz);
+
+    match SimpleAi.decide(&e, wiz) {
+        ControllerDecision::Act(aei) => {
+            assert!(
+                aei.validate(&e),
+                "the AI handed back an action the engine refuses"
+            );
+            assert!(
+                aei.action().school().is_none(),
+                "no spell should be castable from inside the field, but the AI picked {}",
+                aei.action().name()
+            );
+        }
+        ControllerDecision::AwaitInput => {
+            panic!("an AI-driven actor should never stall on its own turn")
+        }
+    }
+}

@@ -2344,6 +2344,14 @@ impl Condition {
                 | Condition::SpiritGuarding
                 | Condition::TidesOfChaos
                 | Condition::Purified
+                // 5e Circle of Power. The third paladin aura on this
+                // list, alongside Aura of Life's `DeathWarded` and Aura
+                // of Purity's `Purified` — and on it for the reason
+                // they are: every clause it carries is read live off
+                // the condition (the save-mode row, the
+                // no-damage-on-success upgrade), so taking the
+                // condition away takes the ward away.
+                | Condition::PowerCircled
                 | Condition::Longstriding
                 | Condition::ExpeditiouslyRetreating
                 | Condition::FlamingArrowed
