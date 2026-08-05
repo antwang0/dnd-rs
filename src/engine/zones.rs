@@ -29,7 +29,7 @@
 //!
 //! ## What a zone can do
 //!
-//! Four clauses, each independently optional, which between them cover
+//! Five clauses, each independently optional, which between them cover
 //! every stationary-area spell the engine has reason to model:
 //!
 //!   - **`obscures`** — heavy obscurement. Blocks sight into, out of,
@@ -43,6 +43,9 @@
 //!   - **`per_step_damage`** — the one trigger 5e bills by the tile
 //!     rather than by the turn: Spike Growth's "2d4 piercing for every
 //!     5 feet it travels".
+//!   - **`suppresses_magic`** — Antimagic Field's "spells … are
+//!     suppressed in the sphere and can't protrude into it", read at
+//!     the casting gate rather than at a contact trigger.
 //!
 //! ## Where a zone is
 //!
@@ -299,6 +302,24 @@ pub struct ZoneEffect {
     /// this fires once per step, and the difference is the whole spell:
     /// the thorns punish crossing the patch, not being on it.
     pub per_step_damage: Option<(Dice, DamageType)>,
+    /// 5e **Antimagic Field**: "spells and other magical effects …
+    /// are suppressed in the sphere and can't protrude into it."
+    ///
+    /// The fourth axis, and the only one that is about what a creature
+    /// may *do* rather than about what the ground does to it. A
+    /// suppressing area has no save, no damage and no condition —
+    /// nothing lands on anyone standing in it — so it is invisible to
+    /// `is_harmful` and the AI walks through it freely, which is right:
+    /// for a creature that does not cast, the field is empty air.
+    ///
+    /// What it does is close the casting gate at
+    /// `Action::validate_input`, in both directions. A caster inside
+    /// cannot cast at all; a caster outside cannot reach a target
+    /// inside. Both halves read one predicate,
+    /// `EncounterInstance::magic_suppressed_between`, so a spell aimed
+    /// at a point and a spell aimed at a creature are answered by the
+    /// same sentence.
+    pub suppresses_magic: bool,
 }
 
 impl ZoneEffect {
@@ -308,6 +329,7 @@ impl ZoneEffect {
         difficult: false,
         contact: None,
         per_step_damage: None,
+        suppresses_magic: false,
     };
 
     /// A zone whose only clause is the bad ground (Entangle, whose
@@ -318,6 +340,18 @@ impl ZoneEffect {
         difficult: true,
         contact: None,
         per_step_damage: None,
+        suppresses_magic: false,
+    };
+
+    /// A zone whose only clause is that magic does not work inside it
+    /// (Antimagic Field). Nothing about the ground changes and nothing
+    /// is rolled — see `suppresses_magic`.
+    pub const NULLIFYING: Self = Self {
+        obscures: false,
+        difficult: false,
+        contact: None,
+        per_step_damage: None,
+        suppresses_magic: true,
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
@@ -328,6 +362,7 @@ impl ZoneEffect {
             difficult: true,
             contact: Some(contact),
             per_step_damage: None,
+            suppresses_magic: false,
         }
     }
 
@@ -339,6 +374,7 @@ impl ZoneEffect {
             difficult: true,
             contact: None,
             per_step_damage: Some((dice, damage_type)),
+            suppresses_magic: false,
         }
     }
 
@@ -351,6 +387,7 @@ impl ZoneEffect {
             difficult: false,
             contact: Some(contact),
             per_step_damage: None,
+            suppresses_magic: false,
         }
     }
 
@@ -362,6 +399,7 @@ impl ZoneEffect {
             difficult: false,
             contact: Some(contact),
             per_step_damage: None,
+            suppresses_magic: false,
         }
     }
 
@@ -410,6 +448,21 @@ pub enum ZoneMotion {
     /// charges a different one (Moonbeam an action, Dawn and Flaming
     /// Sphere a bonus action) with no spell slot behind it.
     Directed { tiles: isize },
+    /// 5e Antimagic Field: "a … sphere of antimagic surrounds you …
+    /// The sphere moves with you."
+    ///
+    /// The one motion with no distance on it, because there is no
+    /// distance in the sentence: the area is not travelling anywhere,
+    /// it is *attached*. Re-centred on the owner at the top of their
+    /// turn, in the same pass that drifts the clouds — so between
+    /// turns it lags a step behind a caster who has walked, which is
+    /// exactly the granularity `DriftsFromOwner` already accepts and
+    /// for the same reason: the alternative is a zone update on every
+    /// tile of every move.
+    ///
+    /// An owner who has left the board takes the area with them, the
+    /// same as one whose cloud drifts off the edge.
+    FollowsOwner,
 }
 
 impl ZoneMotion {
@@ -482,6 +535,23 @@ impl Zone {
             return None;
         }
         Some(self.origin + Coordinate::new(away.x.signum() * tiles, away.y.signum() * tiles))
+    }
+
+    /// Where this area belongs at the top of its owner's turn, given
+    /// where the owner is standing — or `None` if it belongs exactly
+    /// where it is.
+    ///
+    /// The engine-run half of `ZoneMotion`: the two variants nobody
+    /// spends anything on. A drifting cloud takes its step; an attached
+    /// sphere snaps back onto its owner. `Fixed` and `Directed` answer
+    /// `None`, the former because it never moves and the latter because
+    /// its owner moves it by hand and pays for it.
+    pub fn turn_start_destination(&self, owner_at: Coordinate) -> Option<Coordinate> {
+        match self.motion {
+            ZoneMotion::DriftsFromOwner { .. } => self.drift_destination(owner_at),
+            ZoneMotion::FollowsOwner => (self.origin != owner_at).then_some(owner_at),
+            ZoneMotion::Fixed | ZoneMotion::Directed { .. } => None,
+        }
     }
 }
 

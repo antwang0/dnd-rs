@@ -91,6 +91,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POWER_WORD_KILL);
     actions.push(&*METEOR_SWARM);
     actions.push(&*crate::actions::spells::MASS_POLYMORPH);
+    // Abi-Dalzim's Horrid Wilting — lv8 necromancy, shared with the
+    // wizard RAW. Sits below Meteor Swarm as the sorcerer's second
+    // top-tier burst, and above it against a soft, wet board: no
+    // Dexterity save to dodge with, and plants save at disadvantage.
+    actions.push(&*crate::actions::spells::HORRID_WILTING);
     // Latest spell additions: lv2 Acid Arrow, lv3 Tidal Wave, lv5 Dawn,
     // lv6 Investiture of Flame. Round out the sorcerer's mid-tier
     // blaster lineup with the new water / radiant / self-buff options.

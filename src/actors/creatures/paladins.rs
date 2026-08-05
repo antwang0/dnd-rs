@@ -80,6 +80,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // slips past single-element resistance the same way Flame Strike
     // (fire + radiant) does.
     actions.push(&*DESTRUCTIVE_WAVE);
+    // Circle of Power — lv5 abjuration, concentration. The paladin's
+    // answer to an enemy caster: every ally in a 30-ft radius saves
+    // against spells at advantage and takes no damage at all on a save
+    // that would otherwise have halved it. Competes with Aura of Life /
+    // Aura of Purity for the concentration slot along a third axis —
+    // those two blunt what lands, this one stops it landing.
+    actions.push(&*crate::actions::spells::CIRCLE_OF_POWER);
     // Warding Bond — lv2 abjuration. Touch-range damage-share bond.
     // The paladin already takes the hits up front (high HP, AC 18) —
     // bonding a frailer ally (e.g. cleric / wizard) halves their

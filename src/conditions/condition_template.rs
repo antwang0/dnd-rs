@@ -980,6 +980,48 @@ pub enum Condition {
     /// range. We model as a DoT condition on the target with the standard
     /// ROUND_END_DOTS drip so the damage ticks uniformly.
     WitchBolted,
+    /// Enervation's tendril (5e level-5 necromancy, concentration).
+    /// A shadowy limb latched onto the target: 4d8 necrotic a round,
+    /// and the caster regains half of what it takes.
+    ///
+    /// Sibling to `WitchBolted` on the "concentration-bound tether that
+    /// drips" corner, and the first entry in `ROUND_END_DOTS` to set
+    /// `drains_to_owner` — which is the whole difference between the
+    /// two spells, and the reason the flag lives on the table rather
+    /// than in the spell: the drip is already run by the engine, so the
+    /// heal that answers it has to be too.
+    ///
+    /// RAW's escape clause — the target may spend its action on a DEX
+    /// check against the caster's spell save DC to break the tendril —
+    /// is folded into the standard `ROUND_END_SAVES` shape instead: a
+    /// DEX save at the end of each of its turns. Same axis, same odds
+    /// to within the difference between a check and a save, and it
+    /// costs the victim nothing to attempt, which is the more generous
+    /// reading of a spell that would otherwise run to concentration.
+    Enervated,
+    /// Standing inside a paladin's Circle of Power (5e level-5
+    /// abjuration, concentration). Two clauses, both of them about
+    /// saving throws and both of them scoped to magic:
+    ///
+    ///   - advantage on saves against spells and other magical
+    ///     effects — a standing row in `CASTER_SAVE_MODE_RIDERS`,
+    ///     which is the table for save-mode riders that know who cast
+    ///     the spell being saved against, and therefore the only table
+    ///     that can tell a fireball from a dragon's landing;
+    ///   - "if a creature affected by this spell succeeds on a saving
+    ///     throw, it takes no damage instead of half damage" — read at
+    ///     `resolve_post_save_damage`, beside Evasion, whose shape it
+    ///     shares exactly. Evasion is the Dexterity-only version of
+    ///     this clause; this one covers every ability and asks instead
+    ///     that the damage came from a spell.
+    ///
+    /// RAW re-checks the aura's 30-ft envelope continuously and the
+    /// engine re-checks it at cast time, the same simplification every
+    /// other `ally_aura_concentration_effects` install makes: an ally
+    /// who was in the circle when it went up keeps the ward until the
+    /// paladin drops concentration, and one who arrives late does not
+    /// get it.
+    PowerCircled,
     /// Spirit Guardians (5e level-3 conjuration, concentration). The
     /// caster is surrounded by spectral warriors: every hostile creature
     /// that starts its turn within 15ft (6 tiles) takes 3d8 radiant
@@ -2129,6 +2171,8 @@ impl Condition {
             Condition::AbsorbedElements => "absorbing elements",
             Condition::DangerSense => "sensing danger",
             Condition::WitchBolted => "tethered by witch bolt",
+            Condition::Enervated => "drained by a tendril",
+            Condition::PowerCircled => "in a circle of power",
             Condition::SpiritGuarding => "guarded by spirits",
             Condition::MenacingAttacking => "primed to menace",
             Condition::DisarmingAttacking => "primed to disarm",

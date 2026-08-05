@@ -321,6 +321,16 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Constitution,
         log_verb: "strains against the racking pain:",
     },
+    // 5e Enervation (XGtE level-5 necromancy) — DEX at the end of each
+    // of the victim's turns to tear the tendril loose. RAW spends the
+    // victim's *action* on a Dexterity check; folded onto this table
+    // instead so it costs them nothing to try — see
+    // `Condition::Enervated` for why.
+    RoundEndSave {
+        condition: Condition::Enervated,
+        save_ability: crate::engine::types::AbilityScoreType::Dexterity,
+        log_verb: "tears at the draining tendril:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine
@@ -340,6 +350,25 @@ struct RoundEndDot {
     dice: Dice,
     damage_type: DamageType,
     log_verb: &'static str,
+    /// 5e Enervation: "you regain hit points equal to half the amount
+    /// of necrotic damage dealt."
+    ///
+    /// The drip is a *tether* rather than a burn: what it takes from
+    /// one end it gives to the other. The other end is found the same
+    /// way every concentration-bound entry in this table already finds
+    /// it — `find_concentration_owner`, keyed on the exact
+    /// `(victim, condition)` pair the install anchored — so a drip with
+    /// no concentration behind it (a monster ability, an expired
+    /// anchor) simply drains into nobody rather than healing the wrong
+    /// creature.
+    ///
+    /// Half of the damage the victim *took*, not half of the dice:
+    /// resistance, immunity and temp HP all sit between the roll and
+    /// the wound, and RAW's "damage dealt" is the number on the far
+    /// side of them. A tether on a creature immune to necrotic heals
+    /// its holder for nothing, which is the right answer and not the
+    /// one a dice-half would give.
+    drains_to_owner: bool,
 }
 
 /// Round-end DoT registry. Order is the order damage rolls each round
@@ -353,6 +382,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::Burning,
         dice: Dice::new(1, 4),
         damage_type: DamageType::Fire,
+        drains_to_owner: false,
         log_verb: "burns:",
     },
     // 5e Heat Metal — concentration-bound. 2d8 fire per round; the
@@ -362,6 +392,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::HeatMetaled,
         dice: Dice::new(2, 8),
         damage_type: DamageType::Fire,
+        drains_to_owner: false,
         log_verb: "'s gear sears:",
     },
     // 5e Maximilian's Earthen Grasp — concentration-bound. 2d6
@@ -372,6 +403,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::EarthenGrasped,
         dice: Dice::new(2, 6),
         damage_type: DamageType::Bludgeoning,
+        drains_to_owner: false,
         log_verb: "is crushed by the earthen grasp:",
     },
     // 5e Vitriolic Sphere — one-shot residual drip the spell leaves on
@@ -381,6 +413,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::VitriolicAcidCoated,
         dice: Dice::new(5, 4),
         damage_type: DamageType::Acid,
+        drains_to_owner: false,
         log_verb: "drips with vitriolic acid:",
     },
     // 5e Witch Bolt — concentration-bound. 1d12 lightning per round as
@@ -389,6 +422,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::WitchBolted,
         dice: Dice::new(1, 12),
         damage_type: DamageType::Lightning,
+        drains_to_owner: false,
         log_verb: "is shocked by witch bolt:",
     },
     // 5e Tasha's Caustic Brew — concentration-bound. 2d4 acid per round
@@ -400,6 +434,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::CausticBrewed,
         dice: Dice::new(2, 4),
         damage_type: DamageType::Acid,
+        drains_to_owner: false,
         log_verb: "is eaten by caustic brew:",
     },
     // 5e Phantasmal Force — concentration-bound. 1d6 psychic per round
@@ -409,6 +444,7 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::PhantasmalForced,
         dice: Dice::new(1, 6),
         damage_type: DamageType::Psychic,
+        drains_to_owner: false,
         log_verb: "is wounded by the phantasm:",
     },
     // 5e Immolation — concentration-bound, lv5. 4d6 fire per round as
@@ -420,7 +456,20 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         condition: Condition::Immolated,
         dice: Dice::new(4, 6),
         damage_type: DamageType::Fire,
+        drains_to_owner: false,
         log_verb: "burns from immolation:",
+    },
+    // 5e Enervation — concentration-bound, lv5. 4d8 necrotic a round
+    // from the tendril, half of it fed back to the caster. The only
+    // entry in the table that gives anything back; see
+    // `RoundEndDot::drains_to_owner`. RAW's break-free clause is wired
+    // through the matching `ROUND_END_SAVES` entry.
+    RoundEndDot {
+        condition: Condition::Enervated,
+        dice: Dice::new(4, 8),
+        damage_type: DamageType::Necrotic,
+        drains_to_owner: true,
+        log_verb: "is drained by the tendril:",
     },
 ];
 
@@ -562,6 +611,19 @@ pub struct CasterSaveModeRider {
 /// `RollMode::combine` keeps two disadvantage rows at a single notch,
 /// matching 5e's no-stacking rule.
 ///
+/// "Consumes its prime" is the shape of most rows rather than a rule of
+/// the table: a *standing* ward — one that applies to every save
+/// against every spell for as long as it is up — belongs here too, and
+/// says so with a `consume` that does nothing. Circle of Power is the
+/// first of those.
+///
+/// What makes this the right table for a target-side ward, rather than
+/// `BLANKET_SAVE_ADVANTAGE_CONDITIONS` one lane over, is that the rows
+/// here know a spell is what is being saved against. RAW's wards are
+/// almost always scoped that way ("against spells and other magical
+/// effects"), and the blanket table would also lift a save against a
+/// dragon's landing.
+///
 /// Adding a future "the target has advantage/disadvantage on saves
 /// against *my* spell" feature (a Heightened-Spell-shaped metamagic, a
 /// subclass mark, a hypothetical Gnome Cunning-style ward that flips
@@ -628,6 +690,21 @@ pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
         },
         mode: RollMode::Disadvantage,
         label: "magical ambush",
+    },
+    // 5e Circle of Power: "you and friendly creatures within 30 feet
+    // have advantage on saving throws against spells and other magical
+    // effects." The first row on this table that reads the *target*
+    // rather than the caster, and the first whose prime is a standing
+    // ward rather than a one-shot — see the `consume` note above.
+    CasterSaveModeRider {
+        applies: |e, _caster_id, target_id| {
+            e.actors
+                .get(&target_id)
+                .is_some_and(|t| t.has_condition(Condition::PowerCircled))
+        },
+        consume: |_e, _caster_id, _target_id| {},
+        mode: RollMode::Advantage,
+        label: "circle of power",
     },
 ];
 
@@ -4537,7 +4614,30 @@ impl EncounterInstance {
         dc: i32,
         caster_id: usize,
     ) -> crate::engine::saves::SaveOutcome {
-        let mut extra = RollMode::Normal;
+        self.roll_save_against_caster_at(target_id, ability, dc, caster_id, RollMode::Normal)
+    }
+
+    /// `roll_save_against_caster` with a notch the *spell* supplies.
+    ///
+    /// The riders on `CASTER_SAVE_MODE_RIDERS` are properties of the
+    /// caster and the target; this parameter is a property of the spell
+    /// text, and 5e has a steady trickle of them — Abi-Dalzim's Horrid
+    /// Wilting's "plants and water elementals have disadvantage on this
+    /// saving throw" is the shape. Folded in with `combine` alongside
+    /// the rider rows, so a per-spell disadvantage and a Heightened
+    /// Spell prime still resolve at a single notch, per RAW.
+    ///
+    /// Passing `RollMode::Normal` is exactly `roll_save_against_caster`,
+    /// which is how that function is written.
+    pub fn roll_save_against_caster_at(
+        &mut self,
+        target_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        caster_id: usize,
+        spell_mode: RollMode,
+    ) -> crate::engine::saves::SaveOutcome {
+        let mut extra = spell_mode;
         for rider in CASTER_SAVE_MODE_RIDERS {
             if !(rider.applies)(self, caster_id, target_id) {
                 continue;
@@ -5171,8 +5271,9 @@ impl EncounterInstance {
         true
     }
 
-    /// Walk every `DriftsFromOwner` area `actor_id` is sustaining one
-    /// step further away, at the top of their turn.
+    /// Move every engine-run area `actor_id` is sustaining to where it
+    /// belongs at the top of their turn: a `DriftsFromOwner` cloud one
+    /// step further away, a `FollowsOwner` sphere back onto its owner.
     ///
     /// A cloud whose new centre has left the map is swept rather than
     /// tracked off-board: the two spells that drift both say the cloud
@@ -5180,7 +5281,7 @@ impl EncounterInstance {
     /// side of the fight has to keep asking about. Its concentration is
     /// deliberately left alone — RAW the caster is still holding a
     /// spell that is still burning, just not here.
-    fn drift_zones_of(&mut self, actor_id: usize) {
+    fn advance_owned_zones(&mut self, actor_id: usize) {
         let Some(owner_at) = self.actors.get(&actor_id).map(|a| a.location()) else {
             return;
         };
@@ -5188,7 +5289,7 @@ impl EncounterInstance {
             .zones
             .iter()
             .filter(|z| z.owner_id == actor_id)
-            .filter_map(|z| Some((z.id, z.drift_destination(owner_at)?)))
+            .filter_map(|z| Some((z.id, z.turn_start_destination(owner_at)?)))
             .collect();
         for (zone_id, dest) in moves {
             if !self.in_bounds(dest) {
@@ -5245,6 +5346,58 @@ impl EncounterInstance {
         self.zones
             .iter()
             .any(|z| z.effect.obscures && z.covers(coord))
+    }
+
+    /// True if `coord` sits under a magic-suppressing zone — Antimagic
+    /// Field's sphere, and nothing else today.
+    pub fn tile_suppresses_magic(&self, coord: Coordinate) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.effect.suppresses_magic && z.covers(coord))
+    }
+
+    /// True if any tile of `actor_id`'s footprint stands in a
+    /// magic-suppressing zone.
+    ///
+    /// Footprint rather than anchor tile, matching every other zone
+    /// question the engine asks: a Huge creature with one claw inside
+    /// an Antimagic Field is inside it, the same way one with one claw
+    /// in a web is caught by it.
+    pub fn actor_suppresses_magic(&self, actor_id: usize) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.effect.suppresses_magic && self.actor_in_zone(actor_id, z))
+    }
+
+    /// The gate 5e's Antimagic Field closes, in the one direction that
+    /// matters to a cast: **may this caster reach this place with a
+    /// spell?**
+    ///
+    /// RAW is symmetric and this predicate is too. "Spells … are
+    /// suppressed in the sphere and can't protrude into it" forbids
+    /// three things at once, and all three are the same sentence read
+    /// from different sides:
+    ///
+    ///   - a caster standing in the field casting anything at all,
+    ///   - a caster outside reaching a target inside,
+    ///   - a caster inside reaching a target outside.
+    ///
+    /// So: blocked whenever *either* end is under a suppressing zone.
+    /// `to` is `None` for a self-targeted or untargeted spell, which
+    /// leaves only the caster's own square to ask about — and that is
+    /// the first clause, so Misty Step out of a field fails as surely
+    /// as Fire Bolt into one.
+    ///
+    /// Deliberately *not* a walk of the tiles between the two ends. A
+    /// fireball arcing over a sphere it never lands in is not
+    /// protruding into anything, and the line-walk would also have made
+    /// the field a wall — which it is not; it stops magic, not arrows.
+    pub fn magic_suppressed_between(&self, caster_id: usize, to: Option<Coordinate>) -> bool {
+        if self.zones.iter().all(|z| !z.effect.suppresses_magic) {
+            return false;
+        }
+        self.actor_suppresses_magic(caster_id)
+            || to.is_some_and(|c| self.tile_suppresses_magic(c))
     }
 
     /// The movement-cost multiplier the zone layer adds at `coord`: 2.0
@@ -8549,12 +8702,13 @@ impl EncounterInstance {
         // time on that turn and saves for it.
         self.zone_contacts_this_turn.clear();
         // "The cloud moves 10 feet away from you at the start of each of
-        // your turns." Runs after the ledger clear, so a creature the
-        // cloud arrives on pays for the arrival, and before
-        // `touch_zones`, so the owner who has just been overtaken by
-        // their own drifting cloud is standing in it by the time the
-        // "starts its turn there" clause is asked.
-        self.drift_zones_of(actor_id);
+        // your turns", and the attached sphere's "it moves with you".
+        // Runs after the ledger clear, so a creature the cloud arrives
+        // on pays for the arrival, and before `touch_zones`, so the
+        // owner who has just been overtaken by their own drifting cloud
+        // is standing in it by the time the "starts its turn there"
+        // clause is asked.
+        self.advance_owned_zones(actor_id);
         // "…or starts its turn there." Runs after the clear so the
         // creature standing in the web pays this turn's save, and after
         // `reconcile_footprints` so a creature that just grew into the
@@ -9345,20 +9499,58 @@ impl EncounterInstance {
         } else {
             policy
         };
-        let has_evasion = save_ability == AbilityScoreType::Dexterity
-            && self
-                .actors
-                .get(&target_id)
-                .is_some_and(|a| a.has_evasion());
-        if !has_evasion {
+        let Some(mitigation) = self.save_mitigation_for(target_id, save_ability) else {
             return policy.apply(raw, passed);
-        }
-        let dmg = policy.apply_with_evasion(raw, passed);
+        };
+        let dmg = policy.apply_mitigated(raw, passed, mitigation);
         if dmg == 0 && passed {
             let target_name = self.actor_name(target_id);
-            self.log(format!("  evasion: {} takes no damage", target_name));
+            self.log(format!(
+                "  {}: {} takes no damage",
+                mitigation.label(),
+                target_name
+            ));
         }
         dmg
+    }
+
+    /// Which of the target's standing effects, if any, improves what a
+    /// made save leaves standing — returned as a `SaveMitigation` so
+    /// the arithmetic and the log line both come from one answer.
+    ///
+    /// Two answers today, and they carve the space along different
+    /// axes, which is why neither subsumes the other:
+    ///
+    ///   - **Evasion** (Rogue / Monk / Ranger): any Dexterity save,
+    ///     whatever the damage came from — a dragon's breath, a
+    ///     collapsing ceiling, a fireball.
+    ///   - **Circle of Power**: any ability, but only against a spell.
+    ///     The spell gate reads the in-flight cast frame, the same
+    ///     marker Potent Cantrip reads a few lines up, so a Dexterity
+    ///     save against a falling rock is not lifted by a paladin's
+    ///     aura.
+    ///
+    /// A target holding both gets the union, which is what RAW's two
+    /// independent sentences add up to.
+    fn save_mitigation_for(
+        &self,
+        target_id: usize,
+        save_ability: AbilityScoreType,
+    ) -> Option<crate::engine::saves::SaveMitigation> {
+        use crate::engine::saves::SaveMitigation;
+        let target = self.actors.get(&target_id)?;
+        // Evasion first: where the two overlap it is the stronger of
+        // the pair, because it softens a failed save as well as
+        // perfecting a made one.
+        if save_ability == AbilityScoreType::Dexterity && target.has_evasion() {
+            return Some(SaveMitigation::Evasion);
+        }
+        if target.has_condition(Condition::PowerCircled)
+            && self.current_cast().is_some_and(|c| c.school.is_some())
+        {
+            return Some(SaveMitigation::NoneOnSuccess);
+        }
+        None
     }
 
     /// Whether Potent Cantrip should upgrade `policy` on the cast
@@ -11107,7 +11299,7 @@ impl EncounterInstance {
     /// Vitriolic Sphere drip) is a one-line table entry in
     /// `ROUND_END_DOTS` rather than a hand-rolled if-block.
     fn apply_condition_round_end_dots(&mut self, actor_id: usize) {
-        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, Heal};
         for dot in ROUND_END_DOTS {
             let has = self
                 .actors
@@ -11122,13 +11314,51 @@ impl EncounterInstance {
                 "  {} {}: {}({}) {:?}",
                 name, dot.log_verb, dot.dice, dmg, dot.damage_type
             ));
+            // Snapshotted across the hit rather than read off the roll,
+            // so a draining tether is fed by what the victim actually
+            // lost — see `RoundEndDot::drains_to_owner`. Temp HP counts:
+            // it is hit points the damage consumed.
+            let pool_before = dot.drains_to_owner.then(|| self.damage_pool_of(actor_id));
             DealDamage {
                 actor_id,
                 amount: dmg,
                 damage_type: dot.damage_type,
             }
             .apply(self);
+            let Some(before) = pool_before else {
+                continue;
+            };
+            let dealt = before.saturating_sub(self.damage_pool_of(actor_id));
+            let Some(owner_id) = self.find_concentration_owner(actor_id, dot.condition) else {
+                continue;
+            };
+            let drained = dealt / 2;
+            if drained == 0 {
+                continue;
+            }
+            let owner_name = self.actor_name(owner_id);
+            self.log(format!("  {} drains {} hit points back.", owner_name, drained));
+            Heal {
+                actor_id: owner_id,
+                amount: drained,
+            }
+            .apply(self);
         }
+    }
+
+    /// Current hit points plus temporary hit points — the pool damage
+    /// eats through, and therefore the quantity to difference across a
+    /// hit when a caller needs to know how much damage actually landed
+    /// after resistance, immunity and absorption have had their say.
+    ///
+    /// Zero for an actor who is no longer on the board, which makes the
+    /// difference against a snapshot degrade to "everything they had"
+    /// rather than to a panic.
+    fn damage_pool_of(&self, actor_id: usize) -> u32 {
+        self.actors
+            .get(&actor_id)
+            .map(|a| a.hitpoints().saturating_add(a.temp_hp()))
+            .unwrap_or(0)
     }
 
     /// 5e's two ways out of a grapple that aren't an escape check:

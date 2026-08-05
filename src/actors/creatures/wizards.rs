@@ -88,6 +88,21 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POWER_WORD_KILL);
     actions.push(&*METEOR_SWARM);
     actions.push(&*SUNBEAM);
+    // Antimagic Field — lv8 abjuration, concentration. The engine's
+    // only magic-suppressing zone: a 10-ft sphere that travels with the
+    // wizard and inside which no spell can be cast or land. Costs the
+    // wizard's action economy nothing after the cast and shuts down an
+    // enemy caster's entire turn — at the price of the wizard's own
+    // spellcasting for as long as it is up.
+    actions.push(&*crate::actions::spells::ANTIMAGIC_FIELD);
+    // Abi-Dalzim's Horrid Wilting — lv8 necromancy. The largest single
+    // burst on the list (12d8 necrotic, CON save for half) with a
+    // creature-type filter in front of it: constructs and undead are
+    // untouched, plants and water elementals save at disadvantage.
+    actions.push(&*crate::actions::spells::HORRID_WILTING);
+    // Enervation — lv5 necromancy, concentration. A draining tether:
+    // 4d8 necrotic a round with half of it fed back to the wizard.
+    actions.push(&*crate::actions::spells::ENERVATION);
     // Newly added wizard spells (lv4 Dimension Door / Wall of Fire / Fire
     // Shield; lv5 Cloudkill / Wall of Force).
     actions.push(&*DIMENSION_DOOR);

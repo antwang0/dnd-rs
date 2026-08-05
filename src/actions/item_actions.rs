@@ -747,7 +747,11 @@ impl Action for SingleSaveDamageItem {
             SaveDamagePolicy::NoneOnSave
         };
         let dmg = if has_evasion {
-            policy.apply_with_evasion(total, passed)
+            policy.apply_mitigated(
+                total,
+                passed,
+                crate::engine::saves::SaveMitigation::Evasion,
+            )
         } else {
             policy.apply(total, passed)
         };

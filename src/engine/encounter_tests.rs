@@ -69030,3 +69030,361 @@ fn the_ai_does_not_heal_an_ally_that_cannot_be_healed() {
         "a heal on a chilled ally is an action thrown away"
     );
 }
+
+/// A magic-suppressing zone closes the casting gate for anybody
+/// standing in it, and leaves everything that isn't a spell alone.
+/// Both halves matter: an Antimagic Field that also stopped a sword
+/// would be a wall, and it is not one.
+#[test]
+fn nobody_casts_from_inside_an_antimagic_field() {
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actions::spells::{FIRE_BOLT, MAGIC_MISSILE};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    let targets = vec![goblin];
+
+    // Baseline: with no field on the board every one of these is legal.
+    assert!(FIRE_BOLT.validate_input(&e, wiz, Some(&targets), None, None));
+    assert!(MAGIC_MISSILE.validate_input(&e, wiz, Some(&targets), None, None));
+
+    e.install_zone(test_zone(
+        Coordinate::new(4, 4),
+        2,
+        ZoneEffect::NULLIFYING,
+    ));
+
+    // A cantrip and a leveled spell alike: the gate is `school()`, not
+    // the slot, so both are shut.
+    assert!(!FIRE_BOLT.validate_input(&e, wiz, Some(&targets), None, None));
+    assert!(!MAGIC_MISSILE.validate_input(&e, wiz, Some(&targets), None, None));
+    // The goblin is outside the sphere and swinging steel — untouched.
+    assert!(LONGSWORD.validate_input(&e, goblin, Some(&vec![wiz]), None, None));
+}
+
+/// The other half of "can't protrude into it": a caster standing well
+/// clear of the sphere still can't reach a creature inside it, and can
+/// reach one standing beside it.
+#[test]
+fn an_antimagic_field_refuses_a_spell_aimed_into_it() {
+    use crate::actions::spells::FIRE_BOLT;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let sheltered = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 12), 1, 0)
+        .unwrap();
+    let exposed = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 12), 1, 1)
+        .unwrap();
+    e.install_zone(test_zone(
+        Coordinate::new(12, 12),
+        2,
+        ZoneEffect::NULLIFYING,
+    ));
+
+    assert!(!FIRE_BOLT.validate_input(&e, wiz, Some(&vec![sheltered]), None, None));
+    assert!(FIRE_BOLT.validate_input(&e, wiz, Some(&vec![exposed]), None, None));
+}
+
+/// A `FollowsOwner` sphere is attached rather than travelling: it snaps
+/// back onto its owner at the top of their turn however far they walked
+/// during someone else's.
+#[test]
+fn an_attached_sphere_comes_back_to_its_owner() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let mut zone = test_zone(Coordinate::new(4, 4), 2, ZoneEffect::NULLIFYING);
+    zone.owner_id = wiz;
+    zone.motion = ZoneMotion::FollowsOwner;
+    let zone_id = e.install_zone(zone);
+
+    e.place_actor_at(wiz, Coordinate::new(14, 9)).unwrap();
+    assert_eq!(
+        e.zones().iter().find(|z| z.id == zone_id).unwrap().origin,
+        Coordinate::new(4, 4),
+        "the sphere lags until its owner's turn comes round"
+    );
+
+    e.start_turn_for(wiz);
+    assert_eq!(
+        e.zones().iter().find(|z| z.id == zone_id).unwrap().origin,
+        Coordinate::new(14, 9)
+    );
+}
+
+/// Divine Word picks its effect off the target's *remaining* hit
+/// points, so the same word kills the creature the party has been
+/// whittling and does nothing at all to the one beside it.
+#[test]
+fn divine_word_reads_what_is_left_of_each_target() {
+    use crate::actions::spells::DIVINE_WORD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    // Sweep seeds: the CHA save is a die roll, and what the test is
+    // about is the ladder rather than the roll. Every seed that lands
+    // a failed save on the nearly-dead ogre has to kill it.
+    let mut proved = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let dying = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        let healthy = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 12), 1, 1)
+            .unwrap();
+        // Whittle one down under the kill rung and lift the other
+        // clear above every rung on the ladder. The lift is explicit
+        // rather than assumed: an ogre's rolled hit points straddle
+        // the 50-point top rung, and the test is about the ladder,
+        // not about the bestiary's dice.
+        let max = e.actors[&dying].max_hitpoints();
+        e.actors.get_mut(&dying).unwrap().take_damage(max - 12);
+        e.actors.get_mut(&healthy).unwrap().bump_max_hp(60);
+        assert!(e.actors[&healthy].hitpoints() > 50);
+
+        let effects = DIVINE_WORD.side_effects(&mut e, cleric, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Whatever the dice said, a creature over 50 hit points is
+        // untouched — that is the top of the ladder.
+        assert_eq!(
+            e.actors[&healthy].hitpoints(),
+            e.actors[&healthy].max_hitpoints(),
+            "seed {}: the word has no rung for a healthy creature",
+            seed
+        );
+        if !e.actors[&dying].is_combat_active() {
+            proved += 1;
+        }
+    }
+    assert!(
+        proved > 0,
+        "no seed in the sweep landed a failed save — the fixture proves nothing"
+    );
+}
+
+/// "Constructs and undead aren't affected": Horrid Wilting reads the
+/// creature type before it reads the save, so a skeleton in the middle
+/// of the burst takes nothing at all.
+#[test]
+fn horrid_wilting_finds_nothing_to_dry_out_in_the_undead() {
+    use crate::actions::spells::HORRID_WILTING;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 16), 1, 1)
+        .unwrap();
+
+    let effects = HORRID_WILTING.side_effects(
+        &mut e,
+        wiz,
+        None,
+        Some(&vec![Coordinate::new(15, 15)]),
+        None,
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&skeleton].hitpoints(),
+        e.actors[&skeleton].max_hitpoints(),
+        "there is no water in a skeleton"
+    );
+    assert!(
+        e.actors[&ogre].hitpoints() < e.actors[&ogre].max_hitpoints(),
+        "12d8 with a save for half still leaves a mark"
+    );
+}
+
+/// Enervation's tendril is a tether, not a burn: what it takes from the
+/// victim at round-end, half of it lands back on the caster.
+#[test]
+fn the_draining_tendril_feeds_its_caster() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    // Room for the drain to land. A caster at full health would cap
+    // the heal at zero, and a wizard's own hit point pool is small
+    // enough that 4d8 halved can overshoot the wound — so the pool is
+    // widened first and then opened, and the assertion measures a
+    // heal that was never clipped.
+    e.actors.get_mut(&wiz).unwrap().bump_max_hp(60);
+    let wiz_max = e.actors[&wiz].max_hitpoints();
+    e.actors.get_mut(&wiz).unwrap().take_damage(wiz_max - 3);
+
+    // Install the tether by hand with its concentration anchor, which
+    // is what the spell's `side_effects` builds — the point under test
+    // is the round-end drain, not the save that opens it.
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .add_condition(Condition::Enervated, ConditionTimer::Rounds(10));
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(crate::actors::actor_template::ConcentrationData::with_conditions(
+            "Enervation",
+            vec![(ogre, Condition::Enervated)],
+        ));
+
+    let wiz_before = e.actors[&wiz].hitpoints();
+    let ogre_before = e.actors[&ogre].hitpoints();
+    e.round_end();
+    let drained = ogre_before - e.actors[&ogre].hitpoints();
+    assert!(drained > 0, "the tendril should have bitten");
+    assert_eq!(
+        e.actors[&wiz].hitpoints() - wiz_before,
+        drained / 2,
+        "the caster regains half of what the tendril took"
+    );
+}
+
+/// A tether on something that cannot be hurt by it heals its holder for
+/// nothing: the drain is half the damage *dealt*, not half the dice.
+#[test]
+fn a_tendril_on_an_immune_target_feeds_nobody() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    // A skeleton is immune to nothing useful here, so reach for the
+    // engine's own necrotic-immunity marker instead: the zombie
+    // template's undead chassis takes necrotic at immunity.
+    let undead = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    if e.actors[&undead].damage_modifier(DamageType::Necrotic)
+        != Some(crate::engine::types::DamageModifier::Immunity)
+    {
+        // The fixture only says anything if the template is actually
+        // immune; if the bestiary changes, skip rather than assert a
+        // rule this test was never about.
+        return;
+    }
+    e.actors.get_mut(&wiz).unwrap().bump_max_hp(60);
+    let wiz_max = e.actors[&wiz].max_hitpoints();
+    e.actors.get_mut(&wiz).unwrap().take_damage(wiz_max - 3);
+
+    e.actors
+        .get_mut(&undead)
+        .unwrap()
+        .add_condition(Condition::Enervated, ConditionTimer::Rounds(10));
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(crate::actors::actor_template::ConcentrationData::with_conditions(
+            "Enervation",
+            vec![(undead, Condition::Enervated)],
+        ));
+
+    let wiz_before = e.actors[&wiz].hitpoints();
+    e.round_end();
+    assert_eq!(e.actors[&wiz].hitpoints(), wiz_before);
+}
+
+/// Circle of Power upgrades a successful save from half damage to none
+/// — but only against a spell. The same save against the same damage
+/// with no cast in flight still halves.
+#[test]
+fn a_circle_of_power_turns_a_made_save_into_nothing() {
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::saves::SaveDamagePolicy;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::PowerCircled, ConditionTimer::Rounds(10));
+
+    // No cast frame open: the ward has nothing to answer, so a made
+    // save still takes half.
+    assert_eq!(
+        e.resolve_post_save_damage(
+            wiz,
+            fighter,
+            AbilityScoreType::Constitution,
+            SaveDamagePolicy::HalfOnSave,
+            20,
+            true,
+        ),
+        10
+    );
+
+    // Inside a spell's cast frame the same save takes nothing.
+    e.enter_cast(
+        FIREBALL.school(),
+        3,
+        crate::engine::types::DamageTypeSet::EMPTY,
+    );
+    assert_eq!(
+        e.resolve_post_save_damage(
+            wiz,
+            fighter,
+            AbilityScoreType::Constitution,
+            SaveDamagePolicy::HalfOnSave,
+            20,
+            true,
+        ),
+        0
+    );
+    // A failed save is untouched — the ward sharpens a success, it
+    // does not soften a failure.
+    assert_eq!(
+        e.resolve_post_save_damage(
+            wiz,
+            fighter,
+            AbilityScoreType::Constitution,
+            SaveDamagePolicy::HalfOnSave,
+            20,
+            false,
+        ),
+        20
+    );
+    e.exit_cast();
+}

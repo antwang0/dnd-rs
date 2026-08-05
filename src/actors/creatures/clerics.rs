@@ -134,6 +134,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level-7 apex anti-enemy radiant burst with HP-tiered conditions.
     // Pairs with Resurrection for the cleric's level-7 slot economy.
     actions.push(&*HOLY_WORD);
+    // Divine Word — lv7 evocation. Holy Word's sibling and its sharper
+    // edge: the same 30-ft enemy burst and CHA save, but the outcome is
+    // chosen per target by how much life is left in it, bottoming out
+    // at outright death below 20 hit points. The cleric's finisher for
+    // a board the party has already worn down.
+    actions.push(&*crate::actions::spells::DIVINE_WORD);
     // Latest cleric additions: lv4 Guardian of Faith (radiant burst,
     // flat-20 / save-half) and lv6 Blade Barrier (concentration slashing
     // burst). Both round out the cleric's high-tier damage lane with

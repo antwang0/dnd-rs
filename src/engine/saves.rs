@@ -20,7 +20,7 @@ impl SaveOutcome {
 /// cantrips don't half-on-save, and a handful of leveled spells
 /// (Disintegrate) zero on save instead of halving.
 ///
-/// `apply` and `apply_with_evasion` collapse the post-save damage
+/// `apply` and `apply_mitigated` collapse the post-save damage
 /// computation into one chokepoint, so the AoE-burst helper, the
 /// single-target damage-scroll factor, and any future save-for-half
 /// site all route through the same logic. Stored here in
@@ -39,6 +39,35 @@ pub enum SaveDamagePolicy {
     NoneOnSave,
 }
 
+/// A target-side effect that improves what a saving throw leaves
+/// standing. Both variants zero a successful save that would otherwise
+/// have halved; they differ on whether a *failed* save is softened too,
+/// and that difference is the whole of RAW's difference between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveMitigation {
+    /// 5e **Evasion** (Rogue / Monk / Ranger): "you instead take no
+    /// damage if you succeed on the saving throw, and only half damage
+    /// if you fail." Two clauses, so the whole table shifts a notch.
+    /// Scoped by its holder to Dexterity saves, whatever the source.
+    Evasion,
+    /// 5e **Circle of Power**: "when an affected creature succeeds on a
+    /// saving throw … it takes no damage instead of half damage." One
+    /// clause, about success only — a creature that fails its save
+    /// takes everything. Scoped by its holder to spells, whatever the
+    /// ability.
+    NoneOnSuccess,
+}
+
+impl SaveMitigation {
+    /// Log-friendly name of the effect, for the "takes no damage" line.
+    pub fn label(self) -> &'static str {
+        match self {
+            SaveMitigation::Evasion => "evasion",
+            SaveMitigation::NoneOnSuccess => "circle of power",
+        }
+    }
+}
+
 impl SaveDamagePolicy {
     /// Resolve the damage `raw` would deal to a target whose save
     /// outcome is `passed`. Mirrors the standard 5e save-for-half /
@@ -51,38 +80,29 @@ impl SaveDamagePolicy {
         }
     }
 
-    /// Evasion-aware variant: on DEX saves against effects that allow
-    /// half damage on a successful save, the Rogue Evasion class
-    /// feature (and equivalents) turns pass → 0 and fail → half. On
-    /// save-or-nothing effects (cantrips, Disintegrate) evasion has
-    /// nothing to "evade up to" — pass still zeros, fail still hits
-    /// for full — so the table reduces to the non-evasion shape.
-    /// Caller is responsible for confirming evasion is in play (DEX
-    /// save AND the target has the feature).
-    ///
-    /// Mechanically equivalent to invoking `apply` against a policy
-    /// shifted one notch better: HalfOnSave → NoneOnSave-on-pass,
-    /// HalfOnSave-on-fail → half (fresh half lane). NoneOnSave already
-    /// zeros on pass and full-on-fail, so evasion is a no-op — that
-    /// half of the table just delegates to `apply` directly.
-    pub fn apply_with_evasion(self, raw: u32, passed: bool) -> u32 {
-        match self {
-            // Evasion shifts the HalfOnSave table one notch better:
-            // pass → 0 (was raw/2), fail → raw/2 (was raw).
-            SaveDamagePolicy::HalfOnSave => {
-                if passed {
-                    0
-                } else {
-                    raw / 2
-                }
+    /// Apply this policy with a target-side `mitigation` in play. See
+    /// `SaveMitigation` for the two shapes and what distinguishes
+    /// them; caller is responsible for confirming the mitigation
+    /// applies at all.
+    pub fn apply_mitigated(self, raw: u32, passed: bool, mitigation: SaveMitigation) -> u32 {
+        match (self, mitigation) {
+            // Nothing to improve on a save-or-nothing effect: a pass
+            // already zeroes and a fail already lands in full. Both
+            // mitigations reduce to the bare policy here.
+            (SaveDamagePolicy::NoneOnSave, _) => self.apply(raw, passed),
+            // Evasion shifts the HalfOnSave table one whole notch
+            // better: pass → 0 (was raw/2), fail → raw/2 (was raw).
+            (SaveDamagePolicy::HalfOnSave, SaveMitigation::Evasion) => {
+                if passed { 0 } else { raw / 2 }
             }
-            // NoneOnSave: pass already zeros, fail already full —
-            // evasion has nothing to improve. Delegate to `apply`.
-            SaveDamagePolicy::NoneOnSave => self.apply(raw, passed),
+            // The ward touches only the successful half of the table.
+            (SaveDamagePolicy::HalfOnSave, SaveMitigation::NoneOnSuccess) => {
+                if passed { 0 } else { raw }
+            }
         }
     }
 
-    /// Caster-side mirror of `apply_with_evasion`: the 5e Evocation
+    /// Caster-side mirror of `apply_mitigated`: the 5e Evocation
     /// Wizard **Potent Cantrip** shifts a save-or-nothing cantrip one
     /// notch *worse for the target* — a successful save now leaves half
     /// damage standing instead of none.
@@ -127,15 +147,28 @@ mod tests {
     #[test]
     fn evasion_shifts_half_on_save_one_notch_better() {
         // Pass → 0 (was 5), fail → 5 (was 10).
-        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_with_evasion(10, true), 0);
-        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_with_evasion(10, false), 5);
+        let m = SaveMitigation::Evasion;
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_mitigated(10, true, m), 0);
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_mitigated(10, false, m), 5);
     }
 
     #[test]
-    fn evasion_is_a_noop_for_none_on_save() {
-        // Cantrip-style: evasion can't improve on already-zero pass /
-        // already-full fail.
-        assert_eq!(SaveDamagePolicy::NoneOnSave.apply_with_evasion(10, true), 0);
-        assert_eq!(SaveDamagePolicy::NoneOnSave.apply_with_evasion(10, false), 10);
+    fn a_success_only_ward_leaves_a_failed_save_in_full() {
+        // The one line that separates the two mitigations: a creature
+        // that fails its save inside a Circle of Power takes
+        // everything, where one with Evasion would take half.
+        let m = SaveMitigation::NoneOnSuccess;
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_mitigated(10, true, m), 0);
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_mitigated(10, false, m), 10);
+    }
+
+    #[test]
+    fn neither_mitigation_moves_a_save_or_nothing_effect() {
+        // Cantrip-style: there is nothing to improve on an
+        // already-zero pass or an already-full fail.
+        for m in [SaveMitigation::Evasion, SaveMitigation::NoneOnSuccess] {
+            assert_eq!(SaveDamagePolicy::NoneOnSave.apply_mitigated(10, true, m), 0);
+            assert_eq!(SaveDamagePolicy::NoneOnSave.apply_mitigated(10, false, m), 10);
+        }
     }
 }

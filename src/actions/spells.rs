@@ -29225,3 +29225,619 @@ impl Action for Immolation {
 }
 
 pub static IMMOLATION: LazyLock<Immolation> = LazyLock::new(|| Immolation {});
+
+/// Antimagic Field — level-8 abjuration, concentration. A 10-ft-radius
+/// sphere of dead magic surrounds the caster and travels with them.
+///
+/// The engine's only `ZoneEffect::NULLIFYING` area, and the reason that
+/// axis exists. Nothing lands on anybody standing in it — no save, no
+/// damage, no condition — so the AI walks through it as if it were open
+/// ground, which for a creature that does not cast it is. What it does
+/// is close the casting gate at `Action::validate_input`, in both
+/// directions: a caster inside cannot cast, and a caster outside cannot
+/// reach in. See `EncounterInstance::magic_suppressed_between` for why
+/// the predicate is "either end", not a walk of the line between them.
+///
+/// The sphere is the engine's first `ZoneMotion::FollowsOwner` area —
+/// RAW's "the sphere moves with you", re-centred at the top of the
+/// owner's turn in the same pass that drifts the clouds. Between turns
+/// it lags a step behind a caster who has walked, which is the same
+/// granularity the drifting clouds already accept.
+///
+/// **What is deliberately not modeled.** RAW also suppresses magic that
+/// is already in play: a spell's ongoing effects wink out inside the
+/// sphere and resume outside it, magic weapons lose their bonuses, and
+/// a summoned creature vanishes. Every one of those reads a condition,
+/// an item, or an actor through an accessor that has no idea where the
+/// creature is standing — `armor_class()` and `has_condition()` take no
+/// board — so honoring them would mean threading the encounter into
+/// hundreds of call sites for one spell. The clause the engine *can*
+/// enforce cleanly is the one about casting, and that is the clause it
+/// enforces. A field is a place where no new magic happens, not yet a
+/// place where old magic stops.
+pub struct AntimagicField {}
+
+impl AntimagicField {
+    /// 10-ft radius = 4 tile-gaps on the 2.5-ft grid.
+    const RADIUS: isize = 4;
+}
+
+impl Action for AntimagicField {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "antimagic field"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["amf", "antimagic", "dead-magic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        // Friend-or-foe blind, like every other zone: it silences the
+        // party's wizard as thoroughly as the enemy's.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(origin) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        encounter.log("  antimagic field: magic goes quiet");
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "antimagic field",
+                owner_id: caster_id,
+                origin,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::NULLIFYING,
+                // RAW is 1 hour; concentration is what actually ends it
+                // in any fight this engine runs, so the number only has
+                // to outlast the encounter.
+                rounds_remaining: 100,
+                concentration: true,
+                motion: ZoneMotion::FollowsOwner,
+            },
+            // Nothing to catch — the area has no contact clause. Passed
+            // `false` rather than `true` so the install doesn't walk a
+            // sweep that can have no effect.
+            catch_present: false,
+        })]
+    }
+}
+
+pub static ANTIMAGIC_FIELD: LazyLock<AntimagicField> = LazyLock::new(|| AntimagicField {});
+
+/// Divine Word — level-7 evocation (cleric). The caster utters a word of
+/// creation; every enemy within 30 ft that fails a Charisma save suffers
+/// an effect chosen by **how much life is left in it**, which is what
+/// makes this spell unlike every other burst in the game: the save is
+/// the same for everybody, and the outcome is not.
+///
+/// The RAW ladder, walked from the bottom:
+///
+///   - 20 hit points or fewer — the creature dies.
+///   - 30 or fewer — blinded, deafened and stunned for 1 hour.
+///   - 40 or fewer — blinded and deafened for 10 minutes.
+///   - 50 or fewer — deafened for 1 minute.
+///   - more than 50 — the word washes over it and nothing happens.
+///
+/// The thresholds are *current* hit points, so the word is the cleric's
+/// answer to a board that is already broken: it does nothing to a fresh
+/// dragon and clears a room of everything the party has been whittling.
+/// That is the whole design of the spell and the reason it reads its
+/// targets one at a time rather than through the shared burst helper,
+/// which rolls one number and shares it.
+///
+/// Instant death rather than dying: RAW says "dies", not "drops to 0",
+/// and there is no death save to make. Routed as damage equal to the
+/// target's remaining hit points so every ledger the engine keeps about
+/// a kill — the log line, the concentration drop, the team's liveness
+/// check — sees it the same way it sees any other lethal blow.
+///
+/// **Not modeled.** RAW's second paragraph banishes celestials,
+/// elementals, fey and fiends to their home plane. The engine has no
+/// off-board to send them to — the same gap Banishment's docstring
+/// names — so those creatures take the ladder like everybody else.
+pub struct DivineWord {}
+
+impl DivineWord {
+    /// 30-ft radius = 12 tile-gaps.
+    const RADIUS: isize = 12;
+
+    /// The RAW ladder, steepest rung first. `None` in the condition
+    /// slot is the kill rung; every other rung installs its conditions
+    /// for `timer`.
+    ///
+    /// Walked in order and stopped at the first rung whose threshold
+    /// the target is at or under, which is what makes the rungs
+    /// exclusive without restating each band's lower bound.
+    const LADDER: &'static [(u32, &'static [Condition], u32)] = &[
+        (20, &[], 0),
+        (
+            30,
+            &[Condition::Blinded, Condition::Deafened, Condition::Stunned],
+            100,
+        ),
+        (40, &[Condition::Blinded, Condition::Deafened], 100),
+        (50, &[Condition::Deafened], 10),
+    ];
+}
+
+impl Action for DivineWord {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "divine word"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dword", "word"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        // The kill rung is routed as damage but has no type in RAW —
+        // the creature simply dies. Declaring none keeps every
+        // damage-type-keyed feature (Elemental Affinity, Transmuted
+        // Spell) off a spell that has no element to bend.
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(center) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let Some(dc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spellcasting_save_dc())
+        else {
+            return Vec::new();
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.enemy_burst_targets(caster_id, center, Self::RADIUS) {
+            if encounter
+                .roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id)
+                .passed()
+            {
+                continue;
+            }
+            let Some(hp) = encounter.actors.get(&target_id).map(|a| a.hitpoints()) else {
+                continue;
+            };
+            let Some(&(_, conditions, rounds)) =
+                Self::LADDER.iter().find(|(threshold, _, _)| hp <= *threshold)
+            else {
+                continue;
+            };
+            let name = encounter.actor_name(target_id);
+            if conditions.is_empty() {
+                encounter.log(format!("  divine word: {} is unmade", name));
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: hp,
+                    damage_type: DamageType::Radiant,
+                }));
+                continue;
+            }
+            encounter.log(format!(
+                "  divine word: {} reels ({} hp left)",
+                name, hp
+            ));
+            for &condition in conditions {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition,
+                    timer: ConditionTimer::Rounds(rounds),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static DIVINE_WORD: LazyLock<DivineWord> = LazyLock::new(|| DivineWord {});
+
+/// Abi-Dalzim's Horrid Wilting — level-8 necromancy. Moisture is drawn
+/// out of every creature in a 30-ft cube: 12d8 necrotic, Constitution
+/// save for half.
+///
+/// The biggest single burst in the engine's spell list, and the one
+/// that reads its target list through a *creature-type* filter rather
+/// than a team one. RAW: "constructs and undead aren't affected" —
+/// neither of them has any water in it — and the two exclusions are
+/// what keeps an eighth-level slot from being the answer to every
+/// board. A wizard facing a graveyard casts something else.
+///
+/// The plant / water-elemental clause ("they have disadvantage on the
+/// save") is the mirror image of the same idea, and is honored through
+/// the same per-target walk: a creature made mostly of water has the
+/// most to lose.
+pub struct HorridWilting {}
+
+impl HorridWilting {
+    /// A 30-ft cube ≈ a 6-tile-radius square burst, the same envelope
+    /// the engine gives every other 30-ft area.
+    const RADIUS: isize = 6;
+    const DICE: Dice = Dice::new(12, 8);
+
+    /// True if `id` has no moisture in it to draw out — RAW's construct
+    /// and undead exclusion.
+    fn is_bone_dry(encounter: &EncounterInstance, id: usize) -> bool {
+        encounter.actors.get(&id).is_some_and(|a| {
+            matches!(
+                a.creature_type(),
+                crate::engine::types::CreatureType::Construct
+                    | crate::engine::types::CreatureType::Undead
+            )
+        })
+    }
+
+    /// True if `id` is made largely of the thing the spell removes —
+    /// RAW's "plants and water elementals" disadvantage clause. Water
+    /// elementals are identified by type plus a cold/water flavor the
+    /// engine can actually see: `CreatureType::Elemental` alone would
+    /// also catch the fire and earth ones, who are not wet.
+    fn is_waterlogged(encounter: &EncounterInstance, id: usize) -> bool {
+        encounter.actors.get(&id).is_some_and(|a| {
+            a.creature_type() == crate::engine::types::CreatureType::Plant
+                || (a.creature_type() == crate::engine::types::CreatureType::Elemental
+                    && a.name().to_lowercase().contains("water"))
+        })
+    }
+}
+
+impl Action for HorridWilting {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
+    fn name(&self) -> &str {
+        "horrid wilting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wilting", "abi-dalzim", "hw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(dc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spellcasting_save_dc())
+        else {
+            return Vec::new();
+        };
+        // One shared roll for the whole area, matching 5e's AoE
+        // semantics and every other burst in the engine.
+        let raw = encounter.roll_empowered_sum(caster_id, Self::DICE.count, Self::DICE.faces);
+        encounter.log(format!(
+            "  horrid wilting: {}({}) shared Necrotic",
+            Self::DICE,
+            raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.neutral_burst_targets(caster_id, point, Self::RADIUS) {
+            if Self::is_bone_dry(encounter, target_id) {
+                let name = encounter.actor_name(target_id);
+                encounter.log(format!("  horrid wilting: {} has nothing to lose", name));
+                continue;
+            }
+            // RAW's "plants and water elementals have disadvantage on
+            // this saving throw" — a notch the spell supplies, folded
+            // in beside the caster-side riders by
+            // `roll_save_against_caster_at`.
+            let spell_mode = if Self::is_waterlogged(encounter, target_id) {
+                let name = encounter.actor_name(target_id);
+                encounter.log(format!("  horrid wilting: {} withers at disadvantage", name));
+                crate::engine::dice::RollMode::Disadvantage
+            } else {
+                crate::engine::dice::RollMode::Normal
+            };
+            let passed = encounter
+                .roll_save_against_caster_at(
+                    target_id,
+                    AbilityScoreType::Constitution,
+                    dc,
+                    caster_id,
+                    spell_mode,
+                )
+                .passed();
+            let dmg = encounter.resolve_post_save_damage(
+                caster_id,
+                target_id,
+                AbilityScoreType::Constitution,
+                SaveDamagePolicy::HalfOnSave,
+                raw,
+                passed,
+            );
+            if dmg == 0 {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Necrotic,
+            }));
+        }
+        effects
+    }
+}
+
+pub static HORRID_WILTING: LazyLock<HorridWilting> = LazyLock::new(|| HorridWilting {});
+
+/// Enervation — level-5 necromancy, concentration. A shadowy tendril
+/// reaches for one creature within 60 ft; on a failed Dexterity save it
+/// latches on, tearing 4d8 necrotic out of the target every round and
+/// feeding half of it back to the caster.
+///
+/// The engine's first *draining* damage-over-time: the drip itself is
+/// an ordinary `ROUND_END_DOTS` row, and the half that comes back is
+/// the table's new `drains_to_owner` flag rather than anything this
+/// spell does. That split is deliberate — the drip is already run by
+/// the engine at round-end, so the heal that answers it has to be run
+/// there too, or a tether would take on the caster's schedule and give
+/// back on nobody's.
+///
+/// A miss is not nothing: RAW's successful save still takes 2d8, which
+/// is the difference between this and every other save-or-suffer spell
+/// at its tier. The tendril grazes.
+pub struct Enervation {}
+
+impl Enervation {
+    const HIT_DICE: Dice = Dice::new(4, 8);
+    const GRAZE_DICE: Dice = Dice::new(2, 8);
+}
+
+impl Action for Enervation {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
+    fn name(&self) -> &str {
+        "enervation"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["enerv", "tendril"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(dc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.spellcasting_save_dc())
+        else {
+            return Vec::new();
+        };
+        let passed = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id)
+            .passed();
+        let dice = if passed {
+            Self::GRAZE_DICE
+        } else {
+            Self::HIT_DICE
+        };
+        let dmg = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
+        encounter.log(format!(
+            "  enervation: the tendril {} for {}({}) Necrotic",
+            if passed { "grazes" } else { "latches on" },
+            dice,
+            dmg
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Necrotic,
+        })];
+        if passed {
+            // A graze spends the slot and holds nothing — RAW's
+            // successful save ends the spell outright, so there is no
+            // concentration to open and no tendril to sustain.
+            return effects;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Enervated,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Enervation",
+                vec![(target_id, Condition::Enervated)],
+            ),
+        }));
+        effects
+    }
+}
+
+pub static ENERVATION: LazyLock<Enervation> = LazyLock::new(|| Enervation {});
+
+/// Circle of Power — level-5 abjuration (paladin), concentration.
+/// Divine energy radiates 30 ft from the caster; every ally inside it
+/// shrugs off magic better than they otherwise would.
+///
+/// Two clauses, and both of them are about the *kind* of thing being
+/// saved against rather than about the ability rolled — which is what
+/// makes the spell interesting to implement and why neither clause
+/// could reuse an existing table unchanged:
+///
+///   - advantage on saves against spells and other magical effects,
+///     added as the first target-side row on `CASTER_SAVE_MODE_RIDERS`
+///     (the table that knows a spell is what is being saved against);
+///   - a successful save takes *no* damage where it would have taken
+///     half, read at `resolve_post_save_damage` beside Evasion, whose
+///     shape it shares. Evasion is the Dexterity-only version of the
+///     same sentence; this is the every-ability, spells-only version.
+///
+/// Together they are the paladin's answer to an enemy caster: a party
+/// standing in the circle takes roughly a third of what a fireball
+/// would otherwise land on it.
+pub struct CircleOfPower {}
+
+impl CircleOfPower {
+    /// 30-ft radius = 12 tile-gaps.
+    const RADIUS: isize = 12;
+}
+
+impl Action for CircleOfPower {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "circle of power"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cop", "circle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        ally_aura_concentration_effects(
+            encounter,
+            caster_id,
+            Self::RADIUS,
+            "Circle of Power",
+            Condition::PowerCircled,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static CIRCLE_OF_POWER: LazyLock<CircleOfPower> = LazyLock::new(|| CircleOfPower {});
