@@ -559,6 +559,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f-. Monk Patient Defense — bonus action, at will: the Dodge
+        //      action for free. Above Flurry of Blows because a monk
+        //      that is losing wants every incoming swing at
+        //      disadvantage more than it wants one more swing of its
+        //      own, and below Stunning Strike because a stun that lands
+        //      stops the incoming swings altogether. Gated on the monk
+        //      actually being under pressure — a healthy monk dodging is
+        //      a monk giving up a third of its damage for nothing.
+        if let Some(aei) = try_patient_defense(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3f--. Monk Flurry of Blows — bonus action, at will: a whole
+        //       extra Action, which on this chassis is another unarmed
+        //       strike (two, with Extra Attack). It is the monk's
+        //       default use of the bonus action and it was missing from
+        //       this ladder entirely, so every monk on the roster has
+        //       been fighting at two thirds of its damage whenever
+        //       Stunning Strike was unavailable or pointless.
+        //
+        //       Last of the three monk bonus-action rungs because it is
+        //       the one with no precondition worth waiting for: a stun
+        //       has to be worth priming and a dodge has to be worth
+        //       taking, and an extra swing is worth having whenever
+        //       there is something in reach to spend it on.
+        if let Some(aei) = try_flurry_of_blows(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3f'. Monk Empty Body — once-per-long-rest defensive burst
         //      Action. Installs Invisible + DamageResistant on self for
         //      10 rounds. Fire when the monk is below 40% HP AND has an
@@ -4319,31 +4348,101 @@ fn try_smite_from_registry(
 /// Monk Stunning Strike — bonus action prime that lays a stun save on
 /// the next melee hit. Same trigger as Divine Smite: an enemy inside
 /// the monk's own reach, so the prime doesn't tick out unspent.
-/// Once-per-rest gated so the AI only fires it when the action picker
-/// has a melee target queued.
+///
+/// The second gate — at least one in-reach enemy that is *not already
+/// Stunned* — used to be invisible. Stunning Strike carried a private
+/// once-per-rest charge, so a monk who had stunned something had no
+/// second charge to waste re-stunning it. Now that the charge is one
+/// point out of the monk's ki pool (`KI_POINTS_TAG`), the waste is
+/// repeatable: without this clause a monk stands over a stunned ogre
+/// and spends its whole pool priming a save the ogre is not going to
+/// roll, one point per turn, while the Flurry of Blows that would
+/// actually finish it never gets the bonus action.
+///
+/// A stunned creature is also the best possible thing to Flurry — every
+/// swing against it has advantage and auto-crits in reach — so the rung
+/// below this one is exactly where the AI should fall through to.
 fn try_stunning_strike(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let stunnable = encounter.actors.iter().any(|(eid, enemy)| {
+        *eid != actor_id
+            && enemy.team() != my_team
+            && enemy.is_combat_active()
+            && !enemy.has_condition(Condition::Stunned)
+            && encounter
+                .footprint_distance(actor_id, *eid)
+                .is_some_and(|d| d <= MELEE_REACH)
+    });
+    if !stunnable {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "stunning strike")
+}
+
+/// Monk Patient Defense — bonus action, at will: take the Dodge action,
+/// so every attack against the monk this round rolls at disadvantage.
+///
+/// Fires only when the monk is both hurt (below 50% HP, the roster's
+/// standard "this is going badly" threshold) and in contact, because the
+/// dodge is worth exactly as much as the swings it spoils: a healthy
+/// monk, or one nothing can reach, is trading a Flurry for nothing.
+///
+/// Deliberately a looser HP gate than Empty Body's 40%. Patient Defense
+/// costs a bonus action and no resource at all, so it can afford to fire
+/// early and often; Empty Body costs an Action and four fifths of the
+/// monk's ki, so it waits until survival is the question.
+fn try_patient_defense(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !is_low_hp(encounter, actor_id, 0.5) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "patient defense")
+}
+
+/// Monk Flurry of Blows — bonus action, at will: grants the monk a
+/// second Action, which the attack picker then spends on a strike.
+///
+/// The gate is simply "something in reach to hit". There is no charge to
+/// hoard and no prime to waste — an unspent bonus action on a monk in
+/// contact is a strike the monk declined to make.
+///
+/// The reach check is the monk's melee reach rather than any wider
+/// engagement band on purpose: the extra Action is worth a swing, and a
+/// swing needs a target the monk can already reach. A monk who has to
+/// walk first will flurry next turn, from contact, which is where the
+/// feature is worth the most anyway.
+fn try_flurry_of_blows(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
-    try_self_action(encounter, actor_id, "stunning strike")
+    try_self_action(encounter, actor_id, "flurry of blows")
 }
 
-/// Monk Empty Body — once-per-long-rest Action defensive burst.
+/// Monk Empty Body — Action defensive burst, RAW four ki points.
 /// Installs Invisible + DamageResistant on self for 10 rounds. Fire when
 /// the monk is genuinely under pressure — below 40% HP AND has at least
 /// one adjacent enemy that would otherwise pound them. The 40% threshold
-/// is tighter than the standard 50% heal trigger since Empty Body is a
-/// full-Action burn on a resource that doesn't refill without a long
-/// rest: the AI should hold it until survival is at stake, not fire it
-/// on the first scratched-HP alarm.
+/// is tighter than the standard 50% heal trigger because Empty Body is a
+/// full Action *and* the largest single draw on the monk's ki
+/// (`KI_POINTS_TAG`, five points on this chassis): the AI should hold it
+/// until survival is at stake, not fire it on the first scratched-HP
+/// alarm.
 ///
 /// Composes with the standard heal picker (Wholeness of Body, potions):
 /// this fires ahead of them at the Action lane since Empty Body is a
-/// survival burst rather than a topup, and re-priming it later burns a
-/// second charge that the monk doesn't have.
+/// survival burst rather than a topup.
 fn try_empty_body(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -12251,8 +12350,8 @@ mod tests {
             ARCANE_ARCHER_FIGHTER_TEMPLATE, RUNE_KNIGHT_FIGHTER_TEMPLATE,
         };
         use crate::actors::creatures::monks::{
-            ASTRAL_SELF_MONK_TEMPLATE, KENSEI_MONK_TEMPLATE, MERCY_MONK_TEMPLATE,
-            SUN_SOUL_MONK_TEMPLATE,
+            ASTRAL_SELF_MONK_TEMPLATE, DRUNKEN_MASTER_MONK_TEMPLATE, KENSEI_MONK_TEMPLATE,
+            MERCY_MONK_TEMPLATE, SUN_SOUL_MONK_TEMPLATE,
         };
         use crate::actors::creatures::rogues::{
             INQUISITIVE_ROGUE_TEMPLATE, PHANTOM_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE,
@@ -12260,7 +12359,7 @@ mod tests {
         };
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::{
-            CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE,
+            CONQUEST_PALADIN_TEMPLATE, CROWN_PALADIN_TEMPLATE, REDEMPTION_PALADIN_TEMPLATE,
         };
         use crate::actors::creatures::warlocks::{
             FATHOMLESS_WARLOCK_TEMPLATE, UNDEAD_WARLOCK_TEMPLATE,
@@ -12277,7 +12376,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 38] = [
+        let cases: [(&CreatureTemplate, &str); 40] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12422,6 +12521,21 @@ mod tests {
             (&ARMORER_ARTIFICER_TEMPLATE, "defensive field"),
             (&INFILTRATOR_ARTIFICER_TEMPLATE, "lightning launcher"),
             (&ALCHEMIST_ARTIFICER_TEMPLATE, "experimental elixir"),
+            // The exit rides the Flurry the monk was pressing anyway,
+            // which is the whole shape of Drunken Technique — there is
+            // no rung of its own to reach for. Not Redirect Attack: it
+            // needs a second enemy within 5 ft to send the swing to, and
+            // this fixture has one ogre. Not Drunkard's Luck: the monk
+            // has to be rolling at disadvantage, which an unimpeded monk
+            // in the open never is. Both are pinned engine-side, where a
+            // third body and a penalty can be arranged.
+            (&DRUNKEN_MASTER_MONK_TEMPLATE, "drunken technique"),
+            // Not Aura of the Guardian or Protective Spirit: the first
+            // needs an ally inside the aura to take a blow for, and the
+            // second fires off the turn-start hook with nothing for a
+            // controller to decide. Rebuke the Violent is the oath's one
+            // press, and the CD rung reaches it.
+            (&REDEMPTION_PALADIN_TEMPLATE, "rebuke the violent"),
         ];
 
         for (template, marker) in cases {
@@ -12470,6 +12584,75 @@ mod tests {
                 marker
             );
         }
+    }
+
+    /// The monk's bonus action, which used to have exactly one thing on
+    /// it. Stunning Strike is still the first pick, but it declines
+    /// against a creature that is already stunned — and what it declines
+    /// falls through to Patient Defense when the monk is losing and to
+    /// Flurry of Blows otherwise.
+    ///
+    /// Before these two rungs existed the fall-through was nothing at
+    /// all: a monk with the stun unavailable simply did not use its
+    /// bonus action, which on this chassis is a third of its damage.
+    #[test]
+    fn the_monks_bonus_action_has_three_answers_and_picks_between_them() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+
+        // Nothing in reach: none of the three rungs fires, because all
+        // three are worth exactly what the swing they ride is worth.
+        assert!(try_stunning_strike(&e, monk).is_none());
+        assert!(try_flurry_of_blows(&e, monk).is_none());
+        assert!(try_patient_defense(&e, monk).is_none());
+
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // In contact and healthy: stun first, flurry available behind
+        // it, no dodge.
+        assert!(try_stunning_strike(&e, monk).is_some());
+        assert!(try_flurry_of_blows(&e, monk).is_some());
+        assert!(
+            try_patient_defense(&e, monk).is_none(),
+            "a healthy monk dodging is a monk giving up a Flurry for nothing"
+        );
+
+        // Already stunned: re-priming would spend a point of ki on a
+        // save the ogre is not going to roll. Flurry is what a monk
+        // standing over a stunned creature should be doing anyway —
+        // every swing against it has advantage.
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        assert!(
+            try_stunning_strike(&e, monk).is_none(),
+            "nothing left in reach worth stunning"
+        );
+        assert!(try_flurry_of_blows(&e, monk).is_some());
+
+        // Hurt: the dodge outranks the extra swing.
+        let max = e.actors[&monk].max_hitpoints();
+        e.actors.get_mut(&monk).unwrap().take_damage(max * 3 / 4);
+        assert!(try_patient_defense(&e, monk).is_some());
     }
 
     /// The wall lane is reached for in a live fight.
