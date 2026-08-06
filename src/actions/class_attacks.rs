@@ -221,7 +221,21 @@ impl crate::engine::attack::ActionOnHitRider for SneakAttack {
             .get(&p.caster_id)
             .map(|a| a.level())
             .unwrap_or(1);
-        let total_sneak_dice = sneak_attack_dice_for_level(level);
+        // 5e Inquisitive Rogue **Eye for Weakness**: "you deal an extra
+        // 3d6 damage to that target whenever you sneak attack it." Added
+        // to the pool rather than tacked on after it, so a crit doubles
+        // the three dice with the rest and Cunning Strike can price
+        // itself against the larger pool — which is what "extra 3d6 on a
+        // Sneak Attack" means everywhere else the engine reads it.
+        let eye_for_weakness = encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::EYE_FOR_WEAKNESS_TAG)
+            })
+            && target_is_analyzed_by(encounter, p.caster_id, p.target_id);
+        let total_sneak_dice =
+            sneak_attack_dice_for_level(level) + if eye_for_weakness { 3 } else { 0 };
         // 5e 2024 Cunning Strike: deduct dice from the sneak pool for
         // a tactical effect. Walks the active prime table, picks the
         // first match, returns the deduction + a queued side-effect
@@ -419,6 +433,26 @@ pub static PSYCHIC_BLADE_FLOURISH: LazyLock<RogueWeapon> = LazyLock::new(|| Rogu
             .is_some_and(|a| a.action_slots() == 0)
     }),
 });
+
+/// True if `target_id` carries the Inquisitive Rogue's `Analyzed` mark
+/// back-linked to `rogue_id` specifically.
+///
+/// The link is the whole point: a second rogue standing next to a target
+/// somebody else read gets nothing from it, exactly as a paladin gets no
+/// advantage from another paladin's Vow of Enmity. Shared by the
+/// eligibility gate above and by the Eye for Weakness die bump below, so
+/// the two can never disagree about which target the mark is on.
+fn target_is_analyzed_by(
+    encounter: &EncounterInstance,
+    rogue_id: usize,
+    target_id: usize,
+) -> bool {
+    encounter
+        .actors
+        .get(&target_id)
+        .and_then(|t| t.linked_by(crate::conditions::Condition::Analyzed))
+        == Some(rogue_id)
+}
 
 /// 5e Sneak Attack dice scaling: ceil(level / 2) d6.
 /// Level 1 = 1d6, level 3 = 2d6, level 5 = 3d6, etc.
@@ -624,6 +658,17 @@ fn sneak_attack_eligible(
     };
     let target_loc = target.location();
     let target_size = get_tiles_from_size(target.size());
+    // 5e Inquisitive Rogue **Insightful Fighting** path: the rogue has
+    // already read this target, so no advantage is needed. Checked
+    // before the positional paths because it is the cheapest question —
+    // one link lookup against a whole-board scan — and because it is the
+    // one path that is true regardless of where anyone is standing.
+    //
+    // RAW's "but not if you have disadvantage on it" is the early-out
+    // three lines above, which every non-advantage path already shares.
+    if target_is_analyzed_by(encounter, rogue_id, target_id) {
+        return true;
+    }
     // Ally-adjacent path — the classic "flanker enables sneak" trigger.
     let ally_adjacent = encounter.actors.iter().any(|(id, a)| {
         if *id == rogue_id || a.team() != rogue.team() || !a.is_combat_active() {

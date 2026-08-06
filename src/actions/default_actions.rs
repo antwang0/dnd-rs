@@ -617,20 +617,51 @@ pub static READY: LazyLock<Ready> = LazyLock::new(|| Ready {});
 /// designated foe before the start of *your* next turn has advantage.
 /// We collapse the timing slightly: we record `Helped` against *any*
 /// future attack, the helped actor consumes it on their next attack.
-pub struct Help {}
+///
+/// Parameterised over cost and reach because 5e writes the same grant
+/// twice. The PHB's Help is an Action given to somebody you can touch;
+/// the Mastermind Rogue's **Master of Tactics** (XGtE, subclass level 3)
+/// is "you can use the Help action as a bonus action… to aid a friendly
+/// creature attacking a creature within 30 feet of you", which is the
+/// identical effect at a different price. Two statics off one impl
+/// rather than a near-copy, so the "designated foe" heuristic and the
+/// `HelpGrant` bookkeeping stay in one place.
+pub struct Help {
+    /// Log / lookup name, and what a controller types.
+    name: &'static str,
+    aliases: &'static [&'static str],
+    /// `true` for the bonus-action variant (Master of Tactics).
+    bonus_action: bool,
+    /// Footprint-gap reach, in tiles.
+    reach: isize,
+}
 
 impl Action for Help {
     fn name(&self) -> &str {
-        "help"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["h", "assist"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        Some(crate::actions::action_template::MELEE_REACH)
+        Some(self.reach)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            crate::actions::action_template::bonus_action_only()
+        } else {
+            crate::actions::action_template::action_only()
+        }
     }
     fn is_harmful(&self) -> bool {
         false
@@ -710,7 +741,36 @@ impl Action for Help {
     }
 }
 
-pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {});
+pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {
+    name: "help",
+    aliases: &["h", "assist"],
+    bonus_action: false,
+    reach: crate::actions::action_template::MELEE_REACH,
+});
+
+/// **Master of Tactics** — Mastermind Rogue subclass level 3 (XGtE).
+/// The Help action, as a bonus action, at 30 ft.
+///
+/// Both halves matter and they matter together. The bonus action is what
+/// makes it free: a rogue's Action is a Sneak Attack and its bonus
+/// action is Cunning Action, and Cunning Action is the one a Mastermind
+/// standing safely at range has least use for. The thirty feet is what
+/// makes it a *rogue* feature rather than a second front-liner's — the
+/// Mastermind hands the fighter advantage from wherever the rogue chose
+/// to stand, which for a d8 chassis with no armour is a long way from
+/// the fighter.
+///
+/// It is also, on this roster, the only repeatable advantage-granting
+/// button that costs nothing and never runs out. The bard's Inspiration
+/// is a pool of three, the Battle Master's Commander's Strike spends a
+/// superiority die, and Help itself costs the helper their whole turn.
+pub static MASTER_OF_TACTICS: LazyLock<Help> = LazyLock::new(|| Help {
+    name: "master of tactics",
+    aliases: &["mot", "tactics", "bonus-help"],
+    bonus_action: true,
+    // 30 ft = 12 tiles on the 2.5 ft grid.
+    reach: 12,
+});
 
 /// 5e **Mount** (PHB p.198): "Once during your move, you can mount a
 /// creature that is within 5 feet of you… the cost is movement equal to

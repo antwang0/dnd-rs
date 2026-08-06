@@ -1671,6 +1671,11 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::Goaded,
     crate::conditions::Condition::Distracted,
     crate::conditions::Condition::Sworn,
+    // 5e Inquisitive Rogue Insightful Fighting. The link is the rogue
+    // who read the target, so the Sneak Attack the mark unlocks is
+    // theirs and not a second rogue's. Same positive polarity as Sworn
+    // directly above.
+    crate::conditions::Condition::Analyzed,
     crate::conditions::Condition::EldritchStruck,
     crate::conditions::Condition::WardingBonded,
     crate::conditions::Condition::HexbladeCursed,

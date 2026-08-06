@@ -6077,6 +6077,54 @@ impl EncounterInstance {
         if hits >= 1 { 2 } else { 0 }
     }
 
+    /// *Which* creature is standing in the way, rather than how much
+    /// good it does — `cover_ac_bonus`'s question asked from the other
+    /// end.
+    ///
+    /// Returns the first combat-active creature the attacker's line to
+    /// `target_id` passes through that is also within `max_tiles` of the
+    /// target, or `None` if the shot is clear. The distance clause is
+    /// the Mastermind Rogue's, and it is what stops the feature from
+    /// naming a bystander thirty feet up the line who happens to be
+    /// under the shot: RAW is "a creature within 5 feet of you is
+    /// granting you cover."
+    ///
+    /// Walk order, not id order, so the answer is the nearest thing to
+    /// the *shooter* — the body the arrow reaches first is the body it
+    /// can be made to hit. That is also deterministic, which the seeded
+    /// runs need.
+    pub fn cover_granting_creature(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        max_tiles: isize,
+    ) -> Option<usize> {
+        let (a, b) = (self.actors.get(&attacker_id)?, self.actors.get(&target_id)?);
+        let (from, to) = (a.location(), b.location());
+        for coord in tiles_between(from, to) {
+            let Some(blocker_id) = self.actor_id_at(coord) else {
+                continue;
+            };
+            if blocker_id == attacker_id || blocker_id == target_id {
+                continue;
+            }
+            if !self
+                .actors
+                .get(&blocker_id)
+                .is_some_and(|c| c.is_combat_active())
+            {
+                continue;
+            }
+            if self
+                .footprint_distance(blocker_id, target_id)
+                .is_some_and(|d| d <= max_tiles)
+            {
+                return Some(blocker_id);
+            }
+        }
+        None
+    }
+
     /// Footprint-aware LOS: clear if *any* tile of A's footprint can see
     /// *any* tile of B's footprint. Catches the common case where the
     /// origin-to-origin line is blocked but the creatures can still see

@@ -1058,6 +1058,46 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''''''''''-. Insightful Fighting — Inquisitive Rogue lv3
+        //                  bonus action. Marks one hostile within 30 ft
+        //                  so every subsequent Sneak Attack against it
+        //                  lands without needing advantage or a flanker.
+        //
+        //                  Above Steady Aim because it outlives it: the
+        //                  mark is good for ten rounds and Steady Aim's
+        //                  advantage is good for one swing, so a rogue
+        //                  that can afford exactly one bonus action this
+        //                  turn should buy the ten rounds. It also costs
+        //                  no movement, which is the whole price of
+        //                  Steady Aim on a chassis that usually wants to
+        //                  be somewhere else by the end of the turn.
+        //
+        //                  Highest-HP hostile wins per the shared picker,
+        //                  and here that heuristic is doing real work: the
+        //                  mark pays once per swing that lands on the
+        //                  marked creature, so its value is proportional
+        //                  to how many swings the creature survives. Same
+        //                  reasoning as Hexblade's Curse.
+        if let Some(aei) = try_insightful_fighting(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q'''''''''''--. Master of Tactics — Mastermind Rogue lv3
+        //                  bonus action. Hands an ally the Help action's
+        //                  advantage from up to 30 ft away.
+        //
+        //                  Below Insightful Fighting because the rogue's
+        //                  own Sneak Attack is worth more to the rogue
+        //                  than an ally's swing, and above Steady Aim for
+        //                  the same reason Insightful Fighting is: it
+        //                  costs no movement. Fires only when an ally
+        //                  actually has something in reach to swing at —
+        //                  advantage handed to a creature with no target
+        //                  expires unspent.
+        if let Some(aei) = try_master_of_tactics(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q''''''''''''. Steady Aim — Tasha's Rogue lv3 bonus action.
         //                 Mirrors Tides of Chaos's advantage prime but
         //                 costs the rest of the turn's movement instead
@@ -2764,6 +2804,85 @@ fn try_halo_of_spores(
     try_action_on_nearest_enemy(encounter, actor_id, "halo of spores", |gap| {
         gap <= HALO_OF_SPORES_GAP
     })
+}
+
+/// Insightful Fighting — Inquisitive Rogue lv3 bonus action. Marks one
+/// hostile within 30 ft (12 tiles) so the rogue's Sneak Attack lands on
+/// it unconditionally for the next ten rounds.
+///
+/// Delegates wholesale to the shared single-target picker: the action's
+/// own `custom_validate_input` owns the already-read-by-me dedup, and
+/// the highest-HP heuristic the picker applies is the right one here for
+/// the reason the Hexblade's Curse doc gives — a mark that pays per
+/// landed swing is worth what the marked creature survives.
+fn try_insightful_fighting(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "insightful fighting", 12)
+}
+
+/// Master of Tactics — Mastermind Rogue lv3 bonus action. The Help
+/// action at 30 ft, handed to an ally.
+///
+/// Two gates beyond the action's own. The ally must have a hostile
+/// inside their own melee reach, because the grant is consumed by their
+/// next attack and advantage on a swing they cannot make expires
+/// unspent; and they must not already be `Helped`, because a second
+/// grant on top of the first buys nothing.
+///
+/// Among the allies that qualify, the pick is the one with the most hit
+/// points remaining. That is a proxy for "the ally most likely to still
+/// be standing when their turn comes", which is what the grant needs —
+/// it lasts until the start of the rogue's next turn, so an ally who
+/// drops before acting wastes it. Ties break on the sorted id order the
+/// seeded sweeps rely on.
+fn try_master_of_tactics(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("master of tactics")?;
+    let my_team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for ally_id in encounter.sorted_actor_ids() {
+        if ally_id == actor_id {
+            continue;
+        }
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team
+            || !ally.is_combat_active()
+            || ally.has_condition(Condition::Helped)
+        {
+            continue;
+        }
+        // The grant has to have a swing to ride. `MELEE_REACH` rather
+        // than the ally's own weapon reach: the picker is a heuristic,
+        // and one tile of slack the other way would have it hand
+        // advantage to an archer who is about to be charged.
+        let in_contact = encounter.actors.iter().any(|(eid, enemy)| {
+            *eid != ally_id
+                && enemy.team() != my_team
+                && enemy.is_combat_active()
+                && encounter
+                    .footprint_distance(ally_id, *eid)
+                    .is_some_and(|d| d <= crate::actions::action_template::MELEE_REACH)
+        });
+        if !in_contact {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![ally_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = ally.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Steady Aim — Tasha's Rogue lv3 bonus action. Installs an advantage-
@@ -5714,9 +5833,11 @@ fn try_greater_restoration(
 ///   - **not-a-heal** — among actions for the same ally, `is_heal()`
 ///     first. This is the fix; the two elements above are unchanged.
 ///
-/// Help is excluded by name. It is helpful and single-target and would
-/// otherwise sort alongside the buffs, but an attack-advantage rider is
-/// the one thing a creature bleeding out has no use for.
+/// Help is excluded by name, and so is the Mastermind Rogue's Master of
+/// Tactics — the same action at a different price, so the same
+/// reasoning. Both are helpful and single-target and would otherwise
+/// sort alongside the buffs, but an attack-advantage rider is the one
+/// thing a creature bleeding out has no use for.
 fn try_support_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -5730,7 +5851,7 @@ fn try_support_heal(
         .filter(|a| {
             !a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
-                && a.name() != "help"
+                && !matches!(a.name(), "help" | "master of tactics")
         })
         .copied()
         .collect();
@@ -12134,7 +12255,8 @@ mod tests {
             SUN_SOUL_MONK_TEMPLATE,
         };
         use crate::actors::creatures::rogues::{
-            PHANTOM_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE,
+            INQUISITIVE_ROGUE_TEMPLATE, PHANTOM_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE,
+            THIEF_ROGUE_TEMPLATE,
         };
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::paladins::{
@@ -12155,7 +12277,12 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 37] = [
+        let cases: [(&CreatureTemplate, &str); 38] = [
+            // Not Master of Tactics: the Mastermind hands an *ally*
+            // advantage, and this fixture is one PC against one ogre.
+            // Misdirection has no action to choose either — the engine
+            // spends the reaction — so both belong engine-side.
+            (&INQUISITIVE_ROGUE_TEMPLATE, "insightful fighting"),
             (&SPORES_DRUID_TEMPLATE, "halo of spores"),
             (&SPORES_DRUID_TEMPLATE, "symbiotic entity"),
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),

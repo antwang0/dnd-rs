@@ -1398,6 +1398,32 @@ pub enum Condition {
     ///
     /// Cleared when the timer expires or the paladin is downed.
     Sworn,
+    /// Analyzed — 5e Inquisitive Rogue **Insightful Fighting** (subclass
+    /// level 3, XGtE). "You can use a bonus action to make a Wisdom
+    /// (Insight) check against a creature… If your check succeeds, you
+    /// can use your Sneak Attack against that target even if you don't
+    /// have advantage on the attack roll, but not if you have
+    /// disadvantage on it."
+    ///
+    /// A fourth path through `sneak_attack_eligible`, and the only one
+    /// the rogue can *create*: the other three are things the board
+    /// happens to be doing — the rogue rolled with advantage, an ally is
+    /// standing next to the target, or the swashbuckler is duelling it
+    /// alone. This one is a bonus action the rogue spends to make the
+    /// board irrelevant.
+    ///
+    /// Back-linked to the rogue who read the target, the same
+    /// positive-polarity shape `Sworn` uses: it is *that* rogue's sneak
+    /// attack the mark enables and nobody else's, so a second rogue
+    /// standing beside the same target gets nothing from it.
+    ///
+    /// RAW's Insight-versus-Deception contest is dropped — the engine
+    /// rolls no skill checks — so the read always lands. What pays for
+    /// it is the bonus action, which on a rogue is Cunning Action:
+    /// analysing a target is choosing not to Dash, Disengage or Hide
+    /// that turn, and for a d8 chassis standing in reach that is a real
+    /// price.
+    Analyzed,
     /// Purified — 5e Paladin Aura of Purity (lv4 abjuration, concentration).
     /// The holder is shielded by the paladin's protective aura: resistance
     /// to poison damage (folded into the condition_resistance lane in
@@ -2216,6 +2242,7 @@ impl Condition {
             Condition::Shadowstepping => "stepping through shadow",
             Condition::WildShaped => "wild-shaped",
             Condition::Sworn => "sworn-quarry of a vengeance paladin",
+            Condition::Analyzed => "read by an inquisitive rogue",
             Condition::Purified => "purified",
             Condition::PhantasmalForced => "haunted by a phantasm",
             Condition::WaterSphered => "trapped in a watery sphere",

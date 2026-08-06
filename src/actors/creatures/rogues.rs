@@ -615,3 +615,110 @@ pub static PHANTOM_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // shape as `LONG_DEATH_MONK_TEMPLATE`'s Touch of Death.
     ROGUE_TEMPLATE.with_subclass_tag("Phantom Rogue", 'H', WAILS_FROM_THE_GRAVE_TAG)
 });
+
+/// Inquisitive Rogue — **Roguish Archetype: Inquisitive** (XGtE), and
+/// the eighth rogue on a roster where every previous build answers the
+/// same question from a different angle: how do I get my Sneak Attack
+/// onto the right creature? The Assassin gets advantage on the opener,
+/// the Soulknife throws it 60 ft, the Swashbuckler collects it without
+/// help, the Scout survives being reached, the Thief takes an extra
+/// turn, the Phantom spills it onto a second body.
+///
+/// This one stops asking. **Insightful Fighting** (lv3) is a bonus
+/// action that reads a creature within 30 ft and marks it; from then on
+/// the rogue sneak-attacks that creature whether or not anything else on
+/// the board cooperates. It is the only path through
+/// `class_attacks::sneak_attack_eligible` the rogue can manufacture —
+/// the other three are things the board happens to be doing.
+///
+/// **Eye for Weakness** (lv17) is what makes the mark worth a bonus
+/// action even against a target the rogue could already sneak-attack:
+/// +3d6 into the sneak pool against the creature they read. On this
+/// chassis that is a 3d6 pool becoming 6d6, which roughly doubles the
+/// rogue's round.
+///
+/// The two together give the roster its first rogue with a *setup* turn.
+/// Every other build here spends its bonus action on Cunning Action —
+/// Dash to reach, Disengage to leave, Hide to re-arm the advantage —
+/// and the Inquisitive spends one turn's worth of that to make the rest
+/// of the fight unconditional. Which is a real trade on a d8 chassis
+/// standing in reach: the turn the rogue reads its target is a turn it
+/// cannot disengage out of contact.
+///
+/// Left out: **Ear for Deceit** and **Eye for Detail** (lv3) and
+/// **Insightful Manipulator** (lv9) are all skill checks, and the engine
+/// rolls none. **Steady Eye** (lv3) is advantage on Perception and
+/// Investigation, same problem. **Unerring Eye** (lv9) senses illusions
+/// and shapeshifters within 30 ft; the engine's nearest surface is
+/// Truesight, and granting a rogue permanent Truesight to model a
+/// once-per-rest hunch would be a much larger feature than the one RAW
+/// wrote.
+///
+/// Glyph 'I' — for **I**nquisitive. Free on the rogue family, where
+/// 'R', 'A', 'S', 'K', 'T', 'M', 'F' and 'H' are taken.
+pub static INQUISITIVE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{EYE_FOR_WEAKNESS_TAG, INSIGHTFUL_FIGHTING};
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&*INSIGHTFUL_FIGHTING);
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.insert(EYE_FOR_WEAKNESS_TAG);
+    CreatureTemplate {
+        name: "Inquisitive Rogue",
+        glyph: 'I',
+        actions,
+        features,
+        ..ROGUE_TEMPLATE.clone()
+    }
+});
+
+/// Mastermind Rogue — **Roguish Archetype: Mastermind** (XGtE), and the
+/// only rogue on the roster whose two shipped features both act on
+/// somebody other than the rogue.
+///
+/// **Master of Tactics** (lv3) is the Help action as a bonus action at
+/// 30 ft. Both halves matter and they matter together: the bonus action
+/// is the one a Mastermind standing safely at range has least use for,
+/// and the thirty feet is what lets the rogue hand the front line
+/// advantage from wherever a d8 chassis wants to be standing. It is
+/// also, on this roster, the only repeatable advantage-granting button
+/// that costs nothing and never runs out — the bard's Inspiration is a
+/// pool of three, Commander's Strike spends a superiority die, and Help
+/// itself costs the helper their whole turn.
+///
+/// **Misdirection** (lv13) is the other side of the same coin, and it is
+/// the least sentimental feature in the engine: while somebody is
+/// standing between the rogue and a shooter, an attack that would land
+/// on the rogue can be made to land on them instead. RAW does not ask
+/// whether that somebody is a friend, and neither does this. See
+/// `MISDIRECTION_TAG` and `engine::attack::ATTACK_REDIRECTS`.
+///
+/// Read together the archetype is a rogue who fights entirely through
+/// other people's bodies — theirs to swing with, theirs to hide behind.
+/// Which is a genuinely different lane from the seven builds beside it,
+/// every one of which is a question about the rogue's own Sneak Attack.
+/// The Mastermind's Sneak Attack is the baseline's, unimproved, and the
+/// build is still worth playing because the fighter's is better.
+///
+/// Left out: **Soul of Deceit** (lv13's other half) protects the rogue's
+/// thoughts from telepathy and magical lie-detection, neither of which
+/// the engine models. **Insightful Manipulator** (lv9) and the lv3
+/// tool / language proficiencies are ribbons.
+///
+/// Glyph 'D' — for the masterminD, since 'M' is the Soulknife's. Free on
+/// the rogue family, where 'R', 'A', 'S', 'K', 'T', 'M', 'F', 'H' and
+/// 'I' are taken.
+pub static MASTERMIND_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::MISDIRECTION_TAG;
+    use crate::actions::default_actions::MASTER_OF_TACTICS;
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&*MASTER_OF_TACTICS);
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.insert(MISDIRECTION_TAG);
+    CreatureTemplate {
+        name: "Mastermind Rogue",
+        glyph: 'D',
+        actions,
+        features,
+        ..ROGUE_TEMPLATE.clone()
+    }
+});

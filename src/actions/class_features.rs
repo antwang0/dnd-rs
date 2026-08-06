@@ -4158,6 +4158,142 @@ impl Action for VowOfEnmity {
 
 pub static VOW_OF_ENMITY: LazyLock<VowOfEnmity> = LazyLock::new(|| VowOfEnmity {});
 
+/// **Insightful Fighting** — Inquisitive Rogue subclass level 3 (XGtE).
+/// Bonus action, at will, 30 ft: the rogue reads a creature and installs
+/// `Condition::Analyzed` back-linked to themselves for 10 rounds
+/// (1 minute RAW).
+///
+/// The mark is a fourth path through
+/// `class_attacks::sneak_attack_eligible`, and the only one the rogue
+/// manufactures rather than finds. See `Condition::Analyzed` for what
+/// RAW's Insight-versus-Deception contest costs to drop and what the
+/// bonus action buys back.
+///
+/// Shaped on Vow of Enmity directly above — same bonus-action,
+/// single-hostile-target, flag-plus-back-link install, and the same
+/// re-application dedup so a rogue doesn't spend a turn refreshing a
+/// timer with nine rounds left on it. The differences are the price and
+/// the reach: the vow is once per rest at 10 ft, this is free at 30, and
+/// what it hands over is smaller for exactly that reason.
+pub struct InsightfulFighting {}
+
+impl Action for InsightfulFighting {
+    fn name(&self) -> &str {
+        "insightful fighting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["if", "insight", "read"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles on the 2.5 ft grid.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW's contest is a read of the creature's tells; you cannot
+        // read what you cannot see.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Nothing lands on the target — no damage, no save — but the
+        // mark is aimed at an enemy, so the flag keeps the AI's
+        // helpful-action lane from ever offering it against an ally.
+        // Same reasoning as Vow of Enmity above.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let (Some(rogue), Some(target)) = (
+            encounter.actors.get(&caster_id),
+            encounter.actors.get(&target_id),
+        ) else {
+            return false;
+        };
+        if !rogue.is_combat_active()
+            || !target.is_combat_active()
+            || target.team() == rogue.team()
+        {
+            return false;
+        }
+        // Already read by *this* rogue: re-applying only refreshes a
+        // timer, and the bonus action is better spent on Cunning
+        // Action. A target read by a different rogue is still fair
+        // game — the install takes over the back-link.
+        target.linked_by(Condition::Analyzed) != Some(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log(
+            "  insightful fighting: the rogue reads the target's guard and finds the gap."
+                .to_string(),
+        );
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::Analyzed,
+            target_id,
+            caster_id,
+            // 10 rounds = 1 minute RAW, the same envelope every other
+            // one-minute mark on the roster carries.
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static INSIGHTFUL_FIGHTING: LazyLock<InsightfulFighting> =
+    LazyLock::new(|| InsightfulFighting {});
+
+/// Passive tag for the Inquisitive Rogue's **Eye for Weakness**
+/// (subclass level 17, XGtE): "you deal an extra 3d6 damage to that
+/// target whenever you sneak attack it" — "that target" being the one
+/// the rogue read with Insightful Fighting.
+///
+/// Read at the Sneak Attack die-count site in `class_attacks`, where it
+/// adds three dice to the pool when the target carries `Analyzed` linked
+/// back to this rogue. Not a flat rider on top of the sneak damage: it
+/// joins the pool, so a crit doubles it and Cunning Strike can spend
+/// against it, which is what RAW's "extra 3d6" on a Sneak Attack means
+/// at every other site the engine models.
+///
+/// Ships on the CR-2 rogue chassis above its strict RAW lv17 gate for
+/// the same reason every other class template runs above strict RAW
+/// level — templates target a balanced playable level, not lockstep PHB
+/// progression. It is also what makes Insightful Fighting worth a bonus
+/// action against a target the rogue could already sneak-attack: without
+/// it, a rogue standing beside an ally has nothing to buy.
+pub const EYE_FOR_WEAKNESS_TAG: &str = "rogue.eye_for_weakness";
+
 /// Class-feature tag for the Open Hand Monk's **Wholeness of Body** (lv6
 /// subclass feature, once per long rest in our model — RAW: once per
 /// long rest at lv6 already). Action; self-heal for `3 × level` HP.
@@ -4328,6 +4464,25 @@ pub const DRUNKEN_TECHNIQUE_TAG: &str = "monk.drunken_technique";
 /// for the three places the implementation narrows RAW, and for why the
 /// redirected swing rolls fresh damage rather than carrying any over.
 pub const REDIRECT_ATTACK_TAG: &str = "monk.redirect_attack";
+
+/// 5e Mastermind Rogue **Misdirection** (subclass level 13, XGtE)
+/// feature tag: "when you're targeted by an attack while a creature
+/// within 5 feet of you is granting you cover, you can use your reaction
+/// to have the attack target that creature instead of you."
+///
+/// The second row on `engine::attack::ATTACK_REDIRECTS`, and the one
+/// that answers a hit rather than a miss. Passive and uncharged — the
+/// reaction is the whole budget.
+///
+/// It is also the roster's only defensive feature that costs somebody
+/// else something. Every other reaction in the engine spends the
+/// holder's resources: a clamp spends their reaction, an interposition
+/// spends their hit points. This one spends whoever happened to be
+/// standing between the rogue and the arrow, and RAW does not care
+/// whether that creature is a friend. Which is the subclass — the
+/// Mastermind's other shipped feature hands an ally advantage from
+/// thirty feet away, and this one hands them an arrow from five.
+pub const MISDIRECTION_TAG: &str = "rogue.misdirection";
 
 /// 5e Way of the Drunken Master Monk **Drunkard's Luck** (subclass level
 /// 11, XGtE) feature tag: "when you make an ability check, an attack

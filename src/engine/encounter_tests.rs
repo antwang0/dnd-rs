@@ -71619,3 +71619,266 @@ fn wholeness_of_body_is_not_paid_for_in_ki() {
         "and a short rest does not give it back"
     );
 }
+
+/// Insightful Fighting is a fourth path through the Sneak Attack gate,
+/// and it belongs to the rogue who spent the bonus action: a second
+/// rogue standing beside the same target gets nothing from a mark that
+/// isn't theirs.
+#[test]
+fn an_analyzed_target_is_sneak_attackable_by_the_rogue_who_read_it() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::INSIGHTFUL_FIGHTING;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::{INQUISITIVE_ROGUE_TEMPLATE, ROGUE_TEMPLATE};
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let inq = e
+        .instantiate_creature(&INQUISITIVE_ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let other = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 6), 0, 1)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    for eff in INSIGHTFUL_FIGHTING.side_effects(&mut e, inq, Some(&vec![goblin]), None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&goblin].has_condition(Condition::Analyzed));
+    assert_eq!(
+        e.actors[&goblin].linked_by(Condition::Analyzed),
+        Some(inq),
+        "the mark remembers who read the target"
+    );
+    // The read is not repeatable against the same target by the same
+    // rogue — it would only refresh a timer and cost a Cunning Action.
+    assert!(
+        !INSIGHTFUL_FIGHTING.custom_validate_input(&e, inq, Some(&vec![goblin]), None, None),
+        "a rogue does not spend a second bonus action re-reading its own mark"
+    );
+    // …but a different rogue may take the mark over.
+    assert!(INSIGHTFUL_FIGHTING
+        .custom_validate_input(&e, other, Some(&vec![goblin]), None, None));
+    // And it never points at an ally.
+    assert!(
+        !INSIGHTFUL_FIGHTING.custom_validate_input(&e, inq, Some(&vec![other]), None, None),
+        "there is nothing to read on a friend"
+    );
+}
+
+/// Eye for Weakness adds its three dice to the Sneak Attack pool against
+/// the creature the Inquisitive read, and to nothing else. Measured
+/// across a seed sweep on the damage the goblin actually takes, because
+/// the pool is what the dice come out of.
+#[test]
+fn eye_for_weakness_only_pays_against_the_rogues_own_mark() {
+    use crate::actions::class_features::INSIGHTFUL_FIGHTING;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::INQUISITIVE_ROGUE_TEMPLATE;
+    use crate::actions::action_template::Action;
+
+    // Same board and same seed twice over; the only difference is
+    // whether the rogue read the target first.
+    let hits = |analyze: bool| -> Vec<String> {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], 7);
+        let rogue = e
+            .instantiate_creature(&INQUISITIVE_ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+            .unwrap();
+        // An ally in contact with the goblin, so the *unmarked* run is
+        // sneak-eligible too. Without it the comparison would be
+        // "three dice versus none", which is Insightful Fighting's
+        // effect rather than Eye for Weakness's.
+        let _flanker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 0, 1)
+            .unwrap();
+        if analyze {
+            for eff in
+                INSIGHTFUL_FIGHTING.side_effects(&mut e, rogue, Some(&vec![goblin]), None, None)
+            {
+                eff.apply(&mut e);
+            }
+        }
+        let sword = e.actors[&rogue].find_action("shortsword").unwrap();
+        for eff in sword.side_effects(&mut e, rogue, Some(&vec![goblin]), None, None) {
+            eff.apply(&mut e);
+        }
+        e.messages()
+            .iter()
+            .filter(|l| l.contains("sneak attack:"))
+            .cloned()
+            .collect()
+    };
+    // "  sneak attack: NdN(...)" → N.
+    let pool = |lines: &[String]| -> u32 {
+        let line = lines.first().expect("a sneak attack line");
+        line.split("sneak attack: ")
+            .nth(1)
+            .and_then(|rest| rest.split('d').next())
+            .and_then(|n| n.trim().parse().ok())
+            .expect("a die count")
+    };
+    let plain = pool(&hits(false));
+    let marked = pool(&hits(true));
+    assert_eq!(
+        marked,
+        plain + 3,
+        "eye for weakness puts three more dice in the pool"
+    );
+}
+
+/// Misdirection puts the body that was shielding the Mastermind in front
+/// of the arrow — and declines when the line to the rogue is clear.
+#[test]
+fn misdirection_hands_the_hit_to_whoever_was_granting_cover() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::MASTERMIND_ROGUE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+
+    // Shooter at x=2, a goblin in the way at x=6, the rogue at x=7 —
+    // so the blocker is on the line and within 5 ft of the rogue.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let shooter = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+        .unwrap();
+    let blocker = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 1, 1)
+        .unwrap();
+    let rogue = e
+        .instantiate_creature(&MASTERMIND_ROGUE_TEMPLATE, Coordinate::new(7, 4), 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.cover_granting_creature(shooter, rogue, 2),
+        Some(blocker),
+        "the goblin in the way is the one granting cover"
+    );
+    let mut fired = false;
+    for _ in 0..60 {
+        e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+        let blocker_before = e.actors.get(&blocker).map(|a| a.hitpoints());
+        let rogue_before = e.actors[&rogue].hitpoints();
+        let max = e.actors[&rogue].max_hitpoints();
+        e.actors.get_mut(&rogue).unwrap().heal(max);
+        let _ = resolve_attack(
+            &mut e,
+            AttackParams {
+                caster_id: shooter,
+                target_id: rogue,
+                action_name: "shortbow",
+                // Deliberately overwhelming, so every swing connects and
+                // the hit lane is where they all end up.
+                attack_bonus: 30,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 1,
+                damage_type: DamageType::Piercing,
+                is_melee: false,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        let blocker_hurt = e
+            .actors
+            .get(&blocker)
+            .map(|a| a.hitpoints())
+            .zip(blocker_before)
+            .is_none_or(|(now, before)| now < before);
+        if blocker_hurt {
+            fired = true;
+            assert!(
+                e.actors[&rogue].hitpoints() >= rogue_before.min(max),
+                "the rogue takes none of a redirected hit"
+            );
+            assert!(!e.actors[&rogue].has_reaction(), "and it cost the reaction");
+            break;
+        }
+        if !e.actors.contains_key(&blocker) {
+            break;
+        }
+    }
+    assert!(fired, "the mastermind never sent a hit into its cover");
+}
+
+/// …and with a clear line there is nobody to hide behind, so the rogue
+/// takes the hit and keeps the reaction.
+#[test]
+fn misdirection_declines_when_the_shot_is_clear() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::MASTERMIND_ROGUE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let shooter = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+        .unwrap();
+    let rogue = e
+        .instantiate_creature(&MASTERMIND_ROGUE_TEMPLATE, Coordinate::new(9, 4), 0, 0)
+        .unwrap();
+    assert_eq!(e.cover_granting_creature(shooter, rogue, 2), None);
+    let before = e.actors[&rogue].hitpoints();
+    for eff in resolve_attack(
+        &mut e,
+        AttackParams {
+            caster_id: shooter,
+            target_id: rogue,
+            action_name: "shortbow",
+            attack_bonus: 30,
+            damage_dice: Dice::new(1, 6),
+            damage_bonus: 1,
+            damage_type: DamageType::Piercing,
+            is_melee: false,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        e.actors[&rogue].hitpoints() < before,
+        "the rogue eats it: {:?}",
+        e.messages()
+    );
+    // The reaction is not asserted here: with nobody to hide behind the
+    // rogue's Uncanny Dodge takes it instead, which is the whole point
+    // of the ordering — Misdirection gets first refusal, and what it
+    // declines falls through to the clamp cohort.
+    assert!(
+        !e.messages().iter().any(|l| l.contains("misdirection")),
+        "nothing was in the way, so nothing was misdirected"
+    );
+}
+
+/// Master of Tactics is the Help action re-priced: a bonus action, at
+/// 30 ft. The baseline rogue's Help is neither.
+#[test]
+fn master_of_tactics_is_help_at_a_bonus_actions_price() {
+    use crate::actions::action_template::Action;
+    use crate::actions::default_actions::{HELP, MASTER_OF_TACTICS};
+    use crate::actors::creatures::rogues::{MASTERMIND_ROGUE_TEMPLATE, ROGUE_TEMPLATE};
+    use crate::engine::side_effects::Resource;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let mind = e
+        .instantiate_creature(&MASTERMIND_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    assert!(e.actors[&mind].find_action("master of tactics").is_some());
+    assert!(e.actors[&plain].find_action("master of tactics").is_none());
+    assert_eq!(
+        MASTER_OF_TACTICS.cost(&e, mind, None, None, None),
+        vec![Resource::BonusAction]
+    );
+    assert_eq!(HELP.cost(&e, plain, None, None, None), vec![Resource::Action]);
+    assert_eq!(MASTER_OF_TACTICS.reach_tiles(), Some(12));
+    assert_eq!(HELP.reach_tiles(), Some(1));
+    // The grant itself is the same one, so an ally 30 ft off is Helped.
+    let far = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(13, 2), 0, 2)
+        .unwrap();
+    for eff in MASTER_OF_TACTICS.side_effects(&mut e, mind, Some(&vec![far]), None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&far].has_condition(Condition::Helped));
+}

@@ -229,7 +229,7 @@ fn reactive_reducer_eligible(
     encounter: &EncounterInstance,
     target_id: usize,
     attacker_id: usize,
-    passive_ok: fn(&ActorInstance) -> bool,
+    passive_ok: impl Fn(&ActorInstance) -> bool,
     feature_tag: Option<&'static str>,
 ) -> bool {
     let Some(target) = encounter.actors.get(&target_id) else {
@@ -1313,104 +1313,222 @@ pub fn try_fire_riposte(
     encounter.cleanup_dead_actors();
 }
 
-/// 5e Way of the Drunken Master Monk **Tipsy Sway: Redirect Attack**
-/// (subclass level 6): "when a creature misses you with a melee attack
-/// roll, you can spend 1 ki point as a reaction to cause that attack to
-/// hit one creature of your choice, other than the attacker, that you
-/// can see within 5 feet of you."
+/// Which swing a row on `ATTACK_REDIRECTS` answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RedirectLane {
+    /// The swing missed. The Drunken Master's Tipsy Sway makes the
+    /// attacker's whiff land on somebody anyway.
+    Miss,
+    /// The swing connected. The Mastermind's Misdirection puts the body
+    /// that was shielding them in front of it.
+    Hit,
+}
+
+/// How a redirect row picks the creature the swing lands on instead.
+#[derive(Clone, Copy)]
+enum RedirectVictim {
+    /// The nearest hostile within `tiles` of the holder, other than the
+    /// attacker. RAW for the Drunken Master is "one creature of your
+    /// choice, other than the attacker, that you can see within 5 feet
+    /// of you"; hostiles-only is the narrowing — see the cohort docs.
+    NearbyEnemy(isize),
+    /// The creature standing between the attacker and the holder, and
+    /// within `tiles` of the holder — the one whose body is granting the
+    /// cover. RAW for the Mastermind, and deliberately *not* filtered by
+    /// team: a Mastermind who ducks behind an ally and lets the arrow
+    /// find them is the feature working as written.
+    CoverGranter(isize),
+}
+
+/// Cohort row: a feature whose holder spends a reaction to make an
+/// attack aimed at them land on a different creature.
 ///
-/// A third thing a melee miss can be worth, and the only one in the
-/// engine where the *attacker's own swing* lands somewhere else. Riposte
-/// answers a miss with a swing of the defender's; Deflect Missiles and
-/// Parry shrink a hit that already landed; this one keeps the attacker's
-/// damage and moves the body underneath it.
+/// Two rows, and between them they cover both halves of the d20. Every
+/// other defensive reaction in the engine acts on the *damage* — the
+/// clamp cohort shrinks it, `attack_intercepted` erases the hit,
+/// `DAMAGE_INTERPOSERS` moves it onto a volunteer. These move the swing
+/// itself, onto somebody who did not volunteer.
+struct AttackRedirect {
+    /// Passive-feature tag the holder must carry. Neither row has a
+    /// per-rest charge — the reaction is the whole budget.
+    tag: &'static str,
+    lane: RedirectLane,
+    victim: RedirectVictim,
+    /// Log-friendly identity, and the verb the log line reads with.
+    label: &'static str,
+    /// The clause between the holder's name and the attacker's, e.g.
+    /// "sways aside and".
+    flavor: &'static str,
+}
+
+/// Every attack-redirect row, walked by `try_fire_attack_redirect` from
+/// both branches of `resolve_attack_outcome`.
 ///
-/// Three deliberate narrowings of RAW, all in the same direction:
+/// Three deliberate narrowings apply to both rows, all in the same
+/// direction:
 ///
-///   - **Hostiles only.** RAW says "one creature of your choice", which
-///     includes the monk's own allies, and a controller that could aim
-///     the redirect at a friend would be handing the AI a way to shoot
-///     its own side. The pick is the nearest hostile the monk can see
-///     within 5 ft, ties broken on id so a seeded run reproduces.
-///   - **No attack roll and no crit.** The redirected swing "hits" flat
-///     — RAW's wording makes it hit by fiat, so there is no roll to make
-///     and nothing that could come up 20.
-///   - **The damage is re-rolled, not carried over.** The original swing
-///     missed, so it never rolled damage; this rolls the attack's own
-///     dice plus its flat bonus, which is the same expression the hit
-///     branch would have used.
+///   - **No attack roll and no crit on the substitute.** RAW makes the
+///     redirected swing hit by fiat (the Drunken Master) or re-target it
+///     (the Mastermind); neither re-rolls here, so there is no second
+///     d20 and nothing that could come up 20.
+///   - **The damage is rolled fresh.** On the miss lane the original
+///     swing never rolled any; on the hit lane it had not rolled yet.
+///     Either way this rolls the attack's own dice plus its flat bonus,
+///     which is the expression the hit branch would have used.
+///   - **Ki and cover degrees are not modelled.** The Drunken Master's
+///     1 ki collapses to the reaction, as every other ki cost on that
+///     chassis does outside `KI_POINTS_TAG`; the Mastermind's "granting
+///     you cover" is read as "standing on the line within 5 ft" rather
+///     than as a half-versus-three-quarters distinction.
 ///
-/// Ki is not modelled, so the cost is the reaction alone — the same
-/// collapse Flurry of Blows and Patient Defense already make on this
-/// chassis. Unlike Riposte there is no per-rest charge to spend, which
-/// makes the monk's reaction the whole budget: one redirect a round, and
-/// only if the monk has not already spent it on Deflect Missiles.
+/// The hit row fires **ahead of `REACTIVE_DAMAGE_CLAMPS`**, which
+/// matters on the one chassis that carries both: a Mastermind is a
+/// rogue, and a rogue has Uncanny Dodge. Both want the same reaction,
+/// and a redirect takes all of the damage off the rogue where a dodge
+/// takes half, so the redirect is offered first and the dodge catches
+/// whatever it declines. That is a decision the engine makes because
+/// RAW leaves it to the player, and it is the one that is never worse.
+const ATTACK_REDIRECTS: &[AttackRedirect] = &[
+    // 5e Way of the Drunken Master Monk **Tipsy Sway: Redirect Attack**
+    // (subclass level 6, XGtE): "when a creature misses you with a melee
+    // attack roll, you can spend 1 ki point as a reaction to cause that
+    // attack to hit one creature of your choice, other than the
+    // attacker, that you can see within 5 feet of you."
+    //
+    // Hostiles only. RAW's "one creature of your choice" includes the
+    // monk's own allies, and a controller that could aim the redirect at
+    // a friend would be handing the AI a way to shoot its own side.
+    AttackRedirect {
+        tag: crate::actions::class_features::REDIRECT_ATTACK_TAG,
+        lane: RedirectLane::Miss,
+        // 5 ft = 2 tiles on the 2.5 ft grid.
+        victim: RedirectVictim::NearbyEnemy(2),
+        label: "redirect attack",
+        flavor: "sways aside and",
+    },
+    // 5e Mastermind Rogue **Misdirection** (subclass level 13, XGtE):
+    // "when you're targeted by an attack while a creature within 5 feet
+    // of you is granting you cover, you can use your reaction to have
+    // the attack target that creature instead of you."
+    //
+    // The hit lane, because that is where the feature is worth
+    // something: RAW lets the rogue redirect the moment they are
+    // targeted, before knowing whether it would have landed, and a
+    // reaction spent on a swing that was going to miss anyway is a
+    // reaction wasted. Firing on the hit is the same decision made with
+    // better information, which is the direction every other
+    // engine-spent reaction on the roster errs in.
+    AttackRedirect {
+        tag: crate::actions::class_features::MISDIRECTION_TAG,
+        lane: RedirectLane::Hit,
+        victim: RedirectVictim::CoverGranter(2),
+        label: "misdirection",
+        flavor: "steps behind cover and",
+    },
+];
+
+/// Walk `ATTACK_REDIRECTS` for `lane` and fire the first row the target
+/// qualifies for, moving the swing onto somebody else.
 ///
-/// Returns true if a swing was actually moved, so a caller can tell the
-/// difference between "declined" and "nothing in range".
-fn try_fire_redirect_attack(encounter: &mut EncounterInstance, p: &AttackParams) -> bool {
-    use crate::actions::class_features::REDIRECT_ATTACK_TAG;
+/// Returns true if a swing was actually moved, so the hit-lane caller
+/// can abandon the rest of the pipeline and the miss-lane caller can
+/// tell "declined" from "nothing in range".
+fn try_fire_attack_redirect(
+    encounter: &mut EncounterInstance,
+    p: &AttackParams,
+    lane: RedirectLane,
+) -> bool {
     use crate::engine::side_effects::DealDamage;
 
-    let monk_id = p.target_id;
-    // Shared five-clause gate — holds the tag, combat-active, has a
-    // reaction, and can see the attacker (RAW's redirect is a response
-    // to a swing the monk perceives). `tag: None` because the feature
-    // has no per-rest charge; see the doc above.
-    if !reactive_reducer_eligible(
-        encounter,
-        monk_id,
-        p.caster_id,
-        |a| a.has_passive_feature(REDIRECT_ATTACK_TAG),
-        None,
-    ) {
-        return false;
+    let holder_id = p.target_id;
+    for row in ATTACK_REDIRECTS {
+        if row.lane != lane {
+            continue;
+        }
+        // Shared four-clause gate — holds the tag, combat-active, has a
+        // reaction, and can see the attacker (both features are a
+        // response to a swing the holder perceives). `tag: None` because
+        // neither row carries a per-rest charge.
+        if !reactive_reducer_eligible(
+            encounter,
+            holder_id,
+            p.caster_id,
+            |a| a.has_passive_feature(row.tag),
+            None,
+        ) {
+            continue;
+        }
+        let Some(new_target) = pick_redirect_victim(encounter, p, row) else {
+            continue;
+        };
+        let damage =
+            (encounter.roll_weapon_damage_dice(p.damage_dice, false) as i32 + p.damage_bonus).max(0)
+                as u32;
+        let (holder_name, attacker_name, victim_name) = (
+            encounter.actor_name(holder_id),
+            encounter.actor_name(p.caster_id),
+            encounter.actor_name(new_target),
+        );
+        encounter.log(format!(
+            "[reaction] {}: {} {} {}'s {} lands on {} for {} {:?}.",
+            row.label,
+            holder_name,
+            row.flavor,
+            attacker_name,
+            p.action_name,
+            victim_name,
+            damage,
+            p.damage_type
+        ));
+        DealDamage {
+            actor_id: new_target,
+            amount: damage,
+            damage_type: p.damage_type,
+        }
+        .apply(encounter);
+        spend_reactive_reducer(encounter, holder_id, None);
+        encounter.cleanup_dead_actors();
+        return true;
     }
-    let Some(monk_team) = encounter.actors.get(&monk_id).map(|a| a.team()) else {
-        return false;
-    };
-    // "within 5 feet of you" — 2 tiles on the 2.5 ft grid, measured as
-    // the footprint gap the rest of the engine measures reach with.
-    const REDIRECT_RANGE: isize = 2;
-    let mut candidates: Vec<(isize, usize)> = encounter
-        .actors
-        .iter()
-        .filter(|(id, a)| {
-            **id != monk_id && **id != p.caster_id && a.team() != monk_team && a.is_combat_active()
-        })
-        .filter_map(|(id, _)| {
-            let dist = encounter.footprint_distance(monk_id, *id)?;
-            (dist <= REDIRECT_RANGE).then_some((dist, *id))
-        })
-        // RAW's "that you can see" — an invisible bystander is not a
-        // creature the monk can choose.
-        .filter(|(_, id)| encounter.viewer_can_see(monk_id, *id))
-        .collect();
-    candidates.sort_unstable();
-    let Some((_, new_target)) = candidates.first().copied() else {
-        return false;
-    };
+    false
+}
 
-    let damage = encounter.roll_weapon_damage_dice(p.damage_dice, false) as i32 + p.damage_bonus;
-    let damage = damage.max(0) as u32;
-    let (monk_name, attacker_name, victim_name) = (
-        encounter.actor_name(monk_id),
-        encounter.actor_name(p.caster_id),
-        encounter.actor_name(new_target),
-    );
-    encounter.log(format!(
-        "[reaction] redirect attack: {} sways aside and {}'s {} lands on {} for {} {:?}.",
-        monk_name, attacker_name, p.action_name, victim_name, damage, p.damage_type
-    ));
-    DealDamage {
-        actor_id: new_target,
-        amount: damage,
-        damage_type: p.damage_type,
+/// Resolve `row`'s substitute target, or `None` if there is nobody to
+/// send the swing to.
+fn pick_redirect_victim(
+    encounter: &EncounterInstance,
+    p: &AttackParams,
+    row: &AttackRedirect,
+) -> Option<usize> {
+    match row.victim {
+        RedirectVictim::NearbyEnemy(tiles) => {
+            let holder = encounter.actors.get(&p.target_id)?;
+            let holder_team = holder.team();
+            let mut candidates: Vec<(isize, usize)> = encounter
+                .actors
+                .iter()
+                .filter(|(id, a)| {
+                    **id != p.target_id
+                        && **id != p.caster_id
+                        && a.team() != holder_team
+                        && a.is_combat_active()
+                })
+                .filter_map(|(id, _)| {
+                    let dist = encounter.footprint_distance(p.target_id, *id)?;
+                    (dist <= tiles).then_some((dist, *id))
+                })
+                // RAW's "that you can see" — an invisible bystander is
+                // not a creature the holder can choose. Ties break on
+                // id, so a seeded run reproduces.
+                .filter(|(_, id)| encounter.viewer_can_see(p.target_id, *id))
+                .collect();
+            candidates.sort_unstable();
+            candidates.first().map(|(_, id)| *id)
+        }
+        RedirectVictim::CoverGranter(tiles) => {
+            encounter.cover_granting_creature(p.caster_id, p.target_id, tiles)
+        }
     }
-    .apply(encounter);
-    spend_reactive_reducer(encounter, monk_id, None);
-    encounter.cleanup_dead_actors();
-    true
 }
 
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
@@ -1764,7 +1882,7 @@ pub fn resolve_attack_outcome_with_rider(
             // somewhere. Fires after Riposte because both spend the
             // target's reaction and Riposte is the older claim on it;
             // no chassis on the roster holds both.
-            try_fire_redirect_attack(encounter, &p);
+            try_fire_attack_redirect(encounter, &p, RedirectLane::Miss);
         }
         return (Vec::new(), 0);
     }
@@ -1775,6 +1893,15 @@ pub fn resolve_attack_outcome_with_rider(
     // of the cohort applies to any attack roll, not just weapon swings
     // (RAW, uniformly: "any attack roll against you").
     if encounter.attack_intercepted(p.target_id, p.caster_id, is_crit) {
+        return (Vec::new(), 0);
+    }
+    // 5e Mastermind Rogue **Misdirection** — the hit half of
+    // `ATTACK_REDIRECTS`. Runs after the interception cohort because a
+    // swing that lands on a Mirror Image decoy never reached the rogue
+    // for them to duck, and before the damage rolls below because the
+    // whole point is that the rogue takes none of it. The row rolls its
+    // own damage at the substitute, so the swing ends here.
+    if try_fire_attack_redirect(encounter, &p, RedirectLane::Hit) {
         return (Vec::new(), 0);
     }
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
