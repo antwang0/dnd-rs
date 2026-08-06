@@ -138,9 +138,29 @@ pub fn render_map(
         let mut row: Vec<Span> = Vec::new();
         for x in 0..encounter.width {
             let coord = Coordinate::new(x as isize, y as isize);
-            if let Some(actor_id) = encounter.actor_id_at(coord)
-                && let Some(actor) = encounter.actors.get(&actor_id)
+            if let Some(occupant_id) = encounter.actor_id_at(coord)
+                && let Some(occupant) = encounter.actors.get(&occupant_id)
             {
+                // A mounted rider has no stamp on the grid — the mount
+                // owns the pair's tiles (see `engine::mounts`) — so the
+                // map would draw a horse and no knight at all. Draw the
+                // rider on the mount's *anchor* tile and the mount
+                // everywhere else: the pair is one body to walk into and
+                // two creatures to shoot at, and the map has room to say
+                // both.
+                //
+                // Falls back to the mount if the link points at somebody
+                // who is no longer in the table, for the same reason the
+                // outer `if let` exists: a frame can land between a
+                // death and its cleanup, and a renderer is the wrong
+                // place to find out.
+                let (actor_id, actor) = match occupant.ridden_by() {
+                    Some(rider_id) if occupant.location() == coord => encounter
+                        .actors
+                        .get(&rider_id)
+                        .map_or((occupant_id, occupant), |r| (rider_id, r)),
+                    _ => (occupant_id, occupant),
+                };
                 // Stale id (cleanup race between damage tick and frame draw)
                 // would otherwise crash the renderer; skip to terrain.
                 let (mut s, c, bg): (String, Color, Color) =
@@ -364,6 +384,22 @@ pub fn render_sideinfo(
                 spans.push(Span::styled(
                     " +turn".to_string(),
                     Style::default().fg(Color::LightMagenta),
+                ));
+            }
+            // The two halves of a mounted pair, said on the row rather
+            // than left to the map. A ridden mount's slot passes
+            // straight through — it acts on its rider's turn — so
+            // without this the panel shows a warhorse that is never
+            // reached and no reason why.
+            if let Some(rider_id) = actor.ridden_by() {
+                spans.push(Span::styled(
+                    format!(" ridden by {}", encounter.actor_name(rider_id)),
+                    Style::default().fg(Color::LightGreen),
+                ));
+            } else if let Some(mount_id) = actor.mounted_on() {
+                spans.push(Span::styled(
+                    format!(" riding {}", encounter.actor_name(mount_id)),
+                    Style::default().fg(Color::LightGreen),
                 ));
             }
             initiative_lines.push(Line::from(spans));
@@ -729,6 +765,28 @@ mod tests {
             .join("\n")
     }
 
+    /// The map, flattened to one string. Sibling of `rendered_panel`;
+    /// the map is the other half of what a player reads off the screen
+    /// and nothing here was testing it.
+    fn rendered_map(encounter: &EncounterInstance) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("test backend");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_map(encounter, f, area, None);
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
     fn encounter_with(actors: &[(&'static crate::actors::actor_template::CreatureTemplate, usize)])
     -> EncounterInstance {
         let tp = TerrainGenParams {
@@ -753,6 +811,67 @@ mod tests {
                 .expect("instantiate");
         }
         e
+    }
+
+    /// The two halves of a mounted pair both reach the screen: the
+    /// rider's glyph on the map, and the pairing on the panel.
+    ///
+    /// This is the one place a rider can go missing. `engine::mounts`
+    /// takes the rider off the occupancy grid so the pair can share a
+    /// space, and the map is drawn straight off that grid — so a knight
+    /// on a horse renders as a horse, and the player loses track of
+    /// their own character. The panel matters for the same reason from
+    /// the other side: a ridden mount's initiative slot passes straight
+    /// through, and a warhorse that is never reached needs to say why.
+    #[test]
+    fn a_mounted_pair_is_visible_on_the_map_and_named_on_the_panel() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0), (&WARHORSE_TEMPLATE, 0)]);
+        let rider = *e
+            .actors
+            .iter()
+            .find(|(_, a)| a.name().starts_with("Fighter"))
+            .map(|(id, _)| id)
+            .expect("a fighter");
+        let mount = *e
+            .actors
+            .iter()
+            .find(|(_, a)| a.name().starts_with("Warhorse"))
+            .map(|(id, _)| id)
+            .expect("a warhorse");
+        // The generator scatters them, so walk the horse over rather
+        // than depending on where either landed.
+        let beside = e.actors[&rider].location() + Coordinate::new(2, 0);
+        e.place_actor_at(mount, beside).expect("room beside the rider");
+        assert!(e.mount(rider, mount).is_ok());
+
+        // Distinct glyphs, or "both are drawn" is not a question the
+        // map can answer.
+        assert_ne!(e.actors[&rider].glyph(), e.actors[&mount].glyph());
+        let map = rendered_map(&e);
+        let (rider_glyph, mount_glyph) = (
+            e.actors[&rider].glyph(),
+            e.actors[&mount].glyph(),
+        );
+        assert!(
+            map.contains(rider_glyph),
+            "the rider is still on the board and must still be drawn:\n{}",
+            map
+        );
+        assert!(
+            map.contains(mount_glyph),
+            "and so is the horse under them:\n{}",
+            map
+        );
+
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("riding") && panel.contains("ridden by"),
+            "the panel names the pairing from both ends:\n{}",
+            panel
+        );
     }
 
     /// The seed is on screen. Every encounter has one now, and it is
