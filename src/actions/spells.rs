@@ -1882,6 +1882,7 @@ impl Action for FireBolt {
                 damage_type: DamageType::Fire,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: true,
             },
         )
@@ -2898,6 +2899,7 @@ impl Action for RayOfFrost {
                 damage_type: DamageType::Cold,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: true,
             },
         )

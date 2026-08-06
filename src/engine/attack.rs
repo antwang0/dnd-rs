@@ -46,6 +46,12 @@ pub struct AttackParams<'a> {
     /// converted to tiles — attacks between `long_range` and `reach`
     /// roll with disadvantage per RAW.
     pub long_range: Option<isize>,
+    /// 5e close-quarters threshold (in tiles). A swing whose footprint
+    /// gap is *below* this rolls with disadvantage. `None` for every
+    /// weapon that doesn't mind being crowded; `Some(2)` for the lance,
+    /// whose "disadvantage against a target within 5 feet" is the mirror
+    /// of `long_range` and the reason a lance is a mounted weapon.
+    pub min_range: Option<isize>,
     /// `true` for spell-attack rolls (Fire Bolt, Eldritch Blast, Magic
     /// Stone, ...), `false` for weapon swings. Drives the 5e Tasha's
     /// Sorcerer Seeking Spell rider: on a miss, a spell-attack roll can
@@ -1455,6 +1461,17 @@ pub fn resolve_attack_outcome_with_rider(
         && !p.is_melee
         && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
         && dist > nr
+    {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+    }
+    // …and its mirror at the other end of the reach. 5e's lance: "you
+    // have disadvantage when you use a lance to attack a target within
+    // 5 feet of you." Unlike the long-range clause this one is *not*
+    // gated on `!is_melee` — it exists precisely for a melee weapon
+    // that is too long to use up close.
+    if let Some(mr) = p.min_range
+        && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
+        && dist < mr
     {
         mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }

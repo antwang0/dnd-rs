@@ -6819,11 +6819,27 @@ fn best_attack_against(
         // What this swing would actually roll from where the actor is
         // standing. `compute_attack_mode` is the shared engine helper
         // the attack sites use, so the picker and the die agree.
-        let mode = mode_priority(encounter.compute_attack_mode(
-            actor_id,
-            target_id,
-            action.is_melee_attack(),
-        ));
+        //
+        // Plus the one penalty that belongs to the *weapon* rather than
+        // to the pair of creatures: a lance jabbed at something already
+        // in contact. `compute_attack_mode` cannot see it — it is
+        // handed an id and a melee flag, not an action — so the picker
+        // asks the action directly, the same number
+        // `AttackParams::min_range` will hand the die. Without it a
+        // knight with a longsword on their belt reads its lance as the
+        // longer-reaching option and jabs at disadvantage all fight.
+        let crowded = action
+            .min_effective_reach()
+            .is_some_and(|min| dist < min);
+        let mode = mode_priority(
+            encounter
+                .compute_attack_mode(actor_id, target_id, action.is_melee_attack())
+                .combine(if crowded {
+                    crate::engine::dice::RollMode::Disadvantage
+                } else {
+                    crate::engine::dice::RollMode::Normal
+                }),
+        );
         let damage = action.expected_damage(encounter, actor_id);
         let pick = match &best {
             None => true,

@@ -2612,6 +2612,7 @@ fn weapon_plus_one_increases_dealt_damage_over_baseline() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
             );
@@ -4304,6 +4305,7 @@ fn champion_crits_on_nineteen() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
             is_spell: false,
             },
         );
@@ -4330,6 +4332,7 @@ fn champion_crits_on_nineteen() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
             is_spell: false,
             },
         );
@@ -4388,6 +4391,7 @@ fn brutal_critical_adds_die_on_melee_crit() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
             is_spell: false,
                 },
             );
@@ -4452,6 +4456,7 @@ fn savage_attacks_adds_die_on_melee_crit() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
             is_spell: false,
                 },
             );
@@ -4522,6 +4527,7 @@ fn savage_attacks_skips_ranged_crit() {
                     damage_type: DamageType::Piercing,
                     is_melee: false,
                     long_range: None,
+                    min_range: None,
             is_spell: false,
                 },
             );
@@ -7537,6 +7543,7 @@ fn paralyzed_melee_hit_promotes_to_crit() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
             is_spell: false,
                 },
             );
@@ -20351,6 +20358,7 @@ fn empowered_arms_only_pays_while_the_arms_are_up() {
         damage_type: DamageType::Force,
         is_melee: true,
         long_range: None,
+        min_range: None,
         is_spell: false,
     };
     let mut effects = Vec::new();
@@ -23596,6 +23604,7 @@ fn inspired_bonus_lands_on_weapon_attack() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
             is_spell: false,
                 },
             );
@@ -27691,6 +27700,7 @@ fn illusory_self_zeroes_damage_at_the_weapon_attack_chokepoint() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         )
@@ -30496,6 +30506,7 @@ fn sweeping_attack_splash_targets_adjacent_enemy() {
             damage_type: crate::engine::types::DamageType::Slashing,
             is_melee: true,
             long_range: None,
+            min_range: None,
             is_spell: false,
         },
     ) {
@@ -35811,6 +35822,7 @@ fn uncanny_dodge_consumes_reaction_on_hit() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
             long_range: None,
+            min_range: None,
             is_spell: false,
             },
         );
@@ -35862,6 +35874,7 @@ fn deflect_missiles_reduces_ranged_damage_and_consumes_reaction() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -35902,6 +35915,7 @@ fn deflect_missiles_reduces_ranged_damage_and_consumes_reaction() {
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -35986,6 +36000,7 @@ fn uncanny_dodge_does_not_fire_against_invisible_attacker() {
                 damage_type: DamageType::Slashing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36050,6 +36065,7 @@ fn deflect_missiles_does_not_fire_when_monk_is_blinded() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36108,6 +36124,7 @@ fn parry_reduces_melee_damage_and_consumes_charge() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36167,6 +36184,7 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36207,6 +36225,7 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36262,6 +36281,7 @@ fn riposte_fires_on_melee_miss_and_consumes_charge() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -36309,6 +36329,7 @@ fn riposte_does_not_fire_on_ranged_miss_or_on_hit() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -50029,6 +50050,7 @@ fn unwavering_mark_locks_the_target_onto_the_cavalier() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -50086,6 +50108,7 @@ fn unwavering_mark_skips_ranged_swings() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -50359,6 +50382,7 @@ fn psionic_strike_fires_once_per_turn() {
         damage_type: DamageType::Slashing,
         is_melee: true,
         long_range: None,
+        min_range: None,
         is_spell: false,
     };
     let mut effects = Vec::new();
@@ -50498,6 +50522,7 @@ fn eldritch_strike_marks_the_target_on_a_weapon_hit() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
             );
@@ -51395,6 +51420,7 @@ fn a_help_grant_grants_advantage_on_a_weapon_swing() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52627,6 +52653,7 @@ fn dueling_style_adds_damage_on_melee_weapon_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52658,6 +52685,7 @@ fn dueling_style_adds_damage_on_melee_weapon_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52746,6 +52774,7 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52779,6 +52808,7 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52858,6 +52888,7 @@ fn two_weapon_fighting_flag_scales_with_strength() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -52885,6 +52916,7 @@ fn two_weapon_fighting_flag_scales_with_strength() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -54653,6 +54685,7 @@ fn aura_of_hate_adds_damage_on_melee_weapon_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -54681,6 +54714,7 @@ fn aura_of_hate_adds_damage_on_melee_weapon_hits() {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -54729,6 +54763,7 @@ fn aura_of_hate_does_not_fire_on_ranged_weapon_hits() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: Some(30),
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -54756,6 +54791,7 @@ fn aura_of_hate_does_not_fire_on_ranged_weapon_hits() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: Some(30),
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -69844,6 +69880,7 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
             );
@@ -70163,6 +70200,7 @@ fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
             );
@@ -70872,5 +70910,66 @@ fn a_mounted_combatants_horse_dodges_like_a_rogue() {
     assert_eq!(
         e.save_mitigation_for(horse, AbilityScoreType::Constitution),
         None
+    );
+}
+
+/// The lance is a mounted weapon again.
+///
+/// 5e's entry is three clauses; two of them ship. Reach 2 was already
+/// here, and "you have disadvantage when you use a lance to attack a
+/// target within 5 feet of you" is the one that was dropped, with a note
+/// in the weapon's own docstring saying the mount gate had been removed
+/// because there were no mounts to gate on.
+#[test]
+fn a_lance_is_the_wrong_weapon_at_point_blank() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::monster_attacks::LANCE;
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    assert_eq!(LANCE.min_effective_reach(), Some(2));
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let knight = e
+        .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // At the lance's full reach the swing is clean…
+    let far = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    assert_eq!(e.footprint_distance(knight, far), Some(2));
+    let clean_from = e.messages().len();
+    for se in
+        ActionExecutionInfo::new(&LANCE, knight, Some(vec![far]), None, None).execute(&mut e)
+    {
+        se.apply(&mut e);
+    }
+    let clean = e.messages()[clean_from..].join("\n");
+    assert!(
+        clean.contains("lance:") && !clean.contains("(dis)"),
+        "reach 2 is where a lance wants to be:\n{}",
+        clean
+    );
+
+    // …and in contact it is not. The mode itself is read off the
+    // resolution path, so the assertion is on the log the swing writes.
+    let near = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 1)
+        .unwrap();
+    assert_eq!(e.footprint_distance(knight, near), Some(0));
+    // Fresh turn: the first swing above spent the knight's Action, and
+    // a swing that never validates writes no log to read.
+    e.actors.get_mut(&knight).unwrap().reset_for_new_round();
+    let before = e.messages().len();
+    for se in
+        ActionExecutionInfo::new(&LANCE, knight, Some(vec![near]), None, None).execute(&mut e)
+    {
+        se.apply(&mut e);
+    }
+    let log = e.messages()[before..].join("\n");
+    assert!(
+        log.contains("(dis)"),
+        "a lance jabbed at something in contact rolls twice and takes the worse:\n{}",
+        log
     );
 }

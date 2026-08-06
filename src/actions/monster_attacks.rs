@@ -38,7 +38,7 @@ pub fn simple_weapon_attack(
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     simple_weapon_attack_ranged(
         encounter, caster_id, target_ids, action_name, attack_ability,
-        damage_ability, damage_dice, damage_type, is_melee, None,
+        damage_ability, damage_dice, damage_type, is_melee, None, None,
     )
 }
 
@@ -385,6 +385,11 @@ pub fn weapon_swing_with_damage(
             damage_type,
             is_melee,
             long_range,
+            // Nobody reaches this helper with a lance: it is the
+            // bespoke-monster-swing lane, and the close-quarters clause
+            // lives on `SimpleWeapon`, which has its own path to
+            // `resolve_attack`.
+            min_range: None,
             is_spell: false,
         },
     )
@@ -402,6 +407,7 @@ pub fn simple_weapon_attack_ranged(
     damage_type: DamageType,
     is_melee: bool,
     normal_range: Option<isize>,
+    min_effective_range: Option<isize>,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(target_id) = first_target_id(target_ids) else {
         return Vec::new();
@@ -425,6 +431,7 @@ pub fn simple_weapon_attack_ranged(
             damage_type,
             is_melee,
             long_range: normal_range,
+            min_range: min_effective_range,
             is_spell: false,
         },
     )
@@ -710,6 +717,24 @@ pub struct SimpleWeapon {
     /// going to pay for rather than resolving on arms that are no
     /// longer there.
     pub requires_condition: Option<Condition>,
+    /// The footprint gap *below* which this weapon's swing rolls at
+    /// disadvantage, or `None` for the ordinary weapon that is equally
+    /// happy at any range it can reach.
+    ///
+    /// The mirror of `normal_range`, and it exists for one weapon: 5e's
+    /// **lance**. "You have disadvantage when you use a lance to attack
+    /// a target within 5 feet of you" is the clause that makes a lance a
+    /// mounted weapon rather than just a long spear, and it is the half
+    /// of the entry the engine used to drop — the Knight's lance shipped
+    /// with a note saying the mount gate had been removed because there
+    /// were no mounts. There are now.
+    ///
+    /// Read on both sides of the swing: `simple_weapon_attack` passes it
+    /// into `AttackParams::min_range` so the die knows, and the AI's
+    /// attack picker reads it through `Action::min_effective_reach` so a
+    /// knight with a longsword on their belt doesn't jab with the wrong
+    /// end of a lance at point-blank.
+    pub min_effective_range: Option<isize>,
 }
 
 impl SimpleWeapon {
@@ -770,6 +795,7 @@ impl SimpleWeapon {
             cost_resource: Resource::Action,
             normal_range: None,
             requires_condition: None,
+            min_effective_range: None,
         }
     }
 
@@ -809,6 +835,7 @@ impl SimpleWeapon {
             cost_resource: Resource::Action,
             normal_range: None,
             requires_condition: None,
+            min_effective_range: None,
         }
     }
 
@@ -845,6 +872,7 @@ impl SimpleWeapon {
             cost_resource: Resource::Action,
             normal_range: Some(normal_range),
             requires_condition: None,
+            min_effective_range: None,
         }
     }
 
@@ -873,6 +901,7 @@ impl SimpleWeapon {
             cost_resource: self.cost_resource,
             normal_range: self.normal_range,
             requires_condition: Some(condition),
+            min_effective_range: None,
         }
     }
 }
@@ -889,6 +918,9 @@ impl Action for SimpleWeapon {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(self.reach)
+    }
+    fn min_effective_reach(&self) -> Option<isize> {
+        self.min_effective_range
     }
     fn requires_los(&self) -> bool {
         self.requires_los
@@ -962,6 +994,7 @@ impl Action for SimpleWeapon {
                 self.damage_type,
                 self.is_melee,
                 self.normal_range,
+                self.min_effective_range,
             )
         };
         let mut effects = swing(encounter);
@@ -1871,6 +1904,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     cost_resource: Resource::BonusAction,
     normal_range: Some(8),
     requires_condition: None,
+    min_effective_range: None,
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -2125,6 +2159,7 @@ impl Action for AcidSpit {
                 damage_type: DamageType::Acid,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -2902,6 +2937,7 @@ impl Action for LifeDrain {
                 damage_type: DamageType::Necrotic,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -2979,6 +3015,7 @@ impl Action for VampiricBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -3617,17 +3654,32 @@ pub static PACT_BLADE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
-/// drop the mount gate so the Knight gets a polearm option to swing from
-/// 10 ft (one tile beyond a standard sword reach).
-pub static LANCE: SimpleWeapon = SimpleWeapon::reach_melee(
-    "lance",
-    &["lnc"],
-    AbilityScoreType::Strength,
-    Dice::new(1, 12),
-    DamageType::Piercing,
-    2,
-);
+/// Lance — 1d12 piercing, reach 2 (RAW's 10 ft), and disadvantage
+/// against anything within 5 feet.
+///
+/// The whole of RAW's entry except the two-handed clause, which needs a
+/// hand-occupancy model the engine doesn't have. That last clause is
+/// also the least of the three: "a lance requires two hands to wield
+/// when you aren't mounted" is a shield tax, and the disadvantage is
+/// what actually decides whether you want one.
+///
+/// This used to ship as a plain reach-2 spear with a note saying the
+/// mounted-only gate had been dropped because the engine had no mounts.
+/// It has them now, and the lance is the weapon that most wants them: a
+/// knight on foot jabs at disadvantage the moment anything closes to
+/// contact, and a knight on a warhorse rides at ten feet and never lets
+/// it.
+pub static LANCE: SimpleWeapon = SimpleWeapon {
+    min_effective_range: Some(2),
+    ..SimpleWeapon::reach_melee(
+        "lance",
+        &["lnc"],
+        AbilityScoreType::Strength,
+        Dice::new(1, 12),
+        DamageType::Piercing,
+        2,
+    )
+};
 
 /// Knight's double-longsword multiattack — two swings per Action,
 /// modeled on top of the existing Multiattack wrapper.
@@ -3712,6 +3764,7 @@ impl Action for WorgBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -5052,6 +5105,7 @@ impl Action for LichParalyzingTouch {
                 damage_type: DamageType::Cold,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -5313,6 +5367,7 @@ impl Action for CouatlBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -5665,6 +5720,7 @@ impl Action for TarrasqueTail {
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -5777,6 +5833,7 @@ impl Action for SolarLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -5941,6 +5998,7 @@ impl Action for MindFlayerTentacles {
                 damage_type: DamageType::Psychic,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -6017,6 +6075,7 @@ impl Action for ErinyesLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -6722,6 +6781,7 @@ impl Action for DeathKnightLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
         );
@@ -8248,6 +8308,7 @@ impl Action for SpectatorEyeRay {
             DamageType::Force,
             false,
             Some(24),
+            None,
         )
     }
 }
@@ -9659,6 +9720,7 @@ impl Action for CambionFireRay {
             DamageType::Fire,
             false,
             Some(24),
+            None,
         )
     }
 }
@@ -13223,6 +13285,7 @@ impl Action for HornedDevilHurledFlame {
                 damage_type: DamageType::Fire,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: true,
             },
         )
@@ -13459,6 +13522,7 @@ impl Action for EfreetiHurlFlame {
                 damage_type: DamageType::Fire,
                 is_melee: false,
                 long_range: None,
+                min_range: None,
                 is_spell: true,
             },
         )

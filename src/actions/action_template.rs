@@ -789,6 +789,23 @@ pub trait Action {
         !self.requires_los() && self.reach_tiles().is_some_and(|r| r <= MELEE_BAND_REACH)
     }
 
+    /// The footprint gap *below* which this action's swing rolls at
+    /// disadvantage, or `None` for everything that doesn't care how
+    /// close its target is.
+    ///
+    /// 5e's **lance** is the only entry today: "you have disadvantage
+    /// when you use a lance to attack a target within 5 feet of you."
+    /// The mirror of the long-range penalty every bow already carries,
+    /// and declared on the trait for the same reason `reach_tiles` is —
+    /// two consumers need the number and neither of them is the weapon.
+    /// `engine::attack::resolve_attack` applies it to the die, through
+    /// `AttackParams::min_range`; the AI's attack picker reads it here,
+    /// so a knight with a longsword on their belt doesn't jab with the
+    /// wrong end of a lance at point-blank range.
+    fn min_effective_reach(&self) -> Option<isize> {
+        None
+    }
+
     /// True when resolving this action lands more than one attack — the
     /// `Multiattack` and `CompoundAttack` wrappers, which sit on the
     /// same action list as the swings they contain.

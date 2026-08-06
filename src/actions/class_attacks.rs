@@ -154,6 +154,7 @@ impl Action for RogueWeapon {
                 damage_type: self.damage_type,
                 is_melee: self.is_melee,
                 long_range: None,
+                min_range: None,
                 is_spell: false,
             },
             &SneakAttack,
@@ -788,6 +789,7 @@ impl Action for BeastFormClaws {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
             )
@@ -946,6 +948,7 @@ impl Action for BeastNaturalWeapon {
                     damage_type: self.damage_type,
                     is_melee: true,
                     long_range: None,
+                    min_range: None,
                     is_spell: false,
                 },
                 // The rider no-ops on the forms that don't hold the bite
