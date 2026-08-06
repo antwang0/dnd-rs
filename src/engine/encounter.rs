@@ -2771,12 +2771,12 @@ impl EncounterInstance {
     /// is disadvantage and `actor_id` has a charge left, spend it and
     /// hand back `RollMode::Normal`.
     ///
-    /// Called at the two d20 chokepoints that can see the mode before
-    /// the die lands and still hold `&mut` — the attack roll in
-    /// `engine::attack::resolve_attack_outcome` and the save in
-    /// `roll_save_with_extra_mode_and_bonus`. Anything not disadvantaged
-    /// passes straight through, so the cost of the feature on every
-    /// other actor in the game is one enum comparison.
+    /// The first row on the roll-mode cancel lane, reached through
+    /// `steady_the_d20` — which is what the two d20 chokepoints that
+    /// can see the mode before the die lands and still hold `&mut`
+    /// actually call. Anything not disadvantaged passes straight
+    /// through, so the cost of the feature on every other actor in the
+    /// game is one enum comparison.
     ///
     /// Returns the mode to roll under. See `DRUNKARDS_LUCK_TAG` for why
     /// it clears to Normal rather than combining an advantage in, and
