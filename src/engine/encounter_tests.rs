@@ -57504,20 +57504,25 @@ fn abjure_enemy_refreshes_on_short_rest() {
     );
 }
 
-/// Rebuke the Violent (Devotion Paladin lv15 feature): action + tag
-/// both ship on `DEVOTION_PALADIN_TEMPLATE`. Baseline / Ancients /
-/// Vengeance / Oathbreaker paladins do NOT ship it — subclass sanity
-/// gate.
+/// Rebuke the Violent (Oath of Redemption Paladin lv3 Channel
+/// Divinity): action + tag both ship on `REDEMPTION_PALADIN_TEMPLATE`.
+/// Baseline / Devotion / Ancients / Vengeance / Oathbreaker paladins do
+/// NOT ship it — subclass sanity gate.
+///
+/// Devotion is on the deny-list rather than the allow-list because it
+/// used to be the allow-list: the feature shipped there as a "lv15
+/// subclass feature", which is the wrong oath *and* the wrong level.
+/// Purity of Spirit is what Devotion carries now.
 #[test]
-fn rebuke_the_violent_ships_on_devotion_paladin_only() {
+fn rebuke_the_violent_ships_on_redemption_paladin_only() {
     use crate::actions::class_features::REBUKE_THE_VIOLENT_TAG;
     use crate::actors::creatures::paladins::{
         ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, OATHBREAKER_PALADIN_TEMPLATE,
-        PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        PALADIN_TEMPLATE, REDEMPTION_PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
     };
     let mut e = ei_with_terrain(20, 20, &[]);
-    let dev = e
-        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+    let red = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let pal = e
         .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
@@ -57531,23 +57536,32 @@ fn rebuke_the_violent_ships_on_devotion_paladin_only() {
     let oath = e
         .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(18, 6), 0, 4)
         .unwrap();
+    let dev = e
+        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 8), 0, 5)
+        .unwrap();
     assert!(
-        e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG),
-        "Devotion Paladin must ship with Rebuke the Violent charge"
+        e.actors[&red].feature_available(REBUKE_THE_VIOLENT_TAG),
+        "Redemption Paladin must ship with Rebuke the Violent charge"
     );
     assert!(
-        e.actors[&dev].find_action("rebuke the violent").is_some(),
-        "Devotion Paladin must ship with the Rebuke the Violent action"
+        e.actors[&red].find_action("rebuke the violent").is_some(),
+        "Redemption Paladin must ship with the Rebuke the Violent action"
     );
     for (id, name) in [
         (pal, "baseline"),
         (ven, "Vengeance"),
         (anc, "Ancients"),
         (oath, "Oathbreaker"),
+        (dev, "Devotion"),
     ] {
         assert!(
             !e.actors[&id].feature_available(REBUKE_THE_VIOLENT_TAG),
             "{} Paladin must NOT ship Rebuke the Violent",
+            name
+        );
+        assert!(
+            e.actors[&id].find_action("rebuke the violent").is_none(),
+            "{} Paladin must NOT ship the Rebuke the Violent action",
             name
         );
     }
@@ -57562,7 +57576,7 @@ fn rebuke_the_violent_spends_charge_and_damages_goblin() {
     use crate::actions::action_template::Action;
     use crate::actions::class_features::{REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG};
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
     let mut goblin_damaged = false;
     for seed in 0..30 {
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -57570,7 +57584,7 @@ fn rebuke_the_violent_spends_charge_and_damages_goblin() {
             let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
         }
         let dev = e
-            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let g = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
@@ -57601,13 +57615,13 @@ fn rebuke_the_violent_spends_charge_and_damages_goblin() {
 fn rebuke_the_violent_rejects_ally_target() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::class_features::REBUKE_THE_VIOLENT;
-    use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
     let dev = e
-        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let ally = e
-        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
         .unwrap();
     let aei =
         ActionExecutionInfo::new(&*REBUKE_THE_VIOLENT, dev, Some(vec![ally]), None, None);
@@ -57630,16 +57644,16 @@ fn rebuke_the_violent_short_rest_registered() {
     );
 }
 
-/// Rebuke the Violent refresh path — after a short rest the Devotion
+/// Rebuke the Violent refresh path — after a short rest the Redemption
 /// paladin's spent charge is back. Sibling to Wrath of the Storm /
 /// Abjure Enemy refresh tests above.
 #[test]
 fn rebuke_the_violent_refreshes_on_short_rest() {
     use crate::actions::class_features::REBUKE_THE_VIOLENT_TAG;
-    use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
     let dev = e
-        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert!(e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG));
     e.actors
@@ -71025,5 +71039,487 @@ fn a_rider_arrives_at_the_next_encounter_on_their_own_feet() {
             Some(*id),
             "and every one of them is on the grid"
         );
+    }
+}
+
+/// Oath of Redemption's three shipped features all land on
+/// `REDEMPTION_PALADIN_TEMPLATE` and on no other oath — the subclass
+/// sanity gate every other paladin template has.
+#[test]
+fn the_redemption_paladin_carries_the_whole_oath_and_nobody_else_does() {
+    use crate::actions::class_features::{
+        AURA_OF_THE_GUARDIAN_TAG, PROTECTIVE_SPIRIT_TAG, REBUKE_THE_VIOLENT_TAG,
+    };
+    use crate::actors::creatures::paladins::{
+        CROWN_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, PALADIN_TEMPLATE,
+        REDEMPTION_PALADIN_TEMPLATE,
+    };
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let red = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    for tag in [
+        REBUKE_THE_VIOLENT_TAG,
+        AURA_OF_THE_GUARDIAN_TAG,
+        PROTECTIVE_SPIRIT_TAG,
+    ] {
+        assert!(
+            e.actors[&red].has_passive_feature(tag),
+            "the Redemption paladin must carry {}",
+            tag
+        );
+    }
+    // The Crown paladin is the other bodyguard on the roster and the
+    // one most likely to have picked the aura up by accident, since
+    // both rows sit on the same damage-interposition cohort.
+    let others = [
+        (&*PALADIN_TEMPLATE, "baseline"),
+        (&*DEVOTION_PALADIN_TEMPLATE, "Devotion"),
+        (&*CROWN_PALADIN_TEMPLATE, "Crown"),
+    ];
+    for (i, (template, name)) in others.iter().enumerate() {
+        let id = e
+            .instantiate_creature(template, Coordinate::new(6 + 4 * i as isize, 6), 0, 1 + i)
+            .unwrap();
+        for tag in [AURA_OF_THE_GUARDIAN_TAG, PROTECTIVE_SPIRIT_TAG] {
+            assert!(
+                !e.actors[&id].has_passive_feature(tag),
+                "the {} paladin must not carry {}",
+                name,
+                tag
+            );
+        }
+    }
+}
+
+/// Aura of the Guardian moves an ally's damage onto the paladin, and
+/// reaches the full ten feet its RAW text names — twice the five the
+/// Crown paladin's Divine Allegiance covers.
+#[test]
+fn aura_of_the_guardian_takes_the_blow_from_ten_feet_away() {
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // Four tiles apart — the far edge of `PALADIN_AURA_RADIUS`, and
+    // outside the one-tile gap Divine Allegiance would have reached.
+    let pal = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(7, 2), 0, 1)
+        .unwrap();
+    let (pal_before, wiz_before) = (
+        e.actors[&pal].hitpoints(),
+        e.actors[&wiz].hitpoints(),
+    );
+    DealDamage {
+        actor_id: wiz,
+        amount: 7,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&wiz].hitpoints(),
+        wiz_before,
+        "the wizard takes nothing — the blow never reaches them"
+    );
+    assert_eq!(
+        e.actors[&pal].hitpoints(),
+        pal_before - 7,
+        "the paladin takes the whole of it"
+    );
+    assert!(
+        !e.actors[&pal].has_reaction(),
+        "and it cost them their reaction"
+    );
+}
+
+/// …and declines outside the aura. A paladin five tiles from the
+/// wizard is a paladin who watches.
+#[test]
+fn aura_of_the_guardian_declines_past_its_own_radius() {
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pal = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(9, 2), 0, 1)
+        .unwrap();
+    let (pal_before, wiz_before) = (
+        e.actors[&pal].hitpoints(),
+        e.actors[&wiz].hitpoints(),
+    );
+    DealDamage {
+        actor_id: wiz,
+        amount: 5,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&wiz].hitpoints() < wiz_before, "the wizard eats it");
+    assert_eq!(e.actors[&pal].hitpoints(), pal_before);
+    assert!(e.actors[&pal].has_reaction(), "and keeps their reaction");
+}
+
+/// A paladin does not take a blow aimed at an enemy, and cannot take
+/// one aimed at themselves.
+#[test]
+fn aura_of_the_guardian_is_for_allies_only() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pal = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    let goblin_before = e.actors[&goblin].hitpoints();
+    DealDamage {
+        actor_id: goblin,
+        amount: 3,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors[&goblin].hitpoints() < goblin_before,
+        "the goblin's own damage stays with the goblin"
+    );
+    assert!(e.actors[&pal].has_reaction());
+    // And the paladin's own damage doesn't bounce off themselves.
+    let pal_before = e.actors[&pal].hitpoints();
+    DealDamage {
+        actor_id: pal,
+        amount: 4,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&pal].hitpoints(), pal_before - 4);
+    assert!(e.actors[&pal].has_reaction());
+}
+
+/// Protective Spirit mends the paladin on a turn they open below half
+/// HP, and does nothing at all above it.
+#[test]
+fn protective_spirit_only_mends_a_paladin_that_is_already_losing() {
+    use crate::actors::creatures::paladins::REDEMPTION_PALADIN_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pal = e
+        .instantiate_creature(&REDEMPTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // A second body so the initiative queue has somewhere to go.
+    let _goblin = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(9, 9),
+            1,
+            0,
+        )
+        .unwrap();
+    let max = e.actors[&pal].max_hitpoints();
+    // Just above half: nothing happens.
+    e.actors
+        .get_mut(&pal)
+        .unwrap()
+        .take_damage(max - (max / 2 + 1));
+    let healthy = e.actors[&pal].hitpoints();
+    assert!(healthy * 2 > max);
+    for _ in 0..4 {
+        e.skip_turn();
+    }
+    assert_eq!(
+        e.actors[&pal].hitpoints(),
+        healthy,
+        "a paladin above half its HP is not what the spirit is for"
+    );
+    // Now drop it below half and let its turn come round again.
+    e.actors.get_mut(&pal).unwrap().take_damage(healthy - 2);
+    let hurt = e.actors[&pal].hitpoints();
+    assert!(hurt * 2 < max);
+    for _ in 0..4 {
+        e.skip_turn();
+        if e.actors[&pal].hitpoints() > hurt {
+            break;
+        }
+    }
+    assert!(
+        e.actors[&pal].hitpoints() > hurt,
+        "below half, the spirit puts 1d6 + half level back"
+    );
+}
+
+/// Purity of Spirit is the Devotion paladin's RAW level 15, and it
+/// reads at the same gate the Protection from Evil and Good condition
+/// does: a fiend swings at disadvantage, an orc doesn't.
+#[test]
+fn purity_of_spirit_taxes_the_fiends_and_leaves_the_humanoids_alone() {
+    use crate::actors::creatures::imps::IMP_TEMPLATE;
+    use crate::actors::creatures::orcs::ORC_TEMPLATE;
+    use crate::actors::creatures::paladins::{DEVOTION_PALADIN_TEMPLATE, PALADIN_TEMPLATE};
+    use crate::engine::dice::RollMode;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let dev = e
+        .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(4, 8), 0, 1)
+        .unwrap();
+    let imp = e
+        .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    let orc = e
+        .instantiate_creature(&ORC_TEMPLATE, Coordinate::new(3, 4), 1, 1)
+        .unwrap();
+    // Melee throughout, so the "ranged attack with a hostile adjacent
+    // to the shooter" clause doesn't quietly supply a disadvantage of
+    // its own and make every arm of this test pass for the wrong
+    // reason.
+    assert_eq!(
+        e.compute_attack_mode(imp, dev, true),
+        RollMode::Disadvantage,
+        "a fiend attacking a Devotion paladin is warded against"
+    );
+    assert_eq!(
+        e.compute_attack_mode(orc, dev, true),
+        RollMode::Normal,
+        "an orc is not on protection from evil and good's list"
+    );
+    assert_eq!(
+        e.compute_attack_mode(imp, plain, true),
+        RollMode::Normal,
+        "and a paladin without the oath's level 15 gets nothing"
+    );
+}
+
+/// Drunken Technique: the Drunken Master's Flurry of Blows also buys
+/// the exit — the Disengage benefit and ten more feet — while every
+/// other monk's Flurry buys only the extra swing.
+#[test]
+fn drunken_technique_turns_flurry_of_blows_into_an_exit() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::FLURRY_OF_BLOWS;
+    use crate::actors::creatures::monks::{DRUNKEN_MASTER_MONK_TEMPLATE, MONK_TEMPLATE};
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let drunk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(6, 2), 0, 1)
+        .unwrap();
+    for id in [drunk, plain] {
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    }
+    let budget_before = e.actors[&drunk].remaining_movement();
+    for id in [drunk, plain] {
+        for eff in FLURRY_OF_BLOWS.side_effects(&mut e, id, None, None, None) {
+            eff.apply(&mut e);
+        }
+    }
+    assert!(
+        e.actors[&drunk].has_condition(Condition::Disengaging),
+        "the drunken master reels out of reach"
+    );
+    assert!(
+        e.actors[&drunk].remaining_movement() > budget_before,
+        "…with ten more feet to do it in"
+    );
+    assert!(
+        !e.actors[&plain].has_condition(Condition::Disengaging),
+        "the baseline monk's Flurry is still only a Flurry"
+    );
+}
+
+/// Redirect Attack: a melee miss against the Drunken Master lands on
+/// the other enemy standing beside them instead, and costs the monk
+/// their reaction.
+#[test]
+fn redirect_attack_lands_a_miss_on_the_bystander() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    let mut fired = false;
+    for seed in 0..60 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let monk = e
+            .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 4), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 1)
+            .unwrap();
+        e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+        let bystander_before = e.actors[&bystander].hitpoints();
+        let _ = resolve_attack(
+            &mut e,
+            AttackParams {
+                caster_id: attacker,
+                target_id: monk,
+                action_name: "scimitar",
+                // Deliberately hopeless against the monk's AC 15, so
+                // the miss branch is where every swing ends up.
+                attack_bonus: -10,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 2,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        let hurt = e
+            .actors
+            .get(&bystander)
+            .is_none_or(|a| a.hitpoints() < bystander_before);
+        if hurt {
+            fired = true;
+            assert!(
+                !e.actors[&monk].has_reaction(),
+                "the redirect costs the monk their reaction"
+            );
+            break;
+        }
+    }
+    assert!(
+        fired,
+        "the drunken master never redirected a miss onto the second goblin"
+    );
+}
+
+/// …and with nothing else in reach there is nowhere to send it, so the
+/// reaction is kept. Also pins that the attacker is never a legal
+/// destination: RAW says "other than the attacker".
+#[test]
+fn redirect_attack_needs_somebody_other_than_the_attacker_to_hit() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let monk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let attacker = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 4), 1, 0)
+        .unwrap();
+    let attacker_before = e.actors[&attacker].hitpoints();
+    for _ in 0..40 {
+        e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+        let _ = resolve_attack(
+            &mut e,
+            AttackParams {
+                caster_id: attacker,
+                target_id: monk,
+                action_name: "scimitar",
+                attack_bonus: -10,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 2,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        assert!(
+            e.actors[&monk].has_reaction(),
+            "with nowhere to send the swing the monk keeps their reaction"
+        );
+        assert_eq!(
+            e.actors[&attacker].hitpoints(),
+            attacker_before,
+            "and the attacker is never the creature it gets sent to"
+        );
+    }
+}
+
+/// Drunkard's Luck cancels one disadvantaged save per short rest, and
+/// cancels it to Normal rather than upgrading it.
+#[test]
+fn drunkards_luck_spends_once_and_cancels_rather_than_upgrades() {
+    use crate::actions::class_features::DRUNKARDS_LUCK_TAG;
+    use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let monk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG));
+    assert_eq!(
+        e.cancel_disadvantage_with_luck(monk, RollMode::Disadvantage),
+        RollMode::Normal,
+        "the disadvantage goes away"
+    );
+    assert!(
+        !e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG),
+        "and the charge went with it"
+    );
+    assert_eq!(
+        e.cancel_disadvantage_with_luck(monk, RollMode::Disadvantage),
+        RollMode::Disadvantage,
+        "a spent charge buys nothing"
+    );
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+    e.actors.get_mut(&monk).unwrap().short_rest(&mut roller);
+    assert!(
+        e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG),
+        "ki comes back on a short rest"
+    );
+    // An advantaged or straight roll is passed through untouched — the
+    // charge is only ever spent on the case the feature names.
+    for mode in [RollMode::Normal, RollMode::Advantage] {
+        assert_eq!(e.cancel_disadvantage_with_luck(monk, mode), mode);
+    }
+    assert!(e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG));
+}
+
+/// Nobody but the Drunken Master carries the three Way-of-the-Drunken-
+/// Master tags — the subclass sanity gate the monk family's other
+/// eight templates have.
+#[test]
+fn the_drunken_master_tags_ship_on_one_monk_only() {
+    use crate::actions::class_features::{
+        DRUNKARDS_LUCK_TAG, DRUNKEN_TECHNIQUE_TAG, REDIRECT_ATTACK_TAG,
+    };
+    use crate::actors::creatures::monks::{
+        ASTRAL_SELF_MONK_TEMPLATE, DRUNKEN_MASTER_MONK_TEMPLATE, MONK_TEMPLATE,
+        OPEN_HAND_MONK_TEMPLATE,
+    };
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let drunk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let tags = [
+        DRUNKEN_TECHNIQUE_TAG,
+        REDIRECT_ATTACK_TAG,
+        DRUNKARDS_LUCK_TAG,
+    ];
+    for tag in tags {
+        assert!(e.actors[&drunk].has_passive_feature(tag), "missing {}", tag);
+    }
+    for (i, (template, name)) in [
+        (&*MONK_TEMPLATE, "baseline"),
+        (&*OPEN_HAND_MONK_TEMPLATE, "Open Hand"),
+        (&*ASTRAL_SELF_MONK_TEMPLATE, "Astral Self"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let id = e
+            .instantiate_creature(template, Coordinate::new(6 + 4 * i as isize, 2), 0, 1 + i)
+            .unwrap();
+        for tag in tags {
+            assert!(
+                !e.actors[&id].has_passive_feature(tag),
+                "the {} monk must not carry {}",
+                name,
+                tag
+            );
+        }
     }
 }

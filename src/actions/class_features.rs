@@ -168,8 +168,8 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // paladin CD family (Turn the Faithless, Nature's Wrath, Guided
     // Strike, Radiance of the Dawn) — RAW Channel Divinity is once
     // per short rest.
-    // 5e Devotion Paladin level-15 subclass feature — Rebuke the
-    // Violent. Single-target 4d10 radiant damage burst via WIS save
+    // 5e Oath of Redemption Paladin level-3 Channel Divinity — Rebuke
+    // the Violent. Single-target 4d10 radiant damage burst via WIS save
     // vs the paladin's CHA-anchored DC. Refreshed on short rest to
     // match the CD gating shape — RAW uses per long rest = CHA mod
     // refreshes on long rest, collapsed to a single once-per-short-
@@ -318,6 +318,10 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the plain Paladin — the two chassis most likely to be picked, and
     // the two whose Channel Divinity is the whole non-spell half of
     // their turn.
+    // 5e Way of the Drunken Master Monk **Drunkard's Luck**. RAW prices
+    // it in ki, and ki comes back on a short rest — the same reasoning
+    // that puts every other collapsed-ki charge on this lane.
+    DRUNKARDS_LUCK_TAG,
 ];
 
 /// Every **Channel Divinity** on the roster: the once-per-rest resource
@@ -4202,6 +4206,69 @@ pub const EMPOWERED_ARMS_TAG: &str = "monk.empowered_arms";
 /// passive-feature flag the row's `flag` closure reads.
 pub const DEFLECT_ENERGY_TAG: &str = "monk.deflect_energy";
 
+/// 5e Way of the Drunken Master Monk **Drunken Technique** (subclass
+/// level 3, XGtE) feature tag: "whenever you use Flurry of Blows, you
+/// gain the benefit of the Disengage action, and your walking speed
+/// increases by 10 feet until the end of the current turn."
+///
+/// Read inside `FlurryOfBlows::side_effects`, which is the only place
+/// the trigger can be seen — RAW hangs the clause off *using another
+/// feature*, not off a cost or a turn boundary, and Flurry is where that
+/// happens.
+///
+/// The pairing is the subclass. Every other monk's bonus action makes it
+/// a choice between hitting more and leaving safely: Flurry buys the
+/// extra strike, Step of the Wind buys the exit, and a monk gets one of
+/// them. The Drunken Master's Flurry is both, which turns the chassis
+/// from a creature that has to commit to a contact it entered into one
+/// that can strike three times and walk out of reach in the same turn.
+///
+/// The +10 ft is spelled as extra movement handed to the turn rather
+/// than as a speed bonus, because `speed()` is read once when the turn's
+/// budget is granted and a mid-turn bump to it would arrive after the
+/// budget already existed. Step of the Wind's Dash rider has the same
+/// shape for the same reason, one size larger.
+pub const DRUNKEN_TECHNIQUE_TAG: &str = "monk.drunken_technique";
+
+/// 5e Way of the Drunken Master Monk **Tipsy Sway: Redirect Attack**
+/// (subclass level 6, XGtE) feature tag: a melee miss against the monk
+/// can be made to land on somebody else standing next to them.
+///
+/// Passive and uncharged — the whole feature is a reaction the engine
+/// spends on the monk's behalf at the miss branch of
+/// `resolve_attack_outcome`. See `engine::attack::try_fire_redirect_attack`
+/// for the three places the implementation narrows RAW, and for why the
+/// redirected swing rolls fresh damage rather than carrying any over.
+pub const REDIRECT_ATTACK_TAG: &str = "monk.redirect_attack";
+
+/// 5e Way of the Drunken Master Monk **Drunkard's Luck** (subclass level
+/// 11, XGtE) feature tag: "when you make an ability check, an attack
+/// roll, or a saving throw and have disadvantage, you can spend 2 ki
+/// points to cancel the disadvantage for that roll."
+///
+/// One charge per short rest, which is the engine's usual stand-in for a
+/// ki cost (see Shadow Arts' slot table for the other one). The charge
+/// is spent by the engine rather than by the player, at the two d20
+/// chokepoints that can see a disadvantaged roll coming and still have
+/// `&mut` in hand: the attack roll in `resolve_attack_outcome` and the
+/// save in `EncounterInstance::roll_save_with_extra_mode_and_bonus`.
+/// Ability checks are the third RAW context and the engine rolls none.
+///
+/// **Cancel, not upgrade.** RAW says the disadvantage goes away, leaving
+/// whatever the roll would otherwise have been — so a monk who is both
+/// prone-adjacent-advantaged and Poisoned does not come out with
+/// advantage, they come out rolling straight. The implementation clears
+/// the mode to `Normal` rather than combining an `Advantage` into it,
+/// which is the difference.
+///
+/// It is deliberately spent on the first disadvantaged roll of the fight
+/// rather than saved for a better one. The engine has no way to know
+/// whether a bigger swing is coming, and a charge held for a moment that
+/// never arrives is worth less than a charge spent on the swing in front
+/// of it — the same reasoning `fire_missed_attack_boost` states for the
+/// per-rest miss-rescue cohort.
+pub const DRUNKARDS_LUCK_TAG: &str = "monk.drunkards_luck";
+
 /// Arms of the Astral Self — Way of the Astral Self Monk lv3 subclass
 /// action. Bonus action, at will: spectral arms settle over the monk's
 /// own for a minute, and `ASTRAL_ARMS_STRIKE` — which refuses to
@@ -5827,7 +5894,33 @@ impl Action for FlurryOfBlows {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         encounter.log("  flurry of blows: monk gains an extra Action for a follow-up strike.".to_string());
-        grant_extra_action(caster_id)
+        let mut effects = grant_extra_action(caster_id);
+        // 5e Way of the Drunken Master **Drunken Technique**: the same
+        // bonus action also buys the exit. RAW hangs the clause off
+        // *using Flurry of Blows*, so this is the site — there is no
+        // cost or turn boundary the rider could otherwise be read at.
+        // See `DRUNKEN_TECHNIQUE_TAG`.
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(DRUNKEN_TECHNIQUE_TAG))
+        {
+            encounter.log(
+                "  drunken technique: the monk reels out of reach — disengaging, +10 ft."
+                    .to_string(),
+            );
+            effects.push(Box::new(GiveResource {
+                actor_id: caster_id,
+                // 10 ft, handed to the turn's budget rather than to
+                // `speed()` — see `DRUNKEN_TECHNIQUE_TAG`.
+                resource: Resource::Movement(10.),
+            }));
+            effects.push(Box::new(crate::engine::side_effects::SetDisengaging {
+                actor_id: caster_id,
+                disengaging: true,
+            }));
+        }
+        effects
     }
 }
 
@@ -10433,9 +10526,9 @@ impl Action for AbjureEnemy {
 
 pub static ABJURE_ENEMY: LazyLock<AbjureEnemy> = LazyLock::new(|| AbjureEnemy {});
 
-/// 5e Devotion Paladin level-15 subclass feature — **Rebuke the
-/// Violent**. Class-feature tag; refreshed on a short rest via
-/// `SHORT_REST_FEATURES`. RAW: as a reaction when a creature within 30
+/// 5e Oath of Redemption Paladin level-3 subclass Channel Divinity —
+/// **Rebuke the Violent**. Class-feature tag; refreshed on a short rest
+/// via `SHORT_REST_FEATURES`. RAW: as a reaction when a creature within 30
 /// ft deals damage to a creature other than the paladin, the offending
 /// attacker must make a Wisdom save vs the paladin's spell save DC or
 /// take radiant damage equal to the damage they dealt (max 4d10) —
@@ -10460,16 +10553,16 @@ pub static ABJURE_ENEMY: LazyLock<AbjureEnemy> = LazyLock::new(|| AbjureEnemy {}
 /// DEX-save for Infernal Rebuke. Adding a future single-target save-for-
 /// half damage burst drops in as a fresh call with a distinct tuple.
 ///
-/// Ships on `DEVOTION_PALADIN_TEMPLATE` above its strict RAW lv15 gate
-/// for the same reason Nature's Ward / Undying Sentinel (lv15 features)
-/// ship on the CR-1.5 Ancients paladin — class templates target a
-/// balanced playable level, not lockstep PHB progression. Composes
-/// cleanly with the Devotion paladin's existing CD (Turn the Faithless
-/// at lv3) — one CD charge lane for target-side Frighten burst, one
-/// for target-side damage burst, both refreshed on a short rest.
+/// Ships on `REDEMPTION_PALADIN_TEMPLATE`, which is the oath RAW gives
+/// it to. It used to ship on the Devotion paladin, at a level Devotion
+/// doesn't have it either — Devotion's level 15 is Purity of Spirit,
+/// which is now what that template carries (`PURITY_OF_SPIRIT_TAG`).
+/// Composes cleanly with the rest of the Redemption kit: the oath's
+/// whole shape is "absorb what the enemy does and hand it back", and
+/// Rebuke is the handing-back half in one press.
 pub const REBUKE_THE_VIOLENT_TAG: &str = "paladin.rebuke_the_violent";
 
-/// Rebuke the Violent — Devotion Paladin lv15 subclass feature action.
+/// Rebuke the Violent — Oath of Redemption Paladin lv3 Channel Divinity.
 /// Once-per-short-rest single-target 4d10 radiant damage burst: the
 /// target (within 30ft, 12 tiles on our 2.5ft grid) rolls a WIS save
 /// vs the paladin's CHA-anchored DC (8 + prof + CHA mod). On save the
@@ -10479,7 +10572,7 @@ pub const REBUKE_THE_VIOLENT_TAG: &str = "paladin.rebuke_the_violent";
 /// Wrath of the Storm / Infernal Rebuke on the same helper.
 ///
 /// Range gate (12 tiles = 30ft RAW) matches the RAW envelope — the
-/// Devotion paladin's mid-range radiant retort. Pairs naturally with
+/// Redemption paladin's mid-range radiant retort. Pairs naturally with
 /// the paladin's radiant-damage lane (Divine Smite radiant on undead /
 /// fiends, Improved Divine Smite passive +1d8 radiant) — Rebuke the
 /// Violent's 4d10 radiant lands as a slot-free burst that leans into
@@ -14886,11 +14979,87 @@ pub static SEARING_SUNBURST: LazyLock<SearingSunburst> = LazyLock::new(|| Searin
 ///
 /// No action of its own and no charge — the whole feature is a reaction
 /// the engine spends on the paladin's behalf, at the damage chokepoint.
-/// Read at `EncounterInstance::claim_divine_allegiance`, which is called
-/// from the top of `DealDamage::apply`; see that method for why this is
-/// its own lane rather than a row on `REACTIVE_DAMAGE_CLAMPS`, and for
-/// the one RAW clause it doesn't honour.
+/// Read at `EncounterInstance::claim_damage_interposition`, which is
+/// called from the top of `DealDamage::apply`; see that method for why
+/// this is its own lane rather than a row on `REACTIVE_DAMAGE_CLAMPS`,
+/// and for the one RAW clause it doesn't honour.
 pub const DIVINE_ALLEGIANCE_TAG: &str = "paladin.divine_allegiance";
+
+/// Passive tag for the Oath of Redemption Paladin's **Aura of the
+/// Guardian** (subclass level 7): "when a creature within 10 feet of you
+/// takes damage, you can use your reaction to magically take that damage
+/// instead of that creature taking it."
+///
+/// The second row on `EncounterInstance::DAMAGE_INTERPOSERS`, and the
+/// wider of the two: the Crown paladin has to be in contact to take a
+/// blow, this one covers the same ten feet the paladin's other two auras
+/// already project. Which is the whole subclass in one sentence — every
+/// other paladin aura *improves* what happens to the people standing in
+/// it, and this one moves what happens to them onto the paladin.
+///
+/// No action and no charge; the engine spends the reaction. Sitting at
+/// the `DealDamage` chokepoint rather than on the clamp cohort means it
+/// answers a fireball and a poison drip as readily as a sword swing,
+/// which is RAW ("takes damage", unqualified) and is why a Redemption
+/// paladin standing beside the wizard is worth more than an equivalent
+/// clamp would be.
+pub const AURA_OF_THE_GUARDIAN_TAG: &str = "paladin.aura_of_the_guardian";
+
+/// Passive tag for the Oath of Redemption Paladin's **Protective
+/// Spirit** (subclass level 15): "you regain hit points equal to 1d6 +
+/// half your paladin level if you are below half your hit point maximum
+/// … at the end of each of your turns."
+///
+/// The other half of the subclass, and the half that makes the first one
+/// survivable. Aura of the Guardian is a paladin volunteering to be hit
+/// by everything aimed at their party; Protective Spirit is what pays
+/// for it. Read at `EncounterInstance::apply_protective_spirit`.
+///
+/// **Start of turn, not end.** The engine has a per-turn opening hook
+/// (`start_turn_for`) and no per-turn closing one — turns end when the
+/// initiative index moves, which happens in three places for three
+/// reasons. Firing the heal on the paladin's own turn opening is the
+/// same once-per-round cadence one tick earlier, and the tick it moves
+/// across is one in which nothing else happens to the paladin (their own
+/// turn has not started). The one observable difference is against a
+/// damage source that lands between the two moments, which for a
+/// creature that has just had its turn means the rest of the round: a
+/// RAW Protective Spirit tops up before that damage, and this one tops
+/// up after it.
+///
+/// **The `is_wounded` gate is RAW's "below half".** `heal` refuses to
+/// overheal, so a paladin at 90% takes the roll and keeps a point or two
+/// of it; RAW gives them nothing at all. The half-HP gate is checked
+/// explicitly rather than left to the healer, because "regenerates while
+/// hurt" and "regenerates while nearly dead" are different features and
+/// the first one is not this.
+pub const PROTECTIVE_SPIRIT_TAG: &str = "paladin.protective_spirit";
+
+/// Passive tag for the Oath of Devotion Paladin's **Purity of Spirit**
+/// (subclass level 15): "you are always under the effects of a
+/// protection from evil and good spell."
+///
+/// Which in this engine is exactly the `Warded` condition — aberrations,
+/// celestials, elementals, fey, fiends and undead attack the holder at
+/// disadvantage — held permanently rather than for a spell's duration.
+/// Read at the same gate in `compute_attack_mode` that reads the
+/// condition, so the feature costs one clause there rather than a
+/// standing condition install the engine would have to keep re-applying
+/// and would have to stop Dispel Magic from stripping.
+///
+/// This is the feature that RAW puts at Devotion's level 15, and it
+/// replaces Rebuke the Violent, which the engine used to ship here.
+/// Rebuke the Violent belongs to Oath of Redemption — see
+/// `REBUKE_THE_VIOLENT_TAG` and `REDEMPTION_PALADIN_TEMPLATE`.
+///
+/// RAW's other half — the spell also blocks being charmed, frightened or
+/// possessed by those same creature types — is not wired up, because the
+/// engine's Charmed and Frightened installs carry no record of what
+/// creature type caused them, and a blanket immunity would be a strictly
+/// larger feature than the one RAW wrote. The Devotion paladin already
+/// carries `has_aura_of_devotion` for the charm half at 10 ft, which
+/// covers the case the oath is about.
+pub const PURITY_OF_SPIRIT_TAG: &str = "paladin.purity_of_spirit";
 
 /// Per-rest charge for the Oath of the Crown Paladin's Channel Divinity
 /// **Champion Challenge** (subclass level 3): each creature of the

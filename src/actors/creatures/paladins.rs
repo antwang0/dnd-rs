@@ -1,11 +1,11 @@
 use crate::actions::class_features::{
-    ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, AURA_OF_THE_SENTINEL_TAG,
-    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, DREADFUL_ASPECT, DREADFUL_ASPECT_TAG,
-    FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH,
-    NATURES_WRATH_TAG, PALADIN_CHANNEL_DIVINITY_TAG, REBUKE_THE_VIOLENT,
-    REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
-    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
-    VOW_OF_ENMITY_TAG,
+    ABJURE_ENEMY, ABJURE_ENEMY_TAG, AURA_OF_ALACRITY_TAG, AURA_OF_THE_GUARDIAN_TAG,
+    AURA_OF_THE_SENTINEL_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, DREADFUL_ASPECT,
+    DREADFUL_ASPECT_TAG, FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS,
+    LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG, PALADIN_CHANNEL_DIVINITY_TAG,
+    PROTECTIVE_SPIRIT_TAG, PURITY_OF_SPIRIT_TAG, REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG,
+    SACRED_WEAPON, SACRED_WEAPON_TAG, TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG,
+    UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -234,9 +234,10 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
 /// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
 /// Touch, Improved Divine Smite passive, Aura of Protection / Aura of
-/// Courage) with one subclass feature layered on: **Aura of Devotion**
+/// Courage) with the oath's own features layered on: **Aura of Devotion**
 /// (Devotion subclass level 7) — passive 10ft ally-aura that suppresses
-/// Charmed installs.
+/// Charmed installs — and **Purity of Spirit** (lv15), the permanent
+/// protection from evil and good the oath ends on.
 ///
 /// Pairs naturally with the paladin's existing anti-social-debuff kit:
 /// the Devotion paladin's aura sits on top of Aura of Courage (Frightened
@@ -262,24 +263,106 @@ pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     //     paired action + feature charge; the shared `resolve_turn_burst`
     //     helper drives both this and Turn Undead so save/log rule
     //     changes land once.
-    //   - `REBUKE_THE_VIOLENT_TAG` (lv15 subclass feature): once-per-
-    //     short-rest 30ft single-target 4d10 radiant WIS-save burst.
-    //     Ships above its strict RAW level gate for the same reason
-    //     Nature's Ward / Undying Sentinel (lv15) ship on the CR-1.5
-    //     Ancients paladin — class templates target a balanced
-    //     playable level, not lockstep PHB progression. Rounds out
-    //     the Devotion paladin's CD lane with a damage-burst sibling
-    //     to Turn the Faithless's Frighten-burst.
+    //   - `PURITY_OF_SPIRIT_TAG` (lv15 subclass feature): the oath's own
+    //     late passive — the paladin is permanently under protection
+    //     from evil and good, so aberrations, celestials, elementals,
+    //     fey, fiends and undead attack them at disadvantage. Read at
+    //     the `Warded` gate in `compute_attack_mode`.
+    //
+    // Rebuke the Violent used to ship here as a "lv15 subclass
+    // feature", which is wrong twice over: it belongs to the Oath of
+    // Redemption, and it is that oath's level-3 Channel Divinity rather
+    // than anything's level 15. It now lives on
+    // `REDEMPTION_PALADIN_TEMPLATE`, and Devotion carries the feature
+    // RAW actually gives it.
     let mut actions = PALADIN_TEMPLATE.actions.clone();
     actions.push(&*TURN_THE_FAITHLESS);
-    actions.push(&*REBUKE_THE_VIOLENT);
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(TURN_THE_FAITHLESS_TAG);
-    features.insert(REBUKE_THE_VIOLENT_TAG);
+    features.insert(PURITY_OF_SPIRIT_TAG);
     CreatureTemplate {
         name: "Devotion Paladin",
         glyph: 'D',
         has_aura_of_devotion: true,
+        actions,
+        features,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});
+
+/// Redemption Paladin — **Oath of Redemption** (XGtE), and the roster's
+/// answer to a question every other paladin dodges: what does a holy
+/// warrior do if hitting things is the last resort rather than the
+/// first?
+///
+/// Mechanically the oath is a bodyguard build, and it is the second one
+/// here — but it guards from the opposite direction to the Crown
+/// Paladin, and the two are worth reading side by side.
+///
+///   - **Rebuke the Violent** (lv3, Channel Divinity) is the oath's
+///     signature and the only paladin press on the roster that is
+///     *about* somebody else's violence: 30 ft, WIS save, 4d10 radiant
+///     to whoever just hurt someone. RAW makes it a reaction that
+///     mirrors the damage dealt; the engine collapses it to an action at
+///     a fixed 4d10 — see `REBUKE_THE_VIOLENT_TAG` for why.
+///
+///   - **Aura of the Guardian** (lv7) is Divine Allegiance at ten feet
+///     instead of five: anything that damages an ally inside the aura
+///     can be taken by the paladin instead, for a reaction and nothing
+///     else. Same lane, same `DealDamage` chokepoint, twice the reach —
+///     which on a chassis whose other two auras are also ten feet means
+///     the Redemption paladin's guard covers exactly the bubble their
+///     saves and their courage already cover. See
+///     `EncounterInstance::claim_damage_interposition`.
+///
+///   - **Protective Spirit** (lv15) is what pays for the aura: 1d6 +
+///     half level back on every turn the paladin opens below half HP.
+///     Nothing else on the paladin roster regenerates, and this one only
+///     regenerates once the paladin is already losing.
+///
+/// The three are one loop, and it is a loop no other paladin can run.
+/// The Crown Paladin absorbs damage too, but has to be in contact to do
+/// it and has to spend a Channel Divinity to put back what it absorbed —
+/// and Turn the Tide reaches allies, not the paladin. The Redemption
+/// paladin absorbs from a whole aura's width, mends itself for free
+/// every round it is hurt, and answers the creature that caused it with
+/// 4d10 radiant. Sitting at half HP is not this build failing; it is
+/// this build working, because half HP is where Protective Spirit turns
+/// on.
+///
+/// The honest cost is that the loop has no brake. Aura of the Guardian
+/// is unlimited and free, Protective Spirit is a d6, and a paladin who
+/// volunteers for every blow the party takes will out-run its own
+/// mending against anything that hits hard. That is RAW, and it is what
+/// makes the aura a decision each time rather than a passive.
+///
+/// Left out: **Emissary of Peace** (lv3, the other Channel Divinity) is
+/// +5 to a Persuasion check, and the engine rolls no skill checks.
+/// **Aura of Redemption** (lv7's other half) needs an attacker-side
+/// "have you already been answered this turn" ledger the engine doesn't
+/// keep. **Emissary of Redemption** (lv20) — resistance to all damage
+/// from creatures, plus a radiant reflect equal to half of what got
+/// through — sits above this chassis's level, and its first half would
+/// make the aura loop unlosable rather than merely resilient.
+///
+/// Glyph 'R' — for **R**edemption. Distinct from baseline paladin 'P',
+/// Devotion 'D', Ancients 'A', Vengeance 'V', Oathbreaker 'O', Glory
+/// 'Y', Watchers 'H', Conquest 'Q' and Crown 'W'.
+pub static REDEMPTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*REBUKE_THE_VIOLENT);
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(REBUKE_THE_VIOLENT_TAG);
+    // Both the lv7 and lv15 features are tags rather than template
+    // flags, for the same reason Divine Allegiance is one on the Crown
+    // paladin: the engine reads them through `has_passive_feature` at
+    // the damage chokepoint and at the turn-start hook, not through an
+    // `&ActorInstance` accessor the way the always-on auras are read.
+    features.insert(AURA_OF_THE_GUARDIAN_TAG);
+    features.insert(PROTECTIVE_SPIRIT_TAG);
+    CreatureTemplate {
+        name: "Redemption Paladin",
+        glyph: 'R',
         actions,
         features,
         ..PALADIN_TEMPLATE.clone()
@@ -830,7 +913,7 @@ pub static CONQUEST_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 ///     off an attack, so unlike Interception or Warding Maneuver it also
 ///     catches a failed save against a fireball, a poison drip at
 ///     round end, or a death burst. See
-///     `EncounterInstance::claim_divine_allegiance`.
+///     `EncounterInstance::claim_damage_interposition`.
 ///
 ///   - **Champion Challenge** (lv3, Channel Divinity): everything hostile
 ///     within 30 ft rolls WIS or is held where it stands until its next

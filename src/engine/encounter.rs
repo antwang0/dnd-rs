@@ -2744,6 +2744,43 @@ impl EncounterInstance {
             .unwrap_or(0)
     }
 
+    /// 5e Way of the Drunken Master Monk **Drunkard's Luck**: if `mode`
+    /// is disadvantage and `actor_id` has a charge left, spend it and
+    /// hand back `RollMode::Normal`.
+    ///
+    /// Called at the two d20 chokepoints that can see the mode before
+    /// the die lands and still hold `&mut` — the attack roll in
+    /// `engine::attack::resolve_attack_outcome` and the save in
+    /// `roll_save_with_extra_mode_and_bonus`. Anything not disadvantaged
+    /// passes straight through, so the cost of the feature on every
+    /// other actor in the game is one enum comparison.
+    ///
+    /// Returns the mode to roll under. See `DRUNKARDS_LUCK_TAG` for why
+    /// it clears to Normal rather than combining an advantage in, and
+    /// for why the charge is spent on the first disadvantaged roll
+    /// rather than saved for a better one.
+    pub fn cancel_disadvantage_with_luck(&mut self, actor_id: usize, mode: RollMode) -> RollMode {
+        use crate::actions::class_features::DRUNKARDS_LUCK_TAG;
+        if mode != RollMode::Disadvantage {
+            return mode;
+        }
+        let lucky = self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_passive_feature(DRUNKARDS_LUCK_TAG) && a.feature_available(DRUNKARDS_LUCK_TAG)
+        });
+        if !lucky {
+            return mode;
+        }
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.spend_feature(DRUNKARDS_LUCK_TAG);
+        }
+        let name = self.actor_name(actor_id);
+        self.log(format!(
+            "  drunkard's luck: {} shrugs off the disadvantage.",
+            name
+        ));
+        RollMode::Normal
+    }
+
     /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
     /// actor has it and rolled a natural 1. RAW: Lucky lets the holder
     /// reroll the die and "must use the new roll" — the second result is
@@ -3287,6 +3324,14 @@ impl EncounterInstance {
             // attacks against the Warded target. `affected_by_protection`
             // on `CreatureType` is exactly that list.
             //
+            // The Devotion Paladin's **Purity of Spirit** (subclass level
+            // 15) is RAW "you are always under the effects of a
+            // protection from evil and good spell", so it reads the same
+            // clause from a passive tag instead of from a condition — one
+            // `||` here rather than a permanent condition install the
+            // engine would have to keep re-applying and would have to
+            // exempt from Dispel Magic. See `PURITY_OF_SPIRIT_TAG`.
+            //
             // Daylight: the engine's simplification of RAW Sunlight
             // Sensitivity — an undead attacker caught in the aura rolls at
             // disadvantage. RAW's own trait belongs to specific undead
@@ -3294,8 +3339,11 @@ impl EncounterInstance {
             // tag), so undead is the load-bearing cohort.
             if let Some(attacker) = self.actors.get(&attacker_id) {
                 let attacker_type = attacker.creature_type();
-                if (target.has_condition(Condition::Warded)
-                    && attacker_type.affected_by_protection())
+                let warded = target.has_condition(Condition::Warded)
+                    || target.has_passive_feature(
+                        crate::actions::class_features::PURITY_OF_SPIRIT_TAG,
+                    );
+                if (warded && attacker_type.affected_by_protection())
                     || (target.has_condition(Condition::Daylit) && attacker_type.is_undead())
                 {
                     mode = mode.combine(RollMode::Disadvantage);
@@ -4119,6 +4167,12 @@ impl EncounterInstance {
         }
 
         let mode = self.compute_save_mode(actor_id, ability).combine(extra_mode);
+        // 5e Drunken Master Monk **Drunkard's Luck**: RAW names the
+        // saving throw as one of the three contexts, so the cancel sits
+        // on the final mode — after `extra_mode` has folded in, because
+        // a Heightened Spell's disadvantage is exactly the kind of
+        // disadvantage the feature exists to answer.
+        let mode = self.cancel_disadvantage_with_luck(actor_id, mode);
         // 5e Lucky: same nat-1 reroll hook as on attack rolls. RAW
         // explicitly lists "saving throw" as one of the trigger contexts.
         let rolled = self.roll_d20_lucky(actor_id, mode);
@@ -6779,17 +6833,9 @@ impl EncounterInstance {
         )
     }
 
-    /// 5e Oath of the Crown Paladin **Divine Allegiance** (subclass
-    /// level 7): "when a creature within 5 feet of you takes damage, you
-    /// can use your reaction to magically substitute your own health for
-    /// that of the target creature… This damage can't be reduced in any
-    /// way."
-    ///
-    /// Finds the paladin who will carry `target_id`'s damage, spends
-    /// their reaction, and hands back their id — or `None` when nobody
-    /// steps in. Called from `DealDamage::apply` before anything else
-    /// touches the number, because the whole point is that the blow
-    /// never reaches the creature it was aimed at.
+    /// The "I take that one" cohort: features whose holder spends a
+    /// reaction to have a blow aimed at somebody nearby land on them
+    /// instead.
     ///
     /// This is a different lane from every other defensive feature in
     /// the engine, and the difference is worth stating. Uncanny Dodge,
@@ -6797,61 +6843,115 @@ impl EncounterInstance {
     /// stays where it landed and gets smaller. Mirror Image and Illusory
     /// Self *intercept* — the attack is retroactively un-hit. Warding
     /// Bond *mirrors* — the partner takes a copy, and the original still
-    /// lands. Divine Allegiance moves it: the target takes nothing at
-    /// all, and the whole amount arrives somewhere else.
+    /// lands. These two *move* it: the target takes nothing at all, and
+    /// the whole amount arrives somewhere else.
     ///
-    /// Because it hangs off `DealDamage` rather than off an attack
+    /// Because the lane hangs off `DealDamage` rather than off an attack
     /// chokepoint, it catches everything the clamp cohort cannot — a
     /// failed save against a fireball, a poison drip at round end, a
-    /// death burst. That breadth is RAW ("takes damage", with no
-    /// qualifier) and it is most of what the feature is worth.
+    /// death burst. That breadth is RAW on both rows ("takes damage",
+    /// with no qualifier) and it is most of what either feature is
+    /// worth.
     ///
-    /// Three gates, all of them RAW, plus one that isn't:
-    ///   - The paladin holds the feature, is combat-active, is within
-    ///     5 ft, and has a reaction left.
-    ///   - The paladin is on the target's team and is not the target.
-    ///     A paladin does not take a blow for an enemy, and cannot take
-    ///     one for themselves.
+    /// Two rows, differing only in reach — which is the whole reason the
+    /// cohort exists rather than a second open-coded scan:
+    ///
+    ///   - **Divine Allegiance** (Oath of the Crown Paladin, subclass
+    ///     level 7): "when a creature within 5 feet of you takes damage,
+    ///     you can use your reaction to magically substitute your own
+    ///     health for that of the target creature."
+    ///   - **Aura of the Guardian** (Oath of Redemption Paladin,
+    ///     subclass level 7): the same sentence at 10 ft, which on this
+    ///     chassis is the same radius the paladin's other two auras
+    ///     already project (`PALADIN_AURA_RADIUS`).
+    ///
+    /// Ordered narrowest-first, which is the target-favorable reading
+    /// when a hypothetical multiclass holds both: the shorter-ranged
+    /// feature is the one with fewer creatures it could have spent
+    /// itself on, so it is the one to spend here. In practice the two
+    /// belong to different oaths and never co-occur.
+    const DAMAGE_INTERPOSERS: &'static [(&'static str, isize, &'static str)] = &[
+        (
+            crate::actions::class_features::DIVINE_ALLEGIANCE_TAG,
+            // 5 ft. `footprint_distance` is a gap, so 1 is "one tile
+            // between us" on the 2.5 ft grid.
+            1,
+            "divine allegiance",
+        ),
+        (
+            crate::actions::class_features::AURA_OF_THE_GUARDIAN_TAG,
+            Self::PALADIN_AURA_RADIUS,
+            "aura of the guardian",
+        ),
+    ];
+
+    /// Find the ally who will carry `target_id`'s damage, spend their
+    /// reaction, and hand back their id plus the log label of the
+    /// feature that paid for it — or `None` when nobody steps in.
+    ///
+    /// Called from `DealDamage::apply` before anything else touches the
+    /// number, because the whole point is that the blow never reaches
+    /// the creature it was aimed at.
+    ///
+    /// Four gates, three of them RAW:
+    ///   - The interposer holds the feature, is combat-active, is within
+    ///     the row's radius, and has a reaction left.
+    ///   - They are on the target's team and are not the target. Nobody
+    ///     takes a blow for an enemy, and nobody can take one for
+    ///     themselves.
     ///   - Zero damage buys nothing, so it doesn't cost a reaction.
     ///   - **Not RAW:** damage already being carried for somebody can't
-    ///     be handed on again. Nothing in the text forbids the chain,
-    ///     but two adjacent Crown Paladins would otherwise volley a
+    ///     be handed on again. Nothing in either feature's text forbids
+    ///     the chain, but two adjacent paladins would otherwise volley a
     ///     single blow between them until both reactions were gone,
     ///     which is not what either of them meant to do.
     ///
     /// Ties break on the lowest actor id so a seeded run reproduces.
-    pub fn claim_divine_allegiance(&mut self, target_id: usize, amount: u32) -> Option<usize> {
-        use crate::actions::class_features::DIVINE_ALLEGIANCE_TAG;
+    pub fn claim_damage_interposition(
+        &mut self,
+        target_id: usize,
+        amount: u32,
+    ) -> Option<(usize, &'static str)> {
         if amount == 0 || self.in_damage_redirect() {
             return None;
         }
         let target_team = self.actors.get(&target_id)?.team();
-        // One pass keeping the lowest qualifying id, rather than
-        // collect-sort-find. Every damage instance in the game runs this
-        // lookup, almost none of them find anybody, and the sort was an
-        // allocation per hit to order a list that is thrown away. The
-        // minimum is the same answer the sorted walk gave, so the
-        // determinism a seeded run depends on is unchanged.
-        //
-        // The cheap gates go first so a table with no Crown Paladin in
-        // it never reaches the distance computation.
-        let guardian = self
-            .actors
-            .iter()
-            .filter(|(id, a)| {
-                **id != target_id
-                    && a.team() == target_team
-                    && a.has_passive_feature(DIVINE_ALLEGIANCE_TAG)
-                    && a.is_combat_active()
-                    && a.has_reaction()
-            })
-            .map(|(id, _)| *id)
-            .filter(|&id| self.footprint_distance(id, target_id).is_some_and(|d| d <= 1))
-            .min()?;
-        self.actors
-            .get_mut(&guardian)?
-            .consume_resource(crate::engine::side_effects::Resource::Reaction);
-        Some(guardian)
+        for &(tag, radius, label) in Self::DAMAGE_INTERPOSERS {
+            // One pass keeping the lowest qualifying id, rather than
+            // collect-sort-find. Every damage instance in the game runs
+            // this lookup, almost none of them find anybody, and the
+            // sort was an allocation per hit to order a list that is
+            // thrown away. The minimum is the same answer the sorted
+            // walk gave, so the determinism a seeded run depends on is
+            // unchanged.
+            //
+            // The cheap gates go first so a table with no paladin in it
+            // never reaches the distance computation.
+            let Some(guardian) = self
+                .actors
+                .iter()
+                .filter(|(id, a)| {
+                    **id != target_id
+                        && a.team() == target_team
+                        && a.has_passive_feature(tag)
+                        && a.is_combat_active()
+                        && a.has_reaction()
+                })
+                .map(|(id, _)| *id)
+                .filter(|&id| {
+                    self.footprint_distance(id, target_id)
+                        .is_some_and(|d| d <= radius)
+                })
+                .min()
+            else {
+                continue;
+            };
+            self.actors
+                .get_mut(&guardian)?
+                .consume_resource(crate::engine::side_effects::Resource::Reaction);
+            return Some((guardian, label));
+        }
+        None
     }
 
     /// Run `body` with the damage-redirect guard raised, so a blow being
@@ -8899,6 +8999,13 @@ impl EncounterInstance {
         // because zeroing a budget that hasn't been granted yet would
         // be undone a line later.
         self.apply_aura_of_conquest(actor_id);
+        // 5e Oath of Redemption Paladin **Protective Spirit**: the
+        // paladin knits itself back together while it is badly hurt.
+        // Runs alongside the Conquest aura because both are per-turn
+        // passives that read the actor's state at the top of the turn
+        // and neither depends on the other; see `apply_protective_spirit`
+        // for why the heal lands here rather than at the turn's end.
+        self.apply_protective_spirit(actor_id);
         // 5e controlled mount: "it moves as you direct it". The rider
         // walks on the horse's legs, so the turn's movement budget is
         // the horse's speed rather than their own. Runs after
@@ -9008,6 +9115,53 @@ impl EncounterInstance {
             damage_type: DamageType::Psychic,
         }
         .apply(self);
+    }
+
+    /// 5e Oath of Redemption Paladin **Protective Spirit** (subclass
+    /// level 15): "you regain hit points equal to 1d6 + half your paladin
+    /// level if you end your turn in combat with fewer than half of your
+    /// hit points remaining and you aren't incapacitated."
+    ///
+    /// Every clause of that sentence is a gate here, and the last one is
+    /// what keeps the feature from being a resurrection: a paladin who
+    /// has been knocked unconscious is incapacitated, so the spirit stops
+    /// mending them exactly when they need it most. That is RAW and it is
+    /// the reason the feature pairs with Aura of the Guardian rather than
+    /// replacing the need for allies — a paladin absorbing the party's
+    /// damage still has to not go down.
+    ///
+    /// Fires at the start of the paladin's turn rather than at the end of
+    /// it; see `PROTECTIVE_SPIRIT_TAG` for why, and for what the one-tick
+    /// shift is observable against.
+    fn apply_protective_spirit(&mut self, actor_id: usize) {
+        use crate::actions::class_features::PROTECTIVE_SPIRIT_TAG;
+        let eligible = self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_passive_feature(PROTECTIVE_SPIRIT_TAG)
+                && a.is_combat_active()
+                && !a.is_incapacitated()
+                // RAW's "fewer than half of your hit points remaining".
+                // Strict, so a paladin sitting on exactly half gets
+                // nothing — which is the reading that keeps the feature
+                // from firing on a scratch.
+                && a.hitpoints() * 2 < a.max_hitpoints()
+        });
+        if !eligible {
+            return;
+        }
+        // Half the paladin's level, rounded down per RAW's "half your
+        // paladin level". Read off the chassis rather than pinned, so a
+        // template that changes level changes the heal with it.
+        let half_level = self.actors.get(&actor_id).map_or(0, |a| a.level() / 2);
+        let rolled = self.roll(&Dice::new(1, 6));
+        let healed = rolled + half_level;
+        let name = self.actor_name(actor_id);
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.heal(healed);
+        }
+        self.log(format!(
+            "  protective spirit: {} knits back 1d6({}){:+} = {} HP.",
+            name, rolled, half_level, healed
+        ));
     }
 
     /// Advance the initiative queue and fire `round_end` if the queue

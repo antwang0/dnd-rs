@@ -526,11 +526,13 @@ impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
         use crate::engine::types::DamageModifier;
 
-        // 5e Oath of the Crown Paladin **Divine Allegiance**: an
-        // adjacent paladin may spend their reaction to take this damage
-        // in the target's place. Resolved before anything else touches
-        // the number — the target's own auras, resistances and temp HP
-        // never come into it, because the blow does not reach them.
+        // The damage-interposition cohort — Oath of the Crown Paladin's
+        // **Divine Allegiance** at 5 ft and Oath of Redemption's **Aura
+        // of the Guardian** at 10 ft. A nearby paladin may spend their
+        // reaction to take this damage in the target's place. Resolved
+        // before anything else touches the number — the target's own
+        // auras, resistances and temp HP never come into it, because
+        // the blow does not reach them.
         //
         // The redirected instance is a fresh `DealDamage` at the
         // paladin, so it runs the full pipeline on their side: their
@@ -544,12 +546,14 @@ impl ApplicableSideEffect for DealDamage {
         //
         // `within_damage_redirect` is what keeps two adjacent paladins
         // from volleying the same blow between them.
-        if let Some(guardian) = ei.claim_divine_allegiance(self.actor_id, self.amount) {
+        if let Some((guardian, label)) =
+            ei.claim_damage_interposition(self.actor_id, self.amount)
+        {
             let (target_name, guardian_name) =
                 (ei.actor_name(self.actor_id), ei.actor_name(guardian));
             ei.log(format!(
-                "[reaction] divine allegiance: {} takes the {} {:?} meant for {}.",
-                guardian_name, self.amount, self.damage_type, target_name
+                "[reaction] {}: {} takes the {} {:?} meant for {}.",
+                label, guardian_name, self.amount, self.damage_type, target_name
             ));
             let redirected = DealDamage {
                 actor_id: guardian,

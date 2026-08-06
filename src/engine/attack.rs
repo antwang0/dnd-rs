@@ -1132,23 +1132,6 @@ pub fn apply_reactive_damage_clamps(
     damage
 }
 
-/// 5e Fighter Battle Master **Riposte** maneuver — reactive melee
-/// counter-attack that fires when a melee attack MISSES the target and
-/// the target holds the `has_riposte` flag with an unspent `RIPOSTE_TAG`
-/// charge, an available reaction, and a suitable melee weapon action on
-/// their action list. Also gated on `viewer_can_see` so an Invisible /
-/// Blurred / Displaced attacker (or a Blinded fighter) can't be
-/// counter-struck (mirrors the Uncanny Dodge / Deflect Missiles sight
-/// gate). No-op on any missing prerequisite. The counter-attack fires
-/// via the same "run the underlying attack's side_effects" chokepoint
-/// the opportunity-attack dispatcher uses in `EncounterInstance`, so
-/// weapon-side riders (Bless, on-hit smite primes, etc.) fold in
-/// cleanly without a bespoke roll pipeline here.
-///
-/// Kept public so `spells.rs` can drive it from `spell_attack_outcome`
-/// if we later extend RAW to trigger Riposte on missed spell attacks
-/// too — the current RAW clause is melee-only so the caller in
-/// `resolve_attack_outcome` gates on `p.is_melee` at the call site.
 /// Spend `actor_id`'s reaction on one melee weapon attack, at
 /// `director_id`'s order — the shared body behind every "an ally you
 /// name takes a swing right now" feature.
@@ -1235,6 +1218,23 @@ pub fn try_fire_directed_attack(
     true
 }
 
+/// 5e Fighter Battle Master **Riposte** maneuver — reactive melee
+/// counter-attack that fires when a melee attack MISSES the target and
+/// the target holds the `has_riposte` flag with an unspent `RIPOSTE_TAG`
+/// charge, an available reaction, and a suitable melee weapon action on
+/// their action list. Also gated on `viewer_can_see` so an Invisible /
+/// Blurred / Displaced attacker (or a Blinded fighter) can't be
+/// counter-struck (mirrors the Uncanny Dodge / Deflect Missiles sight
+/// gate). No-op on any missing prerequisite. The counter-attack fires
+/// via the same "run the underlying attack's side_effects" chokepoint
+/// the opportunity-attack dispatcher uses in `EncounterInstance`, so
+/// weapon-side riders (Bless, on-hit smite primes, etc.) fold in
+/// cleanly without a bespoke roll pipeline here.
+///
+/// Kept public so `spells.rs` can drive it from `spell_attack_outcome`
+/// if we later extend RAW to trigger Riposte on missed spell attacks
+/// too — the current RAW clause is melee-only so the caller in
+/// `resolve_attack_outcome` gates on `p.is_melee` at the call site.
 pub fn try_fire_riposte(
     encounter: &mut EncounterInstance,
     target_id: usize,
@@ -1311,6 +1311,106 @@ pub fn try_fire_riposte(
         Some(crate::actions::class_features::RIPOSTE_TAG),
     );
     encounter.cleanup_dead_actors();
+}
+
+/// 5e Way of the Drunken Master Monk **Tipsy Sway: Redirect Attack**
+/// (subclass level 6): "when a creature misses you with a melee attack
+/// roll, you can spend 1 ki point as a reaction to cause that attack to
+/// hit one creature of your choice, other than the attacker, that you
+/// can see within 5 feet of you."
+///
+/// A third thing a melee miss can be worth, and the only one in the
+/// engine where the *attacker's own swing* lands somewhere else. Riposte
+/// answers a miss with a swing of the defender's; Deflect Missiles and
+/// Parry shrink a hit that already landed; this one keeps the attacker's
+/// damage and moves the body underneath it.
+///
+/// Three deliberate narrowings of RAW, all in the same direction:
+///
+///   - **Hostiles only.** RAW says "one creature of your choice", which
+///     includes the monk's own allies, and a controller that could aim
+///     the redirect at a friend would be handing the AI a way to shoot
+///     its own side. The pick is the nearest hostile the monk can see
+///     within 5 ft, ties broken on id so a seeded run reproduces.
+///   - **No attack roll and no crit.** The redirected swing "hits" flat
+///     — RAW's wording makes it hit by fiat, so there is no roll to make
+///     and nothing that could come up 20.
+///   - **The damage is re-rolled, not carried over.** The original swing
+///     missed, so it never rolled damage; this rolls the attack's own
+///     dice plus its flat bonus, which is the same expression the hit
+///     branch would have used.
+///
+/// Ki is not modelled, so the cost is the reaction alone — the same
+/// collapse Flurry of Blows and Patient Defense already make on this
+/// chassis. Unlike Riposte there is no per-rest charge to spend, which
+/// makes the monk's reaction the whole budget: one redirect a round, and
+/// only if the monk has not already spent it on Deflect Missiles.
+///
+/// Returns true if a swing was actually moved, so a caller can tell the
+/// difference between "declined" and "nothing in range".
+fn try_fire_redirect_attack(encounter: &mut EncounterInstance, p: &AttackParams) -> bool {
+    use crate::actions::class_features::REDIRECT_ATTACK_TAG;
+    use crate::engine::side_effects::DealDamage;
+
+    let monk_id = p.target_id;
+    // Shared five-clause gate — holds the tag, combat-active, has a
+    // reaction, and can see the attacker (RAW's redirect is a response
+    // to a swing the monk perceives). `tag: None` because the feature
+    // has no per-rest charge; see the doc above.
+    if !reactive_reducer_eligible(
+        encounter,
+        monk_id,
+        p.caster_id,
+        |a| a.has_passive_feature(REDIRECT_ATTACK_TAG),
+        None,
+    ) {
+        return false;
+    }
+    let Some(monk_team) = encounter.actors.get(&monk_id).map(|a| a.team()) else {
+        return false;
+    };
+    // "within 5 feet of you" — 2 tiles on the 2.5 ft grid, measured as
+    // the footprint gap the rest of the engine measures reach with.
+    const REDIRECT_RANGE: isize = 2;
+    let mut candidates: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != monk_id && **id != p.caster_id && a.team() != monk_team && a.is_combat_active()
+        })
+        .filter_map(|(id, _)| {
+            let dist = encounter.footprint_distance(monk_id, *id)?;
+            (dist <= REDIRECT_RANGE).then_some((dist, *id))
+        })
+        // RAW's "that you can see" — an invisible bystander is not a
+        // creature the monk can choose.
+        .filter(|(_, id)| encounter.viewer_can_see(monk_id, *id))
+        .collect();
+    candidates.sort_unstable();
+    let Some((_, new_target)) = candidates.first().copied() else {
+        return false;
+    };
+
+    let damage = encounter.roll_weapon_damage_dice(p.damage_dice, false) as i32 + p.damage_bonus;
+    let damage = damage.max(0) as u32;
+    let (monk_name, attacker_name, victim_name) = (
+        encounter.actor_name(monk_id),
+        encounter.actor_name(p.caster_id),
+        encounter.actor_name(new_target),
+    );
+    encounter.log(format!(
+        "[reaction] redirect attack: {} sways aside and {}'s {} lands on {} for {} {:?}.",
+        monk_name, attacker_name, p.action_name, victim_name, damage, p.damage_type
+    ));
+    DealDamage {
+        actor_id: new_target,
+        amount: damage,
+        damage_type: p.damage_type,
+    }
+    .apply(encounter);
+    spend_reactive_reducer(encounter, monk_id, None);
+    encounter.cleanup_dead_actors();
+    true
 }
 
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
@@ -1529,6 +1629,14 @@ pub fn resolve_attack_outcome_with_rider(
         .get(&p.caster_id)
         .is_some_and(|a| a.has_condition(Condition::Inspired));
     encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
+    // 5e Drunken Master Monk **Drunkard's Luck**: the last thing that
+    // touches `mode` before the die lands. Placed after the one-shot
+    // rider clear so the mode it cancels is the one the swing is
+    // actually rolling under, and after every disadvantage source
+    // (cover-blind, long range, the lance's close quarters, the
+    // defender's reactive taxes) has had its say — the feature answers
+    // the net result, not the first cause.
+    mode = encounter.cancel_disadvantage_with_luck(p.caster_id, mode);
     // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
     // helper folds the reroll into the same seedable RNG so determinism
     // by seed holds — and falls back to the raw roll for actors without
@@ -1644,10 +1752,19 @@ pub fn resolve_attack_outcome_with_rider(
         // miss only), sight (routes through `viewer_can_see` so an
         // Invisible / Blurred / Displaced attacker can't be counter-
         // struck), and the target holding a suitable melee action on
-        // their action list. Skipped on nat-1s AND non-melee misses so a
-        // whiffed longbow shot or spell attack doesn't burn the charge.
+        // their action list. Skipped on non-melee misses so a whiffed
+        // longbow shot or spell attack doesn't burn the charge. A
+        // natural 1 is not skipped: RAW's trigger is "when a creature
+        // misses you", and a fumble is a miss.
         if p.is_melee {
             try_fire_riposte(encounter, p.target_id, p.caster_id);
+            // 5e Way of the Drunken Master Monk **Tipsy Sway: Redirect
+            // Attack** — the other thing a melee miss can buy, and the
+            // only one that makes the attacker's own swing land
+            // somewhere. Fires after Riposte because both spend the
+            // target's reaction and Riposte is the older claim on it;
+            // no chassis on the roster holds both.
+            try_fire_redirect_attack(encounter, &p);
         }
         return (Vec::new(), 0);
     }

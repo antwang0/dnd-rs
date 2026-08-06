@@ -403,6 +403,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*monks::SUN_SOUL_MONK_TEMPLATE,
                     &*monks::MERCY_MONK_TEMPLATE,
                     &*monks::ASTRAL_SELF_MONK_TEMPLATE,
+                    &*monks::DRUNKEN_MASTER_MONK_TEMPLATE,
                 ],
             ),
             (
@@ -417,6 +418,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*paladins::WATCHERS_PALADIN_TEMPLATE,
                     &*paladins::CONQUEST_PALADIN_TEMPLATE,
                     &*paladins::CROWN_PALADIN_TEMPLATE,
+                    &*paladins::REDEMPTION_PALADIN_TEMPLATE,
                 ],
             ),
             (

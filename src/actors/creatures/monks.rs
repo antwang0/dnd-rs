@@ -760,3 +760,83 @@ pub static ASTRAL_SELF_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// Drunken Master Monk — Monastic Tradition **Way of the Drunken
+/// Master** (XGtE), and the ninth monk on a roster where the previous
+/// eight all answer the same question: what do you add to the punch?
+/// This one adds nothing to it. Every feature here is about the monk
+/// *not being where the swing went*, which is a lane the chassis has
+/// never had.
+///
+///   - **Drunken Technique** (lv3): Flurry of Blows also grants the
+///     Disengage benefit and +10 ft of movement. On any other monk the
+///     bonus action is a fork — Flurry to hit more, Step of the Wind to
+///     leave safely — and this one takes both prongs. A Drunken Master
+///     can walk into contact, throw three unarmed strikes, and walk back
+///     out without provoking, every single turn, for free.
+///
+///   - **Tipsy Sway: Redirect Attack** (lv6): when a melee attack misses
+///     the monk, the monk's reaction makes it land on something else
+///     standing next to them instead. Not a counter-attack and not a
+///     clamp — the attacker's own damage, moved. See
+///     `engine::attack::try_fire_redirect_attack`.
+///
+///   - **Drunkard's Luck** (lv11): once per short rest, cancel
+///     disadvantage on an attack roll or a saving throw. See
+///     `DRUNKARDS_LUCK_TAG`.
+///
+/// The three read as one idea from three directions, and the middle one
+/// is the tell. Redirect Attack only pays when the monk is standing in a
+/// crowd — it needs a second enemy within five feet — and Drunken
+/// Technique is what makes standing in a crowd survivable, because the
+/// monk can leave it at the end of the turn without eating the
+/// opportunity attacks that leaving would normally cost. A Drunken
+/// Master who plays the way the Kensei or the Sun Soul plays, from range
+/// or from the edge, gets almost nothing out of the subclass. One who
+/// wades into the middle of three goblins gets a third attack, a free
+/// exit, and every miss against them turned into damage on one of the
+/// other two.
+///
+/// Which is the opposite trade to every other monk here. The chassis's
+/// standing problem is that a d8 hit die with no armour cannot afford to
+/// be in contact, and the roster's answers have been to leave (Shadow's
+/// teleport, Kensei's bow), to out-heal it (Open Hand, Long Death), or
+/// to reach from a tile back (Astral Self). This one leans in and makes
+/// the crowd the resource.
+///
+/// **Intoxicated Frenzy** (lv17) is deliberately not shipped. RAW lets
+/// Flurry of Blows make up to three additional attacks provided each
+/// targets a different creature; the engine's Flurry hands over an extra
+/// *Action* rather than a count of strikes, so the RAW cap and the RAW
+/// distinct-target clause have nothing to attach to — and a fourth and
+/// fifth swing on a chassis that already gets three would be a much
+/// larger feature than the one being modelled. **Tipsy Sway: Leap to
+/// Your Feet** (lv6's other half) lets the monk stand from prone for
+/// 5 ft of movement instead of half its speed; standing up is not
+/// separately priced in the engine's movement lane, so the discount has
+/// nothing to discount.
+///
+/// Glyph 'B' — free on the monk family, where 'M', 'O', 'D', 'W', 'E',
+/// 'K', 'U', 'Y' and 'A' are taken.
+pub static DRUNKEN_MASTER_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        DRUNKARDS_LUCK_TAG, DRUNKEN_TECHNIQUE_TAG, REDIRECT_ATTACK_TAG,
+    };
+    // Three tags and no new actions — which is unusual on this chassis
+    // and is the subclass's own shape rather than a shortcut. Drunken
+    // Technique rides the Flurry the monk already presses, Redirect
+    // Attack is a reaction the engine spends, and Drunkard's Luck is a
+    // charge read at two d20 chokepoints. There is nothing here for a
+    // controller to pick, because the subclass never asks the monk to do
+    // anything it wasn't already doing.
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(DRUNKEN_TECHNIQUE_TAG);
+    features.insert(REDIRECT_ATTACK_TAG);
+    features.insert(DRUNKARDS_LUCK_TAG);
+    CreatureTemplate {
+        name: "Drunken Master Monk",
+        glyph: 'B',
+        features,
+        ..MONK_TEMPLATE.clone()
+    }
+});
