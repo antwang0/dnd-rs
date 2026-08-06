@@ -552,6 +552,23 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3e''. Fighter Indomitable — the cheapest rung on the whole
+        //       ladder, and the reason it sits this high: RAW is "no
+        //       action required", so the engine's `free_cost` is exact
+        //       and firing it costs the fighter nothing they could have
+        //       spent on anything else. There is no version of holding
+        //       it that is better than arming it, because the charge is
+        //       once per long rest and a fighter in a fight is going to
+        //       be asked for a saving throw.
+        //
+        //       Above the primes rather than below them for the same
+        //       reason: a rung that consumes no part of the turn cannot
+        //       pre-empt one that does, so its position only decides how
+        //       early in the fight the marker goes up.
+        if let Some(aei) = try_indomitable(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3f. Monk Stunning Strike — once-per-rest bonus-action prime
         //     that lays a stun save on the next melee hit. Fire when
         //     an adjacent enemy is queued for a swing this turn.
@@ -635,6 +652,35 @@ impl Controller for SimpleAi {
         //     Dreadful Aspect. Fire the narrowest variant the actor holds
         //     that has enough eligible hostiles inside the 30ft burst.
         if let Some(aei) = try_turn_burst(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3f''''. Fiend Warlock Hurl Through Hell — the lv14 capstone,
+        //         once per rest, 60 ft: the target spends a turn in the
+        //         lower planes and comes back with 10d10 psychic on it.
+        //         Losing a turn *and* taking the roster's largest
+        //         single-target die pool is the biggest thing the
+        //         warlock can do to one creature, so the pick is the
+        //         beefiest hostile in range per the shared picker — the
+        //         damage is fixed, and the turn taken off the board is
+        //         worth most against whatever was going to use it best.
+        if let Some(aei) = try_hurl_through_hell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3f'''''. Tiefling Infernal Legacy: Infernal Rebuke — a racial
+        //          once-per-rest 3d10 fire burst at 60 ft, DEX save for
+        //          half. Sibling to Wrath of the Storm two rungs down
+        //          and gated the same way: single-target by
+        //          construction, save-for-half rather than
+        //          save-for-nothing, so it beats the cantrip it competes
+        //          with every time it is spent.
+        //
+        //          Below Hurl Through Hell because no chassis carries
+        //          both and the order between them therefore decides
+        //          nothing; it is written down because a tiefling
+        //          warlock is a build this engine can express.
+        if let Some(aei) = try_infernal_rebuke(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -1401,12 +1447,49 @@ fn is_low_hp(encounter: &EncounterInstance, actor_id: usize, frac: f32) -> bool 
 /// Take the Disengage action if available and currently valid. The
 /// caller is expected to gate this on actually wanting the OA-skip
 /// (under threat, low HP, etc.). Returns None when the actor doesn't
-/// have Disengage in their loadout or can't afford the Action cost.
+/// have Disengage in their loadout or can't afford the cost.
+///
+/// Routed through `try_cheapest_printing` so a rogue reaches for Cunning
+/// Action first — see that helper for why the same effect at two prices
+/// was being bought at the higher one.
 fn try_disengage(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    try_self_action(encounter, actor_id, "disengage")
+    try_cheapest_printing(
+        encounter,
+        actor_id,
+        // The monk's Step of the Wind is the bonus-action printing of
+        // Disengage *and* Dash at once, so it heads both lists. No
+        // chassis carries it alongside Cunning Action, so the order
+        // between the two cheap printings decides nothing.
+        &["step of the wind", "cunning disengage", "disengage"],
+    )
+}
+
+/// Pick the first action in `names` the actor carries and can afford.
+///
+/// 5e prints the same effect at two prices more than once, and the
+/// engine models both printings as separate actions with separate names:
+/// the Rogue's Cunning Action is Dash, Disengage and Hide *as a bonus
+/// action*, and the PHB's own Dash, Disengage and Hide cost the whole
+/// Action. Every heuristic in this file that wanted one of those three
+/// asked for the expensive printing by name, so a rogue — the one
+/// chassis that has the cheap one — bought the expensive one and gave up
+/// its attack to do it.
+///
+/// Order the list cheapest-first. There is never a reason to prefer the
+/// Action-priced version when the bonus-action one is on the sheet: the
+/// effect is identical, and a rogue that Disengages for a bonus action
+/// still has an Action to Sneak Attack with.
+fn try_cheapest_printing(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    names: &[&str],
+) -> Option<ActionExecutionInfo> {
+    names
+        .iter()
+        .find_map(|name| try_self_action(encounter, actor_id, name))
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -4981,6 +5064,49 @@ fn try_zealous_presence(
     try_self_action(encounter, actor_id, "zealous presence")
 }
 
+/// Fighter Indomitable — RAW "no action required", so the engine prices
+/// it at `free_cost` and the AI can arm it without giving anything up.
+///
+/// The only gate is that there is a fight on. A marker armed in an empty
+/// room would still be there when the fight started — nothing expires
+/// it — but firing it against nobody would put a line in the log that
+/// says the fighter did something on a turn where nothing happened, and
+/// the ladder's contract is that a rung firing means a decision was
+/// made. The action's own `custom_validate_input` owns the charge check,
+/// so a fighter who has already armed it falls straight through.
+fn try_indomitable(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if n_actors_within(encounter, actor_id, isize::MAX, false, 1) < 1 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "indomitable")
+}
+
+/// Fiend Warlock Hurl Through Hell — the lv14 capstone, once per rest,
+/// 60 ft (24 tiles). Highest-HP hostile in range wins per the shared
+/// picker: the damage is a flat 10d10 and the turn the target loses is
+/// worth most taken off whatever was going to make best use of it.
+fn try_hurl_through_hell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "hurl through hell", 24)
+}
+
+/// Tiefling Infernal Legacy: Infernal Rebuke — racial, once per rest,
+/// 60 ft (24 tiles), 3d10 fire on a DEX save for half. Same shared
+/// picker and the same reasoning as Wrath of the Storm: fixed damage, so
+/// the only thing target choice buys is that none of it is wasted on
+/// something already dying.
+fn try_infernal_rebuke(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "infernal rebuke", 24)
+}
+
 /// Light Domain Cleric Radiance of the Dawn — once-per-rest Channel
 /// Divinity. A 30 ft (12-tile) self-centred burst of radiant damage that
 /// reaches hostiles only, so there is no friendly-fire question to ask;
@@ -7231,7 +7357,13 @@ fn try_dash_to_close(
     if !has_enemy {
         return None;
     }
-    try_self_action(encounter, actor_id, "dash")
+    // Cheapest printing first — a rogue Dashes for a bonus action and
+    // keeps its Action. See `try_cheapest_printing`.
+    try_cheapest_printing(
+        encounter,
+        actor_id,
+        &["step of the wind", "cunning dash", "dash"],
+    )
 }
 
 /// Break a hold that has left the actor unable to do anything else.
@@ -12450,7 +12582,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 41] = [
+        let cases: [(&CreatureTemplate, &str); 44] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12615,6 +12747,18 @@ mod tests {
             // fixture has one ogre. Its rung is pinned by
             // `the_light_clerics_dawn_waits_for_a_crowd` below.
             (&crate::actors::creatures::clerics::TEMPEST_CLERIC_TEMPLATE, "wrath of the storm"),
+            (
+                &crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE,
+                "hurl through hell",
+            ),
+            (
+                &crate::actors::creatures::tieflings::TIEFLING_TEMPLATE,
+                "infernal rebuke",
+            ),
+            (
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                "indomitable",
+            ),
         ];
 
         for (template, marker) in cases {
@@ -12782,6 +12926,49 @@ mod tests {
             try_radiance_of_the_dawn(&e, cleric).is_some(),
             "two is what the Channel Divinity is for"
         );
+    }
+
+    /// The same effect at two prices is bought at the cheaper one. A
+    /// rogue Disengages with Cunning Action and keeps its Action; a monk
+    /// does it with Step of the Wind and gets the Dash thrown in;
+    /// everyone else pays the PHB's Action for it.
+    #[test]
+    fn the_cheap_printing_of_disengage_is_the_one_that_gets_bought() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        for (template, expected, x) in [
+            (&*ROGUE_TEMPLATE, "cunning disengage", 8),
+            (&*MONK_TEMPLATE, "step of the wind", 10),
+            (&*FIGHTER_TEMPLATE, "disengage", 12),
+        ] {
+            let id = e
+                .instantiate_creature(template, Coordinate::new(x, 8), 0, x as usize)
+                .unwrap();
+            let picked = try_disengage(&e, id).expect("every one of them can disengage somehow");
+            assert_eq!(
+                picked.action().name(),
+                expected,
+                "{} reached for the wrong printing",
+                template.name
+            );
+        }
     }
 
     /// The wall lane is reached for in a live fight.
