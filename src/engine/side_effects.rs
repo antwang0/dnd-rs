@@ -560,6 +560,28 @@ impl ApplicableSideEffect for DealDamage {
             return;
         }
 
+        // 5e **Mounted Combatant**, second clause: a rider with the feat
+        // takes the blow aimed at the horse under them. Same lane as the
+        // paladin above, and checked after it for the reason RAW would
+        // resolve them in that order if both were on the table: the
+        // paladin is spending a reaction and the rider is not, so the
+        // scarcer resource gets first refusal on the hit.
+        if let Some(rider) = ei.claim_rider_interposition(self.actor_id, self.amount) {
+            let (mount_name, rider_name) =
+                (ei.actor_name(self.actor_id), ei.actor_name(rider));
+            ei.log(format!(
+                "  mounted combatant: {} takes the {} {:?} meant for {}.",
+                rider_name, self.amount, self.damage_type, mount_name
+            ));
+            let redirected = DealDamage {
+                actor_id: rider,
+                amount: self.amount,
+                damage_type: self.damage_type,
+            };
+            ei.within_damage_redirect(|e| redirected.apply(e));
+            return;
+        }
+
         // Snapshot the actor's name and self-reduction state before any
         // encounter-wide lookups — the aura check below re-borrows `ei`
         // immutably and can't coexist with a live `&mut actor`.

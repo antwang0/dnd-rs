@@ -50,6 +50,9 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the party's route into `engine::mounts`. No concentration, so it
     // costs the paladin nothing they were going to spend on a smite.
     actions.push(&crate::actions::spells::FIND_STEED);
+    // …and its level-4 upgrade, which is a different animal rather than
+    // a bigger horse: the griffon flies.
+    actions.push(&crate::actions::spells::FIND_GREATER_STEED);
     // Smite spells — bonus-action concentration primes that lay extra
     // rider damage (and a follow-up effect for Wrathful / Branding /
     // Blinding) on the paladin's next melee hit. Slot-cost varies per

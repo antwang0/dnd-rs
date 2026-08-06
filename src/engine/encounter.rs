@@ -3080,6 +3080,16 @@ impl EncounterInstance {
             mode = mode.combine(RollMode::Advantage);
         }
 
+        // 5e **Mounted Combatant**: "You have advantage on melee attack
+        // rolls against an unmounted creature that is smaller than your
+        // mount." Read from the saddle down — the comparison RAW makes
+        // is against the *horse's* size, not the rider's, which is the
+        // whole point of the clause: a Medium knight on a Large
+        // warhorse rides down anything Medium or smaller.
+        if is_melee && self.rides_down(attacker_id, target_id) {
+            mode = mode.combine(RollMode::Advantage);
+        }
+
         // 5e concealment-piercing snapshot: does the attacker see through
         // the target's illusion / invisibility, and does the target see
         // through the attacker's? Both booleans feed the suppression
@@ -6812,7 +6822,7 @@ impl EncounterInstance {
     /// Ties break on the lowest actor id so a seeded run reproduces.
     pub fn claim_divine_allegiance(&mut self, target_id: usize, amount: u32) -> Option<usize> {
         use crate::actions::class_features::DIVINE_ALLEGIANCE_TAG;
-        if amount == 0 || self.redirect_depth > 0 {
+        if amount == 0 || self.in_damage_redirect() {
             return None;
         }
         let target_team = self.actors.get(&target_id)?.team();
@@ -6849,6 +6859,17 @@ impl EncounterInstance {
     /// enter/exit rather than a bare flag for the reason
     /// `enter_multiattack` is: the guard has to come back down on every
     /// path out.
+    /// Whether a blow is currently being carried for somebody else.
+    ///
+    /// The read side of `within_damage_redirect`'s guard, named so the
+    /// redirect claims can ask without reaching into the field. Both of
+    /// them — Divine Allegiance and the rider's interposition — decline
+    /// while it is up, so a hit can be taken for a friend once and not
+    /// passed around a circle of them.
+    pub(crate) fn in_damage_redirect(&self) -> bool {
+        self.redirect_depth > 0
+    }
+
     pub fn within_damage_redirect<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
         self.redirect_depth += 1;
         let out = body(self);
@@ -9748,6 +9769,23 @@ impl EncounterInstance {
         // the pair, because it softens a failed save as well as
         // perfecting a made one.
         if save_ability == AbilityScoreType::Dexterity && target.has_evasion() {
+            return Some(SaveMitigation::Evasion);
+        }
+        // 5e **Mounted Combatant**, third clause: "if your mount is
+        // subjected to an effect that allows it to make a Dexterity
+        // saving throw to take only half damage, it instead takes no
+        // damage if it succeeds on the saving throw, and only half
+        // damage if it fails." Word for word the Evasion table, granted
+        // to the horse by the person sitting on it — so it belongs here
+        // rather than as a fourth `SaveMitigation` variant that would
+        // resolve identically. A rider who has been thrown grants
+        // nothing: the link is what carries the feat down.
+        if save_ability == AbilityScoreType::Dexterity
+            && target
+                .ridden_by()
+                .and_then(|rider_id| self.actors.get(&rider_id))
+                .is_some_and(|r| r.has_mounted_combatant())
+        {
             return Some(SaveMitigation::Evasion);
         }
         if target.has_condition(Condition::PowerCircled)

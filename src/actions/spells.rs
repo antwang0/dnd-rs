@@ -15670,6 +15670,35 @@ pub static FIND_STEED: SummonSpell = SummonSpell {
     concentration: None,
 };
 
+/// Find Greater Steed — 5e level-4 conjuration, action, no
+/// concentration. Find Steed's upgrade, and the reason the lower one is
+/// worth keeping around rather than scaling: RAW's greater steed is a
+/// different *animal*, not a bigger horse. It flies.
+///
+/// RAW's list is griffon, pegasus, peryton, dire wolf, rhinoceros or
+/// saber-toothed tiger; we ship the griffon, which is the branch the
+/// spell is famous for and the one whose stat block already sat in the
+/// bestiary. Every other branch is this declaration with the template
+/// swapped — see `SummonSpell::template` for why the option table
+/// collapses rather than scales.
+///
+/// The griffon is also the case that makes the size clause in
+/// `EncounterInstance::can_mount` earn its keep: it is Large, like the
+/// warhorse, so a Medium paladin rides either and a Large one rides
+/// neither.
+pub static FIND_GREATER_STEED: SummonSpell = SummonSpell {
+    display_name: "find greater steed",
+    aliases: &["greater steed", "findgreatersteed"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::griffons::GRIFFON_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 121,
+    concentration: None,
+};
+
 /// Every spell in the Tasha's summon family, in ascending slot order.
 /// The list the sweeps read, and the one place a ninth has to be added
 /// for every invariant that holds across the family to cover it.

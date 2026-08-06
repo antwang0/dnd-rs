@@ -202,6 +202,68 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e **Mounted Combatant**, first clause: whether `attacker_id` is
+    /// swinging down from a saddle at something small enough and
+    /// footbound enough for RAW to hand them advantage — "an unmounted
+    /// creature that is smaller than your mount".
+    ///
+    /// Three conditions, and each of them is doing work:
+    ///
+    ///   - The attacker has the feat *and* is currently mounted. The
+    ///     feat is dead weight on foot, which is RAW and is also the
+    ///     reason this is a predicate on the encounter rather than a
+    ///     flag on the actor.
+    ///   - The target is not itself mounted. Two riders meeting is a
+    ///     fair fight; the clause is about reach and footing, and a
+    ///     mounted opponent has both.
+    ///   - The target is smaller than the *mount*, not than the rider.
+    ///     A Medium knight rides down anything Medium or below because
+    ///     the thing bearing down on it is a Large horse.
+    pub fn rides_down(&self, attacker_id: usize, target_id: usize) -> bool {
+        let Some(attacker) = self.actors.get(&attacker_id) else {
+            return false;
+        };
+        if !attacker.has_mounted_combatant() {
+            return false;
+        }
+        let Some(mount) = attacker.mounted_on().and_then(|id| self.actors.get(&id)) else {
+            return false;
+        };
+        let Some(target) = self.actors.get(&target_id) else {
+            return false;
+        };
+        target.mounted_on().is_none() && target.size().ordinal() < mount.size().ordinal()
+    }
+
+    /// 5e **Mounted Combatant**, second clause: "you can force an attack
+    /// that targets your mount to target you instead."
+    ///
+    /// Returns the rider who takes the blow, or `None` when the damage
+    /// lands where it was aimed. Resolved as a *damage* redirect rather
+    /// than as a retarget before the roll, which is the shape the engine
+    /// already has — the Crown Paladin's Divine Allegiance shares this
+    /// lane, and `DealDamage` asks both questions in the same breath.
+    /// The divergence from RAW is that the attack is rolled against the
+    /// horse's AC rather than the knight's; a Knight and a Warhorse
+    /// differ by exactly nothing there (AC 18 plate against AC 11
+    /// hide — so the divergence is real, and it favours the attacker,
+    /// which is the direction to err in for a feat).
+    ///
+    /// Costs no reaction, unlike its lane-mate, because RAW attaches
+    /// none — the feat's second clause has no rider on how often it
+    /// fires. What it does share is `redirect_depth`: a blow already
+    /// being carried for somebody cannot be handed on again, which is
+    /// what stops a rider and an adjacent Crown Paladin from volleying
+    /// one hit between them.
+    pub fn claim_rider_interposition(&self, mount_id: usize, amount: u32) -> Option<usize> {
+        if amount == 0 || self.in_damage_redirect() {
+            return None;
+        }
+        let rider_id = self.actors.get(&mount_id)?.ridden_by()?;
+        let rider = self.actors.get(&rider_id)?;
+        (rider.has_mounted_combatant() && rider.is_combat_active()).then_some(rider_id)
+    }
+
     /// Whether `rider_id` may climb onto `mount_id` right now, and why
     /// not when it may not.
     ///

@@ -12721,6 +12721,7 @@ mod tests {
             // the same reason: a paladin who had to concentrate on their
             // horse could never smite from its back.
             ("find steed", false),
+            ("find greater steed", false),
             ("summon beast", true),
             ("summon fey", true),
             ("summon undead", true),

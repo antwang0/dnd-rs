@@ -45,6 +45,15 @@ pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
         ]),
         has_extra_attack: true,
+        // The Mounted Combatant feat. A knight's stat block carries a
+        // Lance, which is a weapon that exists to be used from a horse
+        // — RAW gives it disadvantage against anything within 5 feet
+        // and a reach of 10 — and the MM entry describes knights as
+        // "warriors who have sworn fealty… frequently mounted". Now
+        // that `engine::mounts` exists, the AI's mount rung puts one on
+        // any warhorse that spawns beside it, and the feat is what
+        // makes that worth doing.
+        has_mounted_combatant: true,
         ..CreatureTemplate::defaults()
     }
 });

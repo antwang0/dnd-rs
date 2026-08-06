@@ -70726,3 +70726,151 @@ fn a_dash_in_the_saddle_spends_the_horses_legs() {
         "the Dash doubled the horse's speed, not added the rider's"
     );
 }
+
+/// The 5e **Mounted Combatant** feat, all three clauses.
+///
+/// The feat is what turns `engine::mounts` from a way to travel into a
+/// way to fight, and each of its clauses lands on a lane that already
+/// existed — the attack-mode table, the damage-redirect lane the Crown
+/// Paladin shares, and the Evasion row in `save_mitigation_for`.
+#[test]
+fn a_mounted_combatant_rides_down_the_footbound() {
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cavalier = e
+        .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+
+    // On foot the feat is dead weight, which is RAW.
+    assert!(!e.rides_down(cavalier, goblin));
+    assert_eq!(
+        e.compute_attack_mode(cavalier, goblin, true),
+        RollMode::Normal
+    );
+
+    assert!(e.mount(cavalier, horse).is_ok());
+    assert!(e.rides_down(cavalier, goblin));
+    assert_eq!(
+        e.compute_attack_mode(cavalier, goblin, true),
+        RollMode::Advantage,
+        "a Large horse bearing down on a Small goblin"
+    );
+    // Ranged swings are untouched: RAW says melee attack rolls.
+    assert_eq!(
+        e.compute_attack_mode(cavalier, goblin, false),
+        RollMode::Normal
+    );
+
+    // The comparison is against the mount, not the rider — and it is a
+    // strict inequality, so a Large target matches the horse and gets
+    // nothing.
+    e.actors.get_mut(&goblin).unwrap().set_size(Size::Large);
+    assert!(!e.rides_down(cavalier, goblin));
+    e.actors.get_mut(&goblin).unwrap().set_size(Size::Small);
+
+    // …and a mounted opponent is a fair fight.
+    let their_horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(10, 2), 1, 1)
+        .unwrap();
+    assert!(e.mount(goblin, their_horse).is_ok());
+    assert!(!e.rides_down(cavalier, goblin));
+}
+
+#[test]
+fn a_mounted_combatant_takes_the_blow_meant_for_the_horse() {
+    use crate::actors::creatures::fighters::{CAVALIER_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE};
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+
+    // Two knights, two horses: one rider has the feat and one doesn't,
+    // so the assertion is about the feat rather than about mounting.
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let pairs: Vec<(usize, usize)> = [
+        (&*CAVALIER_FIGHTER_TEMPLATE, 2isize),
+        (&*FIGHTER_TEMPLATE, 12isize),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(n, (template, x))| {
+        let rider = e
+            .instantiate_creature(template, Coordinate::new(*x, 2), 0, n)
+            .unwrap();
+        let mount = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(x + 2, 2), 0, n)
+            .unwrap();
+        assert!(e.mount(rider, mount).is_ok());
+        (rider, mount)
+    })
+    .collect();
+
+    for (n, (rider, mount)) in pairs.iter().enumerate() {
+        let feat = e.actors[rider].has_mounted_combatant();
+        let (rider_hp, mount_hp) = (e.actors[rider].hitpoints(), e.actors[mount].hitpoints());
+        DealDamage {
+            actor_id: *mount,
+            amount: 5,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        if feat {
+            assert_eq!(e.actors[mount].hitpoints(), mount_hp, "pair {}", n);
+            assert_eq!(e.actors[rider].hitpoints(), rider_hp - 5, "pair {}", n);
+        } else {
+            assert_eq!(e.actors[mount].hitpoints(), mount_hp - 5, "pair {}", n);
+            assert_eq!(e.actors[rider].hitpoints(), rider_hp, "pair {}", n);
+        }
+    }
+}
+
+#[test]
+fn a_mounted_combatants_horse_dodges_like_a_rogue() {
+    use crate::actors::creatures::fighters::{CAVALIER_FIGHTER_TEMPLATE, FIGHTER_TEMPLATE};
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    use crate::engine::saves::SaveMitigation;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+    // A riderless horse saves like a horse.
+    assert_eq!(
+        e.save_mitigation_for(horse, AbilityScoreType::Dexterity),
+        None
+    );
+
+    // A rider without the feat changes nothing…
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(e.mount(plain, horse).is_ok());
+    assert_eq!(
+        e.save_mitigation_for(horse, AbilityScoreType::Dexterity),
+        None
+    );
+    assert!(e.dismount(plain));
+
+    // …and one with it hands the horse Evasion, on Dexterity only.
+    let cavalier = e
+        .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(9, 2), 0, 0)
+        .unwrap();
+    e.place_actor_at(cavalier, Coordinate::new(2, 4)).unwrap();
+    assert!(e.mount(cavalier, horse).is_ok());
+    assert_eq!(
+        e.save_mitigation_for(horse, AbilityScoreType::Dexterity),
+        Some(SaveMitigation::Evasion)
+    );
+    assert_eq!(
+        e.save_mitigation_for(horse, AbilityScoreType::Constitution),
+        None
+    );
+}

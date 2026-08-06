@@ -714,6 +714,19 @@ pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         // `Option`: RAW names no limb, because a fighter swings whatever
         // it is holding.
         charge: Some(FEROCIOUS_CHARGER),
+        // The Mounted Combatant feat. RAW is a feat and not a subclass
+        // feature, but the Cavalier is the subclass the feat exists for
+        // — its level-3 **Born to the Saddle** and level-10 **Hold the
+        // Line** are both written on the assumption that the fighter is
+        // on a horse — and the engine's builds are level-complete
+        // characters rather than a class plus a feat budget. So the
+        // Cavalier ships with it the way the Champion ships with a
+        // crit threshold of 19.
+        //
+        // It also gives the charge above somewhere to point. Ferocious
+        // Charger wants twenty straight feet before the swing, and a
+        // fighter has thirty in a turn; a warhorse has sixty.
+        has_mounted_combatant: true,
         ..FIGHTER_TEMPLATE.clone()
     }
 });
