@@ -638,6 +638,36 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g-. Light Domain Cleric Radiance of the Dawn — once-per-rest
+        //      Channel Divinity, a 30 ft self-centred radiant burst that
+        //      hits hostiles only. Gated on two of them inside the
+        //      radius for the same reason `best_burst_placement` refuses
+        //      a one-enemy placement: against a single target the
+        //      cleric's at-will cantrip is most of the damage for none
+        //      of the charge, and the burst's whole value is the crowd.
+        //
+        //      Above Preserve Life because a burst that lands is often
+        //      why the healing is not needed, and below the turn-bursts
+        //      because those are the narrower feature — a cleric that
+        //      can rout the undead in front of it should, and the two
+        //      draw on the same Channel Divinity pool.
+        if let Some(aei) = try_radiance_of_the_dawn(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3g--. Tempest Domain Cleric Wrath of the Storm — once-per-rest
+        //       single-target 2d8 lightning inside 30 ft, save for half.
+        //       No crowd gate: unlike the dawn this is single-target by
+        //       construction, and half damage on a made save makes it
+        //       strictly better than the Sacred Flame the cleric would
+        //       otherwise throw at the same creature — which is a save
+        //       for *nothing*. A once-per-rest charge that beats the
+        //       at-will alternative every time it is spent is a charge
+        //       to spend on the first thing in range.
+        if let Some(aei) = try_wrath_of_the_storm(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g'. Cleric Preserve Life — once-per-rest Channel Divinity.
         //      Fire when at least one ally (including self) is wounded
         //      below half HP and inside the 30ft aura. The action's
@@ -4949,6 +4979,50 @@ fn try_zealous_presence(
         return None;
     }
     try_self_action(encounter, actor_id, "zealous presence")
+}
+
+/// Light Domain Cleric Radiance of the Dawn — once-per-rest Channel
+/// Divinity. A 30 ft (12-tile) self-centred burst of radiant damage that
+/// reaches hostiles only, so there is no friendly-fire question to ask;
+/// the only question is whether there are enough of them to be worth the
+/// charge.
+///
+/// Two is the answer, matching `best_burst_placement`'s own refusal to
+/// place a burst that catches fewer. Against one creature the cleric's
+/// cantrip is most of the damage and costs nothing, and a Channel
+/// Divinity spent to beat a cantrip by a few points is a Channel
+/// Divinity the cleric does not have when the second wave arrives.
+fn try_radiance_of_the_dawn(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    // 30 ft = 12 tiles on the 2.5 ft grid — the same radius the action's
+    // own spend site uses.
+    if n_actors_within(encounter, actor_id, 12, false, 2) < 2 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "radiance of the dawn")
+}
+
+/// Tempest Domain Cleric Wrath of the Storm — once-per-rest Channel
+/// Divinity, single-target, 30 ft (12 tiles), 2d8 lightning on a DEX
+/// save for half.
+///
+/// Delegates to the shared single-target picker, which takes the
+/// highest-HP hostile in range. That is the right tiebreak here for a
+/// blunt reason rather than a subtle one: the damage is fixed, so the
+/// only thing target choice can buy is that the damage is not wasted on
+/// something about to die anyway.
+///
+/// No crowd gate, unlike the Light domain's burst two rungs above. This
+/// one is single-target by construction and it is *strictly* better than
+/// the Sacred Flame it competes with — same dice, and a made save halves
+/// it here where Sacred Flame's negates it outright.
+fn try_wrath_of_the_storm(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "wrath of the storm", 12)
 }
 
 fn try_bless(
@@ -12376,7 +12450,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 40] = [
+        let cases: [(&CreatureTemplate, &str); 41] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12536,6 +12610,11 @@ mod tests {
             // controller to decide. Rebuke the Violent is the oath's one
             // press, and the CD rung reaches it.
             (&REDEMPTION_PALADIN_TEMPLATE, "rebuke the violent"),
+            // Not Radiance of the Dawn beside it: the Light Cleric's
+            // burst is gated on two hostiles in the radius, and this
+            // fixture has one ogre. Its rung is pinned by
+            // `the_light_clerics_dawn_waits_for_a_crowd` below.
+            (&crate::actors::creatures::clerics::TEMPEST_CLERIC_TEMPLATE, "wrath of the storm"),
         ];
 
         for (template, marker) in cases {
@@ -12653,6 +12732,56 @@ mod tests {
         let max = e.actors[&monk].max_hitpoints();
         e.actors.get_mut(&monk).unwrap().take_damage(max * 3 / 4);
         assert!(try_patient_defense(&e, monk).is_some());
+    }
+
+    /// The Light Cleric's Channel Divinity waits for a crowd: one
+    /// hostile in the radius is a job for the cantrip, two is what the
+    /// burst is for. Same two-enemy rule `best_burst_placement` applies
+    /// to placed bursts, applied here to a self-centred one.
+    #[test]
+    fn the_light_clerics_dawn_waits_for_a_crowd() {
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 32,
+            height: 32,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(5)).unwrap();
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            try_radiance_of_the_dawn(&e, cleric).is_none(),
+            "an empty room is not a crowd"
+        );
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_radiance_of_the_dawn(&e, cleric).is_none(),
+            "one goblin is a job for Sacred Flame"
+        );
+        // A second goblin out past the 30 ft radius doesn't make a
+        // crowd — the gate counts what the burst would actually reach.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 1)
+            .unwrap();
+        assert!(
+            try_radiance_of_the_dawn(&e, cleric).is_none(),
+            "a goblin across the room is not in the burst"
+        );
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 6), 1, 2)
+            .unwrap();
+        assert!(
+            try_radiance_of_the_dawn(&e, cleric).is_some(),
+            "two is what the Channel Divinity is for"
+        );
     }
 
     /// The wall lane is reached for in a live fight.
