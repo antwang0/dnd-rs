@@ -9268,6 +9268,69 @@ mod tests {
         assert!(try_stand_for_rider(&e, horse).is_none());
     }
 
+    /// The whole player-side route into `engine::mounts`, end to end:
+    /// the paladin casts Find Steed, the steed appears beside them, and
+    /// the mount rung puts them on it — with the turn's Action still
+    /// unspent, because getting into a saddle is priced in feet.
+    ///
+    /// Worth driving through the ladder rather than calling the two
+    /// rungs directly. Find Steed reaches the AI through the summon
+    /// lane's *free* tier (it holds no concentration), and the mount
+    /// rung sits several rungs below that — so this is also the proof
+    /// that a paladin gets to both of them in the same fight instead of
+    /// one starving the other.
+    #[test]
+    fn a_paladin_conjures_a_steed_and_gets_on_it() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let paladin = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Somebody to fight, far enough off that the ladder isn't busy
+        // swinging: the summon rung wants an enemy within 24 tiles.
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(24, 12), 1, 0)
+            .unwrap();
+
+        let ai = SimpleAi;
+        for _ in 0..40 {
+            e.process_stack();
+            if e.is_complete() || e.is_mounted(paladin) {
+                break;
+            }
+            let Some(prompt) = e.peek_prompt() else { break };
+            let actor_id = prompt.actor_id();
+            match ai.decide(&e, actor_id) {
+                ControllerDecision::Act(aei) => {
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+                ControllerDecision::AwaitInput => break,
+            }
+        }
+
+        assert!(
+            e.messages().iter().any(|m| m.contains("find steed")),
+            "the paladin should reach its own summon:\n{}",
+            e.messages().join("\n")
+        );
+        assert!(
+            e.is_mounted(paladin),
+            "…and then get on it:\n{}",
+            e.messages().join("\n")
+        );
+        let steed = e.actors[&paladin].mounted_on().unwrap();
+        assert_eq!(e.actors[&steed].team(), e.actors[&paladin].team());
+        assert_eq!(
+            e.actors[&paladin].location(),
+            e.actors[&steed].location(),
+            "and rides where it stands"
+        );
+    }
+
     fn empty_arena() -> EncounterInstance {
         let tp = TerrainGenParams {
             width: 30,
