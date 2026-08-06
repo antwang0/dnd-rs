@@ -6779,11 +6779,18 @@ impl ActorInstance {
                 if action_blocked {
                     return false;
                 }
-                // Conditions that zero out movement entirely.
-                if self.conditions.keys().any(|c| c.zeros_movement()) {
-                    return false;
-                }
-                amt <= self.movement
+                // `remaining_movement`, not the raw `movement` field —
+                // the two are the same number for the overwhelming
+                // majority of actors and deliberately differ for the
+                // ones RAW says cannot move at all. Reading the field
+                // meant this gate saw only the `zeros_movement`
+                // conditions and missed the sixth rung of exhaustion,
+                // whose whole sentence is "speed reduced to 0": a
+                // creature that far gone could still buy a stand-up, a
+                // mount or a dismount, because those price themselves
+                // in feet and ask here rather than asking the
+                // pathfinder.
+                amt <= self.remaining_movement()
             }
             Resource::SpellSlot(spell_lvl) => {
                 if action_blocked {
@@ -7252,12 +7259,20 @@ impl ActorInstance {
         if self.exhaustion >= EXHAUSTION_ZERO_SPEED_TIER {
             return 0.0;
         }
-        // 5e RAW: a prone creature crawls at half speed. Every tile of
-        // movement costs double while prone, which we approximate by
-        // halving the remaining budget so the actor gets half as far.
-        if self.has_condition(Condition::Prone) {
-            return self.movement * 0.5;
-        }
+        // Prone is deliberately *not* here, and it used to be. 5e's
+        // crawl is "every foot of movement costs 1 extra foot", which
+        // the pathfinder charges per tile through its `prone_factor` —
+        // and halving the budget here as well charged it twice, so a
+        // prone creature with 30 ft of speed crawled 7.5 feet instead
+        // of 15. The sibling test has said the budget stays intact
+        // since the pathfinder learned the rule; this is the half that
+        // never got taken back out.
+        //
+        // Which is also the RAW-correct reading of standing up. RAW
+        // prices that at "half your speed" out of the *full* budget: a
+        // 30-ft creature pays 15 to stand and walks the other 15. With
+        // the budget pre-halved it paid 15 out of 15 and stood up with
+        // nothing left.
         self.movement
     }
 

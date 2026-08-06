@@ -70609,3 +70609,90 @@ fn the_thorns_bill_the_horse_and_the_rider_both() {
         "and carried the rider across them"
     );
 }
+
+/// A prone creature crawls half its speed, not a quarter of it.
+///
+/// 5e prices the crawl as "every foot of movement costs 1 extra foot",
+/// which the pathfinder charges per tile. The budget used to be halved
+/// on top of that, so the rule was applied twice and a zombie on its
+/// back covered a quarter of the ground RAW gives it. The two halves of
+/// the model disagreed in writing, too: this test's neighbour has
+/// asserted "the budget stays intact" since the pathfinder learned the
+/// rule.
+#[test]
+fn a_crawl_costs_double_per_tile_and_not_double_again_on_the_budget() {
+    use crate::conditions::Condition;
+    let mut e = ei_with_terrain(30, 10, &[]);
+    let id = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let speed = e.actors[&id].speed();
+    let walked = (0..14)
+        .filter(|n| {
+            e.path_cost_to(id, Coordinate::new(2 + n, 2))
+                .is_some_and(|c| c <= speed)
+        })
+        .max()
+        .expect("a zombie can walk somewhere");
+
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent);
+    assert_eq!(
+        e.actors[&id].remaining_movement(),
+        speed,
+        "the budget itself is untouched — the tiles cost more"
+    );
+    let crawled = (0..14)
+        .filter(|n| e.path_cost_to(id, Coordinate::new(2 + n, 2)).is_some())
+        .max()
+        .expect("a prone zombie can still crawl");
+    assert_eq!(
+        crawled * 2,
+        walked,
+        "a crawl covers half the ground a walk does — {} tiles against {}",
+        crawled,
+        walked
+    );
+}
+
+/// The last rung of exhaustion before death is "speed reduced to 0",
+/// and that has to reach the actions priced in feet as well as the
+/// pathfinder.
+///
+/// Standing up, mounting and dismounting all cost movement and nothing
+/// else, and all of them ask `can_consume_resource` rather than asking
+/// the pathfinder for a route. That gate used to read the raw budget
+/// field, which the exhaustion ladder never touches — so a creature too
+/// exhausted to take a single step could still climb onto a horse.
+#[test]
+fn the_fifth_rung_of_exhaustion_stops_the_things_priced_in_feet() {
+    use crate::actors::actor_template::EXHAUSTION_ZERO_SPEED_TIER;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let id = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&id].can_consume_resource(Resource::Movement(2.5)),
+        "an unexhausted creature can spend a tile's worth"
+    );
+    for _ in 0..EXHAUSTION_ZERO_SPEED_TIER {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
+    }
+    assert_eq!(
+        e.actors[&id].exhaustion_level(),
+        EXHAUSTION_ZERO_SPEED_TIER
+    );
+    assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    assert!(
+        !e.actors[&id].can_consume_resource(Resource::Movement(2.5)),
+        "and one this far gone cannot"
+    );
+}

@@ -2524,12 +2524,13 @@ impl Condition {
     /// `ActorInstance::remaining_movement` to gate motion-blocking
     /// conditions in one place.
     pub fn zeros_movement(&self) -> bool {
-        // Note: Prone is NOT in this list. RAW: prone halves movement
-        // (you crawl). The half-speed reduction is modelled in
-        // `ActorInstance::remaining_movement()`, and standing up costs
-        // half the actor's speed via `StandUp::cost()`. Blocking
-        // movement entirely would create a catch-22 — standing up pays
-        // in movement.
+        // Note: Prone is NOT in this list. RAW: a prone creature
+        // crawls, paying an extra foot for every foot it covers, which
+        // `EncounterInstance::dijkstra_path` charges per tile through
+        // its `prone_factor`. The budget itself is untouched, so
+        // standing up can pay for itself out of it — `StandUp::cost()`
+        // asks for half the actor's speed. Blocking movement entirely
+        // would create a catch-22: standing up pays in movement.
         matches!(
             self,
             Condition::Stunned

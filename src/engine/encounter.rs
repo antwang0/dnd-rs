@@ -11845,7 +11845,23 @@ impl EncounterInstance {
         self.tick_conjured_terrain();
     }
 
-    pub fn set_actor_map(
+    /// Move `actor_id`'s stamp on the occupancy grid from wherever it is
+    /// to `coord`, without touching the actor's own `location` field.
+    ///
+    /// Private, and deliberately so: this is the one routine in the
+    /// engine that can leave the grid disagreeing with the actors, and
+    /// its three callers are the three places that immediately put the
+    /// two back in step — `relocate_actor`, and the two spawn paths.
+    /// Anything else that wants to move a body wants `place_actor_at`
+    /// or `walk_actor_to`.
+    ///
+    /// It also cannot be handed a mounted rider. A rider's stamp belongs
+    /// to the mount it is sitting on, so moving it here would erase the
+    /// *horse* from the tiles it is standing on and stamp the rider onto
+    /// tiles it has no claim to. `relocate_actor` resolves the pair
+    /// before it gets here, and that resolution is only sound because
+    /// nothing outside this module can reach past it.
+    fn set_actor_map(
         &mut self,
         actor_id: usize,
         coord: Coordinate,
