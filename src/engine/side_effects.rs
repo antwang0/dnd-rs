@@ -443,6 +443,47 @@ impl ApplicableSideEffect for MoveActor {
     }
 }
 
+/// 5e Mounted Combat: put `rider_id` in `mount_id`'s saddle.
+///
+/// A thin wrapper over `EncounterInstance::mount` so the seating lands
+/// in the stack alongside everything else an action does, rather than
+/// happening inside `side_effects` while the rest of the turn is still
+/// being assembled. The refusal is re-checked here rather than trusted
+/// from the validator: an action is validated when it is chosen and
+/// applied when the stack reaches it, and a horse can be shoved, killed
+/// or mounted by somebody else in between.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct MountUp {
+    pub rider_id: usize,
+    pub mount_id: usize,
+}
+
+impl ApplicableSideEffect for MountUp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Err(refusal) = ei.mount(self.rider_id, self.mount_id) {
+            let name = ei.actor_name(self.rider_id);
+            ei.log(format!("{} can't mount: {}.", name, refusal.describe()));
+        }
+    }
+}
+
+/// 5e Mounted Combat: get `rider_id` out of the saddle on purpose.
+/// Sibling of `MountUp`; see there for why the engine call is re-checked
+/// rather than assumed to still be legal.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct DismountFrom {
+    pub rider_id: usize,
+}
+
+impl ApplicableSideEffect for DismountFrom {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if !ei.dismount(self.rider_id) {
+            let name = ei.actor_name(self.rider_id);
+            ei.log(format!("{} has nowhere to dismount to.", name));
+        }
+    }
+}
+
 /// Move an actor to `dest` without firing per-step opportunity attacks.
 /// 5e teleports (Misty Step, Dimension Door, fey step abilities) bypass
 /// the normal "movement leaving threatened squares" trigger because the
@@ -1190,6 +1231,26 @@ impl ApplicableSideEffect for ApplyCondition {
         };
         if newly_added {
             ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
+            // 5e Mounted Combat: "If your mount is knocked prone, you
+            // can use your reaction to dismount it as it falls and land
+            // on your feet. Otherwise, you are dismounted and fall prone
+            // in a space within 5 feet of it." — and the sentence
+            // before it puts the rider's own knockdown on the same DC 10
+            // Dexterity save. Both halves reach the same handler; which
+            // of the pair was floored decides only whose id names the
+            // mount.
+            //
+            // Hooked to the *install*, not to `add_condition`, because
+            // the answer needs the board: where the rider can land, and
+            // whether there is anywhere at all.
+            if self.condition == Condition::Prone {
+                let mount_id = ei
+                    .actors
+                    .get(&self.actor_id)
+                    .and_then(|a| a.mounted_on())
+                    .unwrap_or(self.actor_id);
+                ei.unseat(mount_id, crate::engine::mounts::UnseatCause::MountProne);
+            }
         } else {
             // Re-application — log the refresh so the player sees that
             // the timer changed (e.g. a re-cast Bless extending duration).

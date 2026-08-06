@@ -4,6 +4,15 @@ use std::sync::LazyLock;
 
 use crate::engine::types::{Coordinate, Size};
 
+/// Feet of board covered by one grid tile.
+///
+/// 5e's grid is 5 ft to the square and this engine's is 2.5, because a
+/// Medium creature occupies a 2×2 block rather than a single tile — see
+/// `get_tiles_from_size`. Every conversion between a rule written in feet
+/// ("half your speed", "within 10 feet") and a count of tiles goes
+/// through this number, and it was a bare `2.5` at each of those sites.
+pub const TILE_FEET: f32 = 2.5;
+
 pub fn get_tiles_from_size(size: Size) -> usize {
     match size {
         Size::Tiny => 1,

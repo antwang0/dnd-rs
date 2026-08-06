@@ -251,7 +251,7 @@ use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
-use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+use crate::engine::util::{TILE_FEET, footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, Roller};
@@ -5043,6 +5043,33 @@ impl EncounterInstance {
         }
     }
 
+    /// Stamp `actor_id` onto the `size` footprint anchored at `origin`.
+    ///
+    /// The named half of `write_footprint`'s `Option` parameter, exposed
+    /// to the mounted-combat lane — which is the only thing outside this
+    /// module that puts a body back on the grid without moving it there,
+    /// because a dismounting rider was never on the grid to move from.
+    pub(crate) fn stamp_footprint_of(
+        &mut self,
+        actor_id: usize,
+        origin: Coordinate,
+        size: Size,
+    ) {
+        self.write_footprint(Some(actor_id), origin, size);
+    }
+
+    /// Release the `size` footprint anchored at `origin`. The erasing
+    /// half of the pair above; `actor_id` is taken for symmetry and to
+    /// document whose tiles are being freed.
+    pub(crate) fn clear_footprint_of(
+        &mut self,
+        _actor_id: usize,
+        origin: Coordinate,
+        size: Size,
+    ) {
+        self.write_footprint(None, origin, size);
+    }
+
     pub fn terrain_at(&self, coord: Coordinate) -> Option<&TerrainInfo> {
         let idx = self.idx(coord).ok()?;
         self.terrain.get(idx)
@@ -5533,10 +5560,24 @@ impl EncounterInstance {
     /// they are the same sentence and differ only in when they are
     /// asked. The ledger is what makes calling it on every step of a
     /// six-tile walk through a web cost one save rather than six.
+    /// A horse that walks into a Web has carried its rider into the Web,
+    /// and each of them saves for themselves — so the trigger is asked
+    /// of both halves of a rider/mount pair. `ride_pair` is the identity
+    /// for the overwhelming majority of actors, who are nobody's
+    /// passenger; the ledger keeps a second ask on the same turn free.
     pub fn touch_zones(&mut self, actor_id: usize) {
         if self.zones.is_empty() {
             return;
         }
+        for id in self.ride_pair(actor_id) {
+            self.touch_zones_alone(id);
+        }
+    }
+
+    /// `touch_zones` for exactly one creature. The body of the old
+    /// single-actor routine, split out so the pair walk above has
+    /// something to call once per half without recursing.
+    fn touch_zones_alone(&mut self, actor_id: usize) {
         if !self
             .actors
             .get(&actor_id)
@@ -5576,10 +5617,21 @@ impl EncounterInstance {
     /// and a creature that crosses six tiles of thorns pays six times.
     /// Called after the step has landed, so the question is whether the
     /// tile just entered is thorny.
+    /// Billed to both halves of a rider/mount pair, for the reason
+    /// `touch_zones` is: five feet of thorns crossed by a horse is five
+    /// feet of thorns crossed by everyone on it.
     pub fn charge_zone_movement(&mut self, actor_id: usize) {
         if self.zones.iter().all(|z| z.effect.per_step_damage.is_none()) {
             return;
         }
+        for id in self.ride_pair(actor_id) {
+            self.charge_zone_movement_alone(id);
+        }
+    }
+
+    /// `charge_zone_movement` for exactly one creature. See
+    /// `touch_zones_alone` for why the split exists.
+    fn charge_zone_movement_alone(&mut self, actor_id: usize) {
         // Footprint coverage, not the anchor tile — the same question
         // `touch_zones` asks, so a Large creature with one corner in
         // the thorns is in the thorns for both triggers.
@@ -5803,6 +5855,20 @@ impl EncounterInstance {
             .actors
             .iter()
             .filter_map(|(id, a)| {
+                // A mounted rider has no footprint to reconcile — the
+                // mount owns the tiles the pair stands on, and
+                // `resize_actor` writes the grid, so letting a rider
+                // through here would stamp a second body over the
+                // horse's. So a growth or shrink that lands on someone
+                // in a saddle is *deferred*, not lost: the sweep runs on
+                // every pump, and the rider takes their new size the
+                // moment they come out of it. Which is also the RAW
+                // answer to a Rune Knight who grows to Large on a
+                // Large horse — RAW's own "if there is enough room"
+                // clause, with a saddle as the room.
+                if a.mounted_on().is_some() {
+                    return None;
+                }
                 let want = a.desired_size();
                 (want != a.size()).then_some((*id, a.size(), want))
             })
@@ -7257,20 +7323,30 @@ impl EncounterInstance {
         use std::collections::BinaryHeap;
 
         let actor = self.actors.get(&actor_id)?;
-        let start = actor.location();
+        // A mounted rider travels on its mount's legs. Everything
+        // geometric about the walk — where it starts, how wide the body
+        // is, which tiles it may enter, whether it crawls, which
+        // surcharges it ignores — belongs to the mount; only the
+        // *budget* stays the rider's, and `start_turn_for` has already
+        // filled that from the mount's speed. For an unmounted actor
+        // `body` and `actor` are the same creature and this costs a
+        // hash lookup.
+        let body_id = self.movement_body(actor_id);
+        let body = self.actors.get(&body_id)?;
+        let start = body.location();
         if start == dest {
             return Some((0.0, Vec::new()));
         }
-        if !self.can_move_to(actor_id, dest) {
+        if !self.can_move_to(body_id, dest) {
             return None;
         }
 
         // Encode floats as millifeet so we can use integer ordering / Eq.
         let to_mft = |f: f32| -> u32 { (f * 1000.0) as u32 };
         // 5e: prone creatures crawl at double movement cost per foot.
-        let prone_factor: u32 = if actor.has_condition(Condition::Prone) { 2 } else { 1 };
-        let cardinal_mft = to_mft(2.5) * prone_factor;
-        let diagonal_mft = to_mft(2.5 * std::f32::consts::SQRT_2) * prone_factor;
+        let prone_factor: u32 = if body.has_condition(Condition::Prone) { 2 } else { 1 };
+        let cardinal_mft = to_mft(TILE_FEET) * prone_factor;
+        let diagonal_mft = to_mft(TILE_FEET * std::f32::consts::SQRT_2) * prone_factor;
         let budget_mft = to_mft(actor.remaining_movement() + 0.5);
         // Freedom of Movement, magical flight, and Land's Stride all
         // waive the difficult-terrain surcharge — see the shared
@@ -7278,7 +7354,7 @@ impl EncounterInstance {
         // rather than per candidate step: the answer can't change while
         // a single path is being searched, and the inner loop below runs
         // eight times per expanded tile.
-        let ignores_rough = actor.ignores_difficult_terrain();
+        let ignores_rough = body.ignores_difficult_terrain();
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -7316,7 +7392,7 @@ impl EncounterInstance {
                         continue;
                     }
                     let next = Coordinate::new(cx + dx, cy + dy);
-                    if !self.can_move_to(actor_id, next) {
+                    if !self.can_move_to(body_id, next) {
                         continue;
                     }
                     let base_step = if dx == 0 || dy == 0 {
@@ -8645,6 +8721,13 @@ impl EncounterInstance {
     /// pattern that lets a new feature drop in as a one-line row
     /// entry rather than a fresh open-coded trigger function.
     pub fn trigger_creature_dropped(&mut self, dropped_target_id: usize) {
+        // A horse that goes down goes down with its rider on it. Run
+        // first, because the two payouts below can heal and can kill,
+        // and both read a board where the rider is already off.
+        self.unseat(
+            dropped_target_id,
+            crate::engine::mounts::UnseatCause::MountDropped,
+        );
         self.pay_hexblade_curse_on_death(dropped_target_id);
         self.pay_kill_triggered_temp_hp(dropped_target_id);
     }
@@ -8778,6 +8861,15 @@ impl EncounterInstance {
         // because zeroing a budget that hasn't been granted yet would
         // be undone a line later.
         self.apply_aura_of_conquest(actor_id);
+        // 5e controlled mount: "it moves as you direct it". The rider
+        // walks on the horse's legs, so the turn's movement budget is
+        // the horse's speed rather than their own. Runs after
+        // `reset_for_new_round` has handed out the rider's own budget
+        // (this replaces it) and after the Conquest aura has had its
+        // say (a rooted rider is rooted whatever they are sitting on —
+        // `Rooted` is a `zeros_movement` condition, which no budget can
+        // buy past).
+        self.grant_mounted_movement(actor_id);
         // 5e Recharge: at the start of each turn, roll a d6 for each
         // spent recharge ability. If the roll >= the ability's threshold,
         // the ability becomes available again.
@@ -11806,13 +11898,51 @@ impl EncounterInstance {
         coord: Coordinate,
         walked: bool,
     ) -> Result<(), Box<dyn Error>> {
-        self.set_actor_map(actor_id, coord)?;
-        if let Some(a) = self.get_actor(actor_id) {
+        // A rider who is *teleported* leaves the saddle rather than
+        // taking the horse with them — RAW's Misty Step moves you, not
+        // the thing you were sitting on. Resolved before the move so the
+        // rider is a normal creature with a footprint by the time the
+        // relocation happens, and so a dismount that can't find room
+        // fails the whole teleport rather than half of it.
+        if !walked && self.is_mounted(actor_id) {
+            self.dismount(actor_id);
+        }
+        // Everything else about a mounted rider's movement is the
+        // mount's: its tiles, its footprint, its stamp on the grid. The
+        // rider's own `location` is mirrored onto the result below.
+        let body_id = self.movement_body(actor_id);
+        self.set_actor_map(body_id, coord)?;
+        if let Some(a) = self.get_actor(body_id) {
             if walked {
                 a.walk_to(coord);
             } else {
                 a.set_location(coord);
             }
+        }
+        // The passenger, if there is one — reached from `body_id` rather
+        // than from `actor_id` so the two directions collapse into one
+        // line: relocating the rider found the mount above and finds the
+        // rider back here, and relocating the mount finds its rider
+        // directly.
+        let passenger = self.actors.get(&body_id).and_then(|a| a.ridden_by());
+        if let Some(rider_id) = passenger
+            && let Some(r) = self.get_actor(rider_id)
+        {
+            // Mirrored with the same verb the mount used: a rider whose
+            // horse is charging is charging, and one whose horse was
+            // shoved has been shoved.
+            if walked {
+                r.walk_to(coord);
+            } else {
+                r.set_location(coord);
+            }
+        }
+        // "If an effect moves your mount against its will while you're
+        // on it…" — the involuntary half of that sentence is exactly
+        // `walked == false`, which is the distinction `walk_actor_to`
+        // and `place_actor_at` already draw for the charge clauses.
+        if !walked && passenger.is_some() {
+            self.unseat(body_id, crate::engine::mounts::UnseatCause::MountForcedMove);
         }
         Ok(())
     }
@@ -12254,6 +12384,7 @@ impl EncounterInstance {
         // takes their concentration — and so the areas it was holding
         // up — with them.
         self.release_map_layers_of(id);
+        let footprint_handled = self.sever_ride_links(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -12263,7 +12394,9 @@ impl EncounterInstance {
         let carried: Vec<&'static crate::items::item_template::Item> =
             actor.items().to_vec();
         drop(actor);
-        self.write_footprint(None, loc, size);
+        if !footprint_handled {
+            self.write_footprint(None, loc, size);
+        }
         self.initiative_tracker.remove_actor(id);
         for item in carried {
             self.drop_item(loc, item);
@@ -12283,6 +12416,13 @@ impl EncounterInstance {
     /// intentionally skips the burst since the actor isn't truly dying.
     fn remove_actor(&mut self, id: usize) {
         self.trigger_death_burst(id);
+        // Cut before the corpse is lifted out of the table: a rider and
+        // a mount are the only two actors in the engine that hold ids
+        // pointing at each other, and either half surviving the other
+        // would leave a link nothing can resolve. The rider's DC 10 save
+        // has already happened at 0 HP (`trigger_creature_dropped`); this
+        // is what stands up a rider who had nowhere to fall then.
+        let footprint_handled = self.sever_ride_links(id);
         // A concentration-held area outlives nothing. Swept here rather
         // than in `drop_concentration`, because death does not route
         // through it — the actor is lifted straight out of the table —
@@ -12303,7 +12443,9 @@ impl EncounterInstance {
         let carried: Vec<&'static crate::items::item_template::Item> =
             actor.items().to_vec();
         drop(actor);
-        self.write_footprint(None, loc, size);
+        if !footprint_handled {
+            self.write_footprint(None, loc, size);
+        }
         self.initiative_tracker.remove_actor(id);
         for item in carried {
             self.drop_item(loc, item);
@@ -12612,7 +12754,18 @@ impl EncounterInstance {
                 self.initiative_tracker.remove_actor(curr_id);
                 continue;
             };
-            if actor.is_combat_active() {
+            // 5e controlled mount: "it moves as you direct it, and it
+            // has only three action options: Dash, Disengage, and
+            // Dodge." All three are things the rider is already choosing
+            // by choosing where to walk, so a ridden mount's slot passes
+            // straight through — it has spent its turn carrying somebody
+            // on theirs. Skipped here rather than by draining its
+            // resources so it never reaches a prompt with nothing to
+            // pick; its reactions are untouched, and a horse still
+            // answers a step past it with an opportunity attack.
+            let ridden_by = actor.ridden_by();
+            let dying = actor.is_dying();
+            if actor.is_combat_active() && ridden_by.is_none() {
                 break;
             }
             if !visited.insert(curr_id) {
@@ -12620,7 +12773,10 @@ impl EncounterInstance {
                 // (everyone left in the queue is downed).
                 break;
             }
-            if actor.is_dying() {
+            if let Some(rider_id) = ridden_by {
+                let (mount, rider) = (self.actor_name(curr_id), self.actor_name(rider_id));
+                self.log(format!("{} is under rein, and acts on {}'s turn.", mount, rider));
+            } else if dying {
                 self.resolve_death_save(curr_id);
             }
             // After the save (or if stable), advance to the next slot.

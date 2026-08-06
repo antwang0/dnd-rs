@@ -60,6 +60,8 @@ pub static CAMEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 5,
         cr: 0.125,
         size: Size::Large,
+        // 5e Mounted Combat: PHB's mount table — the desert entry.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

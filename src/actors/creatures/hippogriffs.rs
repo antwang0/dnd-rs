@@ -31,6 +31,9 @@ pub static HIPPOGRIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 8,
         cr: 1.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM's aerial mount, and the cheap one — a griffon with no appetite for
+        // the horse half of its rider's tack.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

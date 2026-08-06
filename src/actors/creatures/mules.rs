@@ -61,6 +61,8 @@ pub static MULE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 5,
         cr: 0.125,
         size: Size::Medium,
+        // 5e Mounted Combat: PHB's mount table. Medium, so it carries the Small half of the party.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

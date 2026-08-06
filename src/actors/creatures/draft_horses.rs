@@ -58,6 +58,8 @@ pub static DRAFT_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 7,
         cr: 0.25,
         size: Size::Large,
+        // 5e Mounted Combat: PHB's mount table. Bred to pull rather than to run, and rideable either way.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

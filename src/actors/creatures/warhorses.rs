@@ -8,13 +8,16 @@ use std::sync::LazyLock;
 /// equine: a heavy-built hooved combatant bred for line cavalry
 /// charges. Slots beside the Riding Horse / Draft Horse cohort in
 /// the SRD's horse family — RAW's "warhorse" is the militarized
-/// variant. We omit the riding-only-mount horses (CR ¼ each) as a
-/// scope cut: the engine doesn't model the mounted-combat lane
-/// (rider on top, mount underneath, mounted attacks routed through
-/// the rider), so the soft civilian horses would just be hooves
-/// fodder with no unique combat clause. The warhorse keeps the
-/// hooves-with-trample-flavor identity that separates it from a
-/// generic large beast.
+/// variant, and the one whose hooves are worth rolling on its own
+/// turn. The warhorse keeps the hooves-with-trample-flavor identity
+/// that separates it from a generic large beast.
+///
+/// `mountable`, along with the rest of the horse family — see
+/// `engine::mounts`. This paragraph used to say the opposite, and
+/// gave that as the reason the civilian horses weren't worth
+/// shipping: with no mounted-combat lane a riding horse was hooves
+/// fodder with no clause of its own. It has one now, and it is the
+/// only clause that ever mattered for a horse.
 ///
 /// Slots beside the Mastiff (CR ⅛ trained guard hound) and the
 /// Guard (CR ⅛ city watchman) as the "trained-NPC-companion" tier
@@ -78,6 +81,8 @@ pub static WARHORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 7,
         cr: 0.5,
         size: Size::Large,
+        // 5e Mounted Combat: PHB's mount table, militarised: the warhorse is what "line cavalry" means.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         // RAW: when the warhorse closes at least the clause's distance in a

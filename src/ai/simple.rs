@@ -12431,6 +12431,10 @@ mod tests {
             ("conjure elemental", true),
             ("animate objects", true),
             ("animate dead", false),
+            // Find Steed is the second `None` on the chassis, and for
+            // the same reason: a paladin who had to concentrate on their
+            // horse could never smite from its back.
+            ("find steed", false),
             ("summon beast", true),
             ("summon fey", true),
             ("summon undead", true),

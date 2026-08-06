@@ -81,6 +81,8 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Elvish, Language::Sylvan]),
         cr: 0.25,
         size: Size::Large,
+        // 5e Mounted Combat: MM's night-flying mount, on the same terms as the giant eagle.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

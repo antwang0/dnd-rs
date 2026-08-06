@@ -54,6 +54,9 @@ pub static PONY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 7,
         cr: 0.125,
         size: Size::Medium,
+        // 5e Mounted Combat: PHB's mount table, and the reason `can_mount` compares sizes rather than
+        // hardcoding Large: a Medium pony carries a Small halfling and nobody bigger.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

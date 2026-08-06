@@ -700,6 +700,168 @@ impl Action for Help {
 
 pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {});
 
+/// 5e **Mount** (PHB p.198): "Once during your move, you can mount a
+/// creature that is within 5 feet of you… the cost is movement equal to
+/// half your speed."
+///
+/// Costs movement and nothing else — no action, no bonus action. That is
+/// the whole shape of the rule, and it is what makes the mounted turn
+/// worth taking: a knight who spends fifteen feet climbing into the
+/// saddle still has their whole Attack action and the horse's remaining
+/// forty-five feet to spend on it.
+///
+/// The gate lives in `EncounterInstance::can_mount`, which the validator
+/// and the side effect both read, so the target picker offers exactly
+/// the creatures that would actually accept a rider.
+pub struct Mount {}
+
+impl Action for Mount {
+    fn name(&self) -> &str {
+        "mount"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ride", "saddle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        mount_toll(encounter, caster_id)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        first_target_id(target_ids)
+            .is_some_and(|mount_id| encounter.can_mount(caster_id, mount_id).is_ok())
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(mount_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(crate::engine::side_effects::MountUp {
+            rider_id: caster_id,
+            mount_id,
+        })]
+    }
+}
+
+pub static MOUNT: LazyLock<Mount> = LazyLock::new(|| Mount {});
+
+/// 5e **Dismount** (PHB p.198): the other half of the same sentence, at
+/// the same price — half your speed, spent to get down.
+///
+/// `NoArgs`, because there is only one thing you can be sitting on. The
+/// landing tile is the engine's to pick (`EncounterInstance::dismount`
+/// takes the closest free space beside the mount), which is also why the
+/// validator asks for one: a rider walled in on every side stays up, and
+/// offering the action would charge them half their speed for nothing.
+pub struct Dismount {}
+
+impl Action for Dismount {
+    fn name(&self) -> &str {
+        "dismount"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["unmount", "getoff"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        mount_toll(encounter, caster_id)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .and_then(|a| a.mounted_on())
+            .is_some_and(|mount_id| {
+                encounter
+                    .find_adjacent_teleport_anchor(mount_id, caster_id)
+                    .is_some()
+            })
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::DismountFrom {
+            rider_id: caster_id,
+        })]
+    }
+}
+
+pub static DISMOUNT: LazyLock<Dismount> = LazyLock::new(|| Dismount {});
+
+/// The movement RAW charges to get on or off a mount — "half your
+/// speed", both ways.
+///
+/// Shared by both actions rather than written twice because they are one
+/// sentence in the book, and because a `Vec::new()` for a missing actor
+/// is the wrong answer in a subtly expensive way: an empty cost is a
+/// *free* action, so a rider the table has lost track of would be able
+/// to mount and dismount without limit.  There is no such rider —
+/// `caster_id` always resolves — and the fallback is the toll a 30-ft
+/// creature would pay, so the impossible case is priced rather than
+/// comped.
+fn mount_toll(encounter: &EncounterInstance, caster_id: usize) -> Vec<Resource> {
+    let feet = encounter
+        .actors
+        .get(&caster_id)
+        .map_or(DEFAULT_MOUNT_TOLL_FEET, |a| a.mount_movement_cost());
+    vec![Resource::Movement(feet)]
+}
+
+/// Half the speed of an ordinary 30-ft creature, rounded to the grid —
+/// the toll `mount_toll` falls back to. See there.
+const DEFAULT_MOUNT_TOLL_FEET: f32 = 15.0;
+
 /// 5e Shove (special melee attack): contested Athletics check — attacker's
 /// d20 + STR mod vs target's d20 + max(STR mod, DEX mod). On success the
 /// target is knocked prone AND pushed 1 tile (5 ft) away from the attacker.
@@ -1334,6 +1496,8 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*DISENGAGE,
             &*READY,
             &*HELP,
+            &*MOUNT,
+            &*DISMOUNT,
             &*SHOVE,
             &*GRAPPLE,
             &*GRAPPLE_ESCAPE,

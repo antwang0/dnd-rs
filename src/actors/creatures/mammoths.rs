@@ -70,6 +70,9 @@ pub static MAMMOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 6,
         cr: 6.0,
         size: Size::Huge,
+        // 5e Mounted Combat: MM: giants and frost-country raiders ride these into battle. Huge, so it
+        // carries a Large rider as happily as a Medium one.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         // RAW: twenty straight feet at the target and then a gore that

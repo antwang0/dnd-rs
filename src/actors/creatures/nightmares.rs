@@ -34,6 +34,9 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Abyssal, Language::Infernal]),
         cr: 3.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM: "a nightmare... serves as a fiendish steed". The Fiend half of the
+        // same argument the pegasus makes.
+        mountable: true,
         creature_type: CreatureType::Fiend,
         actions,
         damage_modifiers: HashMap::from([

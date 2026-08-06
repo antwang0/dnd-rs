@@ -46,6 +46,10 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SHIELD_OF_FAITH);
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*COMPELLED_DUEL);
+    // 5e Find Steed (lv2 conjuration) — the paladin's own summon, and
+    // the party's route into `engine::mounts`. No concentration, so it
+    // costs the paladin nothing they were going to spend on a smite.
+    actions.push(&crate::actions::spells::FIND_STEED);
     // Smite spells — bonus-action concentration primes that lay extra
     // rider damage (and a follow-up effect for Wrathful / Branding /
     // Blinding) on the paladin's next melee hit. Slot-cost varies per

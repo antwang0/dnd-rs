@@ -33,6 +33,8 @@ pub static GIANT_EAGLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 10,
         cr: 1.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM: a giant eagle "can carry a rider it has agreed to bear".
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

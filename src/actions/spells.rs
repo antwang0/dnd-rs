@@ -15624,6 +15624,52 @@ pub static SUMMON_FIEND: SummonSpell = SummonSpell {
     concentration: Some("Summon Fiend"),
 };
 
+/// Find Steed — 5e level-2 conjuration, action, no concentration. The
+/// paladin's spell, and the one that makes 5e's mounted-combat rules
+/// something a party can actually use rather than something the DM has
+/// to hand them.
+///
+/// RAW summons "a spirit that takes the form of a loyal steed" —
+/// warhorse, pony, camel, elk or mastiff by the caster's choice, with
+/// the stat block of the animal and an Intelligence of at least 6. We
+/// ship the warhorse branch, on the same grounds the rest of the summon
+/// family collapses its option tables (see `SummonSpell::template`): it
+/// is the branch the spell is taken for, and the other four are the same
+/// declaration pointing at a different template.
+///
+/// **No concentration**, which is unusual for this chassis and is RAW —
+/// the steed "vanishes if it drops to 0 hit points" and otherwise stays
+/// for the fight. It shares that with Animate Dead and with nothing
+/// else here, and the reason is the same in both cases: nothing about
+/// the creature depends on its summoner still thinking about it. It
+/// matters more here than it does for a skeleton, because a paladin who
+/// had to hold concentration on their horse could never cast a smite
+/// from its back.
+///
+/// The spell does *not* seat the caster. RAW doesn't either — the steed
+/// appears next to you and you get on it with the ordinary Mount action,
+/// for the ordinary half-your-speed. Which is the whole reason to ship
+/// this next to `engine::mounts` rather than as a bespoke feature: one
+/// slot buys a Large body with 19 hit points and a 60-ft gallop, and
+/// what to do with it is the player's problem.
+pub static FIND_STEED: SummonSpell = SummonSpell {
+    display_name: "find steed",
+    aliases: &["steed", "findsteed"],
+    school: SpellSchool::Conjuration,
+    slot_level: 2,
+    template: &crate::actors::creatures::warhorses::WARHORSE_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    // RAW puts the steed "in an unoccupied space within 30 feet". The
+    // radius is widened past the 12 tiles that would be, to 4, for the
+    // reason every Large summon here carries a wider one: the anchor
+    // search walks rings outward and a 4-tile footprint needs room the
+    // first ring rarely has.
+    search_radius: 4,
+    base_instance_id: 120,
+    concentration: None,
+};
+
 /// Every spell in the Tasha's summon family, in ascending slot order.
 /// The list the sweeps read, and the one place a ninth has to be added
 /// for every invariant that holds across the family to cover it.

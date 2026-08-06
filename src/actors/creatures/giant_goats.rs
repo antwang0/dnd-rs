@@ -57,6 +57,8 @@ pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 5,
         cr: 0.5,
         size: Size::Large,
+        // 5e Mounted Combat: MM's mountain mount — what a dwarf rides where a horse can't stand up.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         // RAW: when the giant goat closes at least the clause's distance in a

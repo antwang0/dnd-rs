@@ -71,6 +71,9 @@ pub static ELK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 6,
         cr: 0.25,
         size: Size::Large,
+        // 5e Mounted Combat: MM: "an elk can serve as a mount", and the Elk totem barbarian's whole
+        // idea is the thing it is named after.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         // RAW: when the elk closes at least the clause's distance in a

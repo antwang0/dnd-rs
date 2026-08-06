@@ -7,7 +7,7 @@ use crate::engine::types::{
     AbilityScoreType, Coordinate, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
     SpecialSense,
 };
-use crate::engine::util::modifier_from_score;
+use crate::engine::util::{TILE_FEET, modifier_from_score};
 use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -2477,6 +2477,28 @@ pub struct CreatureTemplate {
     /// that is how the rules phrase it, and because weapon names are not
     /// unique across the bestiary — see `ChargeRider`.
     pub charge: Option<ChargeRider>,
+    /// Whether this creature's anatomy is one a rider can sit on — 5e's
+    /// "a willing creature that is at least one size larger than you and
+    /// that has an appropriate anatomy may serve as a mount" (PHB
+    /// p.198), minus the size clause, which
+    /// `EncounterInstance::can_mount` derives from the two creatures at
+    /// the moment of mounting.
+    ///
+    /// A declared flag rather than a derived one because *anatomy* is
+    /// the half of that sentence nothing on the sheet answers. Size and
+    /// willingness are both already on the board — size is a field, and
+    /// willingness is team membership — but "has a back, and is broken
+    /// to the saddle" is not recoverable from `creature_type` plus
+    /// `size`. Beast-and-Large would take the giant shark, the gorilla
+    /// and the swarm of bats along with the warhorse; Beast alone misses
+    /// the pegasus (Celestial), the nightmare (Fiend) and the
+    /// hippogriff (Monstrosity), which are the three most famous mounts
+    /// in the game. There is no predicate here, only a list, so the
+    /// engine keeps the list.
+    ///
+    /// `false` for the overwhelming majority of the bestiary, including
+    /// every player class — a fighter is not something you ride.
+    pub mountable: bool,
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -3465,6 +3487,7 @@ impl CreatureTemplate {
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
             charge: None,
+            mountable: false,
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
@@ -3866,6 +3889,30 @@ pub struct ActorInstance {
     /// This creature's charge clause, copied from its template. See
     /// `CreatureTemplate::charge`.
     charge: Option<ChargeRider>,
+    /// Whether this creature can be ridden at all, copied from its
+    /// template. See `CreatureTemplate::mountable`.
+    mountable: bool,
+    /// The creature this actor is currently sitting on, or `None` for
+    /// everybody on their own feet.
+    ///
+    /// Half of a two-sided link the engine keeps in step:
+    /// `a.mounted_on == Some(b)` iff `b.ridden_by == Some(a)`, and
+    /// `EncounterInstance::{mount, dismount}` are the only two writers
+    /// of either side. Nothing outside that pair sets these — a
+    /// one-sided write would leave a rider glued to a horse that has
+    /// forgotten them, and the board would keep rendering both.
+    ///
+    /// A mounted rider is *off the occupancy grid*: `actor_map` holds
+    /// one id per tile and the pair shares a space, so while the link is
+    /// up the mount owns the tiles and the rider's `location` is kept
+    /// mirrored to the mount's. That mirroring is what lets every
+    /// distance, aura, line-of-sight and burst query keep working on the
+    /// rider unchanged — they all read `location()` and `size()`, not
+    /// the grid.
+    mounted_on: Option<usize>,
+    /// The creature currently sitting on this actor. The other side of
+    /// the `mounted_on` link; see there.
+    ridden_by: Option<usize>,
     /// Class-feature charges currently unspent, keyed by feature tag
     /// (decremented on use, refilled to `features_max` on long rest and
     /// — for the short-rest cohorts — on short rest).
@@ -4276,6 +4323,9 @@ impl ActorInstance {
             proficient_saves: ct.proficient_saves.clone(),
             condition_immunities: ct.condition_immunities.clone(),
             charge: ct.charge,
+            mountable: ct.mountable,
+            mounted_on: None,
+            ridden_by: None,
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             attack_bonus_buff: 0,
@@ -6534,7 +6584,7 @@ impl ActorInstance {
     fn sense_tiles(&self, extract: fn(&SpecialSense) -> Option<u32>) -> isize {
         self.senses
             .iter()
-            .filter_map(|s| extract(s).map(|feet| (feet as f32 / 2.5) as isize))
+            .filter_map(|s| extract(s).map(|feet| (feet as f32 / TILE_FEET) as isize))
             .max()
             .unwrap_or(0)
     }
@@ -7249,6 +7299,24 @@ impl ActorInstance {
         self.movement = 0.0;
     }
 
+    /// Replace this turn's movement budget outright, without booking the
+    /// difference as spent.
+    ///
+    /// The distinction from `zero_movement` — and the reason this isn't
+    /// that plus a `give_resource` — is `movement_spent_this_turn`. That
+    /// counter answers "has this creature moved yet", which a rider who
+    /// has just been handed their mount's speed has not. Draining and
+    /// refilling would tell every once-per-turn gate that reads it (the
+    /// rogue's Steady Aim, the charge clauses) that the turn's walking
+    /// had already happened.
+    ///
+    /// Sole caller is `EncounterInstance::grant_mounted_movement`, which
+    /// is the one place in the engine where the legs a creature walks on
+    /// are not its own.
+    pub(crate) fn set_movement_budget(&mut self, feet: f32) {
+        self.movement = feet;
+    }
+
     /// The actor's size *as the board currently sees it*. Every footprint
     /// calculation in the engine — reach, LOS, spawn room, the actor map
     /// stamp — reads this one value, so it is deliberately a plain field
@@ -7373,6 +7441,53 @@ impl ActorInstance {
     /// This creature's 5e Charge / Pounce clause, if it has one.
     pub fn charge(&self) -> Option<ChargeRider> {
         self.charge
+    }
+
+    /// Whether this creature's anatomy admits a rider at all. See
+    /// `CreatureTemplate::mountable` — the size and willingness halves
+    /// of RAW's gate are `EncounterInstance::can_mount`'s.
+    pub fn is_mountable(&self) -> bool {
+        self.mountable
+    }
+
+    /// The creature this actor is riding, if any.
+    pub fn mounted_on(&self) -> Option<usize> {
+        self.mounted_on
+    }
+
+    /// The creature riding this actor, if any.
+    pub fn ridden_by(&self) -> Option<usize> {
+        self.ridden_by
+    }
+
+    /// Write one side of the rider/mount link. Crate-visible rather than
+    /// public because the invariant is that the two sides agree, and
+    /// only `EncounterInstance::{mount, dismount}` can see both actors
+    /// at once to keep them that way.
+    pub(crate) fn set_mounted_on(&mut self, mount_id: Option<usize>) {
+        self.mounted_on = mount_id;
+    }
+
+    /// Write the other side of the link. See `set_mounted_on`.
+    pub(crate) fn set_ridden_by(&mut self, rider_id: Option<usize>) {
+        self.ridden_by = rider_id;
+    }
+
+    /// 5e "you can mount or dismount a creature… the cost is movement
+    /// equal to half your speed" (PHB p.198), in feet.
+    ///
+    /// Measured against `speed()` rather than `base_speed` so a Longstrider
+    /// or a Slow moves the toll with it, which is what "half your speed"
+    /// says. Rounded to the engine's 2.5-ft tile so the toll is always a
+    /// whole number of tiles and a 30-ft creature pays exactly 15.
+    ///
+    /// A creature whose speed has been reduced to nothing pays nothing
+    /// and still cannot mount: `Resource::Movement` refuses outright for
+    /// anyone under a `zeros_movement` condition, whatever the amount,
+    /// so the Rooted and the Restrained stay where they are without this
+    /// having to say so.
+    pub fn mount_movement_cost(&self) -> f32 {
+        (self.speed() / 2.0 / TILE_FEET).floor() * TILE_FEET
     }
 
     /// How many tiles the actor has walked in an unbroken straight line,

@@ -61,6 +61,8 @@ pub static GIANT_LIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         charisma: 5,
         cr: 0.25,
         size: Size::Large,
+        // 5e Mounted Combat: MM: "lizardfolk... use giant lizards as mounts and beasts of burden".
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         ..CreatureTemplate::defaults()

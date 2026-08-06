@@ -69,6 +69,8 @@ pub static GRIFFON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::new(),
         cr: 2.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM's classic aerial mount.
+        mountable: true,
         creature_type: CreatureType::Monstrosity,
         actions,
         ..CreatureTemplate::defaults()

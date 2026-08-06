@@ -38,6 +38,9 @@ pub static PEGASUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Celestial, Language::Common]),
         cr: 2.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM: the celestial steed, and the reason `mountable` is a declared flag
+        // rather than a Beast-and-Large predicate.
+        mountable: true,
         creature_type: CreatureType::Celestial,
         actions,
         ..CreatureTemplate::defaults()

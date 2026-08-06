@@ -28,6 +28,8 @@ pub static DIRE_WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 1.0,
         size: Size::Large,
+        // 5e Mounted Combat: MM: goblins and worg-riders alike put saddles on these.
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         has_pack_tactics: true,

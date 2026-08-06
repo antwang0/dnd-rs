@@ -31,6 +31,8 @@ pub static WORG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Goblin]),
         cr: 0.5,
         size: Size::Large,
+        // 5e Mounted Combat: MM: "goblins and hobgoblins... ride worgs into battle".
+        mountable: true,
         creature_type: CreatureType::Beast,
         actions,
         skills: HashSet::from([Skill::Perception]),
