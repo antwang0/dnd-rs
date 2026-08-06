@@ -1754,7 +1754,7 @@ pub fn resolve_attack_outcome_with_rider(
     // (cover-blind, long range, the lance's close quarters, the
     // defender's reactive taxes) has had its say — the feature answers
     // the net result, not the first cause.
-    mode = encounter.cancel_disadvantage_with_luck(p.caster_id, mode);
+    mode = encounter.steady_the_d20(p.caster_id, mode);
     // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
     // helper folds the reroll into the same seedable RNG so determinism
     // by seed holds — and falls back to the raw roll for actors without

@@ -2781,6 +2781,120 @@ impl EncounterInstance {
         RollMode::Normal
     }
 
+    /// How far a Clockwork Soul Sorcerer's **Restore Balance** reaches —
+    /// 60 ft on the 2.5 ft grid, RAW.
+    const RESTORE_BALANCE_REACH: isize = 24;
+
+    /// 5e Clockwork Soul Sorcerer **Restore Balance** (subclass level
+    /// 1): "when a creature you can see within 60 feet of you is about
+    /// to roll a d20 with advantage or disadvantage, you can use your
+    /// reaction to prevent the roll from being affected."
+    ///
+    /// The second row on the roll-mode lane, and the one that reaches
+    /// past the roller's own sheet. Drunkard's Luck above answers the
+    /// disadvantage on *your* die; this answers whatever is happening
+    /// to somebody else's, from up to 60 ft away, on a reaction the
+    /// engine spends.
+    ///
+    /// RAW's sentence is symmetric and takes no side — a Clockwork Soul
+    /// may flatten an ally's disadvantage or an enemy's advantage with
+    /// the same words. An engine that spends the reaction on the
+    /// holder's behalf has to supply the judgement RAW leaves to the
+    /// player, so the two useful readings are the only ones taken:
+    ///
+    ///   - a **hostile** rolling with **advantage** loses it, and
+    ///   - an **ally** (or the sorcerer) rolling with **disadvantage**
+    ///     is straightened out.
+    ///
+    /// The two cases RAW also permits — cancelling an ally's advantage
+    /// or an enemy's disadvantage — are never what the holder wanted,
+    /// and a lane that spends charges on them would be worse than not
+    /// having the feature.
+    ///
+    /// Ties break on the lowest holder id so a seeded run reproduces,
+    /// and the scan is ordered cheapest-gate-first so a table with no
+    /// Clockwork Soul in it never measures a distance.
+    pub fn cancel_mode_with_restore_balance(
+        &mut self,
+        roller_id: usize,
+        mode: RollMode,
+    ) -> RollMode {
+        use crate::actions::class_features::RESTORE_BALANCE_TAG;
+        if mode == RollMode::Normal {
+            return mode;
+        }
+        let Some(roller_team) = self.actors.get(&roller_id).map(|a| a.team()) else {
+            return mode;
+        };
+        let Some(holder) = self
+            .actors
+            .iter()
+            .filter(|(_id, a)| {
+                a.has_passive_feature(RESTORE_BALANCE_TAG)
+                    && a.feature_available(RESTORE_BALANCE_TAG)
+                    && a.is_combat_active()
+                    && a.has_reaction()
+                    // The judgement clause: flatten a hostile's
+                    // advantage, or a friend's disadvantage. The
+                    // sorcerer's own disadvantaged rolls fall in the
+                    // second branch, since a creature shares a team
+                    // with itself.
+                    && match mode {
+                        RollMode::Advantage => a.team() != roller_team,
+                        RollMode::Disadvantage => a.team() == roller_team,
+                        RollMode::Normal => false,
+                    }
+            })
+            .map(|(id, _)| *id)
+            .filter(|&id| {
+                // A holder may steady their *own* disadvantaged roll —
+                // RAW's "a creature you can see" includes nothing about
+                // excluding yourself, and the reach check below would
+                // trivially pass anyway.
+                id == roller_id
+                    || self
+                        .footprint_distance(id, roller_id)
+                        .is_some_and(|d| d <= Self::RESTORE_BALANCE_REACH)
+            })
+            .min()
+        else {
+            return mode;
+        };
+        if let Some(a) = self.actors.get_mut(&holder) {
+            a.spend_feature(RESTORE_BALANCE_TAG);
+            a.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+        let (holder_name, roller_name) = (self.actor_name(holder), self.actor_name(roller_id));
+        self.log(format!(
+            "  restore balance: {} evens out {}'s roll.",
+            holder_name, roller_name
+        ));
+        RollMode::Normal
+    }
+
+    /// **The** roll-mode cancel chokepoint: run every feature that can
+    /// flatten advantage or disadvantage before the die lands, in
+    /// cheapest-first order, and hand back the mode to roll under.
+    ///
+    /// Two rows today — Drunkard's Luck on the roller's own sheet and
+    /// Restore Balance from up to 60 ft away — and the wrapper exists
+    /// so the two d20 sites that can still hold `&mut` when they know
+    /// the mode (`engine::attack::resolve_attack_outcome` and
+    /// `roll_save_with_extra_mode_and_bonus`) each call one function
+    /// rather than accumulating a line per feature. A third canceller
+    /// is a call added here and nowhere else.
+    ///
+    /// Self-lane first: it costs the roller a charge and nobody a
+    /// reaction, where Restore Balance costs a bystander both. When
+    /// both could fire on the same disadvantaged roll, spending the
+    /// cheaper one is right — and the first to return `Normal`
+    /// short-circuits the rest, so the second is never also spent on a
+    /// roll that is already even.
+    pub fn steady_the_d20(&mut self, roller_id: usize, mode: RollMode) -> RollMode {
+        let mode = self.cancel_disadvantage_with_luck(roller_id, mode);
+        self.cancel_mode_with_restore_balance(roller_id, mode)
+    }
+
     /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
     /// actor has it and rolled a natural 1. RAW: Lucky lets the holder
     /// reroll the die and "must use the new roll" — the second result is
@@ -4172,7 +4286,7 @@ impl EncounterInstance {
         // on the final mode — after `extra_mode` has folded in, because
         // a Heightened Spell's disadvantage is exactly the kind of
         // disadvantage the feature exists to answer.
-        let mode = self.cancel_disadvantage_with_luck(actor_id, mode);
+        let mode = self.steady_the_d20(actor_id, mode);
         // 5e Lucky: same nat-1 reroll hook as on attack rolls. RAW
         // explicitly lists "saving throw" as one of the trigger contexts.
         let rolled = self.roll_d20_lucky(actor_id, mode);
@@ -9521,9 +9635,15 @@ impl EncounterInstance {
             ('-', penalties)
         };
         let rolled = self.roll(&Dice::new(count, 4)) as i32;
+        // Name only as many sources as there are surviving dice. A
+        // creature under Bless, the bond and Bane rolls one die, and a
+        // breakdown reading "bless+bond(1d4=3)" would claim two sources
+        // paid for it. Which of the survivors gets named is arbitrary
+        // — they are the same die — so the first is as good as any.
+        let named = &labels[..(count as usize).min(labels.len())];
         (
             net.signum() * rolled,
-            format!(" {} {}({}d4={})", sign, labels.join("+"), count, rolled),
+            format!(" {} {}({}d4={})", sign, named.join("+"), count, rolled),
         )
     }
 

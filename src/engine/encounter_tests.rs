@@ -72454,3 +72454,160 @@ fn protective_bond_takes_a_blow_from_thirty_feet_away() {
         "one reaction, one blow"
     );
 }
+
+/// 5e Clockwork Soul Sorcerer **Restore Balance** flattens a hostile's
+/// advantage on an attack roll, from across the room, on a reaction the
+/// engine spends.
+///
+/// Driven through the real attack path rather than through the helper,
+/// so what is pinned is that the cancel lands where the die is rolled.
+/// The marker is the log line — a mode that survived would leave the
+/// swing rolling two dice and print no such line.
+#[test]
+fn restore_balance_evens_out_a_hostiles_advantage() {
+    use crate::actions::class_features::RESTORE_BALANCE_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    // 20 tiles from the fight: inside the 60 ft reach, nowhere near the
+    // goblin, and therefore proof the reach is what is being read.
+    let sorcerer = e
+        .instantiate_creature(&CLOCKWORK_SOUL_SORCERER_TEMPLATE, Coordinate::new(24, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+
+    // Prone gives melee attackers advantage against the fighter, which
+    // is the mode the sorcerer is here to take away.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Prone, ConditionTimer::Rounds(5));
+
+    let charges = e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG);
+    assert!(charges > 0, "the origin ships with a pool");
+
+    let attack = e.actors[&goblin]
+        .find_action("scimitar")
+        .or_else(|| e.actors[&goblin].find_action("shortsword"))
+        .expect("the goblin swings something");
+    for eff in attack.side_effects(&mut e, goblin, Some(&vec![fighter]), None, None) {
+        eff.apply(&mut e);
+    }
+
+    assert!(
+        e.messages().iter().any(|m| m.contains("restore balance")),
+        "the sorcerer never evened the roll: {:?}",
+        e.messages()
+    );
+    assert_eq!(
+        e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG),
+        charges - 1,
+        "one roll, one charge"
+    );
+    assert!(
+        !e.actors[&sorcerer].has_reaction(),
+        "and the reaction it costs"
+    );
+}
+
+/// Restore Balance takes a side. RAW lets the holder flatten any d20
+/// within 60 ft; a lane that spends the reaction automatically has to
+/// pick, and the two picks are "a hostile's advantage" and "a friend's
+/// disadvantage" — never the two readings that help the enemy.
+#[test]
+fn restore_balance_never_spends_itself_against_its_own_side() {
+    use crate::actions::class_features::RESTORE_BALANCE_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let sorcerer = e
+        .instantiate_creature(&CLOCKWORK_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    let enemy = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+
+    let before = e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG);
+
+    // An ally rolling *well* is left alone…
+    assert_eq!(
+        e.cancel_mode_with_restore_balance(ally, RollMode::Advantage),
+        RollMode::Advantage
+    );
+    // …and so is an enemy already rolling badly.
+    assert_eq!(
+        e.cancel_mode_with_restore_balance(enemy, RollMode::Disadvantage),
+        RollMode::Disadvantage
+    );
+    assert_eq!(
+        e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG),
+        before,
+        "neither reading is worth a charge, so neither spent one"
+    );
+
+    // The ally's disadvantage is, though — including the sorcerer's own.
+    assert_eq!(
+        e.cancel_mode_with_restore_balance(ally, RollMode::Disadvantage),
+        RollMode::Normal
+    );
+    assert_eq!(
+        e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG),
+        before - 1
+    );
+}
+
+/// Bastion of Law wards an ally at 30 ft with 5d8 temporary hit points
+/// and refuses to overwrite a ward that is already up.
+#[test]
+fn bastion_of_law_wards_an_ally_and_declines_to_stack() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{BASTION_OF_LAW, BASTION_OF_LAW_TAG};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let sorcerer = e
+        .instantiate_creature(&CLOCKWORK_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 2), 0, 1)
+        .unwrap();
+
+    let action: &dyn Action = &*BASTION_OF_LAW;
+    let targets = vec![ally];
+    assert!(action.custom_validate_input(&e, sorcerer, Some(&targets), None, None));
+    for eff in action.side_effects(&mut e, sorcerer, Some(&targets), None, None) {
+        eff.apply(&mut e);
+    }
+    let warded = e.actors[&ally].temp_hp();
+    assert!(
+        (5..=40).contains(&warded),
+        "5d8 lands between 5 and 40: {}",
+        warded
+    );
+    assert!(!e.actors[&sorcerer].feature_available(BASTION_OF_LAW_TAG));
+
+    // Even with the charge restored, a body already carrying temporary
+    // hit points is not a legal target — 5e's temp HP don't stack, and
+    // an AI re-running its ladder would otherwise replace a full ward.
+    e.actors
+        .get_mut(&sorcerer)
+        .unwrap()
+        .restore_feature_charge(BASTION_OF_LAW_TAG);
+    assert!(e.actors[&sorcerer].feature_available(BASTION_OF_LAW_TAG));
+    assert!(!action.custom_validate_input(&e, sorcerer, Some(&targets), None, None));
+}

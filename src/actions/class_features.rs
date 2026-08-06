@@ -70,6 +70,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // their level-1 domain feature between engagements has lost the
     // domain.
     EMBOLDENING_BOND_TAG,
+    // 5e Clockwork Soul Sorcerer, both charges. RAW refreshes each on a
+    // long rest; the short-rest cadence here matches every other
+    // subclass charge on the roster, so a sorcerer arrives at the next
+    // engagement with a subclass.
+    RESTORE_BALANCE_TAG,
+    BASTION_OF_LAW_TAG,
     NATURAL_RECOVERY_TAG,
     // 5e Circle of Stars Druid — Starry Form. RAW spends a Wild Shape
     // use, and Wild Shape recovers on a short rest, so the charge
@@ -661,6 +667,12 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // (allies die, allies arrive, the ten rounds lapse) and a fourth is
     // not. Two is the smallest pool that makes the charge a decision.
     (EMBOLDENING_BOND_TAG, 2),
+    // 5e Clockwork Soul Sorcerer **Restore Balance**: RAW's pool is the
+    // proficiency bonus, four on this chassis. Two, for the reason the
+    // preamble above gives — and because the reaction it spends is one
+    // per round regardless, so the fourth charge is a charge the
+    // sorcerer would rarely reach in a single fight.
+    (RESTORE_BALANCE_TAG, 2),
     // 5e Bard **Bardic Inspiration**: uses equal to the bard's Charisma
     // modifier. Every bard template on the roster carries CHA 16, so
     // three is not a compromise here — it is the number. The bard is
@@ -6255,6 +6267,150 @@ pub const POTENT_SPELLCASTING_TAG: &str = "cleric.potent_spellcasting";
 /// grant its caster a typed resistance, and the damage half is the one
 /// that reads at a site that already exists.
 pub const ELEMENTAL_AFFINITY_TAG: &str = "sorcerer.elemental_affinity";
+
+/// Per-rest charge for the Clockwork Soul Sorcerer's **Restore
+/// Balance** (subclass level 1): a reaction that flattens somebody
+/// else's advantage or disadvantage from up to 60 ft away.
+///
+/// No action of its own — the engine spends the reaction at the
+/// roll-mode chokepoint, `EncounterInstance::steady_the_d20`, which
+/// every attack roll and every saving throw in the game passes
+/// through. See `cancel_mode_with_restore_balance` for the judgement
+/// clause an auto-spending lane has to supply that RAW leaves to the
+/// player.
+///
+/// RAW's pool is "a number of times equal to your proficiency bonus per
+/// long rest" — four on this chassis. Two here, on the short-rest
+/// cadence, for the reason `FEATURE_CHARGES`'s preamble gives: two is
+/// the smallest pool that makes the spend a decision, and the
+/// difference between two and four presses of a reaction the holder
+/// only gets one of per round is mostly theoretical anyway.
+pub const RESTORE_BALANCE_TAG: &str = "sorcerer.restore_balance";
+
+/// Per-rest charge for the Clockwork Soul Sorcerer's **Bastion of Law**
+/// (subclass level 6): a ward of protective dice laid on the sorcerer
+/// or an ally within 30 ft.
+///
+/// RAW prices it at 1–5 sorcery points and hands over that many d8 as a
+/// pool the warded creature spends to *reduce* incoming damage, die by
+/// die, choosing how much to spend per blow. The engine has neither a
+/// sorcery-point resource nor a per-blow spendable die pool, and both
+/// absences point the same way: the closest thing it does have is
+/// temporary hit points, which are a pool that incoming damage eats
+/// through and that expires with the fight.
+///
+/// So the ward ships as 5d8 temporary hit points for one charge — RAW's
+/// maximum spend, since a charge is not divisible — and loses the
+/// clause that makes the RAW version interesting, which is the
+/// warded creature choosing how many dice to burn on each hit. What
+/// survives is the shape: a large, front-loaded shield the sorcerer can
+/// put on somebody else, which is the only thing on the sorcerer
+/// chassis that protects an ally at all.
+pub const BASTION_OF_LAW_TAG: &str = "sorcerer.bastion_of_law";
+
+/// Bastion of Law — Clockwork Soul Sorcerer action. 5d8 temporary hit
+/// points on the sorcerer or one ally within 30 ft.
+///
+/// Targets `SingleActor` rather than `NoArgs`, unlike most of the
+/// engine's self-buffs, because *who gets the ward* is the whole
+/// decision the feature poses — a sorcerer who could only shield
+/// themselves would be a worse Mage Armor.
+///
+/// Declines against a target already carrying temporary hit points
+/// rather than overwriting them: 5e's temp HP don't stack ("choose
+/// which to keep"), and an AI that re-runs its ladder every turn would
+/// otherwise spend the charge replacing a full ward with a fresh one.
+pub struct BastionOfLaw {}
+
+impl Action for BastionOfLaw {
+    fn name(&self) -> &str {
+        "bastion of law"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bol", "bastion"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft on the 2.5 ft grid.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temporary hit points are what the AI's support lane is for,
+        // and declaring the ward a heal is what puts it there.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, BASTION_OF_LAW_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        encounter.actors.get(&target_id).is_some_and(|t| {
+            t.team() == caster.team() && t.is_combat_active() && t.temp_hp() == 0
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(BASTION_OF_LAW_TAG);
+        }
+        // RAW's maximum spend — see `BASTION_OF_LAW_TAG` for why the
+        // 1-to-5 choice collapses to its top end here.
+        let amount = encounter.roll(&Dice::new(5, 8));
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "  bastion of law: 5d8({}) temporary hit points ward {}.",
+            amount, name
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static BASTION_OF_LAW: LazyLock<BastionOfLaw> = LazyLock::new(|| BastionOfLaw {});
 
 /// Class-feature tag for the Circle of Wildfire Druid's **Enhanced
 /// Bond** (subclass level 6): "while your spirit is summoned, ... when

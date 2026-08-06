@@ -460,6 +460,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE,
                     &*sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE,
                     &*sorcerers::SHADOW_MAGIC_SORCERER_TEMPLATE,
+                    &*sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE,
                 ],
             ),
             (

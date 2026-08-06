@@ -917,6 +917,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m''. Bastion of Law — the Clockwork Soul's ward. Beside the
+        //       two bonds above and below both, on the same reasoning:
+        //       it buffs somebody else, and it is preventative, so a
+        //       round spent warding early is worth about what a round
+        //       spent warding now is. Under `try_support_heal` far
+        //       above, which is where the ward lands when an ally is
+        //       already bleeding — this rung is the other half, the
+        //       front-liner who is about to be.
+        if let Some(aei) = try_bastion_of_law(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n. The engaged self-posture lane — bonus-action, once-per-rest
         //     buttons whose payout is survivability rather than a rider
         //     on the next swing. See `ENGAGED_SELF_POSTURES`.
@@ -3359,6 +3371,61 @@ fn try_emboldening_bond(
     }
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
     aei.validate(encounter).then_some(aei)
+}
+
+/// Clockwork Soul Bastion of Law — lay 5d8 temporary hit points on the
+/// body most likely to need them.
+///
+/// "Most likely to need them" is the ally standing nearest to a
+/// hostile, ties broken by the lower hit-point total and then by id so
+/// a seeded run reproduces. Nearest-to-a-hostile rather than
+/// lowest-HP, which is what every heal on the ladder sorts by, because
+/// a ward is not a heal: it is worth exactly what the next few blows
+/// aimed at its holder are worth, and the creature about to be hit is
+/// the front-liner rather than the wounded archer behind them. A ward
+/// on somebody nothing can reach expires unspent.
+///
+/// The sorcerer is in the running like anybody else — a Clockwork Soul
+/// that a hill giant has walked up to is the right place for it — and
+/// the action's own validation carries the "already warded" gate, so
+/// this rung never spends the charge overwriting a full one.
+fn try_bastion_of_law(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("bastion of law")?;
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    let my_team = actor.team();
+    let mut best: Option<((isize, u32, usize), ActionExecutionInfo)> = None;
+    for ally_id in encounter.sorted_actor_ids() {
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team || !ally.is_combat_active() {
+            continue;
+        }
+        let Some(nearest_threat) = encounter
+            .actors
+            .iter()
+            .filter(|(_, h)| h.team() != my_team && h.is_combat_active())
+            .map(|(_, h)| ally.footprint_gap_to(h))
+            .min()
+        else {
+            continue;
+        };
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![ally_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let key = (nearest_threat, ally.hitpoints(), ally_id);
+        if best.as_ref().is_none_or(|(best_key, _)| key < *best_key) {
+            best = Some((key, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Wizard Arcane Recovery — free no-cost slot restore. Fire when the
@@ -12698,7 +12765,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 46] = [
+        let cases: [(&CreatureTemplate, &str); 47] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12902,6 +12969,17 @@ mod tests {
             (
                 &crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE,
                 "emboldening bond",
+            ),
+            // Not Restore Balance: it has no action to choose — the
+            // engine spends the reaction at the roll-mode chokepoint —
+            // so it belongs to the engine-side tests, where a
+            // disadvantaged roll can be arranged. The ward is the
+            // origin's one press, and this fixture is where it lands on
+            // the sorcerer's own body: it is the only creature on its
+            // team, and an ogre has walked up to it.
+            (
+                &crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE,
+                "bastion of law",
             ),
         ];
 

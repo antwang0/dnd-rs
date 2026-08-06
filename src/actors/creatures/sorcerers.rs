@@ -971,3 +971,83 @@ pub static SHADOW_MAGIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
         crate::actions::class_features::STRENGTH_OF_THE_GRAVE_TAG,
     )
 });
+
+/// Clockwork Soul Sorcerer — Sorcerous Origin **Clockwork Soul** (TCoE),
+/// the seventh sorcerer on the roster and the first whose features
+/// point *away* from the sorcerer.
+///
+/// Every other origin here makes the sorcerer's own spells better or
+/// the sorcerer's own body harder to kill: Draconic resists an element
+/// and hits harder with it, Storm blows people off, Shadow refuses to
+/// drop, Aberrant Mind and Divine Soul widen the list. This one spends
+/// both of its features on somebody else's dice.
+///
+/// Two subclass features ship:
+///
+///   - **Restore Balance** (lv1) — a reaction, from 60 ft away, that
+///     flattens a hostile's advantage or an ally's disadvantage. No
+///     action and no button: the engine spends it at the roll-mode
+///     chokepoint every attack and every save passes through. See
+///     `RESTORE_BALANCE_TAG`.
+///   - **Bastion of Law** (lv6) — 5d8 temporary hit points laid on the
+///     sorcerer or an ally within 30 ft. See `BASTION_OF_LAW_TAG` for
+///     what RAW's spendable die pool collapses into and why.
+///
+/// Plus the **Clockwork Magic** list, which is the other half of the
+/// origin's argument and the reason it reads as a support caster rather
+/// than a blaster with a shield. A sorcerer's spell list is otherwise
+/// almost entirely damage; these five are not. Aid and Greater
+/// Restoration keep bodies standing, Lesser Restoration and Freedom of
+/// Movement take conditions off them, and Protection from Energy answers
+/// the one thing a party has no other reply to — a breath weapon
+/// already in the air.
+///
+/// The two features are the same idea at two scales, and the scale is
+/// what makes the origin interesting to play. Restore Balance is small,
+/// free, and constant: it costs a reaction the sorcerer was not using
+/// and it fires on somebody else's turn, so its value is entirely in
+/// *which* roll it lands on — and the engine, spending it automatically
+/// on the first qualifying roll, deliberately gives up the half of the
+/// feature that is about waiting for the right one. Bastion of Law is
+/// large, expensive, and a single decision made once a fight.
+///
+/// **Trance of Order** (lv14) is not shipped. Its "treat a d20 of 9 or
+/// lower as a 10" clause has an engine lane on the save side — the
+/// `d20_floor` the Stars Druid's Dragon constellation rides — but none
+/// on the attack side, and half of a floor is a different feature. Its
+/// "attack rolls against you can't have advantage" half would need a
+/// target-side mode veto the attack pipeline doesn't have. **Clockwork
+/// Cavalcade** (lv18) sits well above this chassis's level.
+///
+/// Glyph 'K' — for cloc**K**work; distinct from baseline sorcerer 'S',
+/// Draconic 'D', Storm 'Ω', Aberrant Mind 'Ψ', Divine Soul 'V' and
+/// Shadow Magic 'H'.
+pub static CLOCKWORK_SOUL_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        BASTION_OF_LAW, BASTION_OF_LAW_TAG, RESTORE_BALANCE_TAG,
+    };
+    let mut actions = SORCERER_TEMPLATE.actions.clone();
+    actions.push(&*BASTION_OF_LAW);
+    // Clockwork Magic — the origin's always-prepared list, minus the
+    // three RAW entries with no combat surface here (Alarm, Summon
+    // Construct, and Protection from Evil and Good, which the chassis
+    // has no reason to want against a mixed warband).
+    actions.push(&*crate::actions::spells::AID);
+    actions.push(&*crate::actions::spells::LESSER_RESTORATION);
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    actions.push(&*crate::actions::spells::GREATER_RESTORATION);
+    let mut features = SORCERER_TEMPLATE.features.clone();
+    // Restore Balance carries no action: the engine spends the reaction
+    // at `EncounterInstance::steady_the_d20`, so the tag is the whole
+    // installation.
+    features.insert(RESTORE_BALANCE_TAG);
+    features.insert(BASTION_OF_LAW_TAG);
+    CreatureTemplate {
+        name: "Clockwork Soul Sorcerer",
+        glyph: 'K',
+        actions,
+        features,
+        ..SORCERER_TEMPLATE.clone()
+    }
+});
