@@ -8089,7 +8089,16 @@ pub static BALM_OF_PEACE: LazyLock<BalmOfPeace> = LazyLock::new(|| BalmOfPeace {
 /// this one is about a party that is bonded whether or not it is
 /// bunched up.
 ///
-/// Two RAW clauses don't ship. The interposer here is always the
+/// The bond half is enforced: the row carries a `covers` gate, so the
+/// cleric takes a blow for a creature holding `Emboldened` and for
+/// nobody else. Without it the widest reach on the cohort would also
+/// have been the least discriminating — a cleric volunteering for
+/// every blow landed on anyone within 30 feet, which is a strictly
+/// better feature than the one RAW describes. It also ties the domain
+/// together mechanically rather than only thematically: Protective
+/// Bond is worth exactly as much as Emboldening Bond has been spent.
+///
+/// Two RAW clauses still don't ship. The interposer here is always the
 /// *cleric*, where RAW lets any bonded creature take a blow for any
 /// other — the lane keys off a passive tag, and the tag lives on the
 /// cleric. And the teleport goes: the reaction moves the damage, not

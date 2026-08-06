@@ -72345,17 +72345,10 @@ fn balm_of_peace_heals_the_huddle_and_frees_the_cleric_to_leave() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 2), 0, 2)
         .unwrap();
 
-    // The cleric carries Protective Bond, which would take both of
-    // these wounds onto an 11-hit-point body and leave the allies at
-    // full — with nothing for the balm to restore. Spend the reaction
-    // up front so the blows land where they were aimed. That the
-    // redirect happens at all is
-    // `protective_bond_takes_a_blow_from_thirty_feet_away`'s claim;
-    // this test is about the heal.
-    e.actors
-        .get_mut(&cleric)
-        .unwrap()
-        .consume_resource(crate::engine::side_effects::Resource::Reaction);
+    // Neither ally is bonded, so Protective Bond's `covers` gate
+    // declines and these wounds land where they were aimed. That gate
+    // is `protective_bond_takes_a_blow_only_for_someone_it_has_bonded`'s
+    // claim; this test is about the heal.
     for id in [close, distant] {
         DealDamage {
             actor_id: id,
@@ -72396,15 +72389,20 @@ fn balm_of_peace_heals_the_huddle_and_frees_the_cleric_to_leave() {
 }
 
 /// Protective Bond puts the Peace Cleric on the damage-interposition
-/// cohort at 30 ft — the widest reach on it.
+/// cohort at 30 ft — the widest reach on it — but only for creatures
+/// that are actually bonded.
 ///
-/// The distance is the assertion. The two paladin rows reach 5 and 10
-/// feet; a cleric who could only take a blow for somebody standing
-/// next to them would be the Crown Paladin with a different name.
+/// Both halves are the assertion, and the second is the one that keeps
+/// the first honest. The two paladin rows reach 5 and 10 feet; a
+/// cleric who could only take a blow for somebody standing next to
+/// them would be the Crown Paladin with a different name. A cleric who
+/// took one for *anyone* within 30 feet would be a better feature than
+/// RAW's.
 #[test]
-fn protective_bond_takes_a_blow_from_thirty_feet_away() {
+fn protective_bond_takes_a_blow_only_for_someone_it_has_bonded() {
     use crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::ConditionTimer;
     use crate::engine::side_effects::DealDamage;
     use crate::engine::types::DamageType;
 
@@ -72417,6 +72415,29 @@ fn protective_bond_takes_a_blow_from_thirty_feet_away() {
     let ward = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 2), 0, 1)
         .unwrap();
+    // An un-bonded ally standing the same distance away. Nothing about
+    // the geometry separates the two; only the condition does.
+    let stranger = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 4), 0, 2)
+        .unwrap();
+
+    // The un-bonded ally is on their own.
+    let stranger_before = e.actors[&stranger].hitpoints();
+    DealDamage {
+        actor_id: stranger,
+        amount: 4,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors[&stranger].hitpoints() < stranger_before,
+        "the bond covered somebody it had never bonded"
+    );
+
+    e.actors
+        .get_mut(&ward)
+        .unwrap()
+        .add_condition(Condition::Emboldened, ConditionTimer::Rounds(10));
     let cleric_before = e.actors[&cleric].hitpoints();
     let ward_before = e.actors[&ward].hitpoints();
 

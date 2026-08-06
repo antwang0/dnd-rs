@@ -1657,6 +1657,29 @@ impl Iterator for TilesBetween {
     }
 }
 
+/// One row in `EncounterInstance::DAMAGE_INTERPOSERS` — a feature whose
+/// holder spends a reaction to have a blow aimed at somebody nearby
+/// land on them instead. See that cohort for what the lane is and how
+/// it differs from the clamp and intercept cohorts beside it.
+#[derive(Debug, Clone, Copy)]
+struct DamageInterposer {
+    /// Passive feature tag the interposer must carry.
+    tag: &'static str,
+    /// How far from the creature taking the blow the interposer can
+    /// stand, as a footprint gap on the 2.5 ft grid.
+    radius: isize,
+    /// A condition the *covered* creature must be holding, or `None`
+    /// for the rows whose RAW sentence asks nothing of them.
+    ///
+    /// One row uses it — Protective Bond, whose text is about bonded
+    /// creatures rather than about anyone in range — and it is the
+    /// column that keeps the cohort's widest reach from also being its
+    /// least discriminating.
+    covers: Option<Condition>,
+    /// What the log line calls the feature that paid.
+    label: &'static str,
+}
+
 pub struct EncounterInstance {
     /// Non-zero while a damage instance is being carried by somebody
     /// other than the creature it was aimed at — see
@@ -7015,8 +7038,9 @@ impl EncounterInstance {
     /// with no qualifier) and it is most of what either feature is
     /// worth.
     ///
-    /// Two rows, differing only in reach — which is the whole reason the
-    /// cohort exists rather than a second open-coded scan:
+    /// Three rows, differing in reach and in what they ask of the
+    /// creature being covered — which is the whole reason the cohort
+    /// exists rather than three open-coded scans:
     ///
     ///   - **Divine Allegiance** (Oath of the Crown Paladin, subclass
     ///     level 7): "when a creature within 5 feet of you takes damage,
@@ -7026,33 +7050,47 @@ impl EncounterInstance {
     ///     subclass level 7): the same sentence at 10 ft, which on this
     ///     chassis is the same radius the paladin's other two auras
     ///     already project (`PALADIN_AURA_RADIUS`).
+    ///   - **Protective Bond** (Peace Domain Cleric, subclass level 6):
+    ///     30 ft, and the only row with a `covers` gate — RAW's
+    ///     sentence is about *bonded* creatures, so the cleric takes a
+    ///     blow for somebody carrying `Emboldened` and for nobody else.
+    ///
+    /// That gate is the reason the rows are a struct rather than a
+    /// tuple. Without it the widest row on the cohort would also have
+    /// been the least discriminating: a cleric volunteering for every
+    /// blow landed on anyone within 30 feet, which is not the feature
+    /// and is a strictly better one.
     ///
     /// Ordered narrowest-first, which is the target-favorable reading
-    /// when a hypothetical multiclass holds both: the shorter-ranged
+    /// when a hypothetical multiclass holds several: the shorter-ranged
     /// feature is the one with fewer creatures it could have spent
-    /// itself on, so it is the one to spend here. In practice the two
-    /// belong to different oaths and never co-occur.
-    const DAMAGE_INTERPOSERS: &'static [(&'static str, isize, &'static str)] = &[
-        (
-            crate::actions::class_features::DIVINE_ALLEGIANCE_TAG,
+    /// itself on, so it is the one to spend here. In practice the three
+    /// belong to two oaths and a domain and never co-occur.
+    const DAMAGE_INTERPOSERS: &'static [DamageInterposer] = &[
+        DamageInterposer {
+            tag: crate::actions::class_features::DIVINE_ALLEGIANCE_TAG,
             // 5 ft. `footprint_distance` is a gap, so 1 is "one tile
             // between us" on the 2.5 ft grid.
-            1,
-            "divine allegiance",
-        ),
-        (
-            crate::actions::class_features::AURA_OF_THE_GUARDIAN_TAG,
-            Self::PALADIN_AURA_RADIUS,
-            "aura of the guardian",
-        ),
-        (
-            crate::actions::class_features::PROTECTIVE_BOND_TAG,
-            // 30 ft — the bond's own radius, and the widest row on the
-            // cohort. See `PROTECTIVE_BOND_TAG` for the two RAW clauses
-            // that don't ship and why both narrow the feature.
-            12,
-            "protective bond",
-        ),
+            radius: 1,
+            covers: None,
+            label: "divine allegiance",
+        },
+        DamageInterposer {
+            tag: crate::actions::class_features::AURA_OF_THE_GUARDIAN_TAG,
+            radius: Self::PALADIN_AURA_RADIUS,
+            covers: None,
+            label: "aura of the guardian",
+        },
+        DamageInterposer {
+            tag: crate::actions::class_features::PROTECTIVE_BOND_TAG,
+            // 30 ft — the bond's own radius, and the widest row here.
+            radius: 12,
+            // RAW: "when a creature that has your Emboldening Bond
+            // takes damage". See `PROTECTIVE_BOND_TAG` for the two RAW
+            // clauses that still don't ship.
+            covers: Some(Condition::Emboldened),
+            label: "protective bond",
+        },
     ];
 
     /// Find the ally who will carry `target_id`'s damage, spend their
@@ -7085,8 +7123,26 @@ impl EncounterInstance {
         if amount == 0 || self.in_damage_redirect() {
             return None;
         }
-        let target_team = self.actors.get(&target_id)?.team();
-        for &(tag, radius, label) in Self::DAMAGE_INTERPOSERS {
+        let target = self.actors.get(&target_id)?;
+        let target_team = target.team();
+        for &DamageInterposer {
+            tag,
+            radius,
+            covers,
+            label,
+        } in Self::DAMAGE_INTERPOSERS
+        {
+            // The row's own gate on the creature being covered, read
+            // once before the holder scan rather than per candidate —
+            // a row whose condition the target isn't carrying has
+            // nobody it could spend itself on.
+            if covers.is_some_and(|c| {
+                self.actors
+                    .get(&target_id)
+                    .is_none_or(|t| !t.has_condition(c))
+            }) {
+                continue;
+            }
             // One pass keeping the lowest qualifying id, rather than
             // collect-sort-find. Every damage instance in the game runs
             // this lookup, almost none of them find anybody, and the
