@@ -127,11 +127,23 @@ impl Action for Move {
         if !actor.has_condition(Condition::Frightened) {
             return true;
         }
-        let my_size = get_tiles_from_size(actor.size());
-        let my_loc = actor.location();
+        // The gaps are measured from the body that is doing the
+        // travelling, which for a mounted rider is the horse — the same
+        // redirect `path_cost_to` above already made. A Medium knight on
+        // a Large warhorse closes on an enemy with the horse's
+        // four-tile footprint, and asking with the rider's two would
+        // read every gap one tile wider than it is.
+        let body_id = encounter.movement_body(caster_id);
+        let body = encounter.actors.get(&body_id).unwrap_or(actor);
+        let my_size = get_tiles_from_size(body.size());
+        let my_loc = body.location();
         let my_team = actor.team();
         for (other_id, other) in encounter.actors.iter() {
-            if *other_id == caster_id || other.team() == my_team || !other.is_combat_active() {
+            if *other_id == caster_id
+                || *other_id == body_id
+                || other.team() == my_team
+                || !other.is_combat_active()
+            {
                 continue;
             }
             let o_loc = other.location();

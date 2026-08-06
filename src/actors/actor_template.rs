@@ -7511,6 +7511,24 @@ impl ActorInstance {
         self.ridden_by
     }
 
+    /// Forget whatever rider/mount link this actor is holding, without
+    /// touching the board.
+    ///
+    /// The one legitimate use for a one-sided write, and it is not a
+    /// rule: it is for an actor being lifted out of one encounter and
+    /// dropped into another. Ids are per-encounter, so a link carried
+    /// across names a creature that no longer exists — or, worse, one
+    /// that now does and isn't a horse. `EncounterInstance::with_pcs`
+    /// is the sole caller and it re-stamps every survivor onto the new
+    /// grid immediately after, which is what makes cutting the link
+    /// without landing anybody safe here and nowhere else.
+    ///
+    /// Ending a ride *inside* a live encounter is `dismount`.
+    pub fn clear_ride_links(&mut self) {
+        self.mounted_on = None;
+        self.ridden_by = None;
+    }
+
     /// Write one side of the rider/mount link. Crate-visible rather than
     /// public because the invariant is that the two sides agree, and
     /// only `EncounterInstance::{mount, dismount}` can see both actors

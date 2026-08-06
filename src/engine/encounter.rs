@@ -7483,6 +7483,13 @@ impl EncounterInstance {
         for mut pc in pcs {
             let location = ei.get_random_spawn(pc.size())?;
             let actor_id = ei.next_actor_id();
+            // Ids are handed out fresh for the new board, so any
+            // rider/mount link a survivor arrives holding names an actor
+            // in the fight that just ended — at best nobody, at worst
+            // whoever inherits that number. Cut before they are seated;
+            // `set_actor_map` below stamps every one of them onto the
+            // grid in their own right.
+            pc.clear_ride_links();
             pc.set_location(location);
             ei.actors.insert(actor_id, pc);
             ei.set_actor_map(actor_id, location)?;
@@ -8613,6 +8620,16 @@ impl EncounterInstance {
     /// loop until they're below the next threshold; we then re-restore
     /// HP so the bonus from the level applies cleanly.
     pub fn long_rest(&mut self) {
+        // Everybody gets off their horse. A rest is not a thing you take
+        // in the saddle, and — more to the point — a rider is off the
+        // occupancy grid while the link is up, so any teardown that
+        // merely cut the link would leave a body the board could not
+        // see. `dismount` is the one that puts them back on it.
+        for id in self.sorted_actor_ids() {
+            if self.is_mounted(id) {
+                self.dismount(id);
+            }
+        }
         // Iterate ids in sorted order so multiple level-up rolls are
         // deterministic with the seeded RNG (HashMap order would otherwise
         // shuffle who rolls first across runs).

@@ -70973,3 +70973,57 @@ fn a_lance_is_the_wrong_weapon_at_point_blank() {
         log
     );
 }
+
+/// A ride does not survive the encounter it happened in.
+///
+/// Actor ids are per-encounter, so a rider/mount link carried into the
+/// next fight names a creature that no longer exists — or, worse, one
+/// that now does and isn't a horse. A rider whose `mounted_on` points at
+/// a stranger is one the pathfinder resolves to the wrong body and the
+/// board never stamps; the two cuts here are what keep that from
+/// happening on either of the paths a survivor can take out of a fight.
+#[test]
+fn a_rider_arrives_at_the_next_encounter_on_their_own_feet() {
+    // A long rest inside the encounter ends the ride *properly* — the
+    // rider goes back on the grid rather than merely losing the link.
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    e.long_rest();
+    assert!(!e.is_mounted(rider));
+    assert_eq!(e.actors[&mount].ridden_by(), None);
+    let landed = e.actors[&rider].location();
+    assert_eq!(e.actor_id_at(landed), Some(rider));
+
+    // And carrying survivors onto a fresh board cuts any link they are
+    // still holding, because their ids are about to change.
+    let (mut e2, rider2, mount2) = mounted_pair();
+    assert!(e2.mount(rider2, mount2).is_ok());
+    let survivors: Vec<crate::actors::actor_template::ActorInstance> =
+        e2.actors.values().cloned().collect();
+    assert!(
+        survivors.iter().any(|a| a.mounted_on().is_some()),
+        "the clones leave the old fight still linked"
+    );
+    let tp = TerrainGenParams {
+        width: 30,
+        height: 20,
+        branch_depth: 0,
+        branch_prob: 0.0,
+    };
+    let ap = ActorGenParams {
+        cr_target: 0.0,
+        n_teams: 0,
+        pc_template: None,
+        start_team: 0,
+    };
+    let next = EncounterInstance::with_pcs(&tp, &ap, Some(7), survivors).unwrap();
+    for (id, a) in next.actors.iter() {
+        assert_eq!(a.mounted_on(), None, "{} arrived still in a saddle", id);
+        assert_eq!(a.ridden_by(), None, "{} arrived still carrying", id);
+        assert_eq!(
+            next.actor_id_at(a.location()),
+            Some(*id),
+            "and every one of them is on the grid"
+        );
+    }
+}
