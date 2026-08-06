@@ -6931,6 +6931,14 @@ impl EncounterInstance {
             Self::PALADIN_AURA_RADIUS,
             "aura of the guardian",
         ),
+        (
+            crate::actions::class_features::PROTECTIVE_BOND_TAG,
+            // 30 ft — the bond's own radius, and the widest row on the
+            // cohort. See `PROTECTIVE_BOND_TAG` for the two RAW clauses
+            // that don't ship and why both narrow the feature.
+            12,
+            "protective bond",
+        ),
     ];
 
     /// Find the ally who will carry `target_id`'s damage, spend their
@@ -9439,23 +9447,84 @@ impl EncounterInstance {
             .unwrap_or(0)
     }
 
+    /// Conditions that each add their own **1d4** to a d20 total —
+    /// attack rolls, spell attack rolls, and saving throws alike, since
+    /// all three route through `bless_bane_attack_die`.
+    ///
+    /// `(condition, log label)`. The label is what the roll breakdown
+    /// names the die as, so a player reading the log can tell which
+    /// buff paid for the hit.
+    ///
+    /// Two rows, from two classes and two cadences:
+    ///
+    ///   - **Bless** — the concentration spell. Its *other* half, the
+    ///     blanket advantage on saving throws, lives on
+    ///     `BLANKET_SAVE_ADVANTAGE_CONDITIONS`; only the die is here.
+    ///   - **Emboldening Bond** — the Peace Domain Cleric's level-1
+    ///     feature, which is the die and nothing else.
+    ///
+    /// That split is the reason this is a cohort rather than a pair of
+    /// hardcoded flags: the two features overlap on one clause and
+    /// diverge on another, and a second use of `Condition::Blessed`
+    /// would have silently handed the domain feature the clause it
+    /// doesn't have.
+    const D4_BONUS_CONDITIONS: &'static [(Condition, &'static str)] =
+        &[(Condition::Blessed, "bless"), (Condition::Emboldened, "bond")];
+
+    /// The mirror cohort — conditions that each *subtract* a 1d4.
+    ///
+    /// One row, Bane, and the symmetry is the point: a creature under
+    /// Bless and Bane at once nets zero dice, which is this engine's
+    /// long-standing simplification of RAW (where both would roll and
+    /// the results would rarely cancel exactly). Generalizing the pair
+    /// into two lists keeps that behaviour exactly — one bonus source
+    /// and one penalty source still cancel — while letting a second
+    /// bonus source stack the way two independent RAW buffs should.
+    const D4_PENALTY_CONDITIONS: &'static [(Condition, &'static str)] =
+        &[(Condition::Baned, "bane")];
+
+    /// Net the actor's 1d4 buff / debuff sources and roll the
+    /// difference, returning the signed total and a log fragment.
+    ///
+    /// **The** chokepoint for the d4 lane: weapon attacks
+    /// (`resolve_attack`), spell attack rolls (`spells::spell_attack`)
+    /// and every saving throw (`roll_save`) all land here, which is why
+    /// a new d4 source is a row on one of the two cohorts above and
+    /// nothing else.
+    ///
+    /// Netting *before* rolling rather than rolling each source and
+    /// summing is what preserves the engine's Bless-and-Bane-cancel
+    /// rule; see `D4_PENALTY_CONDITIONS`. The name predates the cohorts
+    /// and is kept because a rename would touch every call site for no
+    /// behavioural gain.
     pub fn bless_bane_attack_die(&mut self, actor_id: usize) -> (i32, String) {
         let Some(actor) = self.actors.get(&actor_id) else {
             return (0, String::new());
         };
-        let blessed = actor.has_condition(Condition::Blessed);
-        let baned = actor.has_condition(Condition::Baned);
-        match (blessed, baned) {
-            (true, true) | (false, false) => (0, String::new()),
-            (true, false) => {
-                let r = self.roll(&Dice::new(1, 4)) as i32;
-                (r, format!(" + bless(1d4={})", r))
-            }
-            (false, true) => {
-                let r = self.roll(&Dice::new(1, 4)) as i32;
-                (-r, format!(" - bane(1d4={})", r))
-            }
+        let held = |cohort: &'static [(Condition, &'static str)]| -> Vec<&'static str> {
+            cohort
+                .iter()
+                .filter(|(c, _)| actor.has_condition(*c))
+                .map(|(_, label)| *label)
+                .collect()
+        };
+        let bonuses = held(Self::D4_BONUS_CONDITIONS);
+        let penalties = held(Self::D4_PENALTY_CONDITIONS);
+        let net = bonuses.len() as i32 - penalties.len() as i32;
+        if net == 0 {
+            return (0, String::new());
         }
+        let count = net.unsigned_abs();
+        let (sign, labels) = if net > 0 {
+            ('+', bonuses)
+        } else {
+            ('-', penalties)
+        };
+        let rolled = self.roll(&Dice::new(count, 4)) as i32;
+        (
+            net.signum() * rolled,
+            format!(" {} {}({}d4={})", sign, labels.join("+"), count, rolled),
+        )
     }
 
     /// 5e RAW: making an attack consumes the attacker's one-shot advantage

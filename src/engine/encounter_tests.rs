@@ -72150,7 +72150,6 @@ fn aspect_of_the_wyrm_frightens_only_the_hostiles_around_the_monk() {
 /// the retype a choice.
 #[test]
 fn the_draconic_strike_is_the_monks_fist_in_a_different_element() {
-    use crate::actions::action_template::Action;
     use crate::actors::creatures::monks::{ASCENDANT_DRAGON_MONK_TEMPLATE, MONK_TEMPLATE};
     use crate::engine::types::DamageType;
 
@@ -72190,5 +72189,268 @@ fn the_draconic_strike_is_the_monks_fist_in_a_different_element() {
         e.actors[&monk].draconic_ancestry(),
         Some(DamageType::Fire),
         "the strike's element and the breath's are one field"
+    );
+}
+
+/// The d4 lane is a cohort, not a pair of flags: two independent bonus
+/// sources stack into 2d4, one bonus and one penalty still cancel, and
+/// a lone penalty still subtracts.
+///
+/// Every case is read off `bless_bane_attack_die` directly, which is
+/// the single chokepoint weapon attacks, spell attacks and saving
+/// throws all route through — so pinning it here pins all three.
+#[test]
+fn the_d4_lane_nets_its_sources_before_it_rolls() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+
+    let set = |e: &mut EncounterInstance, held: &[Condition]| {
+        let a = e.actors.get_mut(&cleric).unwrap();
+        for c in [Condition::Blessed, Condition::Emboldened, Condition::Baned] {
+            a.remove_condition(c);
+        }
+        for c in held {
+            a.add_condition(*c, ConditionTimer::Rounds(10));
+        }
+    };
+
+    // Nothing held — no die, no log fragment.
+    set(&mut e, &[]);
+    assert_eq!(e.bless_bane_attack_die(cleric), (0, String::new()));
+
+    // One bonus source: +1d4, named for the source that paid.
+    set(&mut e, &[Condition::Blessed]);
+    let (die, note) = e.bless_bane_attack_die(cleric);
+    assert!((1..=4).contains(&die), "one source rolls one d4: {}", die);
+    assert!(note.contains("bless(1d4="), "{}", note);
+
+    // The Peace Domain's bond is the other bonus source, and it names
+    // itself rather than borrowing Bless's label.
+    set(&mut e, &[Condition::Emboldened]);
+    let (die, note) = e.bless_bane_attack_die(cleric);
+    assert!((1..=4).contains(&die));
+    assert!(note.contains("bond(1d4="), "{}", note);
+
+    // Both bonus sources: two dice, not one. This is the case a pair
+    // of hardcoded flags could not express.
+    set(&mut e, &[Condition::Blessed, Condition::Emboldened]);
+    let (die, note) = e.bless_bane_attack_die(cleric);
+    assert!((2..=8).contains(&die), "two sources roll 2d4: {}", die);
+    assert!(note.contains("2d4="), "{}", note);
+
+    // A lone penalty still subtracts…
+    set(&mut e, &[Condition::Baned]);
+    let (die, note) = e.bless_bane_attack_die(cleric);
+    assert!((-4..=-1).contains(&die), "bane subtracts: {}", die);
+    assert!(note.contains("- bane(1d4="), "{}", note);
+
+    // …and one of each still cancels to nothing, which is the engine's
+    // long-standing simplification and must survive the generalization.
+    set(&mut e, &[Condition::Blessed, Condition::Baned]);
+    assert_eq!(e.bless_bane_attack_die(cleric), (0, String::new()));
+
+    // Two bonuses against one penalty nets one die.
+    set(
+        &mut e,
+        &[Condition::Blessed, Condition::Emboldened, Condition::Baned],
+    );
+    let (die, _) = e.bless_bane_attack_die(cleric);
+    assert!((1..=4).contains(&die), "3 - 1 = one net die: {}", die);
+}
+
+/// Emboldening Bond hands the die to the cleric and the nearest allies,
+/// caps at three, and refuses to spend a second charge re-buffing the
+/// same people.
+#[test]
+fn emboldening_bond_bonds_the_nearest_three_and_declines_to_repeat() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{EMBOLDENING_BOND, EMBOLDENING_BOND_TAG};
+    use crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&PEACE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+        .unwrap();
+    let mid = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 0, 2)
+        .unwrap();
+    // In range but fourth in line — the body the cap leaves out.
+    let spare = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 2), 0, 3)
+        .unwrap();
+    // Beyond 30 ft (12 tiles) — out of the bond's reach entirely.
+    let far = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(25, 2), 0, 4)
+        .unwrap();
+
+    let action: &dyn Action = &*EMBOLDENING_BOND;
+    assert!(action.custom_validate_input(&e, cleric, None, None, None));
+    for eff in action.side_effects(&mut e, cleric, None, None, None) {
+        eff.apply(&mut e);
+    }
+    // The cleric counts as one of the three RAW lets it pick.
+    assert!(e.actors[&cleric].has_condition(Condition::Emboldened));
+    assert!(e.actors[&near].has_condition(Condition::Emboldened));
+    assert!(e.actors[&mid].has_condition(Condition::Emboldened));
+    assert!(
+        !e.actors[&spare].has_condition(Condition::Emboldened),
+        "the cap is three and the cleric is one of them"
+    );
+    assert!(!e.actors[&far].has_condition(Condition::Emboldened));
+
+    // One charge spent, one left…
+    assert_eq!(e.actors[&cleric].feature_charges_remaining(EMBOLDENING_BOND_TAG), 1);
+    // …and the second is not spent on the same three: the fourth ally
+    // is still in range and un-bonded, so the recast reaches them.
+    assert!(action.custom_validate_input(&e, cleric, None, None, None));
+    for eff in action.side_effects(&mut e, cleric, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&spare].has_condition(Condition::Emboldened));
+    assert_eq!(e.actors[&cleric].feature_charges_remaining(EMBOLDENING_BOND_TAG), 0);
+    // With nobody left in range to bond, the gate closes even though
+    // the charge lane is the thing that's empty — either is enough.
+    assert!(!action.custom_validate_input(&e, cleric, None, None, None));
+}
+
+/// Balm of Peace heals the huddle inside 5 ft, leaves the ally 30 ft
+/// away alone, and hands the cleric the Disengage that RAW's "without
+/// provoking opportunity attacks" clause is.
+#[test]
+fn balm_of_peace_heals_the_huddle_and_frees_the_cleric_to_leave() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{BALM_OF_PEACE, CLERIC_CHANNEL_DIVINITY_TAG};
+    use crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&PEACE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let close = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+        .unwrap();
+    let distant = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 2), 0, 2)
+        .unwrap();
+
+    // The cleric carries Protective Bond, which would take both of
+    // these wounds onto an 11-hit-point body and leave the allies at
+    // full — with nothing for the balm to restore. Spend the reaction
+    // up front so the blows land where they were aimed. That the
+    // redirect happens at all is
+    // `protective_bond_takes_a_blow_from_thirty_feet_away`'s claim;
+    // this test is about the heal.
+    e.actors
+        .get_mut(&cleric)
+        .unwrap()
+        .consume_resource(crate::engine::side_effects::Resource::Reaction);
+    for id in [close, distant] {
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+    }
+    let close_before = e.actors[&close].hitpoints();
+    let distant_before = e.actors[&distant].hitpoints();
+
+    let action: &dyn Action = &*BALM_OF_PEACE;
+    assert!(action.custom_validate_input(&e, cleric, None, None, None));
+    let pool_before = e.actors[&cleric].feature_charges_remaining(CLERIC_CHANNEL_DIVINITY_TAG);
+    for eff in action.side_effects(&mut e, cleric, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        e.actors[&close].hitpoints() > close_before,
+        "the ally in contact was balmed"
+    );
+    assert_eq!(
+        e.actors[&distant].hitpoints(),
+        distant_before,
+        "5 ft is 5 ft — the ally across the room got nothing"
+    );
+    assert!(
+        e.actors[&cleric].has_condition(Condition::Disengaging),
+        "RAW's 'without provoking opportunity attacks' clause"
+    );
+    // It is a Channel Divinity, so it spends the cleric's shared pool
+    // rather than a private charge of its own — which is what puts it
+    // in competition with Turn Undead instead of beside it.
+    assert_eq!(
+        e.actors[&cleric].feature_charges_remaining(CLERIC_CHANNEL_DIVINITY_TAG),
+        pool_before - 1
+    );
+}
+
+/// Protective Bond puts the Peace Cleric on the damage-interposition
+/// cohort at 30 ft — the widest reach on it.
+///
+/// The distance is the assertion. The two paladin rows reach 5 and 10
+/// feet; a cleric who could only take a blow for somebody standing
+/// next to them would be the Crown Paladin with a different name.
+#[test]
+fn protective_bond_takes_a_blow_from_thirty_feet_away() {
+    use crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(40, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&PEACE_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // 10 tiles = 25 ft: inside the bond and well outside either
+    // paladin aura.
+    let ward = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 2), 0, 1)
+        .unwrap();
+    let cleric_before = e.actors[&cleric].hitpoints();
+    let ward_before = e.actors[&ward].hitpoints();
+
+    DealDamage {
+        actor_id: ward,
+        amount: 4,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+
+    assert_eq!(
+        e.actors[&ward].hitpoints(),
+        ward_before,
+        "the bond moved the blow off the ally"
+    );
+    assert!(
+        e.actors[&cleric].hitpoints() < cleric_before,
+        "…and onto the cleric"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("protective bond")),
+        "the interposition names itself in the log"
+    );
+    // The reaction is spent, so a second blow in the same round lands
+    // where it was aimed.
+    let ward_now = e.actors[&ward].hitpoints();
+    DealDamage {
+        actor_id: ward,
+        amount: 4,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors[&ward].hitpoints() < ward_now,
+        "one reaction, one blow"
     );
 }

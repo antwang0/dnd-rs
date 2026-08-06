@@ -724,6 +724,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g'b. Peace Domain Balm of Peace — the other Channel Divinity
+        //       on the healing lane, and the one whose gate is about
+        //       *where everyone is standing* rather than how hurt they
+        //       are. Directly below Preserve Life because when a cleric
+        //       could spend either, Preserve Life is the better press:
+        //       it reaches 30 ft and tops everyone to half, where the
+        //       balm reaches 5 ft and hands over a flat lump. In
+        //       practice no cleric holds both — the two are different
+        //       domains — so the order between them is a tidiness
+        //       question rather than a live one.
+        if let Some(aei) = try_balm_of_peace(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g''. Wizard Arcane Recovery — once-per-rest free action that
         //       restores a level-1 (and a level-2 at lv3+) spell slot.
         //       Fire when the caster has spent a slot and isn't burning
@@ -885,6 +899,21 @@ impl Controller for SimpleAi {
         //     is about the caster's own remaining hit points rather than
         //     about who is standing where.
         if let Some(aei) = try_warding_bond(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3m'. Emboldening Bond — the Peace Cleric's level-1 charge.
+        //      Beside Warding Bond rather than on the self-buff cohort
+        //      above for the same reason: what it buffs is other
+        //      people, and its gate is about who is standing near the
+        //      cleric rather than about the cleric's own state.
+        //
+        //      Below both because a d4 on future rolls is the least
+        //      urgent thing on this stretch of the ladder — it pays out
+        //      over ten rounds, so a round spent bonding early is worth
+        //      nearly as much as one spent bonding now, which is not
+        //      true of a heal or a wall.
+        if let Some(aei) = try_emboldening_bond(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -3252,6 +3281,80 @@ fn try_preserve_life(
         actor.footprint_gap_to(a) <= 12
     });
     if !wounded_nearby {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Peace Domain Balm of Peace — Channel Divinity, heals every ally
+/// inside 5 ft for 2d6 + WIS and leaves the cleric free to walk away.
+///
+/// Two gates, and the second is the one that makes it a decision. The
+/// fight has to be live (an enemy inside the same 60 ft window every
+/// other charge on the ladder uses, so the balm isn't burned before
+/// anybody has been hit), and **two** allies have to be standing in
+/// the five feet the balm reaches — the cleric plus at least one other.
+///
+/// Two rather than one, unlike Preserve Life's gate. Preserve Life is
+/// billed once and spread over everyone who needs it out to 30 ft, so
+/// a single wounded ally already justifies it; the balm's whole
+/// argument is that it hits several people at once, and a cleric who
+/// spends a Channel Divinity to heal only themselves has spent it on
+/// the worst thing it does. The wound check is folded in the same way —
+/// somebody in the huddle has to actually be missing hit points.
+fn try_balm_of_peace(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("balm of peace")?;
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    // 5 ft — the balm's own radius, and the same one its `side_effects`
+    // heals over, so the gate and the payout can't disagree.
+    let huddle = encounter.ally_heal_burst_targets(actor_id, actor.location(), 1);
+    if huddle.len() < 2 {
+        return None;
+    }
+    let anyone_hurt = huddle.iter().any(|id| {
+        encounter
+            .actors
+            .get(id)
+            .is_some_and(|a| a.hitpoints() < a.max_hitpoints())
+    });
+    if !anyone_hurt {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Peace Domain Emboldening Bond — hand the d4 to the cleric and the
+/// two nearest allies.
+///
+/// The gate is thin on purpose. The action's own
+/// `custom_validate_input` already declines when there is nobody left
+/// to bond (everyone in range is carrying it), which is the stacking
+/// guard; all this rung adds is that the fight is live, so a cleric
+/// doesn't spend both charges on an empty corridor and arrive at the
+/// first enemy with none.
+///
+/// No "is it worth it" heuristic beyond that, because for this feature
+/// there isn't one: the bond costs an Action the cleric would
+/// otherwise spend on a cantrip, pays out on every roll every bonded
+/// creature makes for the next ten rounds, and is strictly better the
+/// earlier it lands. The interesting decision the domain poses is
+/// about *formation*, which the AI expresses by moving rather than by
+/// choosing between buttons.
+fn try_emboldening_bond(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("emboldening bond")?;
+    if !any_enemy_within(encounter, actor_id, 24) {
         return None;
     }
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
@@ -12595,7 +12698,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 45] = [
+        let cases: [(&CreatureTemplate, &str); 46] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12786,6 +12889,19 @@ mod tests {
             (
                 &crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE,
                 "aspect of the wyrm",
+            ),
+            // Not Balm of Peace: its rung wants two bodies inside five
+            // feet and this fixture is one PC against one ogre, so the
+            // cleric is the only creature in its own huddle. Not
+            // Protective Bond either — it has no action to choose, the
+            // engine spends the reaction, and it needs an ally to spend
+            // it for. Both are pinned engine-side. The bond is the
+            // domain's level-1 press and it fires on a lone cleric,
+            // because the cleric is one of the creatures RAW lets it
+            // pick.
+            (
+                &crate::actors::creatures::clerics::PEACE_CLERIC_TEMPLATE,
+                "emboldening bond",
             ),
         ];
 

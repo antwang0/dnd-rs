@@ -2059,6 +2059,32 @@ pub enum Condition {
     /// `caster_gate`: the extra martial-arts die is a property of the
     /// arms being up, not of the monk carrying the feature.
     AstralArms,
+    /// 5e Peace Domain Cleric **Emboldening Bond** (subclass level 1):
+    /// a bonded creature "can roll a d4 and add the number rolled to
+    /// the attack roll, ability check, or saving throw" once per turn.
+    ///
+    /// A condition of its own rather than a second use of `Blessed`,
+    /// and the difference is a whole clause. Bless is *both* a d4 and
+    /// blanket advantage on saving throws — it sits on
+    /// `BLANKET_SAVE_ADVANTAGE_CONDITIONS` for the second half — where
+    /// Emboldening Bond is the die alone. Reusing `Blessed` would have
+    /// handed a level-1 domain feature the save-advantage half of a
+    /// concentration spell for free, and would have made a dispel that
+    /// stripped one strip the other.
+    ///
+    /// The die itself is shared: both conditions sit on
+    /// `D4_BONUS_CONDITIONS`, the cohort `bless_bane_attack_die` reads,
+    /// so a creature carrying Bless *and* the bond rolls 2d4 the way
+    /// two independent RAW sources should.
+    ///
+    /// What isn't modeled is RAW's proximity clause — the die is only
+    /// available "when a bonded creature is within 30 feet of another
+    /// bonded creature". The engine's roll sites read conditions off
+    /// one actor's sheet and have no view of who else on the board is
+    /// carrying the same one, so the bond here pays out on its own.
+    /// The over-grant is bounded by the same thing that bounds the
+    /// feature: three targets, ten rounds, two charges a rest.
+    Emboldened,
 }
 
 impl Condition {
@@ -2077,6 +2103,7 @@ impl Condition {
             Condition::Dodging => "dodging",
             Condition::Grappled => "grappled",
             Condition::Blessed => "blessed",
+            Condition::Emboldened => "emboldened",
             Condition::ShieldOfFaith => "shield of faith",
             Condition::Shielded => "shielded",
             Condition::DamageResistant => "damage resistant",
@@ -2304,6 +2331,10 @@ impl Condition {
         matches!(
             self,
             Condition::Blessed
+                // 5e Peace Domain Cleric Emboldening Bond — a magical
+                // buff with a duration, which is exactly what Dispel
+                // Magic is for.
+                | Condition::Emboldened
                 | Condition::ShieldOfFaith
                 | Condition::MageArmored
                 | Condition::Heroic

@@ -64,6 +64,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     CLERIC_CHANNEL_DIVINITY_TAG,
     PALADIN_CHANNEL_DIVINITY_TAG,
     ARCANE_RECOVERY_TAG,
+    // 5e Peace Domain Cleric — Emboldening Bond. RAW's pool refreshes
+    // on a long rest; it sits on the short-rest cadence here for the
+    // same reason Warding Flare does, which is that a cleric who loses
+    // their level-1 domain feature between engagements has lost the
+    // domain.
+    EMBOLDENING_BOND_TAG,
     NATURAL_RECOVERY_TAG,
     // 5e Circle of Stars Druid — Starry Form. RAW spends a Wild Shape
     // use, and Wild Shape recovers on a short rest, so the charge
@@ -363,7 +369,7 @@ pub fn channel_divinity_features() -> impl Iterator<Item = &'static str> {
 /// the same over-count the Battle Master's maneuvers had, one class
 /// over. The comment here used to say so and call it "a deliberate
 /// simplification".
-pub const CLERIC_CHANNEL_DIVINITIES: [&str; 10] = [
+pub const CLERIC_CHANNEL_DIVINITIES: [&str; 11] = [
     TURN_UNDEAD_TAG,
     PRESERVE_LIFE_TAG,
     GUIDED_STRIKE_TAG,
@@ -374,6 +380,7 @@ pub const CLERIC_CHANNEL_DIVINITIES: [&str; 10] = [
     CHARM_ANIMALS_AND_PLANTS_TAG,
     REAPERS_TOUCH_TAG,
     ORDERS_DEMAND_TAG,
+    BALM_OF_PEACE_TAG,
 ];
 
 /// The Paladin's Channel Divinity options — the membership list of
@@ -646,6 +653,14 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // this feature twice. You regain all expended uses of it when you
     // finish a short or long rest." RAW to the number.
     (ARCANE_SHOT_TAG, 2),
+    // 5e Peace Domain Cleric **Emboldening Bond**: "you can use this
+    // feature a number of times equal to your proficiency bonus." The
+    // cleric chassis is level 9, proficiency +4 — but two is the number
+    // here rather than four, for the reason the table's own preamble
+    // gives: a second bond is genuinely spendable inside one fight
+    // (allies die, allies arrive, the ten rounds lapse) and a fourth is
+    // not. Two is the smallest pool that makes the charge a decision.
+    (EMBOLDENING_BOND_TAG, 2),
     // 5e Bard **Bardic Inspiration**: uses equal to the bard's Charisma
     // modifier. Every bard template on the roster carries CHA 16, so
     // three is not a compromise here — it is the number. The bard is
@@ -7612,6 +7627,320 @@ impl Action for PreserveLife {
 }
 
 pub static PRESERVE_LIFE: LazyLock<PreserveLife> = LazyLock::new(|| PreserveLife {});
+
+/// Per-rest charge for the Peace Domain Cleric's **Emboldening Bond**
+/// (subclass level 1): the cleric bonds a handful of creatures, and for
+/// the next minute each of them adds a d4 to a roll that matters.
+///
+/// RAW's pool is "a number of times equal to your proficiency bonus per
+/// long rest", which on this chassis is two; `FEATURE_CHARGES` says so,
+/// and `SHORT_REST_FEATURES` gives them back per engagement the way
+/// every other cleric charge on the roster does.
+///
+/// Deliberately *not* a Channel Divinity. RAW keeps Emboldening Bond
+/// off that pool — it is the domain's level-1 feature and the Channel
+/// Divinity arrives at level 2 — and the distinction is load-bearing
+/// here: a Peace Cleric who bonds the party has still not spent the
+/// Balm, which is what makes the domain a support build rather than a
+/// single-press one.
+pub const EMBOLDENING_BOND_TAG: &str = "cleric.emboldening_bond";
+
+/// How many creatures one Emboldening Bond reaches, and how far.
+///
+/// RAW bonds "a number of creatures equal to your proficiency bonus" —
+/// two on this chassis — "that you can see within 30 feet". Three here,
+/// counting the cleric, because the cleric is one of the creatures RAW
+/// lets you pick and a domain whose whole identity is the party
+/// standing together should not have to choose between buffing itself
+/// and buffing the front line.
+const EMBOLDENING_BOND_TARGETS: usize = 3;
+
+/// 30 ft on the 2.5 ft grid — the radius the bond is handed out over,
+/// and the same one Preserve Life and every Channel Divinity burst on
+/// the cleric chassis already use.
+const EMBOLDENING_BOND_RADIUS: isize = 12;
+
+/// Emboldening Bond — Peace Domain Cleric action. Installs
+/// `Emboldened` on the cleric and the two nearest wounded-or-not allies
+/// within 30 ft, for 10 rounds.
+///
+/// `NoArgs` rather than a target list, and the choice is the same one
+/// Preserve Life makes: the engine's controllers have no channel for
+/// "pick three of these", so the feature picks for them and the pick is
+/// deterministic (nearest first, ties by id) so a seeded run
+/// reproduces. Bonding the nearest bodies is also the right heuristic
+/// for the feature RAW describes, whose payout clause is about the
+/// bonded creatures being *near each other*.
+///
+/// Allies who already carry the bond are skipped rather than refreshed,
+/// which keeps an AI that re-runs its ladder every turn from spending
+/// both charges re-buffing the same three people — the same stacking
+/// guard `Aided` exists for.
+pub struct EmboldeningBond {}
+
+impl Action for EmboldeningBond {
+    fn name(&self) -> &str {
+        "emboldening bond"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["eb", "bond", "embolden"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, EMBOLDENING_BOND_TAG)
+            && !emboldening_bond_recipients(encounter, caster_id).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let recipients = emboldening_bond_recipients(encounter, caster_id);
+        if recipients.is_empty() {
+            return Vec::new();
+        }
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(EMBOLDENING_BOND_TAG);
+        }
+        let names: Vec<String> = recipients
+            .iter()
+            .map(|&id| encounter.actor_name(id))
+            .collect();
+        encounter.log(format!(
+            "  emboldening bond: {} share a d4 for 10 rounds.",
+            names.join(", ")
+        ));
+        recipients
+            .into_iter()
+            .map(|id| {
+                Box::new(ApplyCondition {
+                    actor_id: id,
+                    condition: Condition::Emboldened,
+                    // 1 minute, RAW.
+                    timer: ConditionTimer::Rounds(10),
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+/// Who this cast of Emboldening Bond would reach — the cleric plus the
+/// nearest un-bonded allies inside 30 ft, capped at
+/// `EMBOLDENING_BOND_TARGETS`.
+///
+/// Shared by `custom_validate_input` and `side_effects` so the gate and
+/// the resolution can never disagree about whether there is anybody
+/// left to bond; a cast that would install nothing declines instead of
+/// burning a charge. Sorted nearest-first with ties broken on the id so
+/// a seeded run reproduces the same three names.
+fn emboldening_bond_recipients(encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let team = caster.team();
+    let origin = caster.location();
+    let origin_size = get_tiles_from_size(caster.size());
+    let mut ranked: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(_, a)| {
+            a.team() == team && a.is_combat_active() && !a.has_condition(Condition::Emboldened)
+        })
+        .filter_map(|(id, a)| {
+            let gap = footprint_chebyshev(
+                a.location(),
+                get_tiles_from_size(a.size()),
+                origin,
+                origin_size,
+            );
+            (gap <= EMBOLDENING_BOND_RADIUS).then_some((gap, *id))
+        })
+        .collect();
+    ranked.sort_unstable();
+    ranked
+        .into_iter()
+        .take(EMBOLDENING_BOND_TARGETS)
+        .map(|(_, id)| id)
+        .collect()
+}
+
+pub static EMBOLDENING_BOND: LazyLock<EmboldeningBond> = LazyLock::new(|| EmboldeningBond {});
+
+/// Channel Divinity charge for the Peace Domain Cleric's **Balm of
+/// Peace** (subclass level 2): the cleric walks through the party and
+/// everyone they pass is a little less hurt.
+///
+/// RAW is a *move*: "you can move up to your speed, without provoking
+/// opportunity attacks, and when you move within 5 feet of any other
+/// creature … you can restore a number of hit points to that creature
+/// equal to 2d6 + your Wisdom modifier." Both halves ship, in the only
+/// order the engine can express them — the heal lands on everyone
+/// already inside 5 ft, and the cleric picks up `Disengaging` so the
+/// walk that follows costs no opportunity attacks.
+///
+/// The divergence is that the engine cannot let an action *interleave*
+/// with movement: a controller declares the action, the effects
+/// resolve, and then the turn's remaining movement is spent. So the
+/// heal is billed at the start of the walk rather than along it, which
+/// is worth less than RAW (a cleric cannot tour the party) and is the
+/// same compromise the engine's other move-and-do features take.
+pub const BALM_OF_PEACE_TAG: &str = "cleric.balm_of_peace";
+
+/// Balm of Peace — Peace Domain Cleric Channel Divinity, action. Heals
+/// every ally within 5 ft (gap 1) for 2d6 + WIS, and leaves the cleric
+/// Disengaging so the rest of the walk is free.
+///
+/// One shared roll for the whole burst, matching how every area effect
+/// in the engine bills a die, and matching RAW's single "2d6 + your
+/// Wisdom modifier" figure rather than a fresh roll per creature.
+///
+/// The radius is the feature's whole cost. Preserve Life reaches 30 ft
+/// and heals to half; this reaches 5 ft and heals a flat lump, so a
+/// Peace Cleric has to be standing *in* the party to spend it — which
+/// on a d8 chassis is exactly the risk the domain is built around, and
+/// the reason the Disengage rider is not a throwaway.
+pub struct BalmOfPeace {}
+
+impl Action for BalmOfPeace {
+    fn name(&self) -> &str {
+        "balm of peace"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bop", "cd-balm", "balm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, BALM_OF_PEACE_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(BALM_OF_PEACE_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let origin = caster.location();
+        let wis = caster.ability_modifier(AbilityScoreType::Wisdom);
+        let rolled = encounter.roll(&Dice::new(2, 6)) as i32;
+        let amount = (rolled + wis).max(0) as u32;
+        // 5 ft — the distance RAW says the cleric has to come within.
+        let targets = encounter.ally_heal_burst_targets(caster_id, origin, 1);
+        encounter.log(format!(
+            "  balm of peace: 2d6({}){:+} = {} HP to {} nearby.",
+            rolled,
+            wis,
+            amount,
+            targets.len()
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = targets
+            .into_iter()
+            .map(|id| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect();
+        // The other half of RAW's sentence: the walk that follows costs
+        // no opportunity attacks. `Disengaging` is the engine's word for
+        // that, and it is the same condition the Disengage action
+        // installs — so a cleric who balms and then moves is already
+        // covered by the movement lane's existing check.
+        effects.push(Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Disengaging,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        }));
+        effects
+    }
+}
+
+pub static BALM_OF_PEACE: LazyLock<BalmOfPeace> = LazyLock::new(|| BalmOfPeace {});
+
+/// Passive tag for the Peace Domain Cleric's **Protective Bond**
+/// (subclass level 6): when a bonded creature takes damage while near
+/// another bonded creature, the second one can spend its reaction to
+/// teleport in and take the damage instead.
+///
+/// The third row on `EncounterInstance::DAMAGE_INTERPOSERS`, and the
+/// widest — 30 ft, against the Crown Paladin's 5 and the Redemption
+/// Paladin's 10. That reach is the domain in one number: the two
+/// paladin features are about a champion standing over somebody, and
+/// this one is about a party that is bonded whether or not it is
+/// bunched up.
+///
+/// Two RAW clauses don't ship. The interposer here is always the
+/// *cleric*, where RAW lets any bonded creature take a blow for any
+/// other — the lane keys off a passive tag, and the tag lives on the
+/// cleric. And the teleport goes: the reaction moves the damage, not
+/// the body. Both narrow the feature rather than widening it, and the
+/// second is what keeps the wide radius honest — a cleric 30 ft away
+/// eats the blow without ending up in the front line.
+pub const PROTECTIVE_BOND_TAG: &str = "cleric.protective_bond";
 
 /// Class-feature tag for the Bard's Cutting Words — once per short rest
 /// (RAW: spends one Bardic Inspiration use). We collapse the

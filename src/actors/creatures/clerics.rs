@@ -1311,3 +1311,84 @@ pub static ORDER_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ..CLERIC_TEMPLATE.clone()
     }
 });
+
+/// Peace Domain Cleric — Divine Domain **Peace Domain** subclass build
+/// (TCoE). The fifteenth cleric domain in the engine, and the only one
+/// whose features are worth what *the party's formation* makes them
+/// worth.
+///
+/// Three subclass features ship:
+///
+///   - **Emboldening Bond** (lv1) — the cleric and the two nearest
+///     allies share a d4 on every attack roll and saving throw for a
+///     minute. Twice per rest.
+///   - **Balm of Peace** (lv2) — the domain's Channel Divinity. Every
+///     ally in contact heals 2d6 + WIS, and the cleric can walk away
+///     from the huddle without provoking.
+///   - **Protective Bond** (lv6) — the cleric's reaction takes a blow
+///     aimed at any ally within 30 ft.
+///
+/// Plus **Potent Spellcasting** (lv8), which is RAW's level-8 pick for
+/// this domain and the reason the radiant Divine Strike comes back off
+/// the chassis — see `cleric_chassis_without_divine_strike`.
+///
+/// The three read as one idea from three distances, and the distances
+/// are the subclass. Balm of Peace reaches 5 ft, the bond is handed out
+/// at 30 ft, and Protective Bond spends itself at 30 ft — so a Peace
+/// Cleric wants the party *bunched at the start of the fight and spread
+/// by the middle of it*. That is a shape no other domain asks for.
+/// Every sibling's Channel Divinity is aimed away from the cleric
+/// (Radiance of the Dawn, Turn Undead, Order's Demand) or is
+/// distance-blind (Preserve Life at 30 ft, Invoke Duplicity on the
+/// cleric's own tile); this one has to be *inside* the huddle, on a d8
+/// chassis, which is exactly the risk Protective Bond then converts
+/// into the domain's payoff.
+///
+/// Contrast Life, the roster's other healing domain. Life's Preserve
+/// Life is a 30-ft pool that tops everyone to half and is over; this
+/// domain's healing is smaller, closer, and comes with a die that pays
+/// out on every roll for the next ten rounds. Life makes a bad round
+/// survivable. Peace makes ten rounds slightly better and one blow
+/// somebody else's problem — which is worth more the longer the fight
+/// runs and less the more suddenly it goes wrong.
+///
+/// Two domain spells join the chassis: **Aura of Purity** and
+/// **Otiluke's Resilient Sphere**. The rest of RAW's domain list
+/// (Heroism, Sanctuary, Aid, Warding Bond, Beacon of Hope, Greater
+/// Restoration) is already on the baseline cleric, which is itself a
+/// comment on how squarely this domain sits in the cleric's existing
+/// lane — the domain's argument is not new spells but a formation.
+///
+/// Left out: **Implacable** (lv17) sits above this chassis's level, and
+/// RAW's proximity clause on the bond's die is not modeled — see
+/// `Condition::Emboldened` for why and for what bounds the over-grant.
+///
+/// Glyph 'P' — for **P**eace. Distinct from every sibling domain: 'C'
+/// baseline, 'W' War, 'L' Light, 'S' Tempest, 'V' Life, 'G' Grave, 'F'
+/// Forge, 'X' Twilight, 'A' Arcana, 'N' Nature, 'K' Trickery, 'B'
+/// Knowledge, 'D' Death, 'O' Order.
+pub static PEACE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        BALM_OF_PEACE, BALM_OF_PEACE_TAG, EMBOLDENING_BOND, EMBOLDENING_BOND_TAG,
+        POTENT_SPELLCASTING_TAG, PROTECTIVE_BOND_TAG,
+    };
+    let (mut actions, mut features) = cleric_chassis_without_divine_strike();
+    actions.push(&*EMBOLDENING_BOND);
+    actions.push(&*BALM_OF_PEACE);
+    actions.push(&*crate::actions::spells::AURA_OF_PURITY);
+    actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
+    features.insert(EMBOLDENING_BOND_TAG);
+    features.insert(BALM_OF_PEACE_TAG);
+    // Protective Bond has no action and no charge: the engine spends
+    // the reaction at the `DealDamage` chokepoint, off the shared
+    // `DAMAGE_INTERPOSERS` cohort the two paladin oaths already sit on.
+    features.insert(PROTECTIVE_BOND_TAG);
+    features.insert(POTENT_SPELLCASTING_TAG);
+    CreatureTemplate {
+        name: "Peace Cleric",
+        glyph: 'P',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
