@@ -87,10 +87,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // burst on the `TurnBurst` chassis.
     ENTHRALLING_PERFORMANCE_TAG,
     BREATH_WEAPON_TAG,
-    // 5e Sun Soul Monk **Searing Sunburst**. RAW spends ki, which
-    // recovers on a short rest — the same cadence the charge lane
-    // carries.
-    SEARING_SUNBURST_TAG,
     // 5e Oath of the Crown Paladin Channel Divinity — Champion Challenge
     // and Turn the Tide. Same short-rest cadence as every other Channel
     // Divinity on the roster.
@@ -318,10 +314,15 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the plain Paladin — the two chassis most likely to be picked, and
     // the two whose Channel Divinity is the whole non-spell half of
     // their turn.
-    // 5e Way of the Drunken Master Monk **Drunkard's Luck**. RAW prices
-    // it in ki, and ki comes back on a short rest — the same reasoning
-    // that puts every other collapsed-ki charge on this lane.
-    DRUNKARDS_LUCK_TAG,
+    // 5e Monk **ki points**: "when you spend a ki point, it is
+    // unavailable until you finish a short or long rest." One row
+    // refills every feature that spends from the pool — Stunning
+    // Strike, Empty Body, Searing Sunburst and Drunkard's Luck — for
+    // the same reason one row refills the whole maneuver suite. Two of
+    // those four used to sit on this list individually and two were
+    // long-rest-only, which is what a private charge per feature buys
+    // you: four features, three cadences, none of them RAW's.
+    KI_POINTS_TAG,
 ];
 
 /// Every **Channel Divinity** on the roster: the once-per-rest resource
@@ -479,6 +480,82 @@ pub const SUPERIORITY_DICE_TAG: &str = "fighter.superiority_dice";
 /// for a future d10 to be half-applied.
 pub const SUPERIORITY_DIE: Dice = Dice::new(1, 8);
 
+/// The Monk's **ki points** pool.
+///
+/// RAW (PHB, Monk, level 2): "your training allows you to harness the
+/// mystic energy of ki. Your access to this energy is represented by a
+/// number of ki points. Your monk level determines the number of points
+/// you have… When you spend a ki point, it is unavailable until you
+/// finish a short or long rest."
+///
+/// Nine doc comments in this file and in `creatures::monks` open with
+/// some version of "the engine has no ki pool", and each of them then
+/// makes a different local compromise: Flurry of Blows and Patient
+/// Defense drop the cost entirely and lean on the bonus action, Shadow
+/// Arts and the Four Elements disciplines borrow the spell-slot table,
+/// and the four features below each took a private once-per-rest charge.
+/// That last group is the one the compromise cost the most, because a
+/// private charge is not a smaller pool — it is a *separate* one. A
+/// level-5 monk who had spent Stunning Strike still had a full Empty
+/// Body waiting, and neither of them came back on a short rest.
+///
+/// This is the pool, sized at 5 for the level-5 chassis every monk
+/// template on the roster represents (RAW: ki points = monk level), and
+/// refreshed on a short rest exactly as RAW says. It is a counter and
+/// names no action of its own — the same shape as the Battle Master's
+/// superiority dice and the two Channel Divinity pools above it.
+///
+/// **What it does not cover, and why.** The engine's ki compromises are
+/// not all the same compromise, and only one kind of them can be undone
+/// by a pool:
+///
+///   - Flurry of Blows, Patient Defense, Step of the Wind, Deft Strike,
+///     Hand of Harm and Hand of Healing all trade their ki cost for the
+///     monk's bonus action, which is the chassis's genuinely scarce
+///     resource — a monk who flurries has not dodged. Pricing them in ki
+///     *as well* would be charging twice for one turn.
+///   - Shadow Arts and the Four Elements disciplines are spells, and
+///     spend from a slot table that is already RAW's ki cost read by
+///     tier. See `FOUR_ELEMENTS_MONK_TEMPLATE`.
+///
+/// What is left is the group RAW prices in ki and the engine gates with
+/// a charge, which is what `MONK_KI_FEATURES` lists.
+pub const KI_POINTS_TAG: &str = "monk.ki_points";
+
+/// The features that spend from `KI_POINTS_TAG` — every monk feature
+/// RAW prices in ki points *and* this engine gates behind a per-rest
+/// charge.
+///
+/// Four rows, and RAW's own prices are 1, 4, 2 and 2 ki respectively.
+/// The pool spends one charge per use rather than the RAW price,
+/// because the charge lane counts uses rather than points — so a monk
+/// gets five presses spread across the four features instead of RAW's
+/// five points spread across the same four. The direction of the
+/// approximation is deliberate and it is the cheap one: what the RAW
+/// prices buy is the *ordering* decision (a Searing Sunburst costs two
+/// Stunning Strikes), and what the private charges cost was the
+/// existence of a decision at all.
+///
+/// Wholeness of Body is deliberately absent. It is the one charge on the
+/// monk chassis RAW does not price in ki — "you can't use this feature
+/// again until you finish a long rest" — so it keeps the private
+/// long-rest charge it already had.
+pub const MONK_KI_FEATURES: [&str; 4] = [
+    // RAW 1 ki. The one the pool changes most: a monk had exactly one
+    // stun per long rest, and now has as many as they are willing to
+    // spend the pool on.
+    STUNNING_STRIKE_TAG,
+    // RAW 4 ki, and RAW's most expensive monk press — which is why it
+    // is the row that most wants a shared pool rather than a private
+    // charge: spending it should empty the monk, and now it does.
+    EMPTY_BODY_TAG,
+    // RAW 2 ki (plus up to 3 more for extra dice, which the fixed 2d6
+    // burst here doesn't offer).
+    SEARING_SUNBURST_TAG,
+    // RAW 2 ki.
+    DRUNKARDS_LUCK_TAG,
+];
+
 /// Feature tags whose charges are drawn from a **shared pool** rather
 /// than from a counter of their own, as `(pool tag, member tags)`.
 ///
@@ -506,6 +583,11 @@ pub const SHARED_FEATURE_POOLS: &[(&str, &[&str])] = &[
     // War Cleric three presses of a two-press feature.
     (CLERIC_CHANNEL_DIVINITY_TAG, &CLERIC_CHANNEL_DIVINITIES),
     (PALADIN_CHANNEL_DIVINITY_TAG, &PALADIN_CHANNEL_DIVINITIES),
+    // And the same story a third time, on the class whose whole
+    // resource *is* a pool. See `KI_POINTS_TAG` for what the four
+    // private charges cost before this row existed, and for the ki
+    // compromises a pool cannot undo.
+    (KI_POINTS_TAG, &MONK_KI_FEATURES),
 ];
 
 /// The shared pool `tag` spends from, or `None` if it has a counter of
@@ -576,6 +658,12 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // who could only take it once was a druid who spent the rest of
     // the fight as a caster who had given away its concentration.
     (COMBAT_WILD_SHAPE_TAG, 2),
+    // 5e Monk **ki points**: "your monk level determines the number of
+    // points you have." Five, for the level-5 chassis every monk
+    // template on the roster is built to — and the first number in this
+    // table that is read as a budget across several features rather
+    // than as one feature's depth. See `KI_POINTS_TAG`.
+    (KI_POINTS_TAG, 5),
 ];
 
 /// How many charges `tag` starts a rest with. One unless
@@ -4386,8 +4474,9 @@ pub const PHYSICIANS_TOUCH_CLEANSES: &[Condition] = &[
 ///
 /// **At-will, and RAW prices it in ki.** That is the same trade Flurry
 /// of Blows, Patient Defense, Step of the Wind and Deft Strike already
-/// make on this chassis: the engine has no ki pool, and the bonus
-/// action *is* the monk's scarce resource. A monk who spends their
+/// make on this chassis, and the one `KI_POINTS_TAG` deliberately does
+/// not undo: the bonus action *is* the monk's scarce resource, and
+/// charging ki on top of it would be charging twice. A monk who spends
 /// bonus action mending has given up the Flurry, the Dodge, the
 /// disengage-dash and the Stunning Strike prime for that round, which
 /// is a real cost and the reason this doesn't need an artificial
@@ -14857,10 +14946,12 @@ pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 /// radiant.
 ///
 /// RAW prices it in ki — 2 points, plus up to 3 more for an extra 2d6
-/// each — and the engine has no ki pool, so it lands on the short-rest
-/// charge lane where every other "once a fight, and you choose the
-/// fight" feature already sits. The scaling clause goes with the pool it
-/// scaled: a single charge has nothing to spend extra of.
+/// each — and the engine's ki pool (`KI_POINTS_TAG`) counts uses rather
+/// than points, so the burst spends one point of the monk's five and the
+/// "up to 3 more for extra dice" clause goes with the arithmetic it
+/// needed. What the pool did buy is the trade: a Sun Soul who throws two
+/// sunbursts has two stuns left instead of five, which is the decision
+/// the private charge this feature used to carry could not express.
 ///
 /// **Save-for-nothing, not save-for-half**, which is the mechanically
 /// interesting half of the feature and the reason it reads so
@@ -15999,6 +16090,12 @@ mod tests {
     /// so a racial feature like the Dragonborn's Breath Weapon read as
     /// an orphan against it. The gap was in the registry, and the
     /// registry has since been filled.
+    ///
+    /// The pool half used to name the Battle Master's maneuvers
+    /// specifically, which was the only pool that existed when it was
+    /// written. It reads `SHARED_FEATURE_POOLS` now: a pool member on
+    /// the short-rest list is a refill of a counter nothing reads, and
+    /// naming one pool meant the next three were unchecked.
     #[test]
     fn the_short_rest_registry_matches_the_templates_that_use_it() {
         let short_rest: Set<&str> = SHORT_REST_FEATURES.iter().copied().collect();
@@ -16013,12 +16110,19 @@ mod tests {
             BATTLE_MASTER_MANEUVERS.len(),
             "BATTLE_MASTER_MANEUVERS lists some tag more than once"
         );
-        let both: Vec<&&str> = short_rest.intersection(&maneuvers).collect();
-        assert!(
-            both.is_empty(),
-            "short_rest chains both registries, so {:?} would refresh twice",
-            both
-        );
+        for &(pool, members) in SHARED_FEATURE_POOLS {
+            let listed: Vec<&str> = members
+                .iter()
+                .copied()
+                .filter(|tag| short_rest.contains(tag))
+                .collect();
+            assert!(
+                listed.is_empty(),
+                "{:?} spend from {}, so refilling their own counters here is dead work",
+                listed,
+                pool
+            );
+        }
     }
 
     /// Every tag in the two per-rest registries is carried by a template

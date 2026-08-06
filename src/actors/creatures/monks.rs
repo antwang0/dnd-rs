@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
     EMPTY_BODY, EMPTY_BODY_TAG, FANGS_OF_THE_FIRE_SNAKE, FANGS_OF_THE_FIRE_SNAKE_TAG,
-    FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
+    FLURRY_OF_BLOWS, KI_POINTS_TAG, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
     SHADOW_ARTS_TAG, SHADOW_STEP, SHADOW_STEP_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
     STUNNING_STRIKE, STUNNING_STRIKE_TAG, TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG,
     WATER_WHIP, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
@@ -106,6 +106,14 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             PURITY_OF_BODY_TAG,
             EMPTY_BODY_TAG,
             UNARMORED_MOVEMENT_TAG,
+            //   - `KI_POINTS_TAG`: the pool Stunning Strike and Empty
+            //     Body above spend from, and the one every subclass
+            //     inherits through `..MONK_TEMPLATE.clone()` — which is
+            //     what puts the Sun Soul's Searing Sunburst and the
+            //     Drunken Master's Drunkard's Luck on the same five
+            //     presses rather than on private charges of their own.
+            //     Five, for the level-5 chassis; see `KI_POINTS_TAG`.
+            KI_POINTS_TAG,
         ]),
         has_evasion: true,
         has_deflect_missiles: true,
@@ -455,8 +463,9 @@ pub static FOUR_ELEMENTS_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
 ///   - **Deft Strike** (lv6): once on each of the monk's turns, a
 ///     connecting kensei-weapon hit deals an extra martial-arts die of
 ///     the weapon's own damage type. RAW's 1 ki is dropped for the same
-///     reason Flurry of Blows' is: the engine has no ki pool, and the
-///     once-per-turn cap is the limiting resource anyway.
+///     reason Flurry of Blows' is: it is a rider on a swing the monk
+///     was making anyway, so the once-per-turn cap is the limiting
+///     resource and `KI_POINTS_TAG` deliberately leaves it alone.
 ///
 ///   - **A longbow.** RAW's Kensei Weapons clause is a proficiency
 ///     grant, which on its own has no surface here — but a monk with no

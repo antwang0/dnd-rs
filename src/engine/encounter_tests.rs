@@ -52442,20 +52442,28 @@ fn natures_ward_does_not_cover_allies() {
     assert!(e.actors[&ally].has_condition(Condition::Charmed));
 }
 
-/// 5e Monk Empty Body (lv18): action, once per long rest. Installs
+/// 5e Monk Empty Body (lv18): an action priced in ki. Installs
 /// Invisible and DamageResistant on the monk for 10 rounds. Both
-/// installs land in a single side-effect batch; the feature charge
-/// is consumed the moment the effects fire.
+/// installs land in a single side-effect batch; the ki is spent the
+/// moment the effects fire.
+///
+/// The spend is read off `KI_POINTS_TAG` rather than off Empty Body's
+/// own tag, because on a monk the two are the same counter — see
+/// `SHARED_FEATURE_POOLS`. This test used to assert the feature was
+/// exhausted by one press, which was true of the private charge Empty
+/// Body carried before the pool and is not true of ki.
 #[test]
 fn empty_body_installs_invisible_and_damage_resistant() {
     use crate::actions::action_template::Action;
-    use crate::actions::class_features::{EMPTY_BODY, EMPTY_BODY_TAG};
+    use crate::actions::class_features::{EMPTY_BODY, EMPTY_BODY_TAG, KI_POINTS_TAG};
     use crate::actors::creatures::monks::MONK_TEMPLATE;
     let mut e = ei_with_terrain(15, 15, &[]);
     let monk = e
         .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert!(e.actors[&monk].feature_available(EMPTY_BODY_TAG));
+    let ki_before = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    assert!(ki_before > 1, "the monk chassis carries a pool, not a press");
     // Validate the gate and drive the side effects manually — same
     // shape the encounter loop uses for every other action.
     let action: &dyn Action = &*EMPTY_BODY;
@@ -52466,8 +52474,16 @@ fn empty_body_installs_invisible_and_damage_resistant() {
     }
     assert!(e.actors[&monk].has_condition(Condition::Invisible));
     assert!(e.actors[&monk].has_condition(Condition::DamageResistant));
-    // Feature charge consumed — the gate must now fail so a
-    // duplicate queued use doesn't slip through.
+    // Exactly one point of ki left the pool…
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki_before - 1
+    );
+    // …and once the pool is dry the gate closes, so a duplicate queued
+    // use doesn't slip through.
+    for _ in 1..ki_before {
+        e.actors.get_mut(&monk).unwrap().spend_feature(EMPTY_BODY_TAG);
+    }
     assert!(!e.actors[&monk].feature_available(EMPTY_BODY_TAG));
     assert!(!action.custom_validate_input(&e, monk, None, None, None));
 }
@@ -71442,7 +71458,7 @@ fn redirect_attack_needs_somebody_other_than_the_attacker_to_hit() {
 /// cancels it to Normal rather than upgrading it.
 #[test]
 fn drunkards_luck_spends_once_and_cancels_rather_than_upgrades() {
-    use crate::actions::class_features::DRUNKARDS_LUCK_TAG;
+    use crate::actions::class_features::{DRUNKARDS_LUCK_TAG, KI_POINTS_TAG};
     use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
     use crate::engine::dice::RollMode;
     let mut e = ei_with_terrain(20, 20, &[]);
@@ -71450,25 +71466,36 @@ fn drunkards_luck_spends_once_and_cancels_rather_than_upgrades() {
         .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
     assert!(e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG));
+    let ki_before = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
     assert_eq!(
         e.cancel_disadvantage_with_luck(monk, RollMode::Disadvantage),
         RollMode::Normal,
         "the disadvantage goes away"
     );
-    assert!(
-        !e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG),
-        "and the charge went with it"
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki_before - 1,
+        "and a point of ki went with it"
     );
+    // Drain the rest of the pool: with nothing left to spend, the
+    // disadvantage stands.
+    for _ in 1..ki_before {
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .spend_feature(DRUNKARDS_LUCK_TAG);
+    }
     assert_eq!(
         e.cancel_disadvantage_with_luck(monk, RollMode::Disadvantage),
         RollMode::Disadvantage,
-        "a spent charge buys nothing"
+        "an empty pool buys nothing"
     );
     let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
     e.actors.get_mut(&monk).unwrap().short_rest(&mut roller);
-    assert!(
-        e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG),
-        "ki comes back on a short rest"
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki_before,
+        "ki comes back on a short rest — all of it"
     );
     // An advantaged or straight roll is passed through untouched — the
     // charge is only ever spent on the case the feature names.
@@ -71522,4 +71549,73 @@ fn the_drunken_master_tags_ship_on_one_monk_only() {
             );
         }
     }
+}
+
+/// The monk's ki is one pool, and Stunning Strike and Empty Body spend
+/// from it — which is the whole point of `KI_POINTS_TAG`. Before it,
+/// each of them carried a private charge, so a monk who had stunned
+/// still had a full Empty Body waiting and neither came back on a short
+/// rest.
+#[test]
+fn stunning_strike_and_empty_body_draw_on_the_same_ki() {
+    use crate::actions::class_features::{EMPTY_BODY_TAG, KI_POINTS_TAG, STUNNING_STRIKE_TAG};
+    use crate::actors::creatures::monks::MONK_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let monk = e
+        .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ki = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    assert_eq!(ki, 5, "a level-5 monk has five points");
+    // Spending one feature is visible from the other, because they are
+    // the same counter.
+    e.actors
+        .get_mut(&monk)
+        .unwrap()
+        .spend_feature(STUNNING_STRIKE_TAG);
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(EMPTY_BODY_TAG),
+        ki - 1,
+        "the stun came out of the pool Empty Body reads"
+    );
+    // Drain it from either end and both features close together.
+    for _ in 1..ki {
+        e.actors.get_mut(&monk).unwrap().spend_feature(EMPTY_BODY_TAG);
+    }
+    assert!(!e.actors[&monk].feature_available(STUNNING_STRIKE_TAG));
+    assert!(!e.actors[&monk].feature_available(EMPTY_BODY_TAG));
+    // And a short rest brings the whole pool back — RAW's cadence for
+    // ki, and the one neither feature had before the pool.
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+    e.actors.get_mut(&monk).unwrap().short_rest(&mut roller);
+    assert_eq!(e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG), ki);
+    assert!(e.actors[&monk].feature_available(STUNNING_STRIKE_TAG));
+}
+
+/// Wholeness of Body is the one monk charge RAW does not price in ki
+/// ("you can't use this feature again until you finish a long rest"), so
+/// it keeps its own counter and a short rest does not bring it back.
+#[test]
+fn wholeness_of_body_is_not_paid_for_in_ki() {
+    use crate::actions::class_features::{KI_POINTS_TAG, WHOLENESS_OF_BODY_TAG};
+    use crate::actors::creatures::monks::OPEN_HAND_MONK_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let monk = e
+        .instantiate_creature(&OPEN_HAND_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ki = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    e.actors
+        .get_mut(&monk)
+        .unwrap()
+        .spend_feature(WHOLENESS_OF_BODY_TAG);
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki,
+        "mending yourself costs the monk no ki"
+    );
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+    e.actors.get_mut(&monk).unwrap().short_rest(&mut roller);
+    assert!(
+        !e.actors[&monk].feature_available(WHOLENESS_OF_BODY_TAG),
+        "and a short rest does not give it back"
+    );
 }
