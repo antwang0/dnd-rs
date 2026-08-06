@@ -70696,3 +70696,33 @@ fn the_fifth_rung_of_exhaustion_stops_the_things_priced_in_feet() {
         "and one this far gone cannot"
     );
 }
+
+/// A Dash on horseback is the horse's second wind, not the rider's.
+///
+/// The four Dash-shaped grants in the engine each open-coded
+/// `actor.speed()`, which is the rider's own legs — so a knight who
+/// spurred a warhorse gained thirty feet where RAW gives sixty. All four
+/// read `travel_speed` now, and this pins the one that ships on every
+/// creature in the game.
+#[test]
+fn a_dash_in_the_saddle_spends_the_horses_legs() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::default_actions::DASH;
+
+    let (mut e, rider, mount) = mounted_pair();
+    let (own, horse) = (e.actors[&rider].speed(), e.actors[&mount].speed());
+    assert!(horse > own, "the pair only says something if they differ");
+
+    assert!(e.mount(rider, mount).is_ok());
+    e.start_turn_for(rider);
+    assert_eq!(e.actors[&rider].remaining_movement(), horse);
+
+    for se in ActionExecutionInfo::new(&*DASH, rider, None, None, None).execute(&mut e) {
+        se.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&rider].remaining_movement(),
+        horse * 2.0,
+        "the Dash doubled the horse's speed, not added the rider's"
+    );
+}

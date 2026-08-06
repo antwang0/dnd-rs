@@ -157,6 +157,30 @@ impl EncounterInstance {
         }
     }
 
+    /// The speed the board actually moves this actor at: its mount's if
+    /// it is riding one, its own otherwise.
+    ///
+    /// The distinction `ActorInstance::speed()` cannot make, because a
+    /// creature cannot see the thing it is sitting on. Every rule that
+    /// converts "your speed" into *feet of travel* reads this instead —
+    /// the turn's opening budget, and each of the four Dash-shaped
+    /// grants (Dash, Cunning Action's, Step of the Wind, the Eagle
+    /// totem's dive). A knight who Dashes on a warhorse covers sixty
+    /// more feet, not thirty: RAW's controlled mount is the thing taking
+    /// the Dash, and it is the horse that runs.
+    ///
+    /// Deliberately *not* read by the rules that convert "your speed"
+    /// into something other than travel. `mount_movement_cost` prices
+    /// getting into the saddle off the rider's own legs, which is the
+    /// only speed they have at that moment; and a Longstrider on the
+    /// knight still does nothing for the horse, which is RAW — your
+    /// speed is not what is carrying you.
+    pub fn travel_speed(&self, actor_id: usize) -> f32 {
+        self.actors
+            .get(&self.movement_body(actor_id))
+            .map_or(0.0, |a| a.speed())
+    }
+
     /// Hand a mounted rider their mount's speed as this turn's movement
     /// budget, replacing their own.
     ///
@@ -169,12 +193,10 @@ impl EncounterInstance {
     ///
     /// A no-op for everyone on their own feet.
     pub(crate) fn grant_mounted_movement(&mut self, actor_id: usize) {
-        let Some(mount_id) = self.actors.get(&actor_id).and_then(|a| a.mounted_on()) else {
+        if !self.is_mounted(actor_id) {
             return;
-        };
-        let Some(speed) = self.actors.get(&mount_id).map(|m| m.speed()) else {
-            return;
-        };
+        }
+        let speed = self.travel_speed(actor_id);
         if let Some(rider) = self.actors.get_mut(&actor_id) {
             rider.set_movement_budget(speed);
         }

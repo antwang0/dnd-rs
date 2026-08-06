@@ -253,10 +253,10 @@ impl Action for Dash {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(actor) = encounter.get_actor(caster_id) else {
-            return Vec::new();
-        };
-        let speed = actor.speed();
+        // `travel_speed`, not the actor's own: a Dash is a second
+        // helping of whatever is carrying you, and for a mounted rider
+        // that is the horse. See `engine::mounts::travel_speed`.
+        let speed = encounter.travel_speed(caster_id);
         vec![Box::new(GiveResource {
             actor_id: caster_id,
             resource: Resource::Movement(speed),

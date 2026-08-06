@@ -1092,11 +1092,7 @@ impl Action for CunningDash {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let speed = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.speed())
-            .unwrap_or(0.0);
+        let speed = encounter.travel_speed(caster_id);
         encounter.log("  cunning dash: extra movement gained.".to_string());
         vec![Box::new(GiveResource {
             actor_id: caster_id,
@@ -2098,11 +2094,7 @@ impl Action for EagleDive {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let speed = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.speed())
-            .unwrap_or(0.0);
+        let speed = encounter.travel_speed(caster_id);
         encounter.log("  eagle dive: barbarian surges forward on totem wings.".to_string());
         vec![Box::new(GiveResource {
             actor_id: caster_id,
@@ -5127,11 +5119,7 @@ impl Action for StepOfTheWind {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let speed = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.speed())
-            .unwrap_or(0.0);
+        let speed = encounter.travel_speed(caster_id);
         encounter.log("  step of the wind: monk surges past the front line.".to_string());
         vec![
             Box::new(GiveResource {
