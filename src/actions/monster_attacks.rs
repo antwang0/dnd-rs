@@ -5597,6 +5597,42 @@ pub static RADIANT_SUN_BOLT: SimpleWeapon = SimpleWeapon::ranged(
     12,
 );
 
+/// Draconic Strike — Way of the Ascendant Dragon Monk (subclass level
+/// 3, FTD). RAW: "when you deal damage with your Unarmed Strike, you
+/// can change its damage type to the damage type associated with your
+/// Draconic Ancestry."
+///
+/// A second `SimpleWeapon` beside the monk's fist rather than a runtime
+/// retype of it, because the feature *is* a choice and the engine
+/// already has a lane that makes choices between swings: the AI's
+/// attack picker ranks candidate weapons by damage-type matchup, and a
+/// human at the prompt picks by name. Two weapons on the sheet is
+/// therefore the same decision RAW asks for, made by the same machinery
+/// that decides between a longsword and a lance — where a retype would
+/// have needed a per-hit override channel neither controller has.
+///
+/// Identical to `MONK_UNARMED_STRIKE` in every other respect (DEX to
+/// hit and to damage, the 1d8 martial-arts die, 5 ft of reach), so
+/// Extra Attack chains it and Flurry of Blows throws it exactly as it
+/// does the fist. The one difference is the whole feature: fire instead
+/// of bludgeoning, which is the right swing against the skeletons and
+/// the trolls and the wrong one against everything that lives in a
+/// volcano — and having both on the sheet is what makes that a
+/// decision rather than a fixed downgrade.
+///
+/// Fire because the chassis that carries it declares a fire
+/// `draconic_ancestry`, which is also what Breath of the Dragon reads.
+/// A second ancestry ships as a second template pairing a different
+/// `SimpleWeapon` with a different ancestry, the way the fifteen
+/// Dragonborn ancestries already do.
+pub static DRACONIC_STRIKE: SimpleWeapon = SimpleWeapon::melee(
+    "draconic strike",
+    &["dstrike", "draconic"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Fire,
+);
+
 /// Arms of the Astral Self — Way of the Astral Self Monk (subclass
 /// level 3, TCE). Spectral arms of ki settle over the monk's own, and
 /// for as long as they hold the monk's unarmed strike changes in four

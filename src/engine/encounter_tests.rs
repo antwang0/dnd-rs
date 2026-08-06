@@ -71882,3 +71882,313 @@ fn master_of_tactics_is_help_at_a_bonus_actions_price() {
     }
     assert!(e.actors[&far].has_condition(Condition::Helped));
 }
+
+/// 5e Ascendant Dragon Monk **Breath of the Dragon** exhales the
+/// element the monk's `draconic_ancestry` names, not a hardcoded one.
+///
+/// Driven through the ancestry field rather than around it: the same
+/// action is fired by two monks whose only difference is that field,
+/// and the log line has to name each one's element. A regression that
+/// hardcodes fire passes the first half and fails the second, which is
+/// the failure mode a single-monk test would miss entirely.
+#[test]
+fn breath_of_the_dragon_exhales_the_monks_own_ancestry() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::BREATH_OF_THE_DRAGON;
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    // The shipped chassis is fire; the second is the same template with
+    // one field swapped, which is exactly how a second ancestry would
+    // ship.
+    let cold: &'static CreatureTemplate = Box::leak(Box::new(CreatureTemplate {
+        name: "Cold Ascendant Dragon Monk",
+        draconic_ancestry: Some(DamageType::Cold),
+        ..ASCENDANT_DRAGON_MONK_TEMPLATE.clone()
+    }));
+    for (template, element) in [(&*ASCENDANT_DRAGON_MONK_TEMPLATE, "fire"), (cold, "cold")] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let monk = e
+            .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let before = e.actors[&ogre].hitpoints();
+        let log_len = e.messages().len();
+
+        let action: &dyn Action = &*BREATH_OF_THE_DRAGON;
+        assert!(action.custom_validate_input(&e, monk, None, None, None));
+        let center = vec![Coordinate::new(6, 2)];
+        for eff in action.side_effects(&mut e, monk, None, Some(&center), None) {
+            eff.apply(&mut e);
+        }
+
+        let line = e.messages()[log_len..]
+            .iter()
+            .find(|m| m.contains("breath of the dragon"))
+            .expect("the breath logs itself")
+            .clone();
+        assert!(
+            line.contains(element),
+            "a {} ancestry exhaled: {}",
+            element,
+            line
+        );
+        assert!(
+            e.actors[&ogre].hitpoints() < before,
+            "{}: the ogre stood in the cone and took nothing",
+            element
+        );
+    }
+}
+
+/// The breath is save-for-half, not save-for-nothing — the other
+/// policy the engine's burst helpers offer, and the one its Sun Soul
+/// sibling takes.
+///
+/// Swept across seeds and checked on shape: every non-zero hit is
+/// either the full shared roll or its half, and both show up. A
+/// regression to `NoneOnSave` shows up as a zero against a target
+/// that saved.
+#[test]
+fn breath_of_the_dragon_halves_on_a_successful_save() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::BREATH_OF_THE_DRAGON;
+    use crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    let mut halved = 0;
+    let mut fully_hit = 0;
+    for seed in 0..24u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let monk = e
+            .instantiate_creature(
+                &ASCENDANT_DRAGON_MONK_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        // An ogre for the same reason Searing Sunburst's sweep uses
+        // one: a target that drops to 0 under-reports what it took.
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let before = e.actors[&ogre].hitpoints();
+        let log_len = e.messages().len();
+
+        let action: &dyn Action = &*BREATH_OF_THE_DRAGON;
+        let center = vec![Coordinate::new(8, 8)];
+        for eff in action.side_effects(&mut e, monk, None, Some(&center), None) {
+            eff.apply(&mut e);
+        }
+
+        // "  breath of the dragon: 2d10(N) fire cone, ..."
+        let rolled: u32 = e.messages()[log_len..]
+            .iter()
+            .find_map(|m| {
+                let tail = m.split("2d10(").nth(1)?;
+                tail.split(')').next()?.parse().ok()
+            })
+            .expect("the breath logs its shared roll");
+        assert!(rolled >= 2, "2d10 cannot roll below 2");
+
+        let taken = before - e.actors[&ogre].hitpoints();
+        assert!(
+            taken == rolled || taken == rolled / 2,
+            "seed {}: took {} against a shared roll of {} — \
+             save-for-half admits only those two",
+            seed,
+            taken,
+            rolled
+        );
+        if taken == rolled {
+            fully_hit += 1;
+        } else {
+            halved += 1;
+        }
+    }
+    assert!(
+        halved > 0,
+        "no seed in 24 passed the save — the fixture isn't exercising the policy"
+    );
+    assert!(fully_hit > 0, "no seed in 24 failed the save");
+}
+
+/// Both Ascendant Dragon presses spend from the monk's ki, not from
+/// private charges of their own.
+///
+/// The distinction is the subclass's whole resource story: five ki
+/// across breath, aura and stun is a decision, and three separate
+/// counters is not. Asserted by spending one of each and watching a
+/// single pool fall by two — and then by draining the pool and
+/// checking that *both* gates close, which is what a stranded private
+/// charge would not do.
+#[test]
+fn the_ascendant_dragons_presses_come_out_of_one_pool_of_ki() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{
+        ASPECT_OF_THE_WYRM, ASPECT_OF_THE_WYRM_TAG, BREATH_OF_THE_DRAGON,
+        BREATH_OF_THE_DRAGON_TAG, KI_POINTS_TAG, STUNNING_STRIKE_TAG,
+    };
+    use crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let monk = e
+        .instantiate_creature(
+            &ASCENDANT_DRAGON_MONK_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let _ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+
+    let ki = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    assert!(ki > 2, "the monk chassis carries a pool, not two presses");
+
+    let breath: &dyn Action = &*BREATH_OF_THE_DRAGON;
+    let center = vec![Coordinate::new(6, 2)];
+    for eff in breath.side_effects(&mut e, monk, None, Some(&center), None) {
+        eff.apply(&mut e);
+    }
+    let aura: &dyn Action = &*ASPECT_OF_THE_WYRM;
+    for eff in aura.side_effects(&mut e, monk, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki - 2,
+        "two presses, one pool, two points"
+    );
+
+    // Drain the rest through a third member of the pool and watch both
+    // of the new gates close with it.
+    for _ in 0..(ki - 2) {
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .spend_feature(STUNNING_STRIKE_TAG);
+    }
+    assert!(!e.actors[&monk].feature_available(BREATH_OF_THE_DRAGON_TAG));
+    assert!(!e.actors[&monk].feature_available(ASPECT_OF_THE_WYRM_TAG));
+    assert!(!breath.custom_validate_input(&e, monk, None, Some(&center), None));
+    assert!(!aura.custom_validate_input(&e, monk, None, None, None));
+}
+
+/// Aspect of the Wyrm frightens the hostiles standing around the monk
+/// and leaves the monk's own side alone.
+///
+/// The ally is the load-bearing half. Every other burst the monk
+/// chassis has is thrown away from itself; this one fires from where
+/// the monk is standing, which is where the monk's own front line is
+/// standing too — so a variant that caught everyone would be a
+/// liability rather than a feature.
+#[test]
+fn aspect_of_the_wyrm_frightens_only_the_hostiles_around_the_monk() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::ASPECT_OF_THE_WYRM;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE;
+
+    // A goblin's WIS save is bad enough that it fails across seeds;
+    // the sweep is what keeps the assertion from riding one roll.
+    let mut ever_frightened = false;
+    for seed in 0..12u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let monk = e
+            .instantiate_creature(
+                &ASCENDANT_DRAGON_MONK_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+
+        let action: &dyn Action = &*ASPECT_OF_THE_WYRM;
+        assert!(action.custom_validate_input(&e, monk, None, None, None));
+        for eff in action.side_effects(&mut e, monk, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Frightened),
+            "seed {}: the aura caught the monk's own front line",
+            seed
+        );
+        assert!(
+            !e.actors[&monk].has_condition(Condition::Frightened),
+            "seed {}: the monk frightened itself",
+            seed
+        );
+        ever_frightened |= e.actors[&goblin].has_condition(Condition::Frightened);
+    }
+    assert!(
+        ever_frightened,
+        "no goblin in 12 seeds failed the save — the aura isn't reaching them"
+    );
+}
+
+/// The Draconic Strike sits *beside* the martial-arts fist rather than
+/// replacing it, and the two differ only in what they are made of.
+///
+/// Which is the feature: fire is the most-resisted element on the
+/// roster, so a monk who could only punch with it would be strictly
+/// worse against half the bestiary. Both on the sheet is what makes
+/// the retype a choice.
+#[test]
+fn the_draconic_strike_is_the_monks_fist_in_a_different_element() {
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::monks::{ASCENDANT_DRAGON_MONK_TEMPLATE, MONK_TEMPLATE};
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let monk = e
+        .instantiate_creature(
+            &ASCENDANT_DRAGON_MONK_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+
+    let fist = e.actors[&monk]
+        .find_action("martial arts")
+        .expect("the ordinary fist stays on the sheet");
+    let scaled = e.actors[&monk]
+        .find_action("draconic strike")
+        .expect("the retyped fist joins it");
+    assert!(
+        e.actors[&plain].find_action("draconic strike").is_none(),
+        "the baseline monk didn't pick up a subclass weapon"
+    );
+
+    // Same reach, same price, same estimate — one element apart.
+    assert_eq!(fist.reach_tiles(), scaled.reach_tiles());
+    assert_eq!(
+        fist.cost(&e, monk, None, None, None),
+        scaled.cost(&e, monk, None, None, None)
+    );
+    assert_eq!(fist.damage_types(), vec![DamageType::Bludgeoning]);
+    assert_eq!(scaled.damage_types(), vec![DamageType::Fire]);
+    assert_eq!(
+        e.actors[&monk].draconic_ancestry(),
+        Some(DamageType::Fire),
+        "the strike's element and the breath's are one field"
+    );
+}

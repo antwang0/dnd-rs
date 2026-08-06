@@ -540,7 +540,7 @@ pub const KI_POINTS_TAG: &str = "monk.ki_points";
 /// monk chassis RAW does not price in ki — "you can't use this feature
 /// again until you finish a long rest" — so it keeps the private
 /// long-rest charge it already had.
-pub const MONK_KI_FEATURES: [&str; 4] = [
+pub const MONK_KI_FEATURES: [&str; 6] = [
     // RAW 1 ki. The one the pool changes most: a monk had exactly one
     // stun per long rest, and now has as many as they are willing to
     // spend the pool on.
@@ -554,6 +554,18 @@ pub const MONK_KI_FEATURES: [&str; 4] = [
     SEARING_SUNBURST_TAG,
     // RAW 2 ki.
     DRUNKARDS_LUCK_TAG,
+    // RAW's Breath of the Dragon is free a proficiency-bonus number of
+    // times per long rest and 1 ki after that. Two cadences for one
+    // button is a distinction the charge lane cannot draw, and of the
+    // two the ki price is the one that makes the breath compete with
+    // the rest of the kit — so the pool is where it lands, and the
+    // free presses go.
+    BREATH_OF_THE_DRAGON_TAG,
+    // RAW 3 ki (or once per long rest for free — same collapse as the
+    // breath above). The most expensive press the Ascendant Dragon
+    // has, and the pool is what makes that cost legible: a monk who
+    // frightens the room has two breaths left instead of five.
+    ASPECT_OF_THE_WYRM_TAG,
 ];
 
 /// Feature tags whose charges are drawn from a **shared pool** rather
@@ -15218,6 +15230,206 @@ impl Action for SearingSunburst {
 }
 
 pub static SEARING_SUNBURST: LazyLock<SearingSunburst> = LazyLock::new(|| SearingSunburst {});
+
+/// Ki charge for the Ascendant Dragon Monk's **Breath of the Dragon**
+/// (subclass level 3): the monk exhales their ancestor's element in a
+/// cone, and every creature caught in it makes a DEX save for half.
+///
+/// The one press on the monk chassis that is neither a punch nor a
+/// spell. Every other monk on the roster answers a cluster of enemies
+/// by walking into the middle of it — a d8 hit die and no armour, which
+/// is the standing problem the Sun Soul solved with range and this one
+/// solves with area. RAW replaces *one attack of the Attack action*
+/// with the breath, so it costs the monk their swing rather than their
+/// turn; here it costs the Action, which is the same trade on a chassis
+/// whose Extra Attack is expressed as two swings off one Action.
+///
+/// The damage type is read from `draconic_ancestry` at resolution
+/// time, the same accessor the Dragonborn's racial Breath Weapon
+/// reads. That is what makes the feature worth its ki against a
+/// bestiary this resistant: an Ascendant Dragon monk with a fire
+/// ancestry is throwing the one element half the bestiary shrugs off,
+/// and the ancestry pick is therefore a real one.
+pub const BREATH_OF_THE_DRAGON_TAG: &str = "monk.breath_of_the_dragon";
+
+/// Breath of the Dragon — Ascendant Dragon Monk action. A radius-3
+/// burst thrown up to 8 tiles, DEX save vs the monk's WIS-based DC,
+/// 2d10 of the ancestry's damage type, half on a success.
+///
+/// Sibling to the Dragonborn's `BreathWeapon` on every axis except the
+/// two that matter: the DC is anchored on Wisdom (the monk's
+/// spellcasting-adjacent ability, per RAW's "Ki save DC") rather than
+/// Constitution, and the cone is the bigger one — RAW's 20-ft cone
+/// against the racial breath's 15 ft, which is the radius-3 / radius-2
+/// split here.
+///
+/// **Friend-or-foe**, unlike the Sun Soul's Searing Sunburst. RAW's
+/// cone catches everything in it and the monk has no Careful Spell to
+/// spare an ally with, so the honest translation is the neutral burst
+/// helper — and the AI's burst placer already refuses a placement that
+/// catches its own team. Searing Sunburst diverges the other way
+/// because it is thrown 150 ft across the room at a cluster the monk
+/// is nowhere near; a cone starts at the monk's own face, where the
+/// monk's own front line is standing.
+pub struct BreathOfTheDragon {}
+
+impl Action for BreathOfTheDragon {
+    fn name(&self) -> &str {
+        "breath of the dragon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["botd", "dragon breath", "exhale"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // RAW 20-ft cone. Radius 3 on the 2.5 ft grid is the same
+        // envelope the engine gives Thunderwave and one step wider
+        // than the Dragonborn's 15-ft racial breath.
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // The cone's own length — 20 ft — is how far from the monk the
+        // far edge sits, so the aim point stays inside 8 tiles.
+        Some(8)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        // Resolved from `draconic_ancestry` at cast time; the list here
+        // is the five ancestries RAW offers, reported for the UI's
+        // resistance hints and the AI's matchup heuristics the same way
+        // the Dragonborn's racial breath reports them.
+        vec![
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Lightning,
+            DamageType::Poison,
+        ]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, BREATH_OF_THE_DRAGON_TAG)
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.draconic_ancestry().is_some())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(center) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Spend the charge before anything can fail, matching Searing
+        // Sunburst and Radiance of the Dawn: a burst that half-resolves
+        // must not leave the press still available.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(BREATH_OF_THE_DRAGON_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let damage_type = caster.draconic_ancestry().unwrap_or(DamageType::Fire);
+        // RAW scaling: 2d10 at lv3, 3d10 at lv11, 4d10 at lv17. The
+        // chassis this ships on is level 5, so 2d10 is the number; the
+        // formula is written out anyway so a level bump on the template
+        // moves the die count with it.
+        let dice_count = match caster.level() {
+            0..=10 => 2,
+            11..=16 => 3,
+            _ => 4,
+        };
+        let damage = encounter.roll(&Dice::new(dice_count, 10));
+        encounter.log(format!(
+            "  breath of the dragon: {}d10({}) {} cone, DC {} DEX save for half.",
+            dice_count, damage, damage_type, dc
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            3,
+            AbilityScoreType::Dexterity,
+            dc,
+            damage,
+            damage_type,
+        )
+    }
+}
+
+pub static BREATH_OF_THE_DRAGON: LazyLock<BreathOfTheDragon> =
+    LazyLock::new(|| BreathOfTheDragon {});
+
+/// Ki charge for the Ascendant Dragon Monk's **Aspect of the Wyrm**
+/// (subclass level 11): the monk takes on their ancestor's presence and
+/// every hostile that can see them makes a save or is Frightened.
+///
+/// RAW's aura is a menu — the monk picks *either* frightening enemies
+/// *or* granting their allies resistance to the ancestral damage type,
+/// and the aura persists for a minute while the monk is up. The
+/// frighten half is what ships. The resistance half wants a projected
+/// ally aura keyed on a damage type, which is a lane the engine's
+/// resistance model does not have (typed resistance is read off held
+/// conditions and passive template flags, both of which are properties
+/// of the *holder* rather than of somebody standing near them), so
+/// shipping it would mean a new cohort for one subclass.
+///
+/// The half that ships is the one that changes how the subclass plays.
+/// A monk is a creature that has to be standing in contact, and
+/// Frightened is the only condition in the engine that makes the
+/// creatures it is in contact with worse at hitting it. Breath of the
+/// Dragon and Aspect of the Wyrm therefore want the same board — a
+/// cluster of hostiles the monk has walked into the middle of — and
+/// spend from the same five presses, which is the decision the ki pool
+/// exists to make legible.
+pub const ASPECT_OF_THE_WYRM_TAG: &str = "monk.aspect_of_the_wyrm";
+
+/// Aspect of the Wyrm — Ascendant Dragon Monk action. Every hostile
+/// within 30 ft makes a WIS save vs the monk's WIS-based DC; on a fail
+/// they are Frightened for 10 rounds. Spends from the ki pool.
+///
+/// The seventh `TurnBurst` config and the first on a monk, which is
+/// the point of the config being data: the whole feature is four
+/// fields and a registry row. WIS-anchored like every other DC the
+/// monk chassis sets, and unfiltered like Dreadful Aspect — RAW's aura
+/// asks nothing about what the creatures caught in it are made of.
+pub static ASPECT_OF_THE_WYRM: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
+    name: "aspect of the wyrm",
+    aliases: &["aotw", "wyrm", "aspect"],
+    tag: ASPECT_OF_THE_WYRM_TAG,
+    // Monk save DCs are Wisdom-anchored — the same ability Stunning
+    // Strike and Breath of the Dragon set theirs from.
+    dc_ability: AbilityScoreType::Wisdom,
+    // No creature-type gate: RAW is "each creature of your choice that
+    // you can see within 30 feet".
+    type_filter: |_| true,
+    installed: Condition::Frightened,
+    // 1 minute, RAW.
+    timer: ConditionTimer::Rounds(10),
+});
 
 /// Passive tag for the Oath of the Crown Paladin's **Divine Allegiance**
 /// (subclass level 7): when a creature within 5 ft takes damage, the

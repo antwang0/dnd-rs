@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS, CONQUERING_PRESENCE,
-    DREADFUL_ASPECT, ENTHRALLING_PERFORMANCE,
+    ARCANE_ABJURATION, ASPECT_OF_THE_WYRM, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS,
+    CONQUERING_PRESENCE, DREADFUL_ASPECT, ENTHRALLING_PERFORMANCE,
     ORDERS_DEMAND, TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
 };
@@ -4767,6 +4767,19 @@ const TURN_BURST_PICKS: &[TurnBurstPick] = &[
     TurnBurstPick {
         config: &ENTHRALLING_PERFORMANCE,
         min_targets: 2,
+    },
+    // Aspect of the Wyrm is the fourth unfiltered variant and the only
+    // one on a chassis that has to be standing inside its own burst.
+    // That is what sets its bar at one rather than two: every other row
+    // here belongs to a caster who is elsewhere, and for them a single
+    // frightened enemy is worth less than the Action. A monk in contact
+    // with one hostile is *being hit by it*, and disadvantage on those
+    // swings is worth the press on its own — the same argument that
+    // gives Conquering Presence a bar of one, arrived at from the
+    // defensive side rather than the offensive one.
+    TurnBurstPick {
+        config: &ASPECT_OF_THE_WYRM,
+        min_targets: 1,
     },
 ];
 
@@ -12582,7 +12595,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 44] = [
+        let cases: [(&CreatureTemplate, &str); 45] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12758,6 +12771,21 @@ mod tests {
             (
                 &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
                 "indomitable",
+            ),
+            // Not Breath of the Dragon: `best_burst_placement` refuses
+            // any placement catching fewer than two enemies, and this
+            // fixture is one PC against one ogre — the same reason
+            // Searing Sunburst is unreachable here. Not the Draconic
+            // Strike either: it is the ordinary fist in a different
+            // element, so which of the two the attack picker prefers is
+            // a matchup question this fixture doesn't pose. Both are
+            // pinned engine-side. The aura is the press with a rung of
+            // its own, and its bar of one is exactly the claim that a
+            // monk in contact with a single hostile should still spend
+            // the ki.
+            (
+                &crate::actors::creatures::monks::ASCENDANT_DRAGON_MONK_TEMPLATE,
+                "aspect of the wyrm",
             ),
         ];
 

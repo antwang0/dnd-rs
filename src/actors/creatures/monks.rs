@@ -849,3 +849,92 @@ pub static DRUNKEN_MASTER_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         ..MONK_TEMPLATE.clone()
     }
 });
+
+/// Ascendant Dragon Monk — Monastic Tradition **Way of the Ascendant
+/// Dragon** (FTD), the tenth monk on the roster and the first whose
+/// answer to a room full of enemies is not to pick one of them.
+///
+/// Three features ship, and they are one idea told three times: the
+/// monk stops being a single-target creature.
+///
+///   - **Draconic Strike** (lv3): the martial-arts fist, retyped to the
+///     ancestor's element. Ships as a second weapon beside the first —
+///     see `DRACONIC_STRIKE` for why the choice belongs to the attack
+///     picker rather than to a per-hit override.
+///
+///   - **Breath of the Dragon** (lv3): a 20-ft cone of the ancestral
+///     element, DEX save for half, priced out of the ki pool. See
+///     `BREATH_OF_THE_DRAGON_TAG`.
+///
+///   - **Aspect of the Wyrm** (lv11): every hostile within 30 ft saves
+///     or is Frightened for a minute. See `ASPECT_OF_THE_WYRM_TAG`.
+///
+/// The subclass's whole shape is that all three want the *same board* —
+/// a cluster of enemies the monk is standing in the middle of — and two
+/// of them spend from the same five ki. That is the decision: a monk
+/// who opens with the breath has one fewer stun, and one who frightens
+/// the room has one fewer breath. Every other monk here spends ki on
+/// things that do not compete for a target (Stunning Strike wants one
+/// enemy, Empty Body wants none), so this is the first monk whose pool
+/// is spent on a reading of the board rather than on a reading of the
+/// monk's own hit points.
+///
+/// Contrast the Sun Soul, the roster's other area monk. Searing
+/// Sunburst is thrown 150 ft at a cluster the monk is nowhere near, and
+/// its damage is radiant — the most polarised type in the bestiary.
+/// This one exhales from its own face at a cluster it is standing in,
+/// and its damage is whatever the ancestry says. The two are the same
+/// mechanic answering opposite questions about where the monk wants to
+/// be, and the Ascendant Dragon's answer is the one the chassis is
+/// otherwise bad at surviving — which is what Aspect of the Wyrm is
+/// for.
+///
+/// **Fire ancestry**, declared through `draconic_ancestry` so the
+/// breath and the strike read the same element from one field. Fire is
+/// the most-resisted element on the roster, which is deliberate rather
+/// than incidental: it is why the ordinary bludgeoning fist stays on
+/// the sheet, and why the attack picker has something to decide every
+/// round.
+///
+/// RAW features not shipped: **Wings Unfurled** (lv6 — a flying speed
+/// for one turn per use of Step of the Wind; the engine's flight is a
+/// template-level speed rather than something a turn can grant), the
+/// resistance half of **Aspect of the Wyrm** (see its tag for the
+/// missing lane), and **Ascendant Aspect**'s (lv17) blindsight and
+/// third-element burst.
+///
+/// Glyph 'R' — for w**R**yrm; free on the monk family, where 'M', 'O',
+/// 'D', 'W', 'E', 'K', 'U', 'Y', 'A' and 'B' are taken.
+pub static ASCENDANT_DRAGON_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        ASPECT_OF_THE_WYRM, ASPECT_OF_THE_WYRM_TAG, BREATH_OF_THE_DRAGON,
+        BREATH_OF_THE_DRAGON_TAG,
+    };
+    use crate::actions::monster_attacks::DRACONIC_STRIKE;
+    use crate::engine::types::DamageType;
+    // The ordinary fist stays: fire is the element half the bestiary
+    // shrugs off, and a monk with only a fire punch has nothing to do
+    // against a salamander.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&DRACONIC_STRIKE);
+    actions.push(&*BREATH_OF_THE_DRAGON);
+    actions.push(&*ASPECT_OF_THE_WYRM);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(BREATH_OF_THE_DRAGON_TAG);
+    features.insert(ASPECT_OF_THE_WYRM_TAG);
+    CreatureTemplate {
+        name: "Ascendant Dragon Monk",
+        glyph: 'R',
+        actions,
+        features,
+        // Read by both Breath of the Dragon (its damage type) and — as
+        // the flavor half of the same pick — the Draconic Strike's
+        // fixed fire typing. One field, so the two can never disagree.
+        draconic_ancestry: Some(DamageType::Fire),
+        // 5e Draconic Ancestry-adjacent: the Ascendant Dragon monk does
+        // not get RAW resistance to its element, and none is granted
+        // here. The ancestry field is the breath's damage type and
+        // nothing else.
+        ..MONK_TEMPLATE.clone()
+    }
+});
