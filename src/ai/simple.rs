@@ -201,6 +201,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a⁶. Get in the saddle. Costs half the actor's speed and
+        //      nothing else — no action, no bonus action, no slot — so
+        //      it sits above every rung that spends something, and the
+        //      turn it fires on still gets its attack from a rung below.
+        //
+        //      What it buys is the mount's speed for the rest of the
+        //      fight, which is the one resource on this ladder that
+        //      compounds: a knight who walks the first round arrives a
+        //      round later than one who rides, and every round after
+        //      that. Its own gate is narrow — the horse has to already
+        //      be next to you — so the rung is a no-op on the
+        //      overwhelming majority of boards rather than a detour
+        //      anyone takes.
+        if let Some(aei) = try_mount_up(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3a⁷. …and the other side of the same rung: a horse whose
+        //      rider is standing right there holds its ground for one
+        //      turn instead of galloping off into the fight alone.
+        //      Without it the pair is at the mercy of the initiative
+        //      order — a warhorse that rolls above its knight charges
+        //      the enemy line by itself, dies to the first thing it
+        //      reaches, and the knight spends the fight on foot next to
+        //      an empty saddle.
+        if let Some(aei) = try_stand_for_rider(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b. Mage Armor — self-only AC boost. Casts once per combat
         //     since the condition lasts ~100 rounds; gated by "don't
         //     re-cast" via the condition check. Bonus action, so it
@@ -6252,6 +6281,122 @@ fn try_summon_allies(
         .map(|(_, _, aei)| aei)
 }
 
+/// Climb onto an allied mount standing next to you (5e Mounted Combat,
+/// PHB p.198).
+///
+/// The gate is `EncounterInstance::can_mount` and nothing else, which
+/// already carries every clause RAW attaches — willing, one size larger,
+/// right anatomy, in reach, neither of you already paired. What this
+/// adds is the two judgements RAW leaves to the rider:
+///
+///   - **Is it worth the movement?** Only if the horse is actually
+///     faster. A creature that would gain nothing but a saddle keeps its
+///     own legs, which matters for the Small cohort — a halfling on a
+///     mule trades 25 ft of its own for the mule's 40, and a goblin on a
+///     worg 30 for 50, but neither should climb onto something slower
+///     than they are.
+///   - **Which horse?** The nearest, then the fastest, then the lowest
+///     id — a total order, so two riders in the same stable make the
+///     same choice as each other every run and the same choice as
+///     themselves on a replay of the seed.
+///
+/// Deliberately *not* gated on there being an enemy nearby, unlike the
+/// summon rung above it. A summon spends a slot and wants to be held
+/// until the fight is real; getting on a horse spends movement the actor
+/// was going to use walking anyway, and the whole value of it is being
+/// mounted *before* the enemy is in range.
+fn try_mount_up(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() || actor.mounted_on().is_some() {
+        return None;
+    }
+    let own_speed = actor.speed();
+    let mount_action = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == crate::actions::default_actions::MOUNT.name())?;
+    let mut stable: Vec<(isize, i32, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(mount_id, m)| {
+            m.speed() > own_speed && encounter.can_mount(actor_id, **mount_id).is_ok()
+        })
+        .map(|(mount_id, m)| {
+            (
+                encounter
+                    .footprint_distance(actor_id, *mount_id)
+                    .unwrap_or(isize::MAX),
+                // Negated so the sort's ascending order puts the fastest
+                // first; the speeds are small whole numbers of feet, so
+                // the cast is exact.
+                -(m.speed() as i32),
+                *mount_id,
+            )
+        })
+        .collect();
+    stable.sort_unstable();
+    stable.into_iter().find_map(|(_, _, mount_id)| {
+        let aei =
+            ActionExecutionInfo::new(*mount_action, actor_id, Some(vec![mount_id]), None, None);
+        aei.validate(encounter).then_some(aei)
+    })
+}
+
+/// The mount's half of the mounting rung: hold still for the ally who is
+/// about to get on you.
+///
+/// A horse is a creature with its own initiative slot, and until someone
+/// is on it the AI drives it like any other body on the team — straight
+/// at the nearest enemy. That is the wrong thing for a mount to do, and
+/// it is wrong in a way that is invisible from the rider's side: by the
+/// time the knight's turn comes round the warhorse is forty feet away
+/// and in melee, `can_mount` refuses on distance, and the rider rung
+/// declines forever. The pair never forms, and nothing in the log says
+/// why.
+///
+/// So a mountable creature with an eligible rider beside it takes the
+/// Dodge action — which is both the useful thing to do while waiting
+/// (nobody hits a dodging horse easily) and one of the three options RAW
+/// gives a controlled mount, so the horse is already behaving like what
+/// it is about to become.
+///
+/// Two gates keep it from becoming a stall:
+///
+///   - **Nobody in contact.** Once the fight has arrived at the horse,
+///     the horse fights; a mount that dodged through a pit fiend's turn
+///     to wait for a rider who was busy would be worse off than one that
+///     kicked.
+///   - **The rider would actually take it** — the same `can_mount` plus
+///     faster-than-you test the rider's own rung applies. A horse does
+///     not wait for somebody who was never going to climb on.
+///
+/// The wait is bounded by the rider's own ladder: `try_mount_up` sits
+/// one rung above the buffs, so an eligible rider mounts on their very
+/// next turn and this stops firing.
+fn try_stand_for_rider(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_mountable() || actor.ridden_by().is_some() || !actor.is_combat_active() {
+        return None;
+    }
+    if !encounter
+        .combat_active_enemy_ids_adjacent(actor_id)
+        .is_empty()
+    {
+        return None;
+    }
+    let my_speed = actor.speed();
+    let wanted = encounter.actors.iter().any(|(rider_id, r)| {
+        r.speed() < my_speed && encounter.can_mount(*rider_id, actor_id).is_ok()
+    });
+    wanted.then(|| try_dodge(encounter, actor_id))?
+}
+
 /// Fire an at-will, self-centered **ally support pulse** — a `NoArgs`
 /// action that costs nothing but the turn, harms nobody, and hands a
 /// buff to the teammates standing near the actor.
@@ -8915,6 +9060,17 @@ mod tests {
                 1,
                 74,
             );
+            // A knight and their warhorse, side by side on team 0. The
+            // one pairing on this board that exercises `engine::mounts`
+            // end to end: the AI's mount rung fires on the first turn,
+            // and from then on every movement, zone, opportunity-attack
+            // and death path in the driver is running with one actor
+            // off the occupancy grid and mirrored onto another. Nothing
+            // else here would notice if that stopped holding.
+            use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+            use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+            let _ = e.instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(2, 8), 0, 36);
+            let _ = e.instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(4, 8), 0, 37);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
@@ -8962,10 +9118,140 @@ mod tests {
                 "seed {}: a lair should have acted at some point",
                 seed
             );
+            // Somebody got on something. Which pairing it is varies by
+            // seed and is not the point — the cleric has taken the
+            // hippogriff on one of these and the knight the warhorse on
+            // another — but a driver in which nobody ever mounts is one
+            // where `engine::mounts` is not being exercised at all, and
+            // every path below it is running on an unridden board.
+            // Somebody got on something. *Which* pairing varies by seed
+            // and is deliberately not asserted: on one of these the
+            // divination wizard takes the warhorse before the knight
+            // does, and on another a kraken's lightning storm kills the
+            // horse in round two — both are the board working. What
+            // would be a regression is a driver in which nobody ever
+            // mounts, because then every path below this rung is
+            // running on an unridden board and `engine::mounts` is
+            // being exercised by its unit tests alone.
+            assert!(
+                e.messages().iter().any(|m| m.contains(" mounts ")),
+                "seed {}: somebody on this board should have found a saddle",
+                seed
+            );
         }
     }
 
     /// Build a no-actors encounter we can hand-place creatures into.
+    /// The AI gets on the horse when there is one beside it, picks the
+    /// nearest of two, and declines a mount that would slow it down.
+    #[test]
+    fn the_ai_takes_the_nearest_horse_that_is_faster_than_it_is() {
+        use crate::actors::creatures::draft_horses::DRAFT_HORSE_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let knight = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // No stable, no rung.
+        assert!(try_mount_up(&e, knight).is_none());
+
+        // A horse across the room is out of reach — `can_mount` refuses
+        // it and so does the rung.
+        let far = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(20, 12), 0, 0)
+            .unwrap();
+        assert!(try_mount_up(&e, knight).is_none());
+
+        // Two beside it: the nearer wins.
+        let near = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(5, 3), 0, 1)
+            .unwrap();
+        let aei = try_mount_up(&e, knight).expect("a horse is right there");
+        assert_eq!(aei.action().name(), "mount");
+        assert_eq!(aei.target_ids(), Some(&[near][..]));
+
+        // Riding it costs movement and nothing else — the turn's action
+        // is still there for the rungs below.
+        e.actors.get_mut(&knight).unwrap().reset_for_new_round();
+        let before = e.actors[&knight].remaining_movement();
+        for se in aei.execute(&mut e) {
+            se.apply(&mut e);
+        }
+        assert!(e.is_mounted(knight));
+        assert!(
+            e.actors[&knight].can_consume_resource(Resource::Action),
+            "mounting is priced in feet, not in the turn"
+        );
+        assert!(
+            e.actors[&knight].remaining_movement() < before,
+            "and the feet were charged"
+        );
+        // Already up: the rung declines rather than looping.
+        assert!(try_mount_up(&e, knight).is_none());
+        let _ = far;
+
+        // A second knight with only a slower horse to hand stays on its
+        // own feet — a draft horse plods at 40 to a fighter's 30, so the
+        // gate is exercised with a genuinely slower body.
+        let mut e2 = empty_arena();
+        let walker = e2
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let cart_horse = e2
+            .instantiate_creature(&DRAFT_HORSE_TEMPLATE, Coordinate::new(5, 3), 0, 0)
+            .unwrap();
+        assert!(e2.can_mount(walker, cart_horse).is_ok());
+        let faster = e2.actors[&cart_horse].speed() > e2.actors[&walker].speed();
+        assert_eq!(
+            try_mount_up(&e2, walker).is_some(),
+            faster,
+            "the rung tracks whether the horse is actually an upgrade"
+        );
+    }
+
+    /// A horse with a rider beside it holds its ground; one with
+    /// nobody waiting, or with the fight already on it, does not.
+    #[test]
+    fn a_horse_waits_for_its_rider_and_not_for_anybody_else() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let horse = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(5, 3), 0, 0)
+            .unwrap();
+        // Nobody wants it: the horse fights like anything else.
+        assert!(try_stand_for_rider(&e, horse).is_none());
+
+        let knight = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let aei = try_stand_for_rider(&e, horse).expect("its rider is right there");
+        assert_eq!(aei.action().name(), "dodge");
+
+        // Once somebody is on it, the wait is over.
+        assert!(e.mount(knight, horse).is_ok());
+        assert!(try_stand_for_rider(&e, horse).is_none());
+        assert!(e.dismount(knight));
+
+        // And a horse the fight has already reached kicks rather than
+        // stands: RAW's controlled mount can Dodge, but a horse nobody
+        // has climbed on yet is just a creature in melee.
+        let _ = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+        assert!(
+            !e.combat_active_enemy_ids_adjacent(horse).is_empty(),
+            "the goblin is in contact with the horse's Large footprint"
+        );
+        assert!(try_stand_for_rider(&e, horse).is_none());
+    }
+
     fn empty_arena() -> EncounterInstance {
         let tp = TerrainGenParams {
             width: 30,

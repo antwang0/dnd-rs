@@ -70280,3 +70280,332 @@ fn a_paladins_channel_divinity_is_a_single_press() {
         "swearing the vow and blessing the weapon are the same press"
     );
 }
+
+// ---------------------------------------------------------------------
+// 5e Mounted Combat (PHB p.198). See `engine::mounts` for the model —
+// the load-bearing claim these pin down is that a mounted rider is off
+// the occupancy grid and mirrored onto its mount, and that every query
+// which used to read the grid now reads through the pair without
+// noticing.
+// ---------------------------------------------------------------------
+
+/// Seat a fighter on a warhorse in a fixed corner of a blank map, and
+/// hand back `(encounter, rider, mount)`. The two are spawned a tile
+/// apart so the adjacency half of `can_mount` is genuinely exercised
+/// rather than assumed.
+fn mounted_pair() -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    // Wide enough that a warhorse's 60 ft and a fighter's 30 land on
+    // different sides of the far wall — the whole point of the pair.
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let rider = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let mount = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+    (e, rider, mount)
+}
+
+#[test]
+fn a_rider_leaves_the_grid_and_the_mount_keeps_the_tiles() {
+    let (mut e, rider, mount) = mounted_pair();
+    let saddle = e.actors[&mount].location();
+    assert!(e.mount(rider, mount).is_ok());
+
+    assert!(e.is_mounted(rider));
+    assert_eq!(e.actors[&mount].ridden_by(), Some(rider));
+    assert_eq!(
+        e.actors[&rider].location(),
+        saddle,
+        "the rider's location mirrors the mount's"
+    );
+    // Every tile of the shared footprint reads as the mount's, and the
+    // rider's old tiles are free.
+    assert_eq!(e.actor_id_at(saddle), Some(mount));
+    assert_eq!(
+        e.actor_id_at(Coordinate::new(2, 2)),
+        None,
+        "the rider's old square is vacated"
+    );
+    // …and yet the rider is still a creature the board can find: the
+    // pair's footprint distance is zero, which is what every reach
+    // check reads.
+    assert_eq!(e.footprint_distance(rider, mount), Some(0));
+}
+
+#[test]
+fn only_a_bigger_willing_animal_will_carry_you() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    use crate::engine::mounts::MountRefusal;
+
+    let (mut e, rider, mount) = mounted_pair();
+    // A fighter is not something you ride, whatever size it is.
+    let other = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert_eq!(e.can_mount(rider, other), Err(MountRefusal::WrongAnatomy));
+    // An enemy horse is not willing.
+    let enemy_horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(6, 2), 1, 1)
+        .unwrap();
+    assert_eq!(
+        e.can_mount(rider, enemy_horse),
+        Err(MountRefusal::Unwilling)
+    );
+    // The one across the room is out of reach.
+    let far_horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(14, 14), 0, 2)
+        .unwrap();
+    assert_eq!(e.can_mount(rider, far_horse), Err(MountRefusal::NotAdjacent));
+    // Size: RAW wants one category larger, and Large-on-Large is not.
+    e.actors.get_mut(&rider).unwrap().set_size(Size::Large);
+    assert_eq!(e.can_mount(rider, mount), Err(MountRefusal::TooSmall));
+    e.actors.get_mut(&rider).unwrap().set_size(Size::Medium);
+    assert!(e.can_mount(rider, mount).is_ok());
+    // And a horse carries one knight.
+    assert!(e.mount(rider, mount).is_ok());
+    assert_eq!(e.can_mount(other, mount), Err(MountRefusal::AlreadyPaired));
+}
+
+#[test]
+fn the_pair_moves_as_one_body_on_the_mounts_legs() {
+    use crate::engine::side_effects::MoveActor;
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    e.start_turn_for(rider);
+
+    // RAW's controlled mount: the rider's budget is the horse's speed,
+    // not their own. A warhorse gallops 60 to a fighter's 30.
+    let horse_speed = e.actors[&mount].speed();
+    let rider_own_speed = e.actors[&rider].speed();
+    assert!(horse_speed > rider_own_speed);
+    assert_eq!(e.actors[&rider].remaining_movement(), horse_speed);
+
+    // A destination the fighter could never reach on its own legs (18
+    // tiles is 45 ft), and pathed against the horse's 4-tile footprint.
+    let dest = Coordinate::new(22, 2);
+    let cost = e
+        .path_cost_to(rider, dest)
+        .expect("the horse can cover this");
+    assert!(cost > rider_own_speed, "and the fighter alone could not");
+
+    let path = e.path_to(rider, dest).unwrap();
+    MoveActor {
+        actor_id: rider,
+        path,
+    }
+    .apply(&mut e);
+
+    assert_eq!(e.actors[&mount].location(), dest, "the horse walked");
+    assert_eq!(
+        e.actors[&rider].location(),
+        dest,
+        "and the rider went with it"
+    );
+    assert_eq!(e.actor_id_at(dest), Some(mount));
+}
+
+#[test]
+fn a_ridden_horse_spends_its_turn_carrying_somebody() {
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    // Drive the queue and watch who gets prompted. The horse never
+    // does — its slot is passed straight through — and the rider does,
+    // which is what keeps this from passing vacuously on a queue that
+    // simply stopped moving.
+    let mut rider_prompted = false;
+    for _ in 0..12 {
+        e.process_stack();
+        let slot = e.initiative_tracker.current_player();
+        assert_ne!(slot, Some(mount), "a ridden mount is never prompted");
+        rider_prompted |= slot == Some(rider);
+        e.skip_turn();
+    }
+    assert!(rider_prompted, "and the rider is");
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("is under rein")),
+        "the skipped slot says why it was skipped"
+    );
+}
+
+#[test]
+fn a_dismount_puts_the_rider_back_on_the_board_beside_the_horse() {
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    assert!(e.dismount(rider));
+
+    assert!(!e.is_mounted(rider));
+    assert_eq!(e.actors[&mount].ridden_by(), None);
+    let landed = e.actors[&rider].location();
+    assert_eq!(
+        e.actor_id_at(landed),
+        Some(rider),
+        "and is stamped back onto the grid"
+    );
+    assert_eq!(
+        e.footprint_distance(rider, mount),
+        Some(0),
+        "RAW: within 5 feet of it"
+    );
+}
+
+#[test]
+fn a_teleport_takes_the_rider_and_leaves_the_horse() {
+    use crate::engine::side_effects::TeleportActor;
+    let (mut e, rider, mount) = mounted_pair();
+    let saddle = e.actors[&mount].location();
+    assert!(e.mount(rider, mount).is_ok());
+
+    TeleportActor {
+        actor_id: rider,
+        dest: Coordinate::new(14, 14),
+    }
+    .apply(&mut e);
+
+    assert!(!e.is_mounted(rider), "misty step moves you, not your horse");
+    assert_eq!(e.actors[&rider].location(), Coordinate::new(14, 14));
+    assert_eq!(e.actor_id_at(Coordinate::new(14, 14)), Some(rider));
+    assert_eq!(e.actors[&mount].location(), saddle, "the horse stayed put");
+    assert_eq!(e.actor_id_at(saddle), Some(mount));
+}
+
+#[test]
+fn a_shove_on_the_horse_asks_the_rider_to_stay_seated() {
+    // The save is a die roll, so sweep seeds and insist that both
+    // outcomes are reachable and that each is self-consistent: a rider
+    // who fails is on the ground, prone, beside the horse; one who
+    // passes is still in the saddle and still off the grid.
+    let mut thrown = 0;
+    let mut kept = 0;
+    for seed in 0..40u64 {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let rider = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let mount = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.mount(rider, mount).is_ok());
+        // `place_actor_at` is the "moved against its will" lane —
+        // `walk_actor_to` is the creature's own legs and asks nothing.
+        e.place_actor_at(mount, Coordinate::new(8, 8)).unwrap();
+
+        if e.is_mounted(rider) {
+            kept += 1;
+            assert_eq!(e.actors[&rider].location(), Coordinate::new(8, 8));
+            assert_eq!(e.actor_id_at(Coordinate::new(8, 8)), Some(mount));
+        } else {
+            thrown += 1;
+            assert!(e.actors[&rider].has_condition(Condition::Prone));
+            assert_eq!(e.footprint_distance(rider, mount), Some(0));
+            assert_eq!(
+                e.actor_id_at(e.actors[&rider].location()),
+                Some(rider),
+                "a thrown rider is back on the grid"
+            );
+        }
+    }
+    assert!(thrown > 0 && kept > 0, "both outcomes are reachable");
+}
+
+#[test]
+fn a_walked_step_never_asks_the_rider_anything() {
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    for x in 5..12 {
+        e.walk_actor_to(mount, Coordinate::new(x, 2)).unwrap();
+    }
+    assert!(e.is_mounted(rider), "a gallop is not an involuntary move");
+    assert!(!e.actors[&rider].has_condition(Condition::Prone));
+    assert_eq!(e.actors[&rider].location(), Coordinate::new(11, 2));
+}
+
+#[test]
+fn a_horse_that_falls_takes_its_rider_off_it() {
+    use crate::engine::side_effects::DealDamage;
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    let hp = e.actors[&mount].hitpoints();
+    DealDamage {
+        actor_id: mount,
+        amount: hp + 50,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    e.cleanup_dead_actors();
+
+    assert!(!e.actors.contains_key(&mount), "the horse is gone");
+    assert!(
+        e.actors.contains_key(&rider),
+        "and the rider is not gone with it"
+    );
+    assert!(!e.is_mounted(rider));
+    let landed = e.actors[&rider].location();
+    assert_eq!(
+        e.actor_id_at(landed),
+        Some(rider),
+        "the rider is back on the grid, on solid tiles"
+    );
+}
+
+#[test]
+fn a_rider_who_dies_in_the_saddle_leaves_the_horse_standing() {
+    use crate::engine::side_effects::DealDamage;
+    let (mut e, rider, mount) = mounted_pair();
+    let saddle = e.actors[&mount].location();
+    assert!(e.mount(rider, mount).is_ok());
+    let hp = e.actors[&rider].hitpoints();
+    DealDamage {
+        actor_id: rider,
+        amount: hp + 200,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    e.cleanup_dead_actors();
+
+    assert!(!e.actors.contains_key(&rider));
+    assert_eq!(e.actors[&mount].ridden_by(), None, "the link is cut");
+    assert_eq!(
+        e.actor_id_at(saddle),
+        Some(mount),
+        "and the horse still owns its own tiles — a rider who was never \
+         stamped must not un-stamp anybody on the way out"
+    );
+}
+
+#[test]
+fn the_thorns_bill_the_horse_and_the_rider_both() {
+    use crate::engine::side_effects::MoveActor;
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    e.install_zone(test_zone(
+        Coordinate::new(8, 2),
+        2,
+        ZoneEffect::thorny(crate::engine::dice::Dice::new(2, 4), DamageType::Piercing),
+    ));
+    let (rider_hp, mount_hp) = (e.actors[&rider].hitpoints(), e.actors[&mount].hitpoints());
+
+    e.start_turn_for(rider);
+    let path = e.path_to(rider, Coordinate::new(8, 2)).unwrap();
+    MoveActor {
+        actor_id: rider,
+        path,
+    }
+    .apply(&mut e);
+
+    assert!(
+        e.actors[&mount].hitpoints() < mount_hp,
+        "the horse crossed the thorns"
+    );
+    assert!(
+        e.actors[&rider].hitpoints() < rider_hp,
+        "and carried the rider across them"
+    );
+}
