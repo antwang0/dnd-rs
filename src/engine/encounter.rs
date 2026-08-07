@@ -744,6 +744,36 @@ const BLANKET_SAVE_ADVANTAGE_CONDITIONS: &[Condition] = &[
     Condition::Foreseen,
 ];
 
+/// Conditions that flip the save-roll mode on the three **mental**
+/// saves — Intelligence, Wisdom and Charisma — and leave the three
+/// physical ones alone. Read by `compute_save_mode` under a single
+/// mental-ability gate, the same way the DEX and STR clusters branch
+/// once and fold their rows inside.
+///
+/// The cohort is deliberately signed (each row carries its own
+/// `RollMode`) rather than split into advantage and disadvantage
+/// lists the way the blanket lane is. The blanket lane has room for
+/// that split because its two tables are read at different points; a
+/// scoped cluster is read under one gate, so two tables here would be
+/// two loops behind one `if` — the STR cluster already learned that
+/// and carries `(condition, mode)` pairs for the same reason.
+///
+/// Rows:
+///   - **Feeblemind**: INT and CHA drop to 1, so every mental save
+///     lands at disadvantage while STR / DEX / CON are untouched — the
+///     target can still throw itself away from a fireball. This clause
+///     predates the cohort and used to be a hand-written
+///     `has_condition(Feebled) && matches!(ability, ...)` branch below
+///     the clusters.
+///   - **Intellect Fortress**: "advantage on Intelligence, Wisdom, and
+///     Charisma saving throws" — the clause that wanted a scoped lane
+///     and found only a blanket one, which is what turned the
+///     Feeblemind branch into this table.
+const MENTAL_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
+    (Condition::Feebled, RollMode::Disadvantage),
+    (Condition::IntellectFortified, RollMode::Advantage),
+];
+
 /// Conditions whose presence combines a blanket **disadvantage** into
 /// the actor's *ability check* mode. Sibling of
 /// `BLANKET_SAVE_DISADVANTAGE_CONDITIONS` one lane over — same row
@@ -3859,18 +3889,21 @@ impl EncounterInstance {
                 }
             }
         }
-        // 5e Feeblemind: target's INT and CHA effectively drop to 1, so
-        // INT / WIS / CHA save rolls suffer disadvantage. STR / DEX / CON
-        // are unaffected — the target can still flee a fireball reflexively.
-        if actor.has_condition(Condition::Feebled)
-            && matches!(
-                ability,
-                AbilityScoreType::Intelligence
-                    | AbilityScoreType::Wisdom
-                    | AbilityScoreType::Charisma
-            )
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        // Mental-save cluster — the INT / WIS / CHA counterpart of the
+        // DEX and STR clusters above. Branch once on the ability, then
+        // walk the signed cohort; see `MENTAL_SAVE_MODE_CONDITIONS` for
+        // what each row is.
+        if matches!(
+            ability,
+            AbilityScoreType::Intelligence
+                | AbilityScoreType::Wisdom
+                | AbilityScoreType::Charisma
+        ) {
+            for (condition, effect) in MENTAL_SAVE_MODE_CONDITIONS {
+                if actor.has_condition(*condition) {
+                    mode = mode.combine(*effect);
+                }
+            }
         }
         // Passive-feature-driven save-advantage cohort — Magic Resistance
         // (all abilities), Dwarven Resilience (CON), Gnome Cunning (INT /

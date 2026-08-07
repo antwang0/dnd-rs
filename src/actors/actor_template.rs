@@ -163,6 +163,15 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
         source: Condition::OtherworldlyGuised,
         types: &[DamageType::Radiant, DamageType::Poison],
     },
+    // 5e Intellect Fortress: "the target has resistance to psychic
+    // damage" — the damage half of the spell. Its save half rides
+    // `MENTAL_SAVE_MODE_CONDITIONS` over in the encounter module; both
+    // halves are one row each, which is the whole reason the spell
+    // needed no code of its own.
+    ConditionDrivenTypedResistance {
+        source: Condition::IntellectFortified,
+        types: &[DamageType::Psychic],
+    },
 ];
 
 /// One row in the `TYPED_VULNERABILITY_CONDITIONS` cohort — a single

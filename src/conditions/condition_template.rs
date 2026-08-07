@@ -2103,6 +2103,57 @@ pub enum Condition {
     /// The over-grant is bounded by the same thing that bounds the
     /// feature: three targets, ten rounds, two charges a rest.
     Emboldened,
+    /// 5e **Intellect Fortress** (level-3 abjuration, TCE). A lattice of
+    /// telepathic force settles over one creature: resistance to psychic
+    /// damage, and advantage on Intelligence, Wisdom and Charisma saves.
+    ///
+    /// Both halves ride cohorts that already existed rather than any
+    /// code of their own — the resistance is one row on
+    /// `TYPED_RESISTANCE_CONDITIONS`, the save advantage one row on
+    /// `MENTAL_SAVE_MODE_CONDITIONS`. That second cohort is new, and
+    /// this condition is why: the engine had a *blanket* save-advantage
+    /// table and a hand-written mental-ability gate for Feeblemind, and
+    /// nowhere for "advantage, but only on the three mental saves" to
+    /// land without a third if-branch beside the second.
+    IntellectFortified,
+    /// 5e **Melf's Minute Meteors** (level-3 evocation, XGE). Six tiny
+    /// meteors orbit the caster; two can be flung as a bonus action on
+    /// each of the caster's turns, each bursting for 2d6 fire in a
+    /// 5-foot radius.
+    ///
+    /// The condition is the ammunition. RAW's supply is six meteors
+    /// spent two at a time, which is three turns of throwing, so the
+    /// install carries a three-round timer and the spell's cost lane
+    /// reads the condition to decide whether this cast is the opening
+    /// Action-and-slot or one of the bonus-action volleys that follow —
+    /// the same `steered_zone_cost` idiom Moonbeam and Flaming Sphere
+    /// use, with a held condition standing in for a placed zone.
+    ///
+    /// Modelling the supply as the timer rather than as a counter is a
+    /// deliberate trade. It cannot express a caster who skips a turn
+    /// and throws on the fourth (RAW would still have meteors left),
+    /// but it needs no new per-actor state, and the binding constraint
+    /// on the spell — three turns' worth of throwing — comes out
+    /// exactly right.
+    MinuteMeteors,
+    /// 5e **Far Step** (level-5 conjuration, XGE). The caster teleports
+    /// 60 feet on the cast and may repeat the jump as a bonus action on
+    /// each later turn for the duration.
+    ///
+    /// Like `MinuteMeteors` above, the condition is what tells the
+    /// spell's cost lane that a later cast is the cheap repeat rather
+    /// than a fresh casting; unlike it, the supply is genuinely the
+    /// concentration duration, so the timer is the ordinary ten rounds.
+    FarStepping,
+    /// 5e **Blade of Disaster** (level-9 conjuration, TCE). A rift-edged
+    /// blade hangs in the air beside the caster and cuts twice a turn
+    /// for 4d12 force, scoring a critical on an 18 or better and
+    /// rolling *three* times the dice when it does.
+    ///
+    /// Held by the caster for as long as they concentrate; read by
+    /// `BLADE_OF_DISASTER`'s cost lane so the opening Action-and-slot
+    /// cast gives way to bonus-action swings.
+    BladeOfDisaster,
 }
 
 impl Condition {
@@ -2122,6 +2173,10 @@ impl Condition {
             Condition::Grappled => "grappled",
             Condition::Blessed => "blessed",
             Condition::Emboldened => "emboldened",
+            Condition::IntellectFortified => "fortified in mind",
+            Condition::MinuteMeteors => "orbited by minute meteors",
+            Condition::FarStepping => "far-stepping",
+            Condition::BladeOfDisaster => "attended by a blade of disaster",
             Condition::ShieldOfFaith => "shield of faith",
             Condition::Shielded => "shielded",
             Condition::DamageResistant => "damage resistant",
@@ -2354,6 +2409,14 @@ impl Condition {
                 // buff with a duration, which is exactly what Dispel
                 // Magic is for.
                 | Condition::Emboldened
+                // The three XGE/TCE buffs that arrived with the
+                // meteor / far-step / rift-blade lane. All are
+                // duration-bearing magical buffs on a willing holder,
+                // which is the whole membership test for this list.
+                | Condition::IntellectFortified
+                | Condition::MinuteMeteors
+                | Condition::FarStepping
+                | Condition::BladeOfDisaster
                 | Condition::ShieldOfFaith
                 | Condition::MageArmored
                 | Condition::Heroic

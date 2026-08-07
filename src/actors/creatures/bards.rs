@@ -181,6 +181,14 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Spirit's charm rider lands on the same axis as Vicious Mockery and
     // Hypnotic Pattern, so a bard's whole kit points one way, and the
     // spirit's speed 40 covers the ground a bard would rather not.
+    // The two XGE / TCE spells on the bard's RAW list. Both are
+    // enchantment-adjacent control, which is the lane the whole chassis
+    // already points down: Enemies Abound is a single-target Confusion
+    // one slot earlier than Confusion itself and off an Intelligence
+    // save, and Intellect Fortress protects the mental saves a bard's
+    // own concentration depends on keeping.
+    actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
+    actions.push(&*crate::actions::spells::ENEMIES_ABOUND);
     actions.push(&crate::actions::spells::SUMMON_FEY);
     CreatureTemplate {
         name: "Bard",

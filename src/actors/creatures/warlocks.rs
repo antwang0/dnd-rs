@@ -201,6 +201,16 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // attackers swing with disadvantage. Sibling to Fire Shield (radiant
     // tier, no attacker-debuff) on the self-shield lane — the necrotic
     // typing leans into the warlock's death-flavored kit.
+    // The XGE / TCE lane on the warlock's RAW list. Four spells, and
+    // the pact-magic chassis changes what each is worth: every slot a
+    // warlock has is its highest, and they all come back on a short
+    // rest, so the two that convert one cast into a whole turn's worth
+    // of repeated bonus actions (Far Step, Blade of Disaster) are worth
+    // strictly more here than on a wizard who is rationing.
+    actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
+    actions.push(&*crate::actions::spells::ENEMIES_ABOUND);
+    actions.push(&*crate::actions::spells::FAR_STEP);
+    actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
     actions.push(&*crate::actions::spells::SHADOW_OF_MOIL);
     CreatureTemplate {
         name: "Warlock",

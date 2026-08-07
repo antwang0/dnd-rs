@@ -124,6 +124,13 @@ pub static ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level 4
     actions.push(&*FREEDOM_OF_MOVEMENT);
     actions.push(&*OTILUKES_RESILIENT_SPHERE);
+    // The two TCE spells on the artificer's own list. Rime's Binding
+    // Ice is the chassis's only cone, and Intellect Fortress is the
+    // clearest fit of anything in this batch — the artificer's RAW
+    // list carries it, and a half-caster in the front rank is exactly
+    // who wants psychic resistance and mental-save advantage.
+    actions.push(&*crate::actions::spells::RIMES_BINDING_ICE);
+    actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
     actions.push(&*STONESKIN);
     CreatureTemplate {
         name: "Artificer",

@@ -632,6 +632,37 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // against a plain Invisible opponent the lv2 self-buff is the right
     // spend, and the lv6 slot stays free for Globe / Mass Suggestion.
     actions.push(&*crate::actions::spells::SEE_INVISIBILITY);
+    // The XGE / TCE lane the wizard had none of. Every one of these is
+    // on the wizard's RAW list, and each fills a slot tier with a shape
+    // the chassis was missing:
+    //   - lv2 **Rime's Binding Ice**: a cone that costs nothing to hold.
+    //     Every other Restrained source the wizard carries (Web, Black
+    //     Tentacles, Earthen Grasp, Watery Sphere) is concentration, so
+    //     this is the only one that can land while something else is up.
+    //   - lv3 **Melf's Minute Meteors**: an Action to light, a bonus
+    //     action a turn to throw. The wizard's bonus-action lane is
+    //     otherwise Misty Step and Telekinetic; this puts damage in it.
+    //   - lv3 **Life Transference**: the wizard's only heal, priced in
+    //     its own hit points — see the spell's own docs for the trade.
+    //   - lv3 **Intellect Fortress**: psychic resistance and mental-save
+    //     advantage, on the squishiest chassis on the roster.
+    //   - lv3 **Enemies Abound**: single-target Confusion a slot early,
+    //     off an INT save rather than a WIS one.
+    //   - lv4 **Gravity Sinkhole**: 5d10 force *and* it drags the
+    //     survivors into one tile for the next burst.
+    //   - lv5 **Far Step**: repeatable escape for a caster whose whole
+    //     defensive plan is not being reachable.
+    //   - lv9 **Blade of Disaster**: 8d12 force a turn for as long as
+    //     concentration holds — the lv9 that keeps paying, next to
+    //     Meteor Swarm / Power Word Kill / Weird, which pay once.
+    actions.push(&*crate::actions::spells::RIMES_BINDING_ICE);
+    actions.push(&*crate::actions::spells::MINUTE_METEORS);
+    actions.push(&*crate::actions::spells::LIFE_TRANSFERENCE);
+    actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
+    actions.push(&*crate::actions::spells::ENEMIES_ABOUND);
+    actions.push(&*crate::actions::spells::GRAVITY_SINKHOLE);
+    actions.push(&*crate::actions::spells::FAR_STEP);
+    actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

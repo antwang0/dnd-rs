@@ -2094,6 +2094,23 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         engage_gap: 20,
         allies_within: None,
     },
+    // Level-3 artificer / bard / sorcerer / warlock / wizard: psychic
+    // resistance and advantage on every mental save. Last on the
+    // cohort, and the placement is the honest one — every row above it
+    // changes what happens on a turn the caster is having, where this
+    // one changes what happens on a turn somebody else is having to
+    // them. It is worth a concentration slot only when nothing that
+    // pays out unconditionally is available, which is exactly what
+    // "bottom of an ordered walk" means.
+    //
+    // The 20-tile engagement gate is the shooter's band rather than the
+    // melee one: the saves this protects are cast at range.
+    SelfBuffPick {
+        name: "intellect fortress",
+        condition: Condition::IntellectFortified,
+        engage_gap: 20,
+        allies_within: None,
+    },
 ];
 
 /// Walk a self-buff cohort in order and return the first row that
@@ -3778,7 +3795,22 @@ fn try_self_action(
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
     let action = encounter.actors.get(&actor_id)?.find_action(action_name)?;
-    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    // A buff that names a creature is aimed at the caster; a buff that
+    // takes no arguments is already about them.
+    //
+    // The branch is what lets a `SingleActor` self-buff ride this lane
+    // at all. Most of the roster's self-buffs are `NoArgs` (Blur,
+    // Bigby's Hand, the four Investitures), but the ones RAW writes as
+    // "a creature you touch" are not — Intellect Fortress is the first,
+    // Barkskin and Warding Bond are the same shape one lane over — and
+    // every one of them fails `validate` with an empty target list.
+    // Without this they could only be reached by a picker of their own,
+    // which is a whole function to express "point it at yourself".
+    let targets = match action.targeting_schema() {
+        TargetingSchema::SingleActor => Some(vec![actor_id]),
+        _ => None,
+    };
+    let aei = ActionExecutionInfo::new(action, actor_id, targets, None, None);
     aei.validate(encounter).then_some(aei)
 }
 
@@ -5912,6 +5944,20 @@ const SELF_TELEPORT_ESCAPES: &[&str] = &[
     "dimension door",
 ];
 
+/// The one escape whose price depends on whether it is already up, and
+/// so the one that cannot hold a fixed rank on the list above.
+///
+/// Far Step costs an Action and a 5th-level slot to open — dearer than
+/// every row on `SELF_TELEPORT_ESCAPES`, including Dimension Door — and
+/// a bare bonus action on every turn after that, which is cheaper than
+/// every row including Hidden Paths. Both readings are right; which one
+/// applies is a question about the caster's sheet, not about the spell.
+///
+/// So `try_teleport_escape` splices this name in at whichever end of
+/// the walk the caster's `FarStepping` condition says it belongs, and
+/// the static list keeps the ranks that really are static.
+const SUSTAINED_TELEPORT_ESCAPE: &str = "far step";
+
 /// The eight unit steps on a Chebyshev grid, used to probe teleport
 /// destinations outward from the caster.
 const COMPASS_DIRECTIONS: [(isize, isize); 8] = [
@@ -6004,7 +6050,22 @@ fn try_teleport_escape(
     };
     let current_gap = gap_to_nearest_threat(my_loc);
 
-    for name in SELF_TELEPORT_ESCAPES {
+    // See `SUSTAINED_TELEPORT_ESCAPE`: an open Far Step is the cheapest
+    // blink on the board and an unopened one is the dearest, so it goes
+    // at the front of the walk or the back of it depending on which.
+    let far_step_is_open = actor.has_condition(Condition::FarStepping);
+    let escapes: Vec<&str> = if far_step_is_open {
+        std::iter::once(SUSTAINED_TELEPORT_ESCAPE)
+            .chain(SELF_TELEPORT_ESCAPES.iter().copied())
+            .collect()
+    } else {
+        SELF_TELEPORT_ESCAPES
+            .iter()
+            .copied()
+            .chain(std::iter::once(SUSTAINED_TELEPORT_ESCAPE))
+            .collect()
+    };
+    for name in &escapes {
         let Some(action) = actor.find_action(name) else {
             continue;
         };

@@ -468,6 +468,19 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     between the sorcerer's lv2 Magic Weapon analog and the lv4
     //     enchantment / illusion lane.
     actions.push(&*crate::actions::spells::MAGNIFY_GRAVITY);
+    // The XGE / TCE lane, all six of which are on the sorcerer's RAW
+    // list. The sorcerer takes the same set as the wizard minus the two
+    // the arcane-vs-sorcerous split keeps off it (Gravity Sinkhole and
+    // Life Transference are wizard-only), and the metamagic chassis
+    // sharpens three of them: Heightened Spell on Rime's Binding Ice
+    // and Enemies Abound turns a single save into a coin flip the
+    // target loses, and Empowered Spell rerolls the meteors' low dice.
+    actions.push(&*crate::actions::spells::RIMES_BINDING_ICE);
+    actions.push(&*crate::actions::spells::MINUTE_METEORS);
+    actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
+    actions.push(&*crate::actions::spells::ENEMIES_ABOUND);
+    actions.push(&*crate::actions::spells::FAR_STEP);
+    actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
     actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
     CreatureTemplate {
         name: "Sorcerer",

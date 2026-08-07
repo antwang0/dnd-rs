@@ -68692,6 +68692,11 @@ fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
         "heal",
         "regenerate",
         "goodberry",
+        // XGE necromancy: restores hit points from a 3rd-level slot,
+        // so Disciple of Life pays out on it exactly as it does on
+        // Cure Wounds. That the healer funds it out of their own hit
+        // points changes who pays, not what the rider attaches to.
+        "life transference",
     ];
 
     /// The subset of `AMPLIFIED` that rolls dice, and so must also
@@ -68709,6 +68714,12 @@ fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
         "healing spirit",
         "aura of vitality",
         "regenerate",
+        // Its dice are rolled on the caster and spent as damage, but
+        // the healing is derived from them, so RAW's "whenever you
+        // would normally roll one or more dice to restore hit points"
+        // reaches them. A Grave Cleric hauling a downed ally back
+        // therefore transfers the maximum — and pays the maximum.
+        "life transference",
     ];
 
     /// Slot-cast actions that report `is_heal` but are not
@@ -73834,4 +73845,578 @@ fn hidden_paths_moves_the_druid_without_walking_them() {
         .restore_feature_charge(HIDDEN_PATHS_TAG);
     let offmap = vec![Coordinate::new(-5, 4)];
     assert!(!action.custom_validate_input(&e, druid, None, Some(&offmap), None));
+}
+
+/// Rime's Binding Ice: the cone deals cold on a failed CON save and
+/// sheets the target in ice, and it does neither on a successful one.
+///
+/// The sweep is over seeds rather than a single roll because the
+/// behaviour under test *is* the save — one run proves whichever branch
+/// the die happened to pick. Both branches have to be seen for the
+/// assertion to mean anything, so the loop collects until it has both
+/// and the tail asserts on the pair.
+#[test]
+fn rimes_binding_ice_freezes_only_the_targets_that_fail() {
+    use crate::actions::spells::RIMES_BINDING_ICE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut saw_restrained = false;
+    let mut saw_untouched = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let point = vec![Coordinate::new(4, 2)];
+        let costs = RIMES_BINDING_ICE.cost(&e, wiz, None, Some(&point), None);
+        assert!(
+            costs.iter().any(|c| matches!(c, Resource::SpellSlot(2))),
+            "Rime's Binding Ice is a 2nd-level slot"
+        );
+        let hp_before = e.actors[&goblin].hitpoints();
+        for ef in RIMES_BINDING_ICE.side_effects(&mut e, wiz, None, Some(&point), None) {
+            ef.apply(&mut e);
+        }
+        let Some(g) = e.actors.get(&goblin) else {
+            // The cone killed it outright — a failed save by any other
+            // name, but the condition is gone with the body, so this
+            // seed proves nothing either way.
+            continue;
+        };
+        if g.has_condition(Condition::Restrained) {
+            saw_restrained = true;
+            assert!(
+                g.hitpoints() < hp_before,
+                "a target the ice caught should also have taken the cold"
+            );
+        } else {
+            saw_untouched = true;
+            assert_eq!(
+                g.hitpoints(), hp_before,
+                "a passed save takes nothing at all — the cone is none-on-save"
+            );
+        }
+        if saw_restrained && saw_untouched {
+            break;
+        }
+    }
+    assert!(saw_restrained, "no seed in the sweep ever failed the CON save");
+    assert!(saw_untouched, "no seed in the sweep ever passed the CON save");
+}
+
+/// Gravity Sinkhole drags what it catches toward the center, and the
+/// pull rides the same failed save the damage does.
+#[test]
+fn gravity_sinkhole_pulls_failed_saves_toward_its_center() {
+    use crate::actions::spells::GRAVITY_SINKHOLE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut pulled = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 15), 0, 0)
+            .unwrap();
+        // Three tiles out from the center of the sphere, and inside its
+        // 4-tile radius, so a caught goblin has somewhere to be dragged.
+        let center = Coordinate::new(15, 15);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 15), 1, 0)
+            .unwrap();
+        let start = e.actors[&goblin].location();
+        let point = vec![center];
+        let costs = GRAVITY_SINKHOLE.cost(&e, wiz, None, Some(&point), None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(4))));
+        for ef in GRAVITY_SINKHOLE.side_effects(&mut e, wiz, None, Some(&point), None) {
+            ef.apply(&mut e);
+        }
+        let Some(g) = e.actors.get(&goblin) else {
+            continue;
+        };
+        if g.location() != start {
+            assert!(
+                g.location().chebyshev_to(center) < start.chebyshev_to(center),
+                "the sinkhole pulls inward, never outward"
+            );
+            pulled = true;
+            break;
+        }
+    }
+    assert!(
+        pulled,
+        "no seed in the sweep ever failed the CON save and got dragged"
+    );
+}
+
+/// Life Transference spends the caster's hit points and pays out double
+/// on the ally — and never spends more than the caster can survive.
+#[test]
+fn life_transference_pays_the_ally_double_what_the_caster_spends() {
+    use crate::actions::spells::LIFE_TRANSFERENCE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+        .unwrap();
+    // Hurt the ally enough that the whole transfer lands as healing
+    // rather than overflowing a nearly-full pool.
+    let ally_max = e.actors[&ally].max_hitpoints();
+    e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+
+    let caster_before = e.actors[&cleric].hitpoints();
+    let ally_before = e.actors[&ally].hitpoints();
+    let targets = vec![ally];
+    let action: &dyn Action = &*LIFE_TRANSFERENCE;
+    assert!(
+        action.custom_validate_input(&e, cleric, Some(&targets), None, None),
+        "a healthy cleric beside a wounded ally should be able to cast it"
+    );
+    for ef in LIFE_TRANSFERENCE.side_effects(&mut e, cleric, Some(&targets), None, None) {
+        ef.apply(&mut e);
+    }
+    let spent = caster_before - e.actors[&cleric].hitpoints();
+    let healed = e.actors[&ally].hitpoints() - ally_before;
+    assert!(spent > 0, "the caster pays for the transfer");
+    assert_eq!(
+        healed, spent * 2,
+        "the ally regains twice what the caster gave"
+    );
+    assert!(
+        e.actors[&cleric].hitpoints() > 0,
+        "the cap exists so the caster survives its own spell"
+    );
+}
+
+/// The two gates on Life Transference: a caster below half health is
+/// refused, and so is a target that cannot regain hit points at all.
+#[test]
+fn life_transference_refuses_a_spent_caster_and_an_unhealable_ally() {
+    use crate::actions::spells::LIFE_TRANSFERENCE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+        .unwrap();
+    let action: &dyn Action = &*LIFE_TRANSFERENCE;
+    let targets = vec![ally];
+    assert!(action.custom_validate_input(&e, cleric, Some(&targets), None, None));
+
+    // Aiming it at itself is a wash, and is refused rather than
+    // silently costing the caster 4d8 for nothing.
+    let selfish = vec![cleric];
+    assert!(!action.custom_validate_input(&e, cleric, Some(&selfish), None, None));
+
+    // A caster down to a sliver has nothing worth transferring.
+    let max = e.actors[&cleric].max_hitpoints();
+    e.actors.get_mut(&cleric).unwrap().take_damage(max - 1);
+    assert!(!action.custom_validate_input(&e, cleric, Some(&targets), None, None));
+
+    // And an ally who can't regain hit points is a slot thrown away
+    // even when the caster is fine.
+    let _ = e.actors.get_mut(&cleric).unwrap().heal(max);
+    e.actors
+        .get_mut(&ally)
+        .unwrap()
+        .add_condition(Condition::ChillTouched, ConditionTimer::Rounds(2));
+    assert!(!action.custom_validate_input(&e, cleric, Some(&targets), None, None));
+}
+
+/// Intellect Fortress is two cohort rows and nothing else: psychic
+/// damage halves, and the three mental saves roll with advantage while
+/// the three physical ones don't.
+#[test]
+fn intellect_fortress_halves_psychic_and_lifts_only_the_mental_saves() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::types::{AbilityScoreType, DamageType};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+
+    for ability in [
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+    ] {
+        assert_eq!(
+            e.compute_save_mode(wiz, ability),
+            RollMode::Normal,
+            "{:?} should start at a normal save",
+            ability
+        );
+    }
+    let plain = e.actors[&wiz].effective_damage(20, DamageType::Psychic);
+
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .add_condition(Condition::IntellectFortified, ConditionTimer::Rounds(10));
+
+    for ability in [
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+    ] {
+        assert_eq!(
+            e.compute_save_mode(wiz, ability),
+            RollMode::Advantage,
+            "{:?} is one of the three saves the fortress lifts",
+            ability
+        );
+    }
+    for ability in [
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+    ] {
+        assert_eq!(
+            e.compute_save_mode(wiz, ability),
+            RollMode::Normal,
+            "{:?} is a body save and the fortress is not about the body",
+            ability
+        );
+    }
+    assert_eq!(
+        e.actors[&wiz].effective_damage(20, DamageType::Psychic),
+        plain / 2,
+        "the fortress halves psychic damage"
+    );
+}
+
+/// Feeblemind still scopes the other way after the mental-save cluster
+/// replaced its hand-written branch — the three mental saves take the
+/// disadvantage and the three physical ones are untouched.
+///
+/// A regression guard on the refactor rather than on Feeblemind: the
+/// clause was a standalone `if` before `MENTAL_SAVE_MODE_CONDITIONS`
+/// existed, and folding it into a signed cohort is exactly the kind of
+/// move that can silently invert a sign or widen a scope.
+#[test]
+fn feeblemind_still_scopes_its_disadvantage_to_the_mental_saves() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Feebled, ConditionTimer::Rounds(10));
+    for ability in [
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+    ] {
+        assert_eq!(e.compute_save_mode(goblin, ability), RollMode::Disadvantage);
+    }
+    for ability in [
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+    ] {
+        assert_eq!(e.compute_save_mode(goblin, ability), RollMode::Normal);
+    }
+
+    // And the two rows cancel rather than one shadowing the other,
+    // which is the whole reason the cohort is signed.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::IntellectFortified, ConditionTimer::Rounds(10));
+    assert_eq!(
+        e.compute_save_mode(goblin, AbilityScoreType::Intelligence),
+        RollMode::Normal,
+        "advantage and disadvantage on the same save cancel"
+    );
+}
+
+/// The three sustained spells price their opening cast as an Action and
+/// a slot, and every cast after it as a bare bonus action.
+///
+/// One test for all three because the clause under test is the shared
+/// `sustained_condition_cost` idiom rather than anything about the
+/// individual spells — a row that stopped reading its condition would
+/// be a silently free 9th-level slot, which is worth pinning once for
+/// each user rather than trusting the helper alone.
+#[test]
+fn a_sustained_spell_costs_a_slot_to_open_and_a_bonus_action_to_repeat() {
+    use crate::actions::spells::{BLADE_OF_DISASTER, FAR_STEP, MINUTE_METEORS};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let cases: [(&(dyn Action + Send + Sync), Condition, u32); 3] = [
+        (&*MINUTE_METEORS, Condition::MinuteMeteors, 3),
+        (&*FAR_STEP, Condition::FarStepping, 5),
+        (&*BLADE_OF_DISASTER, Condition::BladeOfDisaster, 9),
+    ];
+    for (action, marker, level) in cases {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let opening = action.cost(&e, wiz, None, None, None);
+        assert!(
+            opening.iter().any(|c| matches!(c, Resource::Action))
+                && opening
+                    .iter()
+                    .any(|c| matches!(c, Resource::SpellSlot(l) if *l == level)),
+            "{} should open on an Action and a level-{} slot",
+            action.name(),
+            level
+        );
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(marker, ConditionTimer::Rounds(10));
+        let repeat = action.cost(&e, wiz, None, None, None);
+        assert_eq!(
+            repeat.len(),
+            1,
+            "{}'s repeat should cost exactly one resource",
+            action.name()
+        );
+        assert!(
+            matches!(repeat[0], Resource::BonusAction),
+            "{}'s repeat should be a bare bonus action, got {:?}",
+            action.name(),
+            repeat[0]
+        );
+    }
+}
+
+/// Melf's Minute Meteors throws on the turn it is cast, lights the
+/// orbit exactly once, and throws again without relighting it.
+#[test]
+fn minute_meteors_throws_on_the_cast_and_again_without_relighting() {
+    use crate::actions::spells::MINUTE_METEORS;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    let point = vec![Coordinate::new(8, 2)];
+
+    let before = e.actors[&goblin].hitpoints();
+    for ef in MINUTE_METEORS.side_effects(&mut e, wiz, None, Some(&point), None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&wiz].has_condition(Condition::MinuteMeteors),
+        "the opening cast lights the orbit"
+    );
+    assert!(
+        e.actors[&wiz].is_concentrating(),
+        "and takes the concentration"
+    );
+    let after_first = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+    assert!(
+        after_first < before,
+        "both meteors land on the turn the spell goes up"
+    );
+
+    // A second volley while the orbit is lit installs nothing new — it
+    // just throws. Re-installing would have refreshed the three-round
+    // supply every turn, which is the whole spell for free.
+    if e.actors.contains_key(&goblin) {
+        for ef in MINUTE_METEORS.side_effects(&mut e, wiz, None, Some(&point), None) {
+            assert!(
+                ef.concentration_payload().is_none(),
+                "a bonus-action volley should not restart concentration"
+            );
+            ef.apply(&mut e);
+        }
+    }
+}
+
+/// Blade of Disaster cuts twice per activation, and the second
+/// activation costs no slot.
+#[test]
+fn blade_of_disaster_swings_twice_and_then_rides_a_bonus_action() {
+    use crate::actions::spells::BLADE_OF_DISASTER;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // The blade rolls to hit, so sweep seeds until a run lands at least
+    // one of its two cuts; the point of the test is the routine, not
+    // the die.
+    let mut landed = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let targets = vec![ogre];
+        let before = e.actors[&ogre].hitpoints();
+        for ef in BLADE_OF_DISASTER.side_effects(&mut e, wiz, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::BladeOfDisaster),
+            "the opening cast hangs the blade"
+        );
+        if e.actors.get(&ogre).is_some_and(|a| a.hitpoints() < before) {
+            landed = true;
+            break;
+        }
+    }
+    assert!(landed, "no seed in the sweep ever connected with the blade");
+}
+
+/// Far Step teleports on the cast, opens the cheap repeat, and refuses
+/// a landing spot the caster's footprint can't hold.
+#[test]
+fn far_step_teleports_and_opens_a_repeatable_blink() {
+    use crate::actions::spells::FAR_STEP;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let action: &dyn Action = &*FAR_STEP;
+    let dest = vec![Coordinate::new(15, 5)];
+    assert!(action.custom_validate_input(&e, wiz, None, Some(&dest), None));
+    for ef in FAR_STEP.side_effects(&mut e, wiz, None, Some(&dest), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&wiz].location(), Coordinate::new(15, 5));
+    assert!(e.actors[&wiz].has_condition(Condition::FarStepping));
+    assert!(e.actors[&wiz].is_concentrating());
+
+    // Off the map is not a landing spot, open blink or not.
+    let offmap = vec![Coordinate::new(-3, 5)];
+    assert!(!action.custom_validate_input(&e, wiz, None, Some(&offmap), None));
+
+    // The repeat blinks again and does not restart concentration.
+    let again = vec![Coordinate::new(20, 5)];
+    for ef in FAR_STEP.side_effects(&mut e, wiz, None, Some(&again), None) {
+        assert!(ef.concentration_payload().is_none());
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&wiz].location(), Coordinate::new(20, 5));
+}
+
+/// Enemies Abound turns one mind against the room on a failed
+/// Intelligence save, and holds the result on concentration.
+#[test]
+fn enemies_abound_confuses_a_single_mind_off_an_int_save() {
+    use crate::actions::spells::ENEMIES_ABOUND;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut confused = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // An ogre: Intelligence 5, which is who this spell is for.
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let targets = vec![ogre];
+        let costs = ENEMIES_ABOUND.cost(&e, wiz, Some(&targets), None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(3))));
+        for ef in ENEMIES_ABOUND.side_effects(&mut e, wiz, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&ogre].has_condition(Condition::Confused) {
+            assert!(
+                e.actors[&wiz].is_concentrating(),
+                "a landed Enemies Abound is held on concentration"
+            );
+            // A second cast at an already-confused target is refused
+            // rather than spending a slot to install what is installed.
+            assert!(
+                !ENEMIES_ABOUND.custom_validate_input(&e, wiz, Some(&targets), None, None),
+                "re-casting at a confused target should be refused"
+            );
+            confused = true;
+            break;
+        }
+    }
+    assert!(
+        confused,
+        "no seed in the sweep ever beat an ogre's Intelligence save"
+    );
+}
+
+/// Every spell added in the XGE / TCE batch is carried by at least one
+/// playable template and is reachable by its own name.
+///
+/// The cheap half of the coverage argument, and the half that catches
+/// the mistake that actually happens: a complete `impl Action` that no
+/// template pushes is a spell nobody can cast, and nothing else in the
+/// suite would notice. `Warding Wind` shipped that way once — see the
+/// note on the wizard's list.
+#[test]
+fn every_spell_in_the_new_batch_is_carried_by_some_playable_template() {
+    use crate::actors::creatures::pc_template_families;
+
+    const ADDED: &[&str] = &[
+        "rime's binding ice",
+        "gravity sinkhole",
+        "life transference",
+        "intellect fortress",
+        "enemies abound",
+        "melf's minute meteors",
+        "far step",
+        "blade of disaster",
+    ];
+
+    let mut carried: Vec<&str> = Vec::new();
+    for (_family, templates) in pc_template_families() {
+        for tpl in templates {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let Ok(id) = e.instantiate_creature(tpl, Coordinate::new(5, 5), 0, 0) else {
+                continue;
+            };
+            for &name in ADDED {
+                if e.actors[&id].find_action(name).is_some() && !carried.contains(&name) {
+                    carried.push(name);
+                }
+            }
+        }
+    }
+    for &name in ADDED {
+        assert!(
+            carried.contains(&name),
+            "\"{}\" is implemented but no playable template carries it",
+            name
+        );
+    }
 }

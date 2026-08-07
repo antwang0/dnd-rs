@@ -220,6 +220,13 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // HP, healing the most-wounded allies first up to half max HP each.
     // Mass-stabilizer to balance the cleric's offensive Channel Divinity
     // (Turn Undead) — the same action-economy slot, different lane.
+    // lv3 **Life Transference** (XGE necromancy) — the cleric's RAW
+    // spell, and the one place on the roster where healing is paid for
+    // in the healer's own hit points. It sits beside Cure Wounds and
+    // Healing Word rather than replacing either: 4d8 out for 8d8 in is
+    // the best rate the chassis has, and the only one that can kill the
+    // caster, so the spell carries its own floor (see its docs).
+    actions.push(&*crate::actions::spells::LIFE_TRANSFERENCE);
     actions.push(&*PRESERVE_LIFE);
     CreatureTemplate {
         name: "Cleric",

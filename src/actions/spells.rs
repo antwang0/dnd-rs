@@ -547,6 +547,42 @@ fn steered_zone_cost(
     }
 }
 
+/// `steered_zone_cost` for a spell whose sustained thing is a held
+/// condition rather than a placed area: `repeat` while the caster
+/// carries `condition`, `first_cast` otherwise.
+///
+/// The two idioms are the same shape because the spells are. Moonbeam,
+/// Flaming Sphere and Call Lightning each cost an Action and a slot to
+/// bring something into the world and a bonus action to use it again;
+/// so do Melf's Minute Meteors, Far Step and Blade of Disaster. What
+/// differs is only where "it is up" is written down — a zone on the
+/// board for the first family, a condition on the caster's sheet for
+/// the second, because none of the three has an area to place.
+///
+/// Deliberately *not* folded into `steered_zone_cost` behind an enum.
+/// The zone family also needs `steered_zone_move` and
+/// `steered_zone_validate`, both of which are about aiming an area
+/// somewhere it can reach and neither of which has any meaning here;
+/// a shared abstraction would carry two thirds of itself as dead
+/// weight for half its callers.
+fn sustained_condition_cost(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    condition: Condition,
+    repeat: Vec<Resource>,
+    first_cast: Vec<Resource>,
+) -> Vec<Resource> {
+    if encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(condition))
+    {
+        repeat
+    } else {
+        first_cast
+    }
+}
+
 /// The validation half: a recast may only be aimed somewhere the area
 /// can actually reach, and a first cast has to be one the caster can
 /// hold onto.
@@ -30169,3 +30205,1041 @@ impl Action for Scatter {
 }
 
 pub static SCATTER: LazyLock<Scatter> = LazyLock::new(|| Scatter {});
+
+/// Rime's Binding Ice — level-2 evocation (sorcerer / wizard, XGE). A
+/// blast of frost sprays out in a 30-foot cone; every creature caught
+/// makes a Constitution save. On a failure it takes 3d8 cold and the
+/// ice sheets over it, holding it fast until it breaks free.
+///
+/// Cones are approximated as bursts aimed just in front of the caster,
+/// the same shape Burning Hands and Cone of Cold already use. The
+/// damage is `NoneOnSave` rather than half — RAW's cone deals nothing
+/// on a successful save, which is what buys the Restrained rider its
+/// place on a level-2 slot.
+///
+/// The rider is a plain `Restrained` on a timer rather than RAW's
+/// "until it uses an action to break out with a Strength check". The
+/// engine has no generic escape-check action outside the grapple lane,
+/// and the two-round timer is the same envelope a failed break-out
+/// attempt or two would have produced. It is deliberately *not*
+/// concentration: RAW's Rime's Binding Ice is instantaneous, which is
+/// the whole reason a control caster reaches for it while already
+/// holding something else up.
+pub struct RimesBindingIce {}
+
+impl RimesBindingIce {
+    /// 30 ft of cone, measured the way every other cone in this file
+    /// measures: the burst's radius in tiles, aimed at a point the
+    /// caster can see ahead of them.
+    const RADIUS: isize = 3;
+    /// How long the ice holds. See the type docs for why this is a
+    /// timer rather than an escape check.
+    const HOLD_ROUNDS: u32 = 2;
+}
+
+impl Action for RimesBindingIce {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "rime's binding ice"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rbi", "binding ice", "rime"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self-origin cone: the aiming tile sits within the cone's own
+        // length, so the spray always starts at the caster.
+        Some(Self::RADIUS * 2)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_only(
+            encounter,
+            caster_id,
+            point,
+            Self::RADIUS,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(3, 8),
+            DamageType::Cold,
+            "rime's binding ice",
+        );
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Restrained,
+            ConditionTimer::Rounds(Self::HOLD_ROUNDS),
+        );
+        effects
+    }
+}
+
+pub static RIMES_BINDING_ICE: LazyLock<RimesBindingIce> = LazyLock::new(|| RimesBindingIce {});
+
+/// Gravity Sinkhole — level-4 evocation (wizard, XGE). A 20-foot-radius
+/// sphere of crushing gravity opens at a point within 120 feet. Every
+/// creature inside makes a Constitution save; on a failure it takes
+/// 5d10 force and is dragged to the sphere's center.
+///
+/// The pull is the point of the spell and the reason it reads as
+/// control rather than as an expensive Fireball: it collapses a spread
+/// formation into a single tile-cluster that the *next* burst catches
+/// whole. `PullActor` already walks a body toward an anchor a tile at a
+/// time, stopping at whatever it can't cross, so the clause is one side
+/// effect per failed save.
+///
+/// Damage is `NoneOnSave` per RAW — the sphere either grabs you or it
+/// doesn't — and the pull rides the same failure, so a creature that
+/// makes its save keeps both its hit points and its footing.
+pub struct GravitySinkhole {}
+
+impl GravitySinkhole {
+    /// 20 ft of radius.
+    const RADIUS: isize = 4;
+    /// How far a caught creature is dragged. The sphere's own radius:
+    /// anything inside it is by definition no further from the center
+    /// than this, so the budget always suffices to reach the middle and
+    /// the pull stops on arrival rather than on exhaustion.
+    const PULL_TILES: u32 = 4;
+}
+
+impl Action for GravitySinkhole {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "gravity sinkhole"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gs", "sinkhole"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_only(
+            encounter,
+            caster_id,
+            point,
+            Self::RADIUS,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(5, 10),
+            DamageType::Force,
+            "gravity sinkhole",
+        );
+        for &(tid, passed) in &saves {
+            if passed {
+                continue;
+            }
+            effects.push(Box::new(crate::engine::side_effects::PullActor {
+                actor_id: tid,
+                toward: point,
+                max_tiles: Self::PULL_TILES,
+            }));
+        }
+        effects
+    }
+}
+
+pub static GRAVITY_SINKHOLE: LazyLock<GravitySinkhole> = LazyLock::new(|| GravitySinkhole {});
+
+/// Life Transference — level-3 necromancy (cleric / wizard, XGE). The
+/// caster tears necrotic energy out of their own body and pours twice
+/// that much healing into a creature within 30 feet.
+///
+/// The interesting half is the cost, not the heal: this is the only
+/// healing spell on the roster paid for in the healer's own hit points,
+/// which makes it a healthy cleric's way of turning slots they can
+/// afford into hit points on the ally who cannot. It is `is_heal` and
+/// not `is_harmful`, so the AI's support lane picks it up next to Cure
+/// Wounds with no wiring of its own, and it routes through both heal
+/// chokepoints — so the Life Cleric's Disciple of Life amplifies the
+/// transfer and the Grave Cleric's Circle of Mortality maxes its dice
+/// when the ally on the other end is already down.
+///
+/// **The transfer is capped at what the caster can survive.** RAW rolls
+/// a flat 4d8 that "can't be reduced in any way", which is written for
+/// a chassis with three digits of hit points; the templates on this
+/// roster are low-CR and carry one, so a flat 4d8 would not be a cost,
+/// it would be a suicide with a healing rider. The engine rolls the
+/// same 4d8 and then spends `min(rolled, current_hp - 1)` of it, paying
+/// out twice whatever was actually spent. The spell keeps its shape at
+/// every hit-point scale that way — you give what you have, and the
+/// ally gets double — and a caster can no longer kill themselves with
+/// it, which was the only outcome the uncapped version had on most of
+/// the bestiary.
+///
+/// One further RAW clause is not modelled: "can't be reduced in any
+/// way" also outranks resistance, where `DealDamage` runs the ordinary
+/// pipeline, so a caster resistant to necrotic pays half price. Left
+/// alone because the damage lane has one chokepoint and a spell-shaped
+/// exemption to it would cost more than the case is worth.
+pub struct LifeTransference {}
+
+impl LifeTransference {
+    const DICE: Dice = Dice { count: 4, faces: 8 };
+    /// Fraction of maximum hit points the caster must still be holding
+    /// to cast at all.
+    ///
+    /// The cap above guarantees survival; this is what keeps the spell
+    /// from becoming a free action for a caster who has nothing left to
+    /// give. Below half, the transfer would be small, the caster would
+    /// end the turn at 1 hit point, and the slot would be gone — a
+    /// trade nobody would make deliberately and the AI's support lane
+    /// would make every round. Half is the same threshold that lane
+    /// already uses to decide an ally is worth healing.
+    const MIN_CASTER_HP_FRACTION: f32 = 0.5;
+}
+
+impl Action for LifeTransference {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
+    fn name(&self) -> &str {
+        "life transference"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lt", "transference"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // The only damage is to the caster. Declaring it here would put
+        // the spell on the focus-fire picker's list of things to shoot
+        // an enemy with, which is the opposite of what it does.
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Somebody else has to be on the receiving end — RAW targets "a
+        // creature within range", and a caster transferring life to
+        // itself is a wash at best.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        // A heal aimed at something that cannot regain hit points is a
+        // slot and the caster's own blood thrown away — the same gate
+        // the AI's support lane applies to Cure Wounds, applied here at
+        // the action so a human at the prompt is refused too.
+        if !encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.can_regain_hitpoints())
+        {
+            return false;
+        }
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            let max = a.max_hitpoints().max(1) as f32;
+            a.hitpoints() as f32 / max > Self::MIN_CASTER_HP_FRACTION
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
+        // Roll-side chokepoint: the Grave Cleric's Circle of Mortality
+        // maxes the dice when the creature on the other end is at 0 HP.
+        // Read on the *recipient*, which is the creature the healing is
+        // restoring — the caster is the one paying, not the one being
+        // dragged back from the edge.
+        let (rolled, maxed) = crate::actions::class_features::roll_heal_dice(
+            encounter,
+            caster_id,
+            &[target_id],
+            &Self::DICE,
+        );
+        // The survival cap. See the type docs for why it is here at all.
+        let Some(spent) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| rolled.min(a.hitpoints().saturating_sub(1)))
+        else {
+            return Vec::new();
+        };
+        encounter.log(format!(
+            "  life transference: {}({}){} = {} necrotic to self, {} healing to {}",
+            Self::DICE,
+            rolled,
+            crate::actions::class_features::circle_of_mortality_log_suffix(maxed),
+            spent,
+            spent * 2,
+            encounter.actor_name(target_id),
+        ));
+        if spent == 0 {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: caster_id,
+            amount: spent,
+            damage_type: DamageType::Necrotic,
+        })];
+        // Post-roll chokepoint: Disciple of Life's amplification and the
+        // Stars Druid's Chalice overflow both ride slot heals.
+        effects.extend(crate::actions::class_features::slot_heal_effects(
+            encounter,
+            caster_id,
+            &[target_id],
+            spent * 2,
+            3,
+        ));
+        effects
+    }
+}
+
+pub static LIFE_TRANSFERENCE: LazyLock<LifeTransference> = LazyLock::new(|| LifeTransference {});
+
+/// Intellect Fortress — level-3 abjuration (artificer / bard / sorcerer
+/// / warlock / wizard, TCE), concentration. A lattice of telepathic
+/// force settles over one creature for the duration: resistance to
+/// psychic damage, and advantage on Intelligence, Wisdom and Charisma
+/// saving throws.
+///
+/// Both halves are cohort rows rather than code — see
+/// `Condition::IntellectFortified`. What the spell itself contributes
+/// is the targeting: RAW at 3rd level protects one creature, which may
+/// be the caster, so it is a `SingleActor` cast that refuses a hostile
+/// target and refuses a redundant refresh.
+pub struct IntellectFortress {}
+
+impl Action for IntellectFortress {
+    /// Queues a `StartConcentration`; declared so the AI can price the
+    /// cast against whatever it is already holding up.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "intellect fortress"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["if", "fortress"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return false;
+        };
+        actor_lacks_condition(encounter, target_id, Condition::IntellectFortified)
+            && encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::IntellectFortified,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Intellect Fortress",
+                    vec![(target_id, Condition::IntellectFortified)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static INTELLECT_FORTRESS: LazyLock<IntellectFortress> =
+    LazyLock::new(|| IntellectFortress {});
+
+/// Enemies Abound — level-3 enchantment (bard / sorcerer / warlock /
+/// wizard, XGE), concentration. One creature within 120 feet makes an
+/// Intelligence save; on a failure its mind is turned against everyone
+/// it can see, itself included, for the duration.
+///
+/// Modelled through the existing `Confused` condition, which is exactly
+/// the state RAW describes and which the engine already knows how to
+/// drive. What distinguishes this from Confusion one lane over is the
+/// shape of the cast rather than the effect: Confusion is a 10-tile
+/// sphere on a Wisdom save at 4th level, this is a single body on an
+/// **Intelligence** save at 3rd — the save the overwhelming majority of
+/// the bestiary is worst at, which is why a single-target enchantment
+/// gets to be a slot cheaper than the area one.
+pub struct EnemiesAbound {}
+
+impl Action for EnemiesAbound {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
+    fn name(&self) -> &str {
+        "enemies abound"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ea", "abound"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        actor_lacks_condition(encounter, target_id, Condition::Confused)
+            && encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+        ]);
+        if encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Intelligence, dc, caster_id)
+            .passed()
+        {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Confused,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Enemies Abound",
+                    vec![(target_id, Condition::Confused)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static ENEMIES_ABOUND: LazyLock<EnemiesAbound> = LazyLock::new(|| EnemiesAbound {});
+
+/// Melf's Minute Meteors — level-3 evocation (sorcerer / wizard, XGE),
+/// concentration. Six tiny meteors ignite and orbit the caster. Two can
+/// be flung on the turn the spell goes up and two more as a bonus
+/// action on each turn after, each bursting for 2d6 fire in a 5-foot
+/// radius on a failed Dexterity save.
+///
+/// The cost lane is the `sustained_condition_cost` idiom: an Action and
+/// a 3rd-level slot to light the meteors, a bare bonus action to throw
+/// them once they are lit. Both castings throw — the first cast is not
+/// a wasted turn — which is what RAW's "when you cast this spell" gives
+/// and what makes the spell worth an Action at all.
+///
+/// **The supply is the timer.** RAW's six meteors thrown two at a time
+/// is three turns of throwing, so the install carries a three-round
+/// timer and the meteors run out when it lapses; see
+/// `Condition::MinuteMeteors` for why that is stored as a duration
+/// instead of a counter, and what it costs.
+///
+/// Both meteors are aimed at the same tile, which RAW permits and the
+/// engine's single-point targeting requires. A creature standing there
+/// takes two independent saves against two independent 2d6 rolls, which
+/// is exactly what RAW says happens to something caught in both bursts.
+pub struct MinuteMeteors {}
+
+impl MinuteMeteors {
+    /// 5 ft of burst around the impact tile.
+    const RADIUS: isize = 1;
+    /// 120 ft = 48 tiles.
+    const RANGE: isize = 48;
+    /// Meteors per throw.
+    const METEORS_PER_VOLLEY: usize = 2;
+    /// Three turns' worth of throwing. See the type docs.
+    const SUPPLY_ROUNDS: u32 = 3;
+}
+
+impl Action for MinuteMeteors {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "melf's minute meteors"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mmm", "meteors", "minute meteors"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(Self::RANGE)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        sustained_condition_cost(
+            encounter,
+            caster_id,
+            Condition::MinuteMeteors,
+            bonus_action_only(),
+            action_and_slot(3),
+        )
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // A throw needs no concentration check — the meteors are
+        // already lit, and the check would refuse a caster who is
+        // concentrating on this very spell. Lighting them does.
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::MinuteMeteors))
+        {
+            return true;
+        }
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let already_lit = caster.has_condition(Condition::MinuteMeteors);
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for _ in 0..Self::METEORS_PER_VOLLEY {
+            let (meteor, _saves) = enemy_burst_save_only(
+                encounter,
+                caster_id,
+                point,
+                Self::RADIUS,
+                AbilityScoreType::Dexterity,
+                dc,
+                Dice::new(2, 6),
+                DamageType::Fire,
+                "minute meteor",
+            );
+            effects.extend(meteor);
+        }
+        // Only the opening cast lights the orbit and takes the
+        // concentration; a bonus-action volley just throws.
+        if !already_lit {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::MinuteMeteors,
+                timer: ConditionTimer::Rounds(Self::SUPPLY_ROUNDS),
+            }));
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Melf's Minute Meteors",
+                    vec![(caster_id, Condition::MinuteMeteors)],
+                ),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MINUTE_METEORS: LazyLock<MinuteMeteors> = LazyLock::new(|| MinuteMeteors {});
+
+/// Far Step — level-5 conjuration (sorcerer / warlock / wizard, XGE),
+/// concentration. The caster blinks 60 feet on the cast and may blink
+/// again as a bonus action on each of their turns for the duration.
+///
+/// The `sustained_condition_cost` idiom again, and the cleanest case
+/// for it: the spell's whole content is "this teleport is now cheap",
+/// so the condition is doing all of the work and the cast is a Misty
+/// Step that repeats. Both castings teleport, which is RAW.
+///
+/// Unlike Melf's Minute Meteors, the supply here really is the
+/// duration — RAW gives no per-jump budget — so the timer is the
+/// ordinary ten rounds of a concentration spell.
+pub struct FarStep {}
+
+impl FarStep {
+    /// 60 ft = 24 tiles.
+    const RANGE: isize = 24;
+}
+
+impl Action for FarStep {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
+    fn name(&self) -> &str {
+        "far step"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fs", "farstep"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(Self::RANGE)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        sustained_condition_cost(
+            encounter,
+            caster_id,
+            Condition::FarStepping,
+            bonus_action_only(),
+            action_and_slot(5),
+        )
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same landing-spot rule as Misty Step: the caster's whole
+        // footprint has to fit where they are going.
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        if !encounter.can_move_to(caster_id, point) {
+            return false;
+        }
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::FarStepping))
+        {
+            return true;
+        }
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let already_open = encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::FarStepping));
+        // Teleports rather than walks, so no opportunity attacks — the
+        // same reasoning Misty Step and Dimension Door use.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> =
+            vec![Box::new(crate::engine::side_effects::TeleportActor {
+                actor_id: caster_id,
+                dest: point,
+            })];
+        if !already_open {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::FarStepping,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Far Step",
+                    vec![(caster_id, Condition::FarStepping)],
+                ),
+            }));
+        }
+        effects
+    }
+}
+
+pub static FAR_STEP: LazyLock<FarStep> = LazyLock::new(|| FarStep {});
+
+/// Blade of Disaster — level-9 conjuration (sorcerer / warlock /
+/// wizard, TCE), concentration. A blade-shaped rift in reality opens
+/// beside the caster and cuts twice for 4d12 force, once on the cast
+/// and twice more as a bonus action on every turn after.
+///
+/// Third and last user of the `sustained_condition_cost` idiom, and the
+/// one where the repeat is the whole point — a 9th-level slot buys not
+/// a single blast but a bonus-action attack routine that runs for as
+/// long as the caster holds it.
+///
+/// RAW's critical clause is not modelled: the blade crits on an 18 or
+/// better and rolls *three* times its damage dice when it does, where
+/// the engine's crit range is a property of the attacker (the
+/// Champion's `crit_threshold`) and its crit multiplier is the shared
+/// double-the-dice rule at the attack site. Both would have to become
+/// per-action to express this, and the honest accounting is that the
+/// spell is strong enough on 8d12 a turn without them.
+pub struct BladeOfDisaster {}
+
+impl BladeOfDisaster {
+    /// 60 ft = 24 tiles. RAW puts the blade within 60 feet and lets it
+    /// walk 30 more each turn; the engine has no separate body to
+    /// track, so the caster's own reach carries the whole envelope.
+    const RANGE: isize = 24;
+    /// Cuts per activation.
+    const SWINGS: usize = 2;
+}
+
+impl Action for BladeOfDisaster {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
+    fn name(&self) -> &str {
+        "blade of disaster"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bod", "disaster"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(Self::RANGE)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    /// Two swings, so the picker prices the whole routine rather than
+    /// one cut. Declared for `best_attack_against`'s damage key.
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        Some(Self::SWINGS as f32 * Dice::new(4, 12).average_roll())
+    }
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        sustained_condition_cost(
+            encounter,
+            caster_id,
+            Condition::BladeOfDisaster,
+            bonus_action_only(),
+            action_and_slot(9),
+        )
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::BladeOfDisaster))
+        {
+            return true;
+        }
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let already_open = caster.has_condition(Condition::BladeOfDisaster);
+        let ability = caster.best_spellcasting_ability(
+            crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+        );
+        let attack_bonus = caster.spell_attack_modifier(ability);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for _ in 0..Self::SWINGS {
+            effects.extend(spell_attack(
+                encounter,
+                caster_id,
+                target_id,
+                "blade of disaster",
+                attack_bonus,
+                Dice::new(4, 12),
+                DamageType::Force,
+                false,
+            ));
+        }
+        if !already_open {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::BladeOfDisaster,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Blade of Disaster",
+                    vec![(caster_id, Condition::BladeOfDisaster)],
+                ),
+            }));
+        }
+        effects
+    }
+}
+
+pub static BLADE_OF_DISASTER: LazyLock<BladeOfDisaster> = LazyLock::new(|| BladeOfDisaster {});
