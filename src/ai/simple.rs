@@ -1409,7 +1409,9 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 5. AoE — point that catches 2+ enemies, no friendly fire.
+        // 5. AoE — a point with no friendly fire that catches two
+        //    enemies, or one when the cast spends neither the Action nor
+        //    a slot (see `best_burst_placement`'s floor).
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
@@ -3806,8 +3808,15 @@ fn try_self_action(
     // every one of them fails `validate` with an empty target list.
     // Without this they could only be reached by a picker of their own,
     // which is a whole function to express "point it at yourself".
+    // The `!is_harmful` half is the guard, not decoration. Two hostile
+    // `SingleActor` features reach the AI by name today (Halo of Spores,
+    // Insightful Fighting) and both are routed through the enemy-side
+    // pickers instead, which is where they belong — but a third arriving
+    // on this lane by mistake would otherwise be aimed at the caster,
+    // and "the druid saves against its own spores" is not a failure any
+    // test would be looking for.
     let targets = match action.targeting_schema() {
-        TargetingSchema::SingleActor => Some(vec![actor_id]),
+        TargetingSchema::SingleActor if !action.is_harmful() => Some(vec![actor_id]),
         _ => None,
     };
     let aei = ActionExecutionInfo::new(action, actor_id, targets, None, None);
@@ -6777,12 +6786,41 @@ fn best_burst_placement(
             // blast its whole subclass is built around: every candidate
             // point in a melee scrum catches an ally, and the gate would
             // reject all of them.
+            let costs = aei.cost(encounter);
             let shield_capacity = encounter.ally_shield_capacity(
                 actor_id,
                 action.school(),
-                crate::engine::side_effects::spell_slot_level(&aei.cost(encounter))
-                    .unwrap_or(0),
+                crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0),
             );
+            // How many hostiles the blast has to catch to be worth
+            // firing.
+            //
+            // Two, for a cast that spends the turn's Action or a spell
+            // slot: those are the caster's scarcest resources, and a
+            // burst that catches one creature is a worse use of either
+            // than the single-target picker one rung down, which at
+            // least aims.
+            //
+            // One, for a cast that spends neither. Those exist and the
+            // floor was never about them: a Melf's Minute Meteors volley
+            // and a Moonbeam walked onto somebody each cost a bonus
+            // action the caster had no other use for, and refusing to
+            // spend it on one hostile does not save it for anything.
+            // Both spells were effectively unreachable — the meteors
+            // could be lit and then never thrown, and the beam could be
+            // placed and then never moved — because a 5-foot burst
+            // almost never covers two bodies.
+            let min_enemy_hits = if costs.iter().any(|c| {
+                matches!(
+                    c,
+                    crate::engine::side_effects::Resource::Action
+                        | crate::engine::side_effects::Resource::SpellSlot(_)
+                )
+            }) {
+                2
+            } else {
+                1
+            };
             let mut enemy_hits = 0usize;
             let mut ally_hits = 0usize;
             for (id, a) in encounter.actors.iter() {
@@ -6805,7 +6843,7 @@ fn best_burst_placement(
                 }
             }
             let friendly_fire_blocked = ally_hits > shield_capacity;
-            if friendly_fire_blocked || enemy_hits < 2 {
+            if friendly_fire_blocked || enemy_hits < min_enemy_hits {
                 continue;
             }
             let pick = match &best {
@@ -14030,5 +14068,49 @@ mod tests {
             "these actions target no enemy yet claim to deal damage: {liars:?}"
         );
     }
+    /// A burst that costs nothing but a bonus action fires at a single
+    /// hostile; one that costs the Action or a slot still waits for two.
+    ///
+    /// The floor is what made two spells unreachable. Melf's Minute
+    /// Meteors is a 5-foot burst thrown off a bonus action once it is
+    /// lit, and a 5-foot burst almost never covers two bodies — so the
+    /// meteors could be lit and then never thrown for the rest of the
+    /// fight. The fixture is that exact stance: the orbit is up, one
+    /// goblin is in range, and the caster has a bonus action.
+    #[test]
+    fn a_free_burst_is_worth_one_hostile_and_a_paid_one_is_not() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let _goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+
+        // Unlit, the meteors cost an Action and a 3rd-level slot, so a
+        // lone goblin is not worth them — and neither is any other
+        // burst on the wizard's list.
+        let paid = best_burst_placement(&e, wiz, |a| a.name() == "melf's minute meteors");
+        assert!(
+            paid.is_none(),
+            "a slot-and-Action burst should still want two hostiles"
+        );
+
+        // Lit, the volley is a bare bonus action and the same goblin is
+        // worth throwing at.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::MinuteMeteors, ConditionTimer::Rounds(3));
+        let free = best_burst_placement(&e, wiz, |a| a.name() == "melf's minute meteors")
+            .expect("a free volley should fire at one hostile");
+        assert_eq!(free.action().name(), "melf's minute meteors");
+    }
+
 }
 
