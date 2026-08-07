@@ -3753,9 +3753,6 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
-        // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
-        // rider on every melee swing the holder lands. Mirrors Crown of
-        // Stars but cold-typed and melee-only.
         // 5e Path of the Giant Barbarian **Elemental Cleaver** (subclass
         // level 3): the weapon the barbarian kindled deals an extra 1d6
         // of the chosen element on every hit.
@@ -3784,6 +3781,9 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
+        // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
+        // rider on every melee swing the holder lands. Mirrors Crown of
+        // Stars but cold-typed and melee-only.
         OnHitRider {
             condition: Condition::SpiritShrouded,
             dice: Dice::new(1, 8),

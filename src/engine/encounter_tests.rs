@@ -73117,3 +73117,51 @@ fn the_unicorn_spill_belongs_to_the_druid_who_planted_the_totem() {
         "a cleric collected the druid's aura"
     );
 }
+
+/// The giant path's growth reaches the board and comes back off it.
+///
+/// `desired_size` is where the gate lives, but the size a creature
+/// actually occupies is `reconcile_footprints`' to write — and the
+/// round trip is the half that matters at the table: a barbarian who
+/// grew and never shrank would be holding a Large footprint for the
+/// rest of the fight on a rage that lapsed rounds ago.
+#[test]
+fn the_giant_paths_rage_grows_the_board_footprint_and_gives_it_back() {
+    use crate::actors::creatures::barbarians::GIANT_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::types::Size;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let b = e
+        .instantiate_creature(&GIANT_BARBARIAN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    // Far enough east that a Medium footprint cannot reach it and a
+    // Large one can — the same geometry the Rune Knight's reach test
+    // uses, which is the point: the two features buy the same thing
+    // and only one of them costs a bonus action.
+    let g = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+    let reach = crate::actions::action_template::MELEE_REACH;
+    assert_eq!(e.actors[&b].size(), Size::Medium);
+    assert!(e.footprint_distance(b, g).unwrap() > reach);
+
+    e.get_actor(b)
+        .unwrap()
+        .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+    e.reconcile_footprints();
+    assert_eq!(e.actors[&b].size(), Size::Large);
+    assert!(
+        e.footprint_distance(b, g).unwrap() <= reach,
+        "a raging giant-path barbarian should threaten a tile a Medium one cannot"
+    );
+
+    e.get_actor(b).unwrap().remove_condition(Condition::Raging);
+    e.reconcile_footprints();
+    assert_eq!(
+        e.actors[&b].size(),
+        Size::Medium,
+        "the footprint outlived the rage that grew it"
+    );
+}
