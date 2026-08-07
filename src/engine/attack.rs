@@ -2810,7 +2810,16 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// Named and shaped to match `OnHitConditionMark::holder_gate` one
     /// cohort over, which grew the same column for the same reason
     /// (Ancestral Protectors' "while raging" clause).
-    pub caster_gate: Option<fn(&ActorInstance) -> bool>,
+    ///
+    /// Takes the encounter alongside the swinger because the second row
+    /// to want a gate needed one: the Drakewarden's Bond of Fang and
+    /// Scale asks whether the ranger's drake is alive and standing
+    /// within 30 ft, which is a question about the board and not about
+    /// the ranger. The extra parameter is free for the rows that ignore
+    /// it, and the alternative — a second `board_gate` column beside
+    /// this one — would have made every future row choose between two
+    /// spellings of the same idea.
+    pub caster_gate: Option<fn(&EncounterInstance, &ActorInstance) -> bool>,
 }
 
 /// A condition an `OncePerTurnWeaponRiderSpec` lays on its target, and
@@ -2860,10 +2869,14 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
     if p.is_spell {
         return false;
     }
+    // The gate reads `encounter` as well as the swinger, so the actor
+    // borrow is taken separately rather than inside a closure over
+    // `encounter.actors` — both are shared borrows, which is what lets
+    // a row ask a question about the whole board.
     let caster_ok = encounter.actors.get(&p.caster_id).is_some_and(|a| {
         a.has_passive_feature(spec.tag)
             && !a.once_per_turn_used(spec.tag)
-            && spec.caster_gate.is_none_or(|gate| gate(a))
+            && spec.caster_gate.is_none_or(|gate| gate(encounter, a))
     });
     if !caster_ok {
         return false;
@@ -3099,7 +3112,34 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "empowered arms",
         target_gate: |_| true,
         installs: None,
-        caster_gate: Some(|a| a.has_condition(crate::conditions::Condition::AstralArms)),
+        caster_gate: Some(|_, a| a.has_condition(crate::conditions::Condition::AstralArms)),
+    },
+    // 5e Drakewarden Ranger **Bond of Fang and Scale** (subclass level
+    // 7): while the drake is summoned, the ranger's weapon attacks
+    // carry an extra 1d6 of the drake's element.
+    //
+    // The one row here whose gate looks at the board: the die is worth
+    // nothing unless a live drake is standing within 30 ft, which is
+    // what makes the feature a leash rather than a passive. See
+    // `BOND_OF_FANG_AND_SCALE_TAG` for why the leash is here at all
+    // when RAW has none.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::BOND_OF_FANG_AND_SCALE_TAG,
+        dice: Dice::new(1, 6),
+        // RAW fixes the type to the drake's chosen element rather than
+        // to the weapon's, which is why this is a constant and not
+        // `|p| p.damage_type`.
+        damage_type: |_| DamageType::Fire,
+        label: "bond of fang and scale",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: Some(|encounter, a| {
+            encounter.friendly_beacon_within(
+                a,
+                crate::actions::class_features::DRAKE_COMPANION_TAG,
+                crate::engine::encounter::FANG_AND_SCALE_REACH_TILES,
+            )
+        }),
     },
     // 5e Armorer Artificer **Arcane Armor: Infiltrator** (subclass
     // level 3, TCE): "once on each of your turns when you hit a

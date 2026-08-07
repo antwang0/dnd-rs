@@ -34,6 +34,7 @@ pub mod dire_wolves;
 pub mod displacer_beasts;
 pub mod doppelgangers;
 pub mod dragons;
+pub mod drakes;
 pub mod drow;
 pub mod druids;
 pub mod dwarves;
@@ -434,6 +435,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*rangers::MONSTER_SLAYER_RANGER_TEMPLATE,
                     &*rangers::SWARMKEEPER_RANGER_TEMPLATE,
                     &*rangers::BEAST_MASTER_RANGER_TEMPLATE,
+                    &*rangers::DRAKEWARDEN_RANGER_TEMPLATE,
                 ],
             ),
             (

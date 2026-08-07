@@ -8402,6 +8402,7 @@ mod tests {
                 "eldritch cannon (protector)",
                 "ranger's companion",
                 "steel defender",
+                "summon drake",
                 "summon wildfire spirit",
                 "tentacle of the deep",
             ],
@@ -12765,7 +12766,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 47] = [
+        let cases: [(&CreatureTemplate, &str); 49] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12980,6 +12981,24 @@ mod tests {
             (
                 &crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE,
                 "bastion of law",
+            ),
+            // The drake is called, and then it bites. Not the bond and
+            // not the breath: the bond pays out on the ranger's own
+            // swing, and a ranger whose drake is holding the ogre is a
+            // ranger the ogre never reached — which is the subclass
+            // playing correctly. The breath is a burst, and
+            // `best_burst_placement` refuses any placement catching
+            // fewer than two enemies, which is the same wall Searing
+            // Sunburst and Breath of the Dragon meet in this fixture.
+            // Both are pinned engine-side, where a second body can be
+            // put on the board.
+            (
+                &crate::actors::creatures::rangers::DRAKEWARDEN_RANGER_TEMPLATE,
+                "summon drake",
+            ),
+            (
+                &crate::actors::creatures::rangers::DRAKEWARDEN_RANGER_TEMPLATE,
+                "bite",
             ),
         ];
 
@@ -13658,6 +13677,7 @@ mod tests {
             ("summon draconic spirit", true),
             ("summon fiend", true),
             ("ranger's companion", false),
+            ("summon drake", false),
             ("summon wildfire spirit", false),
             ("tentacle of the deep", false),
             ("eldritch cannon (flamethrower)", false),

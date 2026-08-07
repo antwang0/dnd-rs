@@ -55736,7 +55736,8 @@ fn dark_ones_blessing_does_not_fire_on_friendly_kill() {
 #[test]
 fn once_per_turn_rider_ledger_tags_are_independent() {
     use crate::actions::class_features::{
-        ANCESTRAL_PROTECTORS_TAG, ARCANE_JOLT_TAG, COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG,
+        ANCESTRAL_PROTECTORS_TAG, ARCANE_JOLT_TAG, BOND_OF_FANG_AND_SCALE_TAG,
+        COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG,
         DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG,
         FEROCIOUS_CHARGER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG,
         LIGHTNING_LAUNCHER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
@@ -55748,10 +55749,11 @@ fn once_per_turn_rider_ledger_tags_are_independent() {
     // this test also pins the cohort inventory.
     assert_eq!(
         ONCE_PER_TURN_RIDER_TAGS.len(),
-        19,
+        20,
         "once-per-turn rider tag registry drifted"
     );
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
+    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&BOND_OF_FANG_AND_SCALE_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FEROCIOUS_CHARGER_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ARCANE_JOLT_TAG));
     assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&LIGHTNING_LAUNCHER_TAG));
@@ -72631,4 +72633,101 @@ fn bastion_of_law_wards_an_ally_and_declines_to_stack() {
         .restore_feature_charge(BASTION_OF_LAW_TAG);
     assert!(e.actors[&sorcerer].feature_available(BASTION_OF_LAW_TAG));
     assert!(!action.custom_validate_input(&e, sorcerer, Some(&targets), None, None));
+}
+
+/// The Drakewarden's Bond of Fang and Scale is the first row on
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS` whose gate asks about the board
+/// rather than about the swinger: the die rides the ranger's swings
+/// only while a live drake stands within 30 ft.
+///
+/// Three states in one sweep, because the interesting failure is not
+/// "the rider never fires" — it is the rider firing in a state where
+/// the leash is slack, which is what makes the feature free.
+#[test]
+fn bond_of_fang_and_scale_needs_the_drake_on_the_board_and_close() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::LONGBOW;
+    use crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::DRAKEWARDEN_RANGER_TEMPLATE;
+
+    /// Swing across a seed sweep and report whether the bond's line
+    /// ever showed up. Re-instantiating per seed keeps each swing on a
+    /// fresh turn, so the once-per-turn ledger never masks the gate.
+    fn bond_fires(place_drake: Option<Coordinate>) -> bool {
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(40, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&DRAKEWARDEN_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            if let Some(at) = place_drake {
+                e.instantiate_creature(&DRAKE_COMPANION_TEMPLATE, at, 0, 0)
+                    .unwrap();
+            }
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            let before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            if e.messages()[before..]
+                .iter()
+                .any(|s| s.contains("bond of fang and scale"))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    assert!(
+        !bond_fires(None),
+        "the bond paid out with no drake on the board"
+    );
+    assert!(
+        !bond_fires(Some(Coordinate::new(38, 2))),
+        "the bond paid out with the drake parked past the 30 ft leash"
+    );
+    assert!(
+        bond_fires(Some(Coordinate::new(4, 2))),
+        "the bond never paid out with the drake standing beside the ranger"
+    );
+}
+
+/// Calling the drake spends the charge, puts a body on the ranger's
+/// team, and hands that body the beacon the bond reads. The three
+/// facts the rest of the subclass is built on.
+#[test]
+fn summoning_the_drake_spends_the_charge_and_lands_the_beacon() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{DRAKE_COMPANION_TAG, SUMMON_DRAKE_COMPANION};
+    use crate::actors::creatures::rangers::DRAKEWARDEN_RANGER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 15, &[]);
+    let r = e
+        .instantiate_creature(&DRAKEWARDEN_RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let action: &dyn Action = &SUMMON_DRAKE_COMPANION;
+    assert!(action.custom_validate_input(&e, r, None, None, None));
+
+    for eff in action.side_effects(&mut e, r, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&r].feature_available(DRAKE_COMPANION_TAG),
+        "the call left the charge unspent"
+    );
+    let (_, drake) = e
+        .actors
+        .iter()
+        .find(|(id, a)| **id != r && a.has_passive_feature(DRAKE_COMPANION_TAG))
+        .expect("the drake should be on the board");
+    assert_eq!(drake.team(), e.actors[&r].team());
+
+    // Spent is spent: a second call is refused rather than stacking a
+    // pair of drakes off one charge.
+    assert!(!action.custom_validate_input(&e, r, None, None, None));
 }

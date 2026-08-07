@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, DREADFUL_STRIKES_TAG, FOE_SLAYER_TAG, GATHERED_SWARM_TAG,
-    LANDS_STRIDE_TAG, MULTIATTACK_DEFENSE_TAG, PLANAR_WARRIOR_TAG, RANGERS_COMPANION,
-    RANGERS_COMPANION_TAG, ROVING_TAG, SLAYERS_PREY_TAG, VANISH, VANISH_TAG,
+    BOND_OF_FANG_AND_SCALE_TAG, COLOSSUS_SLAYER_TAG, DRAKE_COMPANION_TAG, DREADFUL_STRIKES_TAG,
+    FOE_SLAYER_TAG, GATHERED_SWARM_TAG, LANDS_STRIDE_TAG, MULTIATTACK_DEFENSE_TAG,
+    PLANAR_WARRIOR_TAG, RANGERS_COMPANION, RANGERS_COMPANION_TAG, ROVING_TAG, SLAYERS_PREY_TAG,
+    SUMMON_DRAKE_COMPANION, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -916,6 +917,75 @@ pub static BEAST_MASTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     CreatureTemplate {
         name: "Beast Master Ranger",
         glyph: 'A',
+        actions,
+        features,
+        ..RANGER_TEMPLATE.clone()
+    }
+});
+
+/// Drakewarden Ranger — Ranger Conclave **Drakewarden** subclass build
+/// (Fizban's Treasury of Dragons), and the second conclave on the
+/// roster that puts a second body on the board.
+///
+/// Two subclass features ship:
+///
+///   - **Drake Companion** (lv3) — an Action, once per short rest: a
+///     Small dragon arrives on a free tile beside the ranger and fights
+///     on their team until it drops. It brings its own bite and its own
+///     cone of fire; see `DRAKE_COMPANION_TEMPLATE`.
+///   - **Bond of Fang and Scale** (lv7) — while the drake is alive and
+///     within 30 ft, every weapon swing the ranger lands carries an
+///     extra 1d6 fire, once per turn. A row on
+///     `ONCE_PER_TURN_WEAPON_DIE_RIDERS`.
+///
+/// **The comparison that matters is the Beast Master, not the other
+/// six conclaves.** Both trade a turn for a body, and everything else
+/// about them differs. The Beast Master's wolf is a *setup* piece — the
+/// bite trips, and a prone target is one the whole party swings at with
+/// advantage — and once it is on the board the ranger goes back to
+/// shooting and forgets about it. The drake is a *leash*. It fights
+/// well on its own, but the ranger's own damage now depends on where it
+/// is standing, so a Drakewarden spends the fight aware of two
+/// positions instead of one.
+///
+/// That is the same shape the Circle of Wildfire druid plays, and it is
+/// deliberate: those two and the Fathomless warlock are the engine's
+/// three "your summon's position is your resource" builds. The
+/// difference here is that the drake is worth having even when the
+/// leash is slack, which the wildfire spirit and the tentacle are not.
+///
+/// Once per short rest rather than the Beast Master's long: RAW's drake
+/// comes back for a spell slot or an hour, and the whole roster's other
+/// summon charges sit on the short-rest cadence. The Beast Master keeps
+/// the harsher one because RAW's criticism of that conclave — lose the
+/// beast, lose the subclass for the day — is a real part of what it is.
+///
+/// Left out: Draconic Gift (lv3, a cantrip and a language), Drake
+/// Mount / Perfected Bond (lv15, the drake grows Large and the ranger
+/// rides it). The second is the interesting omission — the engine has a
+/// mount lane that would carry the riding half — but the drake is built
+/// at the level-9 chassis the ranger templates target, and a Large
+/// drake is a different creature.
+///
+/// Glyph 'D' — for **D**rakewarden. Distinct from baseline ranger 'R',
+/// Hunter 'H', Gloom Stalker 'G', Fey Wanderer 'Y', Horizon Walker 'Z',
+/// Monster Slayer 'M', Swarmkeeper 'K' and Beast Master 'A'. The drake
+/// itself is lowercase 'k', pairing with its ranger the way the
+/// wildfire spirit's 'w' pairs with its druid's 'W'.
+pub static DRAKEWARDEN_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Not the `with_subclass_tag` one-liner five of the conclaves use:
+    // this one adds an action and two tags. The
+    // `..RANGER_TEMPLATE.clone()` tail still carries the whole ranger
+    // chassis — longbow, scimitar, the half-caster spell list, Vanish,
+    // and every baseline passive.
+    let mut actions = RANGER_TEMPLATE.actions.clone();
+    actions.push(&SUMMON_DRAKE_COMPANION);
+    let mut features = RANGER_TEMPLATE.features.clone();
+    features.insert(DRAKE_COMPANION_TAG);
+    features.insert(BOND_OF_FANG_AND_SCALE_TAG);
+    CreatureTemplate {
+        name: "Drakewarden Ranger",
+        glyph: 'D',
         actions,
         features,
         ..RANGER_TEMPLATE.clone()

@@ -1922,6 +1922,22 @@ struct FlatSpellDamageBonus {
     amount: FlatBonusAmount,
 }
 
+/// RAW's 60 ft between the Wildfire Druid and their spirit, in tiles on
+/// the 2.5 ft grid. Both halves of Enhanced Bond measure against it.
+pub const ENHANCED_BOND_REACH_TILES: isize = 24;
+
+/// The leash between a Drakewarden and their drake, in tiles on the
+/// 2.5 ft grid — 30 ft, half of Enhanced Bond's.
+///
+/// Shorter than its sibling because the two bonds pay for different
+/// things. Enhanced Bond buys a die on a *spell*, and a druid casting
+/// spells is already standing back; the 60 ft is generous because it
+/// has to be. Bond of Fang and Scale buys a die on a *weapon swing*, so
+/// the ranger is in the front rank already and the drake has no excuse
+/// not to be. See `BOND_OF_FANG_AND_SCALE_TAG` for why there is a leash
+/// at all when RAW has none.
+pub const FANG_AND_SCALE_REACH_TILES: isize = 12;
+
 /// Features that add a flat amount to **one damage roll of a spell**.
 ///
 /// The unit is the cast, not the die and not the target — see
@@ -1942,10 +1958,6 @@ struct FlatSpellDamageBonus {
 /// never a stack in practice. A hypothetical multiclass that did hold
 /// two would collect both, which is what RAW says when two features
 /// with no interaction clause both trigger.
-/// RAW's 60 ft between the Wildfire Druid and their spirit, in tiles on
-/// the 2.5 ft grid. Both halves of Enhanced Bond measure against it.
-pub const ENHANCED_BOND_REACH_TILES: isize = 24;
-
 static FLAT_SPELL_DAMAGE_BONUSES: &[FlatSpellDamageBonus] = &[
     // 5e Evocation Wizard **Empowered Evocation** (subclass lv10): add
     // the caster's INT modifier to one damage roll of a wizard
@@ -2510,7 +2522,19 @@ impl EncounterInstance {
     ) -> bool {
         let subject_tiles = get_tiles_from_size(subject.size());
         self.actors.values().any(|a| {
-            a.team() == subject.team()
+            // "other than `subject` itself", which this used to promise
+            // and not do. It cost nothing while the only caller was
+            // Enhanced Bond — a druid does not carry the wildfire
+            // spirit's tag — but the tag-sharing summons do: the
+            // Drakewarden carries `DRAKE_COMPANION_TAG` as their summon
+            // charge, so a ranger with no drake on the board was
+            // standing within 0 ft of a beacon and collecting the die
+            // for free. Identity by address rather than by id because
+            // that is what a `&ActorInstance` is; the map's values are
+            // the only `ActorInstance`s alive, so the comparison is
+            // exact.
+            !std::ptr::eq(a, subject)
+                && a.team() == subject.team()
                 && a.is_combat_active()
                 && a.has_passive_feature(beacon)
                 && footprint_chebyshev(

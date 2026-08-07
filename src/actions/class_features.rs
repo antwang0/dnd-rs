@@ -312,6 +312,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // of Pact Magic and of both of these by name.
     TENTACLE_OF_THE_DEEP_TAG,
     GUARDIAN_COIL_TAG,
+    // 5e Drakewarden Ranger — the summon charge. RAW's drake is a
+    // permanent bond re-summoned with a spell slot or an hour's ritual;
+    // the short-rest cadence here is the same translation the tentacle
+    // and the wildfire spirit already carry, and it is what keeps a
+    // Drakewarden from arriving at the second fight of the day without
+    // the half of the subclass that fights.
+    DRAKE_COMPANION_TAG,
     // The three Channel Divinities that were missing from this lane —
     // see `CHANNEL_DIVINITY_FEATURES`. Cleric **Turn Undead** is the
     // odd one out in the most literal sense: five comments in this
@@ -3011,6 +3018,7 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     PSIONIC_STRIKE_TAG,
     DEFT_STRIKE_TAG,
     GIANTS_MIGHT_RIDER_TAG,
+    BOND_OF_FANG_AND_SCALE_TAG,
     // The only entry here that isn't a damage rider: Ancestral
     // Protectors uses the ledger to enforce RAW's "the *first* creature
     // you hit on your turn" rather than to cap a die pool. Same
@@ -10464,6 +10472,97 @@ pub static SUMMON_TENTACLE_OF_THE_DEEP: FeatureSummon = FeatureSummon {
     cost_resource: Resource::BonusAction,
 };
 
+/// Marker tag carried by the **drake companion** itself, and the charge
+/// the Drakewarden Ranger spends to call it — one tag doing both jobs
+/// on two different creatures, the same economy
+/// `TENTACLE_OF_THE_DEEP_TAG` makes and for the same reasons.
+///
+/// On the ranger it is a per-short-rest charge gating
+/// `SUMMON_DRAKE_COMPANION`. On the drake it is the beacon Bond of Fang
+/// and Scale searches the board for when it asks whether the ranger is
+/// swinging within 30 ft of their drake.
+///
+/// The two readings never collide: `friendly_beacon_within` skips the
+/// subject itself, and the charge is only ever read through
+/// `feature_ready` on the summoner. RAW's bond is permanent and the
+/// summon is a once-per-long-rest ritual; the short-rest cadence here
+/// matches every other subclass charge on the roster, so a Drakewarden
+/// arrives at the next engagement with a subclass.
+pub const DRAKE_COMPANION_TAG: &str = "ranger.drake_companion";
+
+/// Summon Drake Companion — Drakewarden Ranger level-3 action. Once per
+/// short rest, a Small dragon appears beside the ranger on their team
+/// and stays until it drops.
+///
+/// **The third body-summoning feature on the roster and the only one
+/// whose body is worth having for itself.** The wildfire spirit exists
+/// so the druid's spells get a die; the tentacle exists so a ten-foot
+/// bubble sits somewhere useful. The drake is a competent CR-1
+/// combatant with a cone of fire on top — and it *also* carries the
+/// die (Bond of Fang and Scale). Which is why it costs an Action rather
+/// than the tentacle's bonus action: a Drakewarden who opened with a
+/// free drake would be strictly ahead of every other conclave from
+/// round one.
+///
+/// Search radius 2, like the Ranger's Companion and the wildfire
+/// spirit: the drake walks, so where it lands matters far less than
+/// where it goes.
+pub static SUMMON_DRAKE_COMPANION: FeatureSummon = FeatureSummon {
+    display_name: "summon drake",
+    aliases: &["drake", "drake companion", "sdc"],
+    tag: DRAKE_COMPANION_TAG,
+    template: &crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    search_radius: 2,
+    base_instance_id: 73,
+    cost_resource: Resource::Action,
+};
+
+/// Every feature summon on the roster, in one place.
+///
+/// The sweeps that have to hold across all of them — distinct instance
+/// bands, distinct charges, and a rest that gives each charge back —
+/// used to read a list written out inside the test itself, which meant
+/// a fourth summon was covered only if whoever added it remembered to
+/// edit an assertion in another module. That is the same failure
+/// `pc_template_families` exists to prevent, and it had already been
+/// paid once: the tentacle shipped with no refresh at all, and the
+/// sweep only caught it because someone had remembered.
+///
+/// **Adding a feature summon is one line here and nothing else.**
+pub const FEATURE_SUMMONS: &[&FeatureSummon] = &[
+    &RANGERS_COMPANION,
+    &SUMMON_WILDFIRE_SPIRIT,
+    &SUMMON_TENTACLE_OF_THE_DEEP,
+    &SUMMON_DRAKE_COMPANION,
+];
+
+/// 5e Drakewarden Ranger **Bond of Fang and Scale** (subclass level 7):
+/// "while your drake is summoned, you gain... your weapon attacks deal
+/// an extra 1d6 damage of the type chosen for your drake."
+///
+/// A row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, and the first row on
+/// that cohort whose gate is a question about the *board* rather than
+/// about the swinger. Every other rider there asks what the attacker
+/// carries or what condition they are under; this one asks whether a
+/// particular second body is still alive and still nearby, which is
+/// what widened `caster_gate` to take the encounter.
+///
+/// The 30-ft leash is not RAW — RAW asks only that the drake be
+/// summoned, wherever it is. It is here because the alternative reading
+/// makes the feature free: a Drakewarden would park the drake in a
+/// corner out of reach and collect the die for the rest of the fight,
+/// which is the opposite of what a bond is supposed to cost. The leash
+/// is the same distance the Wildfire druid's Enhanced Bond measures and
+/// it does the same job — it makes the summon's *position* the price of
+/// the summoner's damage.
+///
+/// The rider's type is fire, matching the drake's chosen element on
+/// `DRAKE_COMPANION_TEMPLATE`. Fixed rather than read off the drake
+/// because the element is a template constant on both sides; the day a
+/// second drake element ships, the two rows move together.
+pub const BOND_OF_FANG_AND_SCALE_TAG: &str = "ranger.bond_of_fang_and_scale";
+
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
 /// (level 2 subclass). Once per short rest, action-cost 30ft self-centered
 /// radiant burst — every enemy in range makes a CON save vs the cleric's
@@ -17154,11 +17253,7 @@ mod tests {
     /// features sharing a charge would spend each other's.
     #[test]
     fn every_feature_summon_gets_its_own_band_and_its_own_charge() {
-        let summons = [
-            &RANGERS_COMPANION,
-            &SUMMON_WILDFIRE_SPIRIT,
-            &SUMMON_TENTACLE_OF_THE_DEEP,
-        ];
+        let summons = FEATURE_SUMMONS;
         let mut bands: Vec<usize> = summons.iter().map(|s| s.base_instance_id).collect();
         bands.sort_unstable();
         let unique = {
