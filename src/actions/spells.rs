@@ -547,6 +547,21 @@ fn steered_zone_cost(
     }
 }
 
+/// The validation half: a recast may only be aimed somewhere the area
+/// can actually reach, and a first cast has to be one the caster can
+/// hold onto.
+fn steered_zone_validate(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    zone_name: &str,
+    target_locations: Option<&Vec<Coordinate>>,
+) -> bool {
+    if encounter.zone_sustained_by(caster_id, zone_name).is_some() {
+        return steered_zone_move(encounter, caster_id, zone_name, target_locations).is_some();
+    }
+    encounter.caster_can_concentrate(caster_id)
+}
+
 /// `steered_zone_cost` for a spell whose sustained thing is a held
 /// condition rather than a placed area: `repeat` while the caster
 /// carries `condition`, `first_cast` otherwise.
@@ -581,21 +596,6 @@ fn sustained_condition_cost(
     } else {
         first_cast
     }
-}
-
-/// The validation half: a recast may only be aimed somewhere the area
-/// can actually reach, and a first cast has to be one the caster can
-/// hold onto.
-fn steered_zone_validate(
-    encounter: &EncounterInstance,
-    caster_id: usize,
-    zone_name: &str,
-    target_locations: Option<&Vec<Coordinate>>,
-) -> bool {
-    if encounter.zone_sustained_by(caster_id, zone_name).is_some() {
-        return steered_zone_move(encounter, caster_id, zone_name, target_locations).is_some();
-    }
-    encounter.caster_can_concentrate(caster_id)
 }
 
 /// Who's caught in a save-burst: enemies only (allies on the safe side
