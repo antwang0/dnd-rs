@@ -5337,8 +5337,25 @@ impl EncounterInstance {
     /// round-end drift) — so a stored flag would be correct only until
     /// the next one was added. Recomputing costs one terrain lookup per
     /// footprint tile, on paths that already do more work than that.
+    ///
+    /// Read through `movement_body`, like every other question about
+    /// which tiles a creature is standing on. A rider has no footprint
+    /// of its own while mounted — the horse's is the one on the board —
+    /// so measuring the rider's own 2x2 span from the horse's anchor
+    /// would read a sub-rectangle of the horse that nothing is actually
+    /// occupying, and a Large mount straddling a shoreline could report
+    /// its Medium rider as fully immersed while it was itself half out
+    /// of the water.
+    ///
+    /// Note which half of the underwater rules this redirect covers and
+    /// which it doesn't, because the split is deliberate and is RAW's.
+    /// *Being in the water* is a fact about the body carrying you, so it
+    /// is the mount's. *Having a swimming speed* is a fact about the
+    /// creature swinging the sword, so it stays the rider's: a knight on
+    /// a swimming horse is underwater and still doesn't know how to
+    /// fight there.
     pub fn is_immersed(&self, actor_id: usize) -> bool {
-        let Some(actor) = self.actors.get(&actor_id) else {
+        let Some(actor) = self.actors.get(&self.movement_body(actor_id)) else {
             return false;
         };
         if actor.has_magical_flight() {

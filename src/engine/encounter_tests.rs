@@ -37036,6 +37036,63 @@ fn a_flying_creature_over_a_pool_is_not_in_it() {
     assert!(!e.is_immersed(swimmer), "they are over the pool, not in it");
 }
 
+/// A rider is in the water exactly when the thing carrying it is, and
+/// its own swimming speed (or lack of one) still decides how it swings.
+///
+/// The two halves come apart on a mounted pair and nowhere else, which
+/// is why the pair is the fixture. A Medium knight has a 2x2 footprint
+/// and a Large warhorse a 4x4, and while the knight is in the saddle
+/// only the horse's is stamped on the board — so reading the knight's
+/// own span from the horse's anchor measures a quarter of the horse
+/// that nothing occupies, and a horse standing with its forequarters in
+/// a pool would have reported the knight submerged and itself dry.
+#[test]
+fn a_rider_is_immersed_when_its_mount_is_and_not_before() {
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // A pool wide enough for the horse's whole 4x4 footprint, and one
+    // tile of dry land at its edge for the half-in case.
+    for x in 2..=5isize {
+        for y in 2..=5isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let rider = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(10, 10),
+            0,
+            1,
+        )
+        .unwrap();
+    let horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(2, 2), 0, 2)
+        .unwrap();
+    // Bring the rider alongside and mount up; the pair then moves as the
+    // horse.
+    e.place_actor_at(rider, Coordinate::new(6, 2)).unwrap();
+    assert!(e.mount(rider, horse).is_ok());
+
+    assert!(e.is_immersed(horse), "the horse's whole footprint is water");
+    assert!(
+        e.is_immersed(rider),
+        "and a rider on a swimming horse is in the water with it"
+    );
+
+    // Drain one tile under the horse. Neither of them is fully immersed
+    // any more — and in particular the rider stops being immersed even
+    // though the tile that dried is outside the 2x2 its own span would
+    // have covered.
+    e.set_terrain_at(Coordinate::new(5, 5), TerrainType::Floor);
+    assert!(!e.is_immersed(horse), "the horse is half out");
+    assert!(
+        !e.is_immersed(rider),
+        "so is the rider, whose body is the horse's"
+    );
+}
+
 /// The melee clause, end to end through the real verdict chokepoint:
 /// the weapon decides, and a swimming speed excuses the whole question.
 #[test]

@@ -1612,18 +1612,25 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     },
 ];
 
-/// One row in the `DIFFICULT_TERRAIN_IMMUNITIES` cohort — a single
-/// source of "this actor pays no movement surcharge for difficult
-/// terrain". `flag` is any predicate on the actor (a held condition, a
-/// passive-feature tag, or an OR of several); a single matching row is
-/// enough, so the cohort is read with `.any()` rather than summed.
+/// One row in a **boolean cohort** — a single source of some yes/no
+/// property an actor can have, expressed as a predicate over the actor.
+/// `flag` is any such predicate (a held condition, a passive-feature
+/// tag, or an OR of several); one matching row is enough, so every
+/// cohort built from these is read with `.any()` rather than summed.
 ///
 /// Shape sibling to `PassiveFeatureSpeedBonus` / `ConditionSpeedBonus`
-/// minus the magnitude — terrain immunity is a boolean, so the row is
-/// the flag alone. Same reason those two hold a function pointer
-/// instead of an enum tag: a new row points at any predicate without
-/// expanding a central enum.
-struct DifficultTerrainImmunity {
+/// minus the magnitude — the property is a boolean, so the row is the
+/// flag alone. Same reason those two hold a function pointer instead of
+/// an enum tag: a new row points at any predicate without expanding a
+/// central enum.
+///
+/// Deliberately named for its *shape* rather than for a cohort, because
+/// three of them share it and no cohort's name would be right for the
+/// other two: `DIFFICULT_TERRAIN_IMMUNITIES`, `WATER_SURCHARGE_IMMUNITIES`
+/// and `SWIM_SPEED_SOURCES`. It carried the first cohort's name while
+/// it had only one, and the second and third arriving is what made that
+/// a lie rather than a shorthand.
+struct ActorFlagRow {
     flag: fn(&ActorInstance) -> bool,
 }
 
@@ -1659,14 +1666,14 @@ struct DifficultTerrainImmunity {
 ///     lv6): the class-feature row, and the first one that is a build
 ///     choice rather than a spell effect. See the tag's docstring for
 ///     which RAW clauses ship.
-const DIFFICULT_TERRAIN_IMMUNITIES: &[DifficultTerrainImmunity] = &[
-    DifficultTerrainImmunity {
+const DIFFICULT_TERRAIN_IMMUNITIES: &[ActorFlagRow] = &[
+    ActorFlagRow {
         flag: |a| a.has_condition(Condition::Footloose),
     },
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: ActorInstance::has_magical_flight,
     },
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::LANDS_STRIDE_TAG),
     },
 ];
@@ -1699,14 +1706,14 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[DifficultTerrainImmunity] = &[
 ///     `EncounterInstance::is_immersed` reads the same predicate: a
 ///     flying creature that paid nothing to cross a lake must also not
 ///     be swinging at disadvantage over it.
-const WATER_SURCHARGE_IMMUNITIES: &[DifficultTerrainImmunity] = &[
-    DifficultTerrainImmunity {
+const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
+    ActorFlagRow {
         flag: ActorInstance::has_swim_speed,
     },
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: |a| a.has_condition(Condition::Footloose),
     },
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: ActorInstance::has_magical_flight,
     },
 ];
@@ -1722,8 +1729,8 @@ const WATER_SURCHARGE_IMMUNITIES: &[DifficultTerrainImmunity] = &[
 /// road. Keeping the narrower predicate separate is what lets
 /// `UnderwaterVerdict::for_attack` take `swims` and `waived` as two
 /// arguments and give the bow and the trident different answers.
-const SWIM_SPEED_SOURCES: &[DifficultTerrainImmunity] = &[
-    DifficultTerrainImmunity {
+const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
+    ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::SWIM_SPEED_TAG),
     },
     // 5e Scout Rogue **Superior Mobility** (subclass lv9, XGtE): "you
@@ -1732,7 +1739,7 @@ const SWIM_SPEED_SOURCES: &[DifficultTerrainImmunity] = &[
     // swimming half had no combat surface in this engine because there
     // was no water to swim in; there is now, and this row is that
     // sentence finally meaning something.
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::SUPERIOR_MOBILITY_TAG),
     },
     // 5e Ranger **Roving** (2024 PHB lv6): "you also have a Climb Speed
@@ -1741,7 +1748,7 @@ const SWIM_SPEED_SOURCES: &[DifficultTerrainImmunity] = &[
     // one place Roving and Land's Stride, which the ranger also carries,
     // stop overlapping: Land's Stride is scoped to nonmagical difficult
     // terrain and a lake is not that.
-    DifficultTerrainImmunity {
+    ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
     },
 ];
@@ -7249,9 +7256,20 @@ impl ActorInstance {
     /// speed) lands as a one-line entry in that table rather than a new
     /// branch here or — worse — in the pathfinder's inner loop.
     pub fn ignores_difficult_terrain(&self) -> bool {
-        DIFFICULT_TERRAIN_IMMUNITIES
-            .iter()
-            .any(|row| (row.flag)(self))
+        self.matches_any(DIFFICULT_TERRAIN_IMMUNITIES)
+    }
+
+    /// True if any row in `cohort` holds for this actor — the shared
+    /// read for every `ActorFlagRow` table.
+    ///
+    /// One line of body, and worth naming anyway: it is the sentence
+    /// "one matching source is enough", which is the rule that makes a
+    /// boolean cohort a cohort rather than a list. The three readers
+    /// that call it had three identical `.iter().any(|row| (row.flag)(self))`
+    /// bodies, which is exactly the number at which the next one gets
+    /// written slightly differently.
+    fn matches_any(&self, cohort: &[ActorFlagRow]) -> bool {
+        cohort.iter().any(|row| (row.flag)(self))
     }
 
     /// True if this actor has a swimming speed — natural (the tag on an
@@ -7265,7 +7283,7 @@ impl ActorInstance {
     /// water's penalties, and neither is a swimming speed. See
     /// `SWIM_SPEED_SOURCES`.
     pub fn has_swim_speed(&self) -> bool {
-        SWIM_SPEED_SOURCES.iter().any(|row| (row.flag)(self))
+        self.matches_any(SWIM_SPEED_SOURCES)
     }
 
     /// True if this actor crosses `TerrainType::Water` at no movement
@@ -7277,9 +7295,7 @@ impl ActorInstance {
     /// paying for it. Flight and Freedom of Movement both qualify. See
     /// `WATER_SURCHARGE_IMMUNITIES` for why the two cohorts are not one.
     pub fn swims_freely(&self) -> bool {
-        WATER_SURCHARGE_IMMUNITIES
-            .iter()
-            .any(|row| (row.flag)(self))
+        self.matches_any(WATER_SURCHARGE_IMMUNITIES)
     }
 
     /// True if 5e's Underwater Combat penalties are waived for this
