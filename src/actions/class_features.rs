@@ -10519,7 +10519,7 @@ pub static SUMMON_DRAKE_COMPANION: FeatureSummon = FeatureSummon {
     template: &crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE,
     size: crate::engine::types::Size::Small,
     search_radius: 2,
-    base_instance_id: 73,
+    base_instance_id: 77,
     cost_resource: Resource::Action,
 };
 
@@ -10571,6 +10571,21 @@ pub const UNICORN_SPIRIT_SPILL: u32 = 9;
 /// the aura — RAW's "5 + your druid level" on the level-9 chassis.
 pub const BEAR_SPIRIT_WARD: u32 = 14;
 
+/// The footprint a totem occupies. Medium on both flavors, and stated
+/// once so the validator's "does a body fit here" probe and the spawn
+/// that follows it cannot disagree — a mismatch there is a feature that
+/// validates and then fails to land, spending the charge for nothing.
+const SPIRIT_TOTEM_SIZE: crate::engine::types::Size = crate::engine::types::Size::Medium;
+
+/// How far from the druid the spawn search looks for a free tile.
+///
+/// 3 rather than the roster's usual 2, for the reason the tentacle's
+/// is: RAW places the spirit anywhere within 60 ft, it never moves
+/// again, and where it lands is the only placement decision the feature
+/// makes. A slightly wider search is the cheapest approximation the
+/// engine has, absent a destination picker the AI could answer.
+const SPIRIT_TOTEM_SEARCH_RADIUS: isize = 3;
+
 /// Spirit Totem — Circle of the Shepherd Druid action (subclass level
 /// 2). Once per short rest: an incorporeal spirit appears near the
 /// druid and projects a thirty-foot aura for the rest of the fight.
@@ -10594,11 +10609,8 @@ pub const BEAR_SPIRIT_WARD: u32 = 14;
 ///     inside the aura. Its decision is placement — see
 ///     `UNICORN_SPIRIT_TAG`.
 ///
-/// Search radius 3 rather than the roster's usual 2, for the reason the
-/// tentacle's is: RAW places the spirit anywhere within 60 ft, it never
-/// moves again, and where it lands is the only placement decision the
-/// feature makes. A slightly wider search is the cheapest approximation
-/// the engine has, absent a destination picker the AI could answer.
+/// See `SPIRIT_TOTEM_SEARCH_RADIUS` for why the spawn search is wider
+/// than the roster's usual.
 pub struct SpiritTotem {
     display_name: &'static str,
     aliases: &'static [&'static str],
@@ -10651,7 +10663,7 @@ impl Action for SpiritTotem {
         // at: whether a body fits anywhere nearby.
         feature_ready(encounter, caster_id, SPIRIT_TOTEM_TAG)
             && encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+                .find_adjacent_spawn(caster_id, SPIRIT_TOTEM_SIZE, SPIRIT_TOTEM_SEARCH_RADIUS)
                 .is_some()
     }
     fn side_effects(
@@ -10673,9 +10685,9 @@ impl Action for SpiritTotem {
             encounter,
             caster_id,
             self.template,
-            crate::engine::types::Size::Medium,
+            SPIRIT_TOTEM_SIZE,
             1,
-            3,
+            SPIRIT_TOTEM_SEARCH_RADIUS,
             self.base_instance_id,
             self.display_name,
         );
@@ -10717,7 +10729,7 @@ pub static SPIRIT_TOTEM_BEAR: LazyLock<SpiritTotem> = LazyLock::new(|| SpiritTot
     display_name: "bear spirit",
     aliases: &["bear", "bear totem", "spirit totem"],
     template: &crate::actors::creatures::spirit_totems::BEAR_SPIRIT_TOTEM_TEMPLATE,
-    base_instance_id: 74,
+    base_instance_id: 78,
     arrival_ward: BEAR_SPIRIT_WARD,
 });
 
@@ -10727,7 +10739,7 @@ pub static SPIRIT_TOTEM_UNICORN: LazyLock<SpiritTotem> = LazyLock::new(|| Spirit
     display_name: "unicorn spirit",
     aliases: &["unicorn", "unicorn totem", "spirit totem"],
     template: &crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE,
-    base_instance_id: 75,
+    base_instance_id: 79,
     // Nothing on arrival: the unicorn's whole payout is downstream, at
     // `slot_heal_effects`.
     arrival_ward: 0,
@@ -10750,7 +10762,17 @@ pub const FEATURE_SUMMONS: &[&FeatureSummon] = &[
     &SUMMON_WILDFIRE_SPIRIT,
     &SUMMON_TENTACLE_OF_THE_DEEP,
     &SUMMON_DRAKE_COMPANION,
+    &SUMMON_FLAMETHROWER_CANNON,
+    &SUMMON_FORCE_BALLISTA_CANNON,
+    &SUMMON_PROTECTOR_CANNON,
+    &SUMMON_STEEL_DEFENDER,
 ];
+
+/// The instance-id band every summoning *spell* starts from. Feature
+/// summons live below it and spell summons at or above, so a party that
+/// puts a companion, a cannon and a Conjure Animals pack on the board
+/// at once still gets distinct display names for all of them.
+pub const SPELL_SUMMON_BAND_FLOOR: usize = 80;
 
 /// 5e Drakewarden Ranger **Bond of Fang and Scale** (subclass level 7):
 /// "while your drake is summoned, you gain... your weapon attacks deal
@@ -12398,18 +12420,16 @@ fn unicorn_spirit_spill(
     caster_id: usize,
     targets: &[usize],
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(team) = encounter.actors.get(&caster_id).map(|c| c.team()) else {
+        return Vec::new();
+    };
     let Some(origin) = encounter
         .actors
-        .iter()
-        .find(|(_, a)| {
-            a.is_combat_active()
-                && a.has_passive_feature(UNICORN_SPIRIT_TAG)
-                && encounter
-                    .actors
-                    .get(&caster_id)
-                    .is_some_and(|c| c.team() == a.team())
+        .values()
+        .find(|a| {
+            a.team() == team && a.is_combat_active() && a.has_passive_feature(UNICORN_SPIRIT_TAG)
         })
-        .map(|(_, a)| a.location())
+        .map(|a| a.location())
     else {
         return Vec::new();
     };
@@ -17655,49 +17675,107 @@ mod tests {
         }
     }
 
-    /// The feature summons don't collide.
+    /// Every summoned body the engine can put on the board from a
+    /// class feature, paired with the instance band it is named out of.
     ///
-    /// Each carries its own instance-id band because two of them can
-    /// share a board — a party with a Beast Master, a Wildfire druid and
-    /// a Fathomless warlock puts three of these out at once — and
-    /// `instantiate_creature` keys the display name off the band. The
-    /// tags have to differ for the same reason the bands do: two
-    /// features sharing a charge would spend each other's.
+    /// Two lists behind one name because the summons are two shapes:
+    /// the eight rows of `FEATURE_SUMMONS` and the two Circle of the
+    /// Shepherd totems, which are not on that cohort because their
+    /// payout happens as they land rather than after. Both hand a band
+    /// to `spawn_adjacent_summons`, so both have to be in any sweep
+    /// that claims the bands don't collide.
+    fn every_summon_band() -> Vec<(&'static str, usize)> {
+        let mut out: Vec<(&'static str, usize)> = FEATURE_SUMMONS
+            .iter()
+            .map(|s| (s.display_name, s.base_instance_id))
+            .collect();
+        for totem in [&*SPIRIT_TOTEM_BEAR, &*SPIRIT_TOTEM_UNICORN] {
+            out.push((totem.display_name, totem.base_instance_id));
+        }
+        out
+    }
+
+    /// No two summons are named out of the same band.
+    ///
+    /// A party can have several of these out at once — a Beast Master,
+    /// a Wildfire druid and a Fathomless warlock put three on the board
+    /// between them — and `instantiate_creature` keys the display name
+    /// off the band, so a collision renames somebody's summon after
+    /// somebody else's.
+    ///
+    /// The sweep used to read a three-name list written inside the
+    /// assertion, which is why it never noticed that the artificer's
+    /// three cannons and the steel defender were not in it at all. That
+    /// omission was not free: the next summon added took band 73 and
+    /// collided with the flamethrower cannon, and the test that was
+    /// supposed to catch exactly that passed.
     #[test]
-    fn every_feature_summon_gets_its_own_band_and_its_own_charge() {
-        let summons = FEATURE_SUMMONS;
-        let mut bands: Vec<usize> = summons.iter().map(|s| s.base_instance_id).collect();
-        bands.sort_unstable();
-        let unique = {
-            let mut b = bands.clone();
-            b.dedup();
-            b.len()
-        };
-        assert_eq!(unique, summons.len(), "two feature summons share an id band");
-        // Clear of the summon *spells*, which start at 90.
-        assert!(
-            bands.iter().all(|b| *b < 90),
-            "a feature summon wandered into the spell summons' band"
-        );
-
-        let mut tags: Vec<&str> = summons.iter().map(|s| s.tag).collect();
-        tags.sort_unstable();
-        tags.dedup();
-        assert_eq!(tags.len(), summons.len(), "two feature summons share a charge");
-
-        // Every one of them has something that gives the charge back.
-        // The Ranger's Companion is the long-rest exception — RAW
-        // rebonds the beast over a long rest and not a short one — and
-        // it is named rather than defaulted so a summon that simply
-        // forgot to register fails here instead of quietly costing its
-        // owner the subclass for the rest of the day. Which is what
-        // happened: the tentacle shipped with no refresh at all, and
-        // this assertion is how it was found.
-        for s in summons {
+    fn no_two_summons_are_named_out_of_the_same_band() {
+        let bands = every_summon_band();
+        for (i, (name, band)) in bands.iter().enumerate() {
+            for (other, other_band) in bands.iter().skip(i + 1) {
+                assert_ne!(
+                    band, other_band,
+                    "{} and {} share instance band {}",
+                    name, other, band
+                );
+            }
             assert!(
-                SHORT_REST_FEATURES.contains(&s.tag) || s.tag == RANGERS_COMPANION_TAG,
+                *band < SPELL_SUMMON_BAND_FLOOR,
+                "{} wandered into the summoning spells' bands",
+                name
+            );
+        }
+    }
+
+    /// Every charge a summon spends is a charge something gives back.
+    ///
+    /// The Ranger's Companion is the long-rest exception — RAW rebonds
+    /// the beast over a long rest and not a short one — and it is named
+    /// rather than defaulted so a summon that simply forgot to register
+    /// fails here instead of quietly costing its owner the subclass for
+    /// the rest of the day. Which is what happened: the tentacle
+    /// shipped with no refresh at all, and this assertion is how it was
+    /// found.
+    #[test]
+    fn every_summon_charge_comes_back_on_a_rest() {
+        let charges = FEATURE_SUMMONS
+            .iter()
+            .map(|s| (s.display_name, s.tag))
+            .chain([("spirit totem", SPIRIT_TOTEM_TAG)]);
+        for (name, tag) in charges {
+            assert!(
+                SHORT_REST_FEATURES.contains(&tag) || tag == RANGERS_COMPANION_TAG,
                 "{} spends a charge nothing gives back",
-                s.display_name
+                name
+            );
+        }
+    }
+
+    /// Two summons share a charge only when RAW says they are one
+    /// summon wearing several names.
+    ///
+    /// Two rows are allowed to collide here and both are deliberate:
+    /// the Artillerist's three cannons ("you can have only one cannon
+    /// at a time"), and the Shepherd's two totems, which are two builds
+    /// rather than two features. Anything else sharing a tag would be
+    /// two subclasses quietly spending each other's charge, which is
+    /// what this pins.
+    #[test]
+    fn only_the_declared_families_share_a_summon_charge() {
+        use std::collections::HashMap as Map;
+        let mut by_tag: Map<&str, Vec<&str>> = Map::new();
+        for s in FEATURE_SUMMONS {
+            by_tag.entry(s.tag).or_default().push(s.display_name);
+        }
+        for (tag, names) in by_tag {
+            if names.len() == 1 {
+                continue;
+            }
+            assert_eq!(
+                tag, ELDRITCH_CANNON_TAG,
+                "{:?} share the charge {} without being one feature",
+                names, tag
             );
         }
     }
