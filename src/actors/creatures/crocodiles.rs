@@ -27,7 +27,8 @@ use std::sync::LazyLock;
 /// allies pile on.
 ///
 /// Stat shape: AC 12, ~19 HP (3d10+3), STR 15, DEX 10, CON 13, INT 2,
-/// WIS 10, CHA 5. Speed 20 (RAW also swim 30 which we don't model).
+/// WIS 10, CHA 5. Speed 20 (RAW also swim 30, whose magnitude we don't
+/// model — but the tag ships, so a pool is free to cross).
 /// Size Large. CR ½.
 pub static CROCODILE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -86,7 +87,8 @@ pub static CROCODILE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// + grapple lock-down on a huge HP bar.
 ///
 /// Stat shape: AC 14, ~85 HP (9d12+27), STR 21, DEX 9, CON 17, INT 2,
-/// WIS 10, CHA 7. Speed 30 (RAW also swim 50 which we don't model).
+/// WIS 10, CHA 7. Speed 30 (RAW also swim 50, whose magnitude we don't
+/// model — but the tag ships, so a pool is free to cross).
 /// Size Huge. CR 5.
 pub static GIANT_CROCODILE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();

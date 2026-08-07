@@ -235,8 +235,11 @@ pub static SWASHBUCKLER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
 /// slippery mind, blindsense) with one subclass feature layered on:
 /// **Superior Mobility** (level 9, XGtE) — passive +10 ft walking-speed
 /// bump on the scout chassis. RAW also grants matching climbing +
-/// swimming speeds; both fold into the walking `speed()` accessor since
-/// the engine has no 3D terrain to differentiate. Read at the shared
+/// swimming speeds: the climbing half folds into the walking `speed()`
+/// accessor for want of 3D terrain, and the swimming half is a row on
+/// `SWIM_SPEED_SOURCES`, which makes the Scout and the Ranger the only
+/// two player builds that cross a pool for free and swing out of one
+/// without disadvantage. Read at the shared
 /// `passive_feature_speed_bonus` chokepoint via `SUPERIOR_MOBILITY_TAG`
 /// — same lane as the barbarian's Fast Movement (+10), the monk's
 /// Unarmored Movement (+10), and the ranger's Roving (+5).

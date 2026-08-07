@@ -661,9 +661,17 @@ mod tests {
         }
     }
 
-    /// `aquatic_templates` is the whole truth about who swims: every
-    /// entry carries `SWIM_SPEED_TAG`, and no template anywhere else in
-    /// the engine does.
+    /// `aquatic_templates` is the whole truth about who carries
+    /// `SWIM_SPEED_TAG`: every entry does, and no template anywhere else
+    /// in the engine does.
+    ///
+    /// Deliberately narrower than "who swims". Two player builds have a
+    /// swimming speed without this tag — the Scout Rogue's Superior
+    /// Mobility and the Ranger's Roving both grant one as a clause of a
+    /// class feature, and both reach `has_swim_speed` through their own
+    /// row on `SWIM_SPEED_SOURCES`. The tag is the *monster stat block*
+    /// lane specifically, and the list is the roster of stat blocks that
+    /// have a swim line.
     ///
     /// The second half is a genuine invariant rather than a restatement
     /// of the list. The tag is one short line inside a struct literal

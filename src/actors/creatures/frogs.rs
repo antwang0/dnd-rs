@@ -31,7 +31,8 @@ use std::sync::LazyLock;
 ///
 /// Stat shape: AC 11, ~1 HP (1d4-1 → floored at 1), STR 1, DEX 13,
 /// CON 8, INT 1, WIS 8, CHA 3. Speed 20 — RAW: walking 20 ft + swim
-/// 20 ft (the engine collapses ground + swim into a single per-
+/// 20 ft (the engine keeps the swimming speed as a flag and collapses
+/// the two magnitudes into a single per-
 /// creature speed). Size Tiny. CR 0. XP: 10 per RAW.
 pub static FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {

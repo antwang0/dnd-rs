@@ -36,7 +36,9 @@ pub static MERROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         // 6d10+12 = 45 average per MM.
         hitpoints: "6d10+12".parse().unwrap(),
-        speed: 20., // 5e: 10ft walking, 40ft swim — we collapse to walking.
+        // 5e: 10ft walking, 40ft swim. The two magnitudes collapse to
+        // one; the swimming speed itself rides `SWIM_SPEED_TAG` below.
+        speed: 20.,
         strength: 18,
         intelligence: 8,
         dexterity: 10,

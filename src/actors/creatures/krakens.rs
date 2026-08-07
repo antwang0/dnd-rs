@@ -46,10 +46,15 @@ use std::sync::LazyLock;
 /// Stat shape: AC 18 (slick hide), 472 average HP (27d20+189), STR 30
 /// (the engine's tied-highest after Tarrasque), CON 25. Truesight 120 ft
 /// (the kraken sees through illusion and into the Ethereal Plane). No
-/// Darkvision needed — Truesight subsumes it. Speed 20 ft (slow on land)
-/// — the kraken's swim speed is 60 ft RAW but the engine doesn't yet
-/// model swim-speed differentiation, so we surface the land speed and
-/// trust the encounter map to keep aquatic flavor implicit.
+/// Darkvision needed — Truesight subsumes it. Speed 20 ft (slow on
+/// land) — RAW's 60 ft swim is the larger number and the engine models
+/// one magnitude, so the land speed is the one on the sheet. The swim
+/// *speed* itself ships as `SWIM_SPEED_TAG`, which is what keeps a pool
+/// from charging the kraken double to cross. Being Gargantuan it is
+/// almost never `is_immersed` — that wants all sixty-four of its
+/// footprint tiles under water — so in practice the sea monster wades
+/// through the map's ponds rather than swimming them, which is about
+/// right for a creature twenty feet across.
 ///
 /// Languages: understands Abyssal / Celestial / Infernal / Primordial but
 /// can't speak. We surface only Primordial since the engine doesn't

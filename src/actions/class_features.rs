@@ -12424,6 +12424,21 @@ fn spend_feature_and_install_ally_burst(
 /// already ride the CR-1 baseline template — class templates target
 /// a balanced playable level, not lockstep PHB progression.
 ///
+/// The **swimming** half of the feature is a second, separate surface.
+/// RAW's Roving is "your Speed increases by 10 feet… you also have a
+/// Climb Speed and a Swim Speed equal to your Speed", and the second
+/// sentence used to be flavour because the engine had no water in it.
+/// This tag is a row on `SWIM_SPEED_SOURCES`, so every ranger on the
+/// roster crosses `TerrainType::Water` at no surcharge and swings in it
+/// without the disadvantage everyone else takes.
+///
+/// That is the one place Roving and Land's Stride come apart, and they
+/// come apart the way RAW says: Land's Stride is scoped to "nonmagical
+/// difficult terrain", which a lake is not, so a ranger swims for free
+/// because of *this* feature and crosses rubble for free because of
+/// that one. The two ship on the same chassis and are not
+/// interchangeable.
+///
 /// Always-on passive; no per-rest charge and no condition gate. The
 /// tag lives in the actor's `features` pool, not in
 /// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and

@@ -32,7 +32,7 @@ use std::sync::LazyLock;
 /// threat is the grapple lock-down, not damage soak.
 ///
 /// Stat shape: AC 12, ~13 HP (2d10+2), STR 15, DEX 14, CON 12, INT 1,
-/// WIS 10, CHA 3. Speed 30 (RAW also swim 30 which we don't model as a
+/// WIS 10, CHA 3. Speed 30 (RAW also swim 30, whose magnitude we don't model as a
 /// separate movement lane). Senses: Blindsight 10ft (the snake's heat-
 /// pit sensors). Size Large. CR ¼.
 pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -89,7 +89,8 @@ pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// threat is the reach-2 grapple lock-down on a wide HP bar.
 ///
 /// Stat shape: AC 12, ~60 HP (8d12+8), STR 19, DEX 14, CON 12, INT 1,
-/// WIS 10, CHA 3. Speed 30 (RAW also swim 30 which we don't model).
+/// WIS 10, CHA 3. Speed 30 (RAW also swim 30, whose magnitude we don't
+/// model — but the tag ships, so a pool is free to cross).
 /// Senses: Blindsight 10ft. Size Huge. CR 2.
 pub static GIANT_CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();

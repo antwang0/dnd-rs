@@ -218,11 +218,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // future non-Hunter subclass template (Beast Master, Gloom
         // Stalker, etc.) inherits it for free via `..RANGER_TEMPLATE.clone()`.
         // 5e Ranger **Roving** (optional class feature, 2024 PHB level 6):
-        // passive +5 ft walking speed (RAW also grants climbing +
-        // swimming speeds matching walking, but only the walking-speed
-        // bump has a combat surface in this engine — climbing / swimming
-        // fold into the same `speed()` accessor with no 3D terrain to
-        // differentiate). Ships on the CR-1 baseline template above its
+        // passive +5 ft walking speed, plus RAW's matching climbing and
+        // swimming speeds. The climbing half folds into the same
+        // `speed()` accessor for want of 3D terrain; the swimming half
+        // is a row on `SWIM_SPEED_SOURCES`, and is the reason a ranger
+        // crosses a pool for free where the fighter beside them pays
+        // double. Ships on the CR-1 baseline template above its
         // strict RAW lv6 gate for the same reason Feral Senses (lv18) /
         // Foe Slayer (lv20) already ride here — class templates target
         // a balanced playable level, not lockstep PHB progression. Read

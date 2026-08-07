@@ -100,12 +100,18 @@ pub static SPIRIT_MAUL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// Bestial Spirit — the Medium beast **Summon Beast** puts beside its
 /// caster for a level-2 slot.
 ///
-/// The **Land** branch of RAW's Land/Sky/Water table, picked because the
-/// other two are movement modes the grid doesn't distinguish: a Sky
-/// spirit's flight and a Water spirit's swim speed both come out as
-/// "moves 30 ft on the same tiles", so choosing either would have bought
-/// flavour and changed nothing. Land at least has the highest hit points
-/// of the three, which is what a level-2 slot is actually being spent on.
+/// The **Land** branch of RAW's Land/Sky/Water table, picked because it
+/// has the highest hit points of the three, which is what a level-2 slot
+/// is actually being spent on.
+///
+/// The other two branches are movement modes, and the grid distinguishes
+/// them less than RAW does: a Sky spirit's flight and a Water spirit's
+/// swim speed both come out as "moves 30 ft", since the engine models
+/// one speed magnitude. They are no longer *identical* to Land, though —
+/// flight lifts a creature over difficult terrain and out of the water,
+/// and a swimming speed makes a pool free to cross — so a future branch
+/// picker would have something to pick between. What it would still not
+/// have is a reason to give up the hit points.
 ///
 /// It is the entry rung of the whole family and reads like one: two
 /// small bites, thirty hit points, no resistances at all. What a druid

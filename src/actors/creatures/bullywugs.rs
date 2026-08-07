@@ -15,7 +15,8 @@ use std::sync::LazyLock;
 /// Stats: STR 12, DEX 12, CON 13, INT 7, WIS 10, CHA 7. No special
 /// senses (RAW has none); speaks Bullywug — collapsed to Common in this
 /// engine since Bullywug isn't a Language variant. The amphibious
-/// 40 ft swim speed collapses to the standard 20 ft walk in our
+/// 40 ft swim speed contributes its `SWIM_SPEED_TAG` and collapses
+/// its magnitude into the standard 20 ft walk in our
 /// no-water-terrain model.
 pub static BULLYWUG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();

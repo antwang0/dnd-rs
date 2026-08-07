@@ -32,7 +32,8 @@ use std::sync::LazyLock;
 /// and per-swing damage, not control or resistance.
 ///
 /// Stat shape: AC 13, ~68 HP (8d10+24), STR 18, DEX 15, CON 16, INT 2,
-/// WIS 12, CHA 5. Speed 20 (RAW: 20ft walk + 40ft swim — we collapse
+/// WIS 12, CHA 5. Speed 20 (RAW: 20ft walk + 40ft swim — we keep the
+/// swimming speed as a flag and collapse the magnitudes
 /// to the walking speed since the engine isn't aquatic-aware). Size
 /// Large. CR 2.
 ///

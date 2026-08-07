@@ -35,7 +35,8 @@ use std::sync::LazyLock;
 /// unable to move AND eating attack-against advantage.
 ///
 /// Stat shape: AC 11, ~52 HP (8d10+8), STR 17, DEX 13, CON 13, INT 4,
-/// WIS 10, CHA 4. Speed 20 (RAW: 10ft walk + 60ft swim — we collapse to
+/// WIS 10, CHA 4. Speed 20 (RAW: 10ft walk + 60ft swim — we keep the
+/// swimming speed as a flag and collapse the magnitudes to
 /// a 20ft walking speed since the engine isn't aquatic-aware; the
 /// reach-3 tentacles already give the octopus a kiting advantage from
 /// outside normal melee range). Senses: Darkvision 60. Size Large.

@@ -36,8 +36,8 @@ use std::sync::LazyLock;
 /// dungeon biomes.
 ///
 /// Stat shape: AC 14, ~11 HP (2d8+2), STR 10, DEX 18, CON 13,
-/// INT 2, WIS 10, CHA 3. Speed 30 walking + swim 30 (collapsed
-/// to walking 30 since the engine doesn't track swimming
+/// INT 2, WIS 10, CHA 3. Speed 30 walking + swim 30 (magnitudes
+/// collapsed to walking 30 since the engine doesn't track a swimming
 /// separately). Senses: Blindsight 10, Darkvision 60. Size Medium.
 /// CR ¼. XP: 50 per RAW.
 pub static GIANT_POISONOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {

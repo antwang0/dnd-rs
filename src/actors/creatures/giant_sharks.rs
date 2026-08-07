@@ -30,7 +30,7 @@ use std::sync::LazyLock;
 /// flavor-only — the engine doesn't model the aquatic-vs-land
 /// terrain split, so the clause collapses to the per-creature
 /// 50 walking speed (RAW: swim 50, no land speed; we use the
-/// swim speed as the per-creature speed since giant sharks
+/// swim number as the per-creature speed since giant sharks
 /// never walk).
 ///
 /// Defensive identity: AC 13 (huge + 11 DEX), 126 HP (11d12+44).
@@ -44,7 +44,7 @@ use std::sync::LazyLock;
 /// multiple full rounds to ramp.
 ///
 /// Stat shape: AC 13, ~126 HP (11d12+44), STR 23, DEX 11, CON 19,
-/// INT 1, WIS 10, CHA 5. Speed 50 (RAW swim 50; collapsed to
+/// INT 1, WIS 10, CHA 5. Speed 50 (RAW swim 50; magnitude collapsed to
 /// per-creature speed). Senses: Blindsight 60. Size Huge. CR 5.
 /// XP: 1800 per RAW.
 pub static GIANT_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {

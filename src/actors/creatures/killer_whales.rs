@@ -40,8 +40,9 @@ use std::sync::LazyLock;
 /// combat.
 ///
 /// Stat shape: AC 12, ~90 HP (12d12+12), STR 19, DEX 10, CON 13,
-/// INT 3, WIS 12, CHA 7. Speed 0 walking + swim 60 (collapsed to
-/// 30 since the engine doesn't track swimming separately; the orca
+/// INT 3, WIS 12, CHA 7. Speed 0 walking + swim 60 (magnitude
+/// collapsed to 30 since the engine tracks a swimming speed as a flag
+/// rather than as a second budget; the orca
 /// spends every encounter in or near water and the engine's flat
 /// move budget approximates the swim envelope). Senses:
 /// Blindsight 60. Size Huge. CR 3. XP: 700 per RAW.
@@ -60,8 +61,8 @@ pub static KILLER_WHALE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ac: 12,
         // 12d12+12 = 90 average per MM (CR 3).
         hitpoints: "12d12+12".parse().unwrap(),
-        // RAW: 0 walking + swim 60. Collapsed to 30 (the standard
-        // baseline) since the engine doesn't surface swim speed
+        // RAW: 0 walking + swim 60. Magnitude collapsed to 30 (the
+        // standard baseline) since the engine doesn't surface swim speed
         // separately — most ocean encounters treat tiles as
         // navigable water for the orca's purposes.
         speed: 30.,

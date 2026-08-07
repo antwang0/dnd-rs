@@ -36856,13 +36856,19 @@ fn the_two_surcharges_are_waived_by_different_things() {
     let dest = Coordinate::new(5, 3);
 
     // Land's Stride: free over rubble, charged in water.
-    let (e, ranger) =
-        rough_corridor_walker(&crate::actors::creatures::rangers::RANGER_TEMPLATE);
-    assert!(e.actors[&ranger].has_passive_feature(LANDS_STRIDE_TAG));
-    let stride_rough = e.path_cost_to(ranger, dest).unwrap();
-    let (e, ranger) =
-        flooded_corridor_walker(&crate::actors::creatures::rangers::RANGER_TEMPLATE);
-    let stride_wet = e.path_cost_to(ranger, dest).unwrap();
+    //
+    // The Land Druid rather than the Ranger, though both carry the
+    // feature, and the reason is the rule this test is about: the
+    // Ranger's Roving grants a swimming speed as well, so a ranger
+    // crosses both tiles for free and could not tell the two waivers
+    // apart. The druid carries Land's Stride and nothing wet.
+    let land_druid = &crate::actors::creatures::druids::LAND_DRUID_TEMPLATE;
+    let (e, druid) = rough_corridor_walker(land_druid);
+    assert!(e.actors[&druid].has_passive_feature(LANDS_STRIDE_TAG));
+    assert!(!e.actors[&druid].has_swim_speed(), "and no swimming speed");
+    let stride_rough = e.path_cost_to(druid, dest).unwrap();
+    let (e, druid) = flooded_corridor_walker(land_druid);
+    let stride_wet = e.path_cost_to(druid, dest).unwrap();
     assert!(
         (stride_rough - 5.0).abs() < 0.01,
         "Land's Stride waives the rubble, got {stride_rough}"
@@ -36894,6 +36900,58 @@ fn the_two_surcharges_are_waived_by_different_things() {
         (swim_wet - 5.0).abs() < 0.01,
         "a swimming speed waives the water, got {swim_wet}"
     );
+}
+
+/// The two class features that grant a swimming speed reach every build
+/// on their chassis, and nothing else on the roster gets one for free.
+///
+/// Both are a *clause* of a feature whose headline is a speed bump —
+/// Roving's "+5 ft… you also have a Climb Speed and a Swim Speed", the
+/// Scout's "+10 ft… and climbing and swimming speeds" — which is exactly
+/// the kind of clause that ships as flavour and stays that way. They
+/// were flavour here too until the board had water in it, and the
+/// failure mode if one is dropped is a ranger quietly paying double to
+/// cross a pond.
+#[test]
+fn roving_and_superior_mobility_are_the_two_player_swimming_speeds() {
+    use crate::actors::creatures::{druids, fighters, rangers, rogues};
+    let swimmers: &[&crate::actors::actor_template::CreatureTemplate] = &[
+        &rangers::RANGER_TEMPLATE,
+        &rangers::HUNTER_RANGER_TEMPLATE,
+        &rangers::GLOOM_STALKER_RANGER_TEMPLATE,
+        &rangers::BEAST_MASTER_RANGER_TEMPLATE,
+        &rogues::SCOUT_ROGUE_TEMPLATE,
+    ];
+    let landlubbers: &[&crate::actors::actor_template::CreatureTemplate] = &[
+        &fighters::FIGHTER_TEMPLATE,
+        // The other carrier of Land's Stride, and the control that says
+        // the two features are not the same feature.
+        &druids::LAND_DRUID_TEMPLATE,
+        // The Scout's siblings on the same chassis: the grant is the
+        // subclass's, not the rogue's.
+        &rogues::ROGUE_TEMPLATE,
+        &rogues::ASSASSIN_ROGUE_TEMPLATE,
+    ];
+    for t in swimmers {
+        let (e, id) = flooded_corridor_walker(t);
+        assert!(e.actors[&id].has_swim_speed(), "{} swims", t.name);
+        let cost = e.path_cost_to(id, Coordinate::new(5, 3)).unwrap();
+        assert!(
+            (cost - 5.0).abs() < 0.01,
+            "{} crosses the pool for free, got {cost}",
+            t.name
+        );
+    }
+    for t in landlubbers {
+        let (e, id) = flooded_corridor_walker(t);
+        assert!(!e.actors[&id].has_swim_speed(), "{} does not swim", t.name);
+        let cost = e.path_cost_to(id, Coordinate::new(5, 3)).unwrap();
+        assert!(
+            (cost - 7.5).abs() < 0.01,
+            "{} pays the swimming surcharge, got {cost}",
+            t.name
+        );
+    }
 }
 
 /// Freedom of Movement is the one row on both cohorts, because RAW puts

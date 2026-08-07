@@ -268,7 +268,7 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// still landing every bite, for a third of what it used to.
 ///
 /// Speed 40 for RAW's "0 ft, swim 40 ft" — the engine models one speed
-/// and no water, so the swim number is the one that matters; a swarm of
+/// magnitude, so the swim number is the one that matters; a swarm of
 /// quippers on dry land is not an encounter.
 pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     swarm_template(

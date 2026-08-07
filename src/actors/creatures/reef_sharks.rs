@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 /// flavor-only — the engine doesn't model the aquatic-vs-land
 /// terrain split, so the clause collapses to the per-creature
 /// 40 walking speed (RAW: swim 40, no land speed; we use the
-/// swim speed as the per-creature speed since reef sharks never
+/// swim number as the per-creature speed since reef sharks never
 /// walk).
 ///
 /// Defensive identity: AC 12 (medium + 13 DEX), 22 HP (4d8+4).
@@ -41,7 +41,7 @@ use std::sync::LazyLock;
 ///
 /// Stat shape: AC 12, ~22 HP (4d8+4), STR 14, DEX 13, CON 13,
 /// INT 1, WIS 10, CHA 4. Speed 40 (RAW swim 40; we collapse to
-/// the swim speed as per-creature speed). Senses: Blindsight 30.
+/// the swim number as per-creature speed). Senses: Blindsight 30.
 /// Size Medium. CR ½. XP: 100 per RAW.
 pub static REEF_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();

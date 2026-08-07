@@ -26,8 +26,9 @@ use std::sync::LazyLock;
 /// **Amphibious** (RAW: can breathe air and water) and **Standing
 /// Leap** (long jump up to 20 ft, high jump up to 10 ft) are RAW
 /// flavor-only — the engine doesn't surface 3D movement or
-/// swim/water-terrain mechanics, so both clauses collapse to the
-/// per-creature speed (30 walking; the swim half is omitted).
+/// water-breathing mechanics, so that clause collapses to the
+/// per-creature speed (30 walking); the swimming half survives as the
+/// tag that makes `TerrainType::Water` free to cross.
 ///
 /// The **Swallow** follow-up (RAW: bite again with a Grappled Small-
 /// or-smaller target → swallow whole, taking acid each turn) is
@@ -45,7 +46,8 @@ use std::sync::LazyLock;
 /// target in melee for the rest of the swamp pack to pile on.
 ///
 /// Stat shape: AC 11, ~18 HP (4d8), STR 12, DEX 13, CON 11, INT 2,
-/// WIS 10, CHA 3. Speed 30 (RAW: 30 + swim 30 — we collapse to the
+/// WIS 10, CHA 3. Speed 30 (RAW: 30 + swim 30 — we keep the swimming
+/// speed as a flag and collapse the magnitudes to the
 /// walking speed since the engine isn't aquatic-terrain-aware).
 /// Senses: Darkvision 30. Size Medium. CR ¼. XP: 50 per RAW.
 pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {

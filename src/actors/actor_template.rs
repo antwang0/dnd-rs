@@ -1735,6 +1735,15 @@ const SWIM_SPEED_SOURCES: &[DifficultTerrainImmunity] = &[
     DifficultTerrainImmunity {
         flag: |a| a.has_passive_feature(crate::actions::class_features::SUPERIOR_MOBILITY_TAG),
     },
+    // 5e Ranger **Roving** (2024 PHB lv6): "you also have a Climb Speed
+    // and a Swim Speed equal to your Speed." The sibling clause to the
+    // Scout's, on the other of the two chassis that ship one — and the
+    // one place Roving and Land's Stride, which the ranger also carries,
+    // stop overlapping: Land's Stride is scoped to nonmagical difficult
+    // terrain and a lake is not that.
+    DifficultTerrainImmunity {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
+    },
 ];
 
 /// The 5e exhaustion ladder, one constant per rung, named for what the

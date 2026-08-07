@@ -683,11 +683,18 @@ impl ApplicableSideEffect for DealDamage {
         // "multiple instances of resistance count as only one" holds by
         // construction rather than by the order the lanes happen to be
         // tested in.
-        let positional = POSITIONAL_DAMAGE_HALVINGS.iter().find(|row| {
-            !has_own_reduction
-                && row.types.contains(&self.damage_type)
-                && (row.applies)(ei, self.actor_id)
-        });
+        // `has_own_reduction` gates the whole walk rather than each row:
+        // it does not vary per row, and testing it inside the predicate
+        // would run every row's board query — an aura sweep, a footprint
+        // walk — before discarding all of them.
+        let positional = (!has_own_reduction)
+            .then(|| {
+                POSITIONAL_DAMAGE_HALVINGS.iter().find(|row| {
+                    row.types.contains(&self.damage_type)
+                        && (row.applies)(ei, self.actor_id)
+                })
+            })
+            .flatten();
         let raw_amount = match positional {
             Some(row) => {
                 let halved = self.amount / 2;

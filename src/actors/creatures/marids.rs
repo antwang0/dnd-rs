@@ -49,7 +49,8 @@ use std::sync::LazyLock;
 /// `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
 /// Stat shape: AC 17, ~229 HP (17d10+136), STR 18, DEX 15, CON 22,
-/// INT 14, WIS 18, CHA 18. Speed 30 (RAW also grants swim 90 which we
+/// INT 14, WIS 18, CHA 18. Speed 30 (RAW also grants swim 90, whose
+/// magnitude we
 /// don't model). Senses: Darkvision 120ft. Languages: Aquan collapsed
 /// to Primordial in this engine. Size Large. CR 11.
 pub static MARID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {

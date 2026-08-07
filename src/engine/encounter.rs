@@ -6230,7 +6230,13 @@ impl EncounterInstance {
     /// only non-wall tiles between (exclusive of endpoints). Endpoints are
     /// not checked so callers can target the tile they currently occupy or
     /// the tile they want to attack into. Actors do *not* block LOS — only
-    /// walls do (matches 5e's "creatures don't grant cover" default).
+    /// walls do, which is RAW: a creature in the way grants its target
+    /// half cover (PHB p.196 lists "a creature" alongside the low wall
+    /// and the tree trunk), and half cover is an AC bonus rather than a
+    /// blocked shot. `cover_ac_bonus` is where that lands. The two
+    /// questions used to be conflated in this docstring, which cited a
+    /// "creatures don't grant cover" default 5e does not have and this
+    /// engine does not implement.
     pub fn has_line_of_sight(&self, from: Coordinate, to: Coordinate) -> bool {
         !tiles_between(from, to)
             .any(|c| matches!(self.terrain_at(c), Some(t) if t.terrain_type.blocks_sight()))
@@ -6245,11 +6251,15 @@ impl EncounterInstance {
     /// routine assumes LOS already validated.
     ///
     /// Creatures and low walls count on the same ladder rather than on
-    /// separate ones, which is RAW: a target gets "the most protective
-    /// degree of cover" from whatever is in the way, not a stacking
-    /// bonus per obstruction type. Standing behind a low wall *and*
-    /// behind an ally is three-quarters cover, the same as standing
-    /// behind two allies.
+    /// separate ones, so standing behind a low wall *and* behind an ally
+    /// is three-quarters cover, the same as standing behind two allies.
+    /// One ladder is the RAW half of the design — a target's cover comes
+    /// from whatever is in the way, not as a bonus per obstruction
+    /// *type*. Climbing that ladder by counting obstructions is not:
+    /// RAW takes the most protective single source rather than adding
+    /// them up, so by the book two half-covers is still half cover. See
+    /// the comment at the low-wall branch below for why the engine
+    /// counts anyway.
     ///
     /// The routine is deliberately conservative: it walks the Bresenham
     /// line between the two actors' anchor tiles and stops counting after
@@ -6311,12 +6321,29 @@ impl EncounterInstance {
                 }
             }
             // A low wall under the line obstructs it the same way a body
-            // does. Counted independently of the creature check above:
-            // a creature standing *on* a low-wall tile is two things in
-            // the way, which is three-quarters cover, and RAW agrees —
-            // "if two sources of cover apply, the target gets the more
-            // protective degree", and two half-covers on one line is
-            // exactly what the +5 rung is for.
+            // does, and is counted independently of the creature check
+            // above: a creature standing *on* a low-wall tile is two
+            // things in the way, and this routine's ladder reads two
+            // obstructions as three-quarters cover.
+            //
+            // That ladder is a house simplification and worth naming as
+            // one. RAW is "if two sources of cover apply to a target,
+            // the target's cover is determined by the most protective
+            // degree, not by adding them together" — so by the book, two
+            // half-covers is half cover, and the +5 rung is reached only
+            // by an obstruction that is three-quarters cover on its own,
+            // which nothing on this board is. Counting instead of
+            // maxing is what gives the engine a second rung at all, and
+            // it is the reading that makes a firing lane worth thinking
+            // about: an archer who can find an angle past the second
+            // body has bought something.
+            //
+            // Written down here because the previous version of this
+            // comment cited that same RAW sentence *in support of* the
+            // counting, which reads as fidelity and is the opposite of
+            // it. A deliberate divergence that describes itself as RAW
+            // is worse than an undocumented one — the next reader has no
+            // reason to look.
             if !endpoint_tiles(coord, from, a_span)
                 && !endpoint_tiles(coord, to, b_span)
                 && self

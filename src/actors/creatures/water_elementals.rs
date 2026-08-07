@@ -34,6 +34,7 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // 12d10+48 = ~114 average per MM (CR 5 Water Elemental).
         hitpoints: "12d10+48".parse().unwrap(),
         // RAW: 30 ft walk + 90 ft swim. Engine isn't 3D so we collapse
+        // the magnitudes (the swimming speed itself rides the tag below)
         // to a fast ground speed — comparable to Air's flier without
         // tilting the encounter generator against it.
         speed: 50.,

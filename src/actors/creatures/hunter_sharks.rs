@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 /// flavor-only — the engine doesn't model the aquatic-vs-land
 /// terrain split, so the clause collapses to the per-creature
 /// 40 walking speed (RAW: swim 40, no land speed; we use the
-/// swim speed as the per-creature speed since hunter sharks
+/// swim number as the per-creature speed since hunter sharks
 /// never walk).
 ///
 /// Defensive identity: AC 12 (large + 13 DEX), 45 HP (6d10+12).
@@ -39,7 +39,7 @@ use std::sync::LazyLock;
 /// scratches first.
 ///
 /// Stat shape: AC 12, ~45 HP (6d10+12), STR 18, DEX 13, CON 15,
-/// INT 1, WIS 10, CHA 4. Speed 40 (RAW swim 40; collapsed to
+/// INT 1, WIS 10, CHA 4. Speed 40 (RAW swim 40; magnitude collapsed to
 /// per-creature speed). Senses: Blindsight 30. Size Large. CR 2.
 /// XP: 450 per RAW.
 pub static HUNTER_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
