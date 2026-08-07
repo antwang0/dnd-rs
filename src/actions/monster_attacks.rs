@@ -928,6 +928,32 @@ impl Action for SimpleWeapon {
     fn is_weapon_attack(&self) -> bool {
         true
     }
+    /// Declared rather than derived, because this weapon *knows*.
+    ///
+    /// `Action::is_melee_attack`'s default infers the answer from
+    /// `requires_los` and a reach band, which is the best a bespoke
+    /// `impl Action` can do and strictly worse than reading the field
+    /// the weapon already carries — the same `is_melee` that
+    /// `resolve_attack` is handed as `AttackParams::is_melee`. Two
+    /// consumers were reading the inference where the truth was one
+    /// field away, and they disagreed with the die.
+    ///
+    /// The kraken found it. Its tentacle reaches six tiles, and
+    /// `MELEE_BAND_REACH` stops at four — so the longest arm in the
+    /// bestiary read as a *ranged* attack to everything that asked the
+    /// trait. Three things followed from that, none of them visible as
+    /// an error: `has_ranged_attack` counted the kraken as a shooter,
+    /// so the kiting rungs backed the engine's heaviest melee thresher
+    /// out of contact to use a weapon it swings; the attack picker
+    /// scored the tentacle under `compute_attack_mode`'s *ranged*
+    /// clauses, so a kraken with something in its face believed its own
+    /// tentacle was at disadvantage when the die had never said so; and
+    /// the underwater verdict judged a tentacle by the rules for bows.
+    /// The swing itself was always resolved correctly — only every
+    /// decision leading up to it was made on a wrong answer.
+    fn is_melee_attack(&self) -> bool {
+        self.is_melee
+    }
     fn requires_los(&self) -> bool {
         self.requires_los
     }

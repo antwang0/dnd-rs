@@ -36800,6 +36800,81 @@ fn lands_stride_ships_on_the_ranger_line_and_the_land_druid() {
 // 5e Underwater Combat (PHB p.198)
 // ---------------------------------------------------------------------
 
+/// The longest arm in the bestiary is a melee attack, and every
+/// consumer of the trait agrees with the die about that.
+///
+/// The kraken's tentacle reaches six tiles and `MELEE_BAND_REACH` stops
+/// at four, so `Action::is_melee_attack`'s inference called it a ranged
+/// attack — while `resolve_attack` was handed `is_melee: true` off the
+/// same weapon and resolved every swing as the melee attack it is. The
+/// swing was never wrong; every decision leading up to it was made on
+/// the other answer.
+///
+/// Pinned against the *field* rather than against a number, because the
+/// fix is that `SimpleWeapon` declares instead of inferring: a seventh
+/// tile of reach on some future titan must not reintroduce this, and a
+/// test that asserted `reach <= 6` would let it.
+#[test]
+fn the_krakens_tentacle_is_a_melee_attack_however_far_it_reaches() {
+    use crate::actions::action_template::MELEE_BAND_REACH;
+    use crate::actions::monster_attacks::KRAKEN_TENTACLE;
+
+    let tentacle: &dyn crate::actions::action_template::Action = &KRAKEN_TENTACLE;
+    assert!(
+        tentacle.reach_tiles().is_some_and(|r| r > MELEE_BAND_REACH),
+        "the tentacle is the case that outreaches the inference's band"
+    );
+    assert!(
+        tentacle.is_melee_attack(),
+        "and it is still a swing, not a shot"
+    );
+    assert!(
+        tentacle.normal_range().is_none(),
+        "a swing has no normal range for the underwater cut to read"
+    );
+}
+
+/// Every ranged weapon in the engine declares a normal range.
+///
+/// Two separate rules read that number and neither can ask for it a
+/// second way: 5e's long-range disadvantage ("attacks beyond normal
+/// range have disadvantage"), and Underwater Combat's harder clause
+/// ("automatically misses a target beyond the weapon's normal range").
+/// A ranged weapon that left it unset would be a bow with no falloff
+/// and a bow you can shoot the length of a lake with, and it would look
+/// like a weapon that was simply good.
+///
+/// Swept over every template's action list rather than over the weapon
+/// statics, because the failure is a template shipping an action, and
+/// an unused static is nobody's bug. Melee weapons are excluded by
+/// construction — reach *is* their range — and so is everything that
+/// isn't a weapon attack, since a spell has no normal range and RAW
+/// never gives it one.
+#[test]
+fn every_ranged_weapon_declares_the_normal_range_two_rules_read() {
+    let mut checked = 0;
+    let templates = EncounterInstance::template_pool().into_iter().chain(
+        crate::actors::creatures::pc_template_families()
+            .into_iter()
+            .flat_map(|(_, ts)| ts),
+    );
+    for t in templates {
+        for action in &t.actions {
+            if !action.is_weapon_attack() || action.is_melee_attack() {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                action.normal_range().is_some(),
+                "{}'s {} is a ranged weapon with no normal range",
+                t.name,
+                action.name()
+            );
+        }
+    }
+    assert!(checked > 0, "the sweep found ranged weapons to check");
+}
+
 /// The `rough_corridor_walker` board with the middle tile flooded
 /// instead of strewn with rubble. The two helpers are deliberately
 /// twins: every claim below about what the water charges is a claim

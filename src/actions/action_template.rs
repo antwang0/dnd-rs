@@ -189,13 +189,29 @@ pub fn resolve_enemy_burst_save_damage(
 /// reach weapons would be 2. Ranged actions return their max range here.
 pub const MELEE_REACH: isize = 1;
 
-/// The widest gap a swing can still be a *melee* swing across.
+/// The widest gap a swing can still be a *melee* swing across, for the
+/// actions that have to be guessed at.
 ///
-/// `MELEE_REACH` is the reach of an ordinary weapon; this is the reach
-/// of the longest arm in the bestiary — the Tarrasque's bite and claws
-/// at 15 ft, four tiles on this grid. Between the two sit every reach
-/// weapon in the game: the ogre's greatclub and the hill giant's at 2,
-/// the wyvern's stinger and the storm giant's greatsword at 3.
+/// `MELEE_REACH` is the reach of an ordinary weapon; this is a band
+/// wide enough for the reach weapons — the ogre's greatclub and the
+/// hill giant's at 2, the wyvern's stinger and the storm giant's
+/// greatsword at 3, the Tarrasque's bite and tail sweep at 4.
+///
+/// It is *not* the reach of the longest arm in the bestiary, and the
+/// docstring used to say it was. The kraken's tentacle reaches six, so
+/// for as long as both existed the band called the engine's heaviest
+/// melee thresher a shooter — see `SimpleWeapon::is_melee_attack` for
+/// what that cost. A band can only ever be a guess about where swinging
+/// stops, and the guess was already stale when it was written down as a
+/// fact.
+///
+/// Which is why the band is no longer the primary answer.
+/// `SimpleWeapon` — every shared weapon static in the bestiary —
+/// declares `is_melee_attack` from the same `is_melee` field the die is
+/// handed, so no reach can put it wrong. What is left here is the
+/// fallback for bespoke `impl Action` blocks, which have nothing else
+/// to go on. A future one that swings from further out than four tiles
+/// should override the method rather than widen this number.
 ///
 /// The two exist separately because a great deal of code wants to ask
 /// "is this creature in melee with that one" and had only `MELEE_REACH`
