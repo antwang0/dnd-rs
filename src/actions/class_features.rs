@@ -6480,13 +6480,23 @@ pub const SUMMON_WILDFIRE_SPIRIT_TAG: &str = "druid.summon_wildfire_spirit";
 /// asks whether the damaged creature is standing close enough to the
 /// coils to be shielded by them.
 ///
-/// The two readings never collide: a warlock is never within 10 ft of
-/// *themselves* in the sense the beacon means, because the beacon
-/// search skips the reactor, and the charge is only ever read through
-/// `feature_ready` on the summoner. Sharing one tag rather than minting
-/// a second is the same reasoning `WILDFIRE_SPIRIT_TAG` gives for using
-/// a tag at all — the fact lives on the creature, so a tentacle that
-/// dies and is re-called needs nothing cleaned up.
+/// The two readings do not collide, but only because
+/// `friendly_beacon_within` skips the creature it is measuring *from*.
+/// That exclusion was documented and missing for a while, and this tag
+/// is what it cost: a warlock with no tentacle on the board stood zero
+/// feet from a creature carrying the beacon — themselves — and clamped
+/// their own damage with a feature whose whole premise is a second body
+/// somewhere else. Pinned now by
+/// `a_warlock_with_no_tentacle_does_not_shield_themselves`.
+///
+/// Sharing one tag rather than minting a second is still the same
+/// reasoning `WILDFIRE_SPIRIT_TAG` gives for using a tag at all — the
+/// fact lives on the creature, so a tentacle that dies and is re-called
+/// needs nothing cleaned up. The Shepherd's totems go the other way and
+/// mint a second tag, because their beacon is read to build a *target
+/// list* rather than to answer yes or no, and a druid who was their own
+/// beacon would put every ally near themselves inside the spirit's
+/// aura.
 pub const TENTACLE_OF_THE_DEEP_TAG: &str = "warlock.tentacle_of_the_deep";
 
 /// Class-feature tag for the Fathomless Warlock's **Guardian Coil**

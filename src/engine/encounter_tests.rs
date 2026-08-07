@@ -72977,3 +72977,64 @@ fn the_unicorn_spirit_spills_the_druids_heals_across_its_aura() {
         "the spell's own target should not be paid twice"
     );
 }
+
+/// A Fathomless warlock is not their own tentacle.
+///
+/// `TENTACLE_OF_THE_DEEP_TAG` does two jobs on two creatures — a charge
+/// on the warlock and a beacon on the coils — and the beacon search
+/// documented a self-exclusion it did not implement. So a warlock who
+/// had never called a tentacle stood zero feet from a creature carrying
+/// the beacon (themselves) and clamped their own incoming damage with a
+/// feature whose whole premise is a second body somewhere else.
+///
+/// Nothing caught it because every Guardian Coil test measures from an
+/// ally: the wizard in `guardian_coil_shields_whatever_stands_beside_the_tentacle`
+/// does not carry the warlock's charge, so the collision needed the
+/// warlock themselves to be the one taking the hit.
+#[test]
+fn a_warlock_with_no_tentacle_does_not_shield_themselves() {
+    use crate::actions::class_features::GUARDIAN_COIL_TAG;
+    use crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::warlocks::FATHOMLESS_WARLOCK_TEMPLATE;
+    use crate::engine::attack::apply_reactive_damage_clamps;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+        .unwrap();
+    let warlock = e
+        .instantiate_creature(&FATHOMLESS_WARLOCK_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+        .unwrap();
+    assert_eq!(
+        apply_reactive_damage_clamps(
+            &mut e,
+            goblin,
+            warlock,
+            20,
+            true,
+            false,
+            DamageType::Slashing
+        ),
+        20,
+        "the warlock's own charge tag was read as a tentacle standing beside them"
+    );
+    assert!(e.actors[&warlock].feature_available(GUARDIAN_COIL_TAG));
+
+    // And with a real tentacle beside them, the coils do shield the
+    // warlock — RAW's "when you or a creature you can see within 10
+    // feet of your tentacle takes damage" covers the warlock too.
+    e.instantiate_creature(&TENTACLE_OF_THE_DEEP_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        apply_reactive_damage_clamps(
+            &mut e,
+            goblin,
+            warlock,
+            20,
+            true,
+            false,
+            DamageType::Slashing
+        ) < 20
+    );
+}
