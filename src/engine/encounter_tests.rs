@@ -55735,43 +55735,8 @@ fn dark_ones_blessing_does_not_fire_on_friendly_kill() {
 /// construction.
 #[test]
 fn once_per_turn_rider_ledger_tags_are_independent() {
-    use crate::actions::class_features::{
-        ANCESTRAL_PROTECTORS_TAG, ARCANE_JOLT_TAG, BOND_OF_FANG_AND_SCALE_TAG,
-        COLOSSUS_SLAYER_TAG, DEFT_STRIKE_TAG,
-        DIVINE_FURY_TAG, DREADFUL_STRIKES_TAG, EMPOWERED_ARMS_TAG, FOE_SLAYER_TAG,
-        FEROCIOUS_CHARGER_TAG, FORM_OF_DREAD_TAG, GATHERED_SWARM_TAG, GIANTS_MIGHT_RIDER_TAG,
-        LIGHTNING_LAUNCHER_TAG, ONCE_PER_TURN_RIDER_TAGS, PLANAR_WARRIOR_TAG,
-        HAND_OF_HARM_TAG, PSIONIC_STRIKE_TAG, PSYCHIC_BLADES_TAG, SLAYERS_PREY_TAG,
-        SNEAK_ATTACK_TAG,
-    };
+    use crate::actions::class_features::ONCE_PER_TURN_RIDER_TAGS;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    // Sanity: the registry lists every named tag we're checking so
-    // this test also pins the cohort inventory.
-    assert_eq!(
-        ONCE_PER_TURN_RIDER_TAGS.len(),
-        20,
-        "once-per-turn rider tag registry drifted"
-    );
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ANCESTRAL_PROTECTORS_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&BOND_OF_FANG_AND_SCALE_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FEROCIOUS_CHARGER_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&ARCANE_JOLT_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&LIGHTNING_LAUNCHER_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&EMPOWERED_ARMS_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FORM_OF_DREAD_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DEFT_STRIKE_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&HAND_OF_HARM_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GIANTS_MIGHT_RIDER_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DIVINE_FURY_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DREADFUL_STRIKES_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSYCHIC_BLADES_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PSIONIC_STRIKE_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&PLANAR_WARRIOR_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SLAYERS_PREY_TAG));
-    assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&GATHERED_SWARM_TAG));
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let g = e
@@ -73036,5 +73001,75 @@ fn a_warlock_with_no_tentacle_does_not_shield_themselves() {
             false,
             DamageType::Slashing
         ) < 20
+    );
+}
+
+/// The once-per-turn ledger registry names every rider that writes to
+/// it, and names nothing else.
+///
+/// `ONCE_PER_TURN_RIDER_TAGS` is what `reset_for_new_round` walks, so a
+/// rider whose tag is missing fires once per *fight* rather than once
+/// per turn — silently, because a ledger entry that is never cleared
+/// is indistinguishable from a rider that has already gone off. The
+/// other direction matters less but is still worth pinning: a tag left
+/// in the registry after its rider was deleted is a line nobody can
+/// tell is dead.
+///
+/// Derived from the two cohorts rather than restated. The membership
+/// used to be a hardcoded length plus twenty hand-written `contains`
+/// lines, which is twenty lines to edit for every new rider and no
+/// guarantee whatsoever for the one nobody remembered to add — the
+/// count moves, the assertion is updated, and the tag is still missing.
+#[test]
+fn the_once_per_turn_ledger_registry_names_every_rider() {
+    use crate::actions::class_features::{
+        ANCESTRAL_PROTECTORS_TAG, DIVINE_FURY_TAG, FEROCIOUS_CHARGER_TAG, FOE_SLAYER_TAG,
+        ONCE_PER_TURN_RIDER_TAGS, SNEAK_ATTACK_TAG,
+    };
+    use crate::engine::attack::{ONCE_PER_TURN_WEAPON_DIE_RIDERS, on_hit_rider_ledger_tags};
+    use std::collections::HashSet;
+
+    /// Tags on the ledger that belong to no cohort row, because their
+    /// rider is open-coded rather than declarative. Four damage riders
+    /// whose log or bonus shape doesn't fit either table (Sneak Attack,
+    /// Foe Slayer, Divine Fury, Ferocious Charger) and one that isn't a
+    /// damage rider at all — Ancestral Protectors uses the ledger to
+    /// enforce "the first creature you hit on your turn".
+    ///
+    /// Listed rather than allowed by default, so the day one of them
+    /// moves onto a cohort this test says so instead of shrugging.
+    const OPEN_CODED: &[&str] = &[
+        SNEAK_ATTACK_TAG,
+        FOE_SLAYER_TAG,
+        DIVINE_FURY_TAG,
+        FEROCIOUS_CHARGER_TAG,
+        ANCESTRAL_PROTECTORS_TAG,
+    ];
+
+    let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();
+    assert_eq!(
+        declared.len(),
+        ONCE_PER_TURN_RIDER_TAGS.len(),
+        "a tag is listed twice on the ledger registry"
+    );
+
+    let reached: HashSet<&str> = ONCE_PER_TURN_WEAPON_DIE_RIDERS
+        .iter()
+        .map(|spec| spec.tag)
+        .chain(on_hit_rider_ledger_tags())
+        .chain(OPEN_CODED.iter().copied())
+        .collect();
+
+    let unregistered: Vec<&&str> = reached.difference(&declared).collect();
+    assert!(
+        unregistered.is_empty(),
+        "these riders write a ledger nothing clears: {:?}",
+        unregistered
+    );
+    let orphaned: Vec<&&str> = declared.difference(&reached).collect();
+    assert!(
+        orphaned.is_empty(),
+        "these ledger tags belong to no rider: {:?}",
+        orphaned
     );
 }

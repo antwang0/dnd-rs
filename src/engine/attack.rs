@@ -4789,6 +4789,28 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         },
 ];
 
+/// Every once-per-turn ledger key `ON_HIT_RIDERS` writes through, read
+/// back out of the private table.
+///
+/// The sibling of `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, which is public
+/// and can be walked directly. Both cohorts key the same ledger on
+/// `ActorInstance`, and a tag that reaches one of them without reaching
+/// `ONCE_PER_TURN_RIDER_TAGS` is a rider that fires once per *fight*
+/// instead of once per turn — silently, because a ledger that is never
+/// cleared looks exactly like a rider that has already gone off.
+///
+/// Exists so `the_once_per_turn_ledger_registry_names_every_rider` can
+/// derive the registry's membership instead of restating it: the list
+/// used to be twenty hand-written `contains` assertions plus a length,
+/// which is twenty lines to edit for every new rider and no invariant
+/// at all for the tags nobody remembered to add.
+pub fn on_hit_rider_ledger_tags() -> Vec<&'static str> {
+    ON_HIT_RIDERS
+        .iter()
+        .filter_map(|r| r.once_per_turn_tag)
+        .collect()
+}
+
 /// The blast radius the Bursting Arrow row actually delivers, read back
 /// out of `ON_HIT_RIDERS`. `None` if the row has gone.
 ///
