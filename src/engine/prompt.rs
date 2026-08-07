@@ -59,6 +59,79 @@ impl Prompt {
             .map(|(id, _)| TargetArg::Actor(*id))
     }
 
+    /// Resolve the leading tokens of a command line to one of `actions`,
+    /// returning how many tokens the name consumed and what it named.
+    ///
+    /// **The** action-addressing rule, and a function rather than a
+    /// paragraph inside `process_input` because it has a second caller:
+    /// `every_pc_action_is_reachable_by_its_canonical_name` sweeps every
+    /// action on every playable template through it. That sweep used to
+    /// carry a hand-copied reimplementation of this body under a comment
+    /// reading "mirror `process_input`'s resolution", which is a test
+    /// that proves a property of its own copy — the moment the parser
+    /// changed and the copy did not, the sweep would keep passing while
+    /// guaranteeing nothing.
+    ///
+    /// The rule, in order:
+    ///
+    ///   1. **Longest token-prefix first.** `scorching ray id:3` is the
+    ///      two-token action "scorching ray" and one argument, not the
+    ///      one-token action "scorching" and two.
+    ///   2. **Canonical names before aliases, at every width.** Aliases
+    ///      are short and collide freely across a big caster's list, and
+    ///      some collide with another action's real name — a wizard
+    ///      carries both Darkness and Maddening Darkness, and the latter
+    ///      aliases "darkness". A single pass that mixed the two kinds
+    ///      resolved by action-list order, so `darkness` cast a
+    ///      level-8 slot. A canonical name is the one handle a player
+    ///      can be certain of, so nothing may shadow it.
+    ///   3. **An ambiguous alias is refused, not guessed.** Aliases
+    ///      collide with each other constantly ("sphere" is claimed by
+    ///      four spells on the sorcerer's list, "fs" by three), and the
+    ///      old rule handed the collision to whichever came first in the
+    ///      action list. That is a silent wrong-spell: a wizard typing
+    ///      `bh` for Burning Hands got Bigby's Hand and a 5th-level slot
+    ///      instead of a 1st. Refusing costs the player one retype and
+    ///      tells them exactly what to type; guessing costs them the
+    ///      slot and tells them nothing. Every action stays reachable by
+    ///      its full name, which is what makes the refusal cheap.
+    ///
+    /// `Err` carries the message `process_input` shows the player.
+    pub fn resolve_action<'a>(
+        actions: &[&'a (dyn Action + Send + Sync)],
+        tokens: &[&str],
+    ) -> Result<(usize, &'a (dyn Action + Send + Sync)), String> {
+        for n in (1..=tokens.len()).rev() {
+            let candidate = tokens[..n].join(" ");
+            if let Some(act) = actions.iter().find(|e| candidate == e.name()) {
+                return Ok((n, *act));
+            }
+            // Aliases are single-token by construction, so only the
+            // narrowest width can match one.
+            if n != 1 {
+                continue;
+            }
+            let by_alias: Vec<&'a (dyn Action + Send + Sync)> = actions
+                .iter()
+                .filter(|e| e.aliases().contains(&tokens[0]))
+                .copied()
+                .collect();
+            match by_alias.len() {
+                0 => {}
+                1 => return Ok((1, by_alias[0])),
+                _ => {
+                    let names: Vec<&str> = by_alias.iter().map(|a| a.name()).collect();
+                    return Err(format!(
+                        "{:?} is ambiguous — it is short for {}. Type the full name.",
+                        tokens[0],
+                        names.join(", ")
+                    ));
+                }
+            }
+        }
+        Err(format!("unknown or unavailable action {:?}", tokens[0]))
+    }
+
     pub fn process_input(
         &self,
         input: &str,
@@ -74,55 +147,8 @@ impl Prompt {
             return Err(ParseError::with_input("empty input", input));
         }
 
-        // Match action by the longest token-prefix that names an action.
-        // We try N tokens, then N-1, etc., so multi-word spell names like
-        // "scorching ray" or "hold person" work alongside single-token
-        // names. Aliases are still single-token (e.g. "sr", "hp").
-        //
-        // At each width, **canonical names are tried before aliases**.
-        // That ordering is load-bearing rather than cosmetic: aliases are
-        // short and collide freely across a big caster's action list, and
-        // some of them collide with another action's real name. A wizard
-        // carries both Darkness and Maddening Darkness, and the latter
-        // aliases "darkness" — so a single-pass search that mixed the two
-        // kinds resolved by *action-list order*, and typing `darkness`
-        // cast Maddening Darkness (a level-8 slot) instead. A canonical
-        // name is the one handle a player can be certain of, so nothing
-        // is allowed to shadow it.
-        //
-        // Alias-vs-alias collisions are left resolved by list order and
-        // are not treated as bugs: short handles are a convenience, every
-        // action stays reachable by its full name, and renaming a few
-        // hundred of them across the spell list would trade a small
-        // ambiguity for a large one.
-        let mut action_opt: Option<(usize, &(dyn Action + Send + Sync))> = None;
-        for n in (1..=tokens.len()).rev() {
-            let candidate = tokens[..n].join(" ");
-            let by_name = self
-                .actions
-                .iter()
-                .find(|e| candidate == e.name())
-                .copied();
-            let matched = by_name.or_else(|| {
-                if n != 1 {
-                    return None;
-                }
-                self.actions
-                    .iter()
-                    .find(|e| e.aliases().contains(&tokens[0]))
-                    .copied()
-            });
-            if let Some(act) = matched {
-                action_opt = Some((n, act));
-                break;
-            }
-        }
-        let Some((consumed, action)) = action_opt else {
-            return Err(ParseError::with_input(
-                format!("unknown or unavailable action {:?}", tokens[0]),
-                input,
-            ));
-        };
+        let (consumed, action) = Self::resolve_action(&self.actions, &tokens)
+            .map_err(|msg| ParseError::with_input(msg, input))?;
 
         let mut target_ids: Vec<usize> = Vec::new();
         let mut target_locations: Vec<Coordinate> = Vec::new();
@@ -379,13 +405,14 @@ mod tests {
     /// survive new content — a spell added with an alias that happens to
     /// equal an existing spell's name fails here rather than in play.
     ///
-    /// Alias-vs-alias collisions are deliberately *not* asserted. They
-    /// are pervasive across the large caster lists ("sphere" is claimed
-    /// by four spells on the sorcerer), resolve by list order, and cost
-    /// nothing that the canonical name doesn't recover.
+    /// Alias-vs-alias collisions are not asserted *here*, because they
+    /// are no longer resolved silently — `resolve_action` refuses them
+    /// and says what they were short for. See
+    /// `an_ambiguous_alias_is_refused_rather_than_guessed`.
     #[test]
     fn every_pc_action_is_reachable_by_its_canonical_name() {
         use crate::actions::action_template::Action;
+        use super::Prompt;
         let families = crate::actors::creatures::pc_template_families();
         for (_label, family) in families {
             for template in family {
@@ -393,31 +420,12 @@ mod tests {
                     template.actions.clone();
                 for action in &actions {
                     let name = action.name();
-                    // Mirror `process_input`'s resolution: longest
-                    // token-prefix first, canonical names before aliases.
                     let tokens: Vec<&str> = name.split_whitespace().collect();
-                    let mut resolved: Option<&str> = None;
-                    for n in (1..=tokens.len()).rev() {
-                        let candidate = tokens[..n].join(" ");
-                        let by_name =
-                            actions.iter().find(|e| candidate == e.name()).copied();
-                        let matched = by_name.or_else(|| {
-                            if n != 1 {
-                                return None;
-                            }
-                            actions
-                                .iter()
-                                .find(|e| e.aliases().contains(&tokens[0]))
-                                .copied()
-                        });
-                        if let Some(act) = matched {
-                            resolved = Some(act.name());
-                            break;
-                        }
-                    }
+                    let resolved = Prompt::resolve_action(&actions, &tokens)
+                        .map(|(_, act)| act.name());
                     assert_eq!(
                         resolved,
-                        Some(name),
+                        Ok(name),
                         "{}: typing '{}' resolves to {:?}",
                         template.name,
                         name,
@@ -428,6 +436,62 @@ mod tests {
         }
     }
 
+    /// An alias two actions on the same list both claim is refused with
+    /// both names, rather than silently resolving to whichever the list
+    /// happens to hold first.
+    ///
+    /// The wizard is the fixture because it is the chassis where this
+    /// bit: it carries Burning Hands and Bigby's Hand, both of which
+    /// alias "bh", and list order gave the level-5 one. Driven through
+    /// the real parser (not just the resolver) so the message the player
+    /// actually sees is what is pinned.
+    #[test]
+    fn an_ambiguous_alias_is_refused_rather_than_guessed() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use super::Prompt;
+
+        let mut e = ei();
+        let wizard = e
+            .instantiate_creature(
+                &WIZARD_TEMPLATE,
+                crate::engine::types::Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        let actions = e.actors[&wizard].available_actions();
+        // The fixture is only meaningful while the collision exists.
+        let claimants: Vec<&str> = actions
+            .iter()
+            .filter(|a| a.aliases().contains(&"bh"))
+            .map(|a| a.name())
+            .collect();
+        assert!(
+            claimants.len() > 1,
+            "the wizard should still carry more than one \"bh\": {:?}",
+            claimants
+        );
+
+        let prompt = Prompt::new(wizard, actions);
+        let Err(err) = prompt.process_input("bh 5,5", &e) else {
+            panic!("an ambiguous alias should be refused");
+        };
+        for name in &claimants {
+            assert!(
+                err.message().contains(name),
+                "the refusal should name {:?}: {}",
+                name,
+                err.message()
+            );
+        }
+
+        // And the unambiguous full name still works, which is what makes
+        // the refusal cheap.
+        assert!(
+            prompt.process_input("burning hands 6,5", &e).is_ok(),
+            "the canonical name is always reachable"
+        );
+    }
 
 }
 

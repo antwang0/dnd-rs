@@ -1740,6 +1740,18 @@ pub struct EncounterInstance {
     /// entirely (nothing has wrapped yet), and the turn hook misses a
     /// round in which the encounter ends before anyone is prompted.
     lair_acted_round: Option<u32>,
+    /// Casters whose concentration-held map layer expired on its own
+    /// timer this round, queued for `release_concentration_with_nothing_left`
+    /// to look at once every timer has finished ticking.
+    ///
+    /// A queue rather than a direct call because the two producers
+    /// (`tick_zones`, `tick_conjured_terrain`) run mid-teardown, and a
+    /// caster who is holding both a zone and a patch would otherwise be
+    /// judged by the first of them to expire — with the second still
+    /// standing and about to expire in the same tick. Draining once at
+    /// the end of `round_end` asks the question exactly when the answer
+    /// is stable. Always empty between rounds.
+    pending_concentration_review: Vec<usize>,
     terrain: Vec<TerrainInfo>,
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
@@ -5566,16 +5578,22 @@ impl EncounterInstance {
     /// out. Called from `round_end`, beside `tick_zones`.
     fn tick_conjured_terrain(&mut self) {
         let mut expired: Vec<(usize, String)> = Vec::new();
+        // The terrain-layer twin of `tick_zones`'s bereaved list.
+        let mut bereaved: Vec<usize> = Vec::new();
         for patch in self.conjured_terrain.iter_mut() {
             patch.rounds_remaining = patch.rounds_remaining.saturating_sub(1);
             if patch.rounds_remaining == 0 {
                 expired.push((patch.id, patch.name.to_string()));
+                if patch.concentration {
+                    bereaved.push(patch.owner_id);
+                }
             }
         }
         for (id, name) in expired {
             self.dispel_conjured_terrain(id);
             self.log(format!("The {} crumbles away.", name));
         }
+        self.pending_concentration_review.append(&mut bereaved);
     }
 
     /// Take down every concentration-held patch `actor_id` is
@@ -5872,16 +5890,25 @@ impl EncounterInstance {
     /// map-layer sibling of.
     fn tick_zones(&mut self) {
         let mut expired: Vec<(usize, String)> = Vec::new();
+        // Owners whose concentration-held area is the thing that just
+        // ran out. Reported so `round_end` can ask whether the caster
+        // has anything left to concentrate *on* — see
+        // `release_concentration_with_nothing_left`.
+        let mut bereaved: Vec<usize> = Vec::new();
         for zone in self.zones.iter_mut() {
             zone.rounds_remaining = zone.rounds_remaining.saturating_sub(1);
             if zone.rounds_remaining == 0 {
                 expired.push((zone.id, zone.name.to_string()));
+                if zone.concentration {
+                    bereaved.push(zone.owner_id);
+                }
             }
         }
         for (id, name) in expired {
             self.remove_zone(id);
             self.log(format!("The {} disperses.", name));
         }
+        self.pending_concentration_review.append(&mut bereaved);
     }
 
     /// Tear down every concentration-held zone `actor_id` is sustaining.
@@ -8085,6 +8112,7 @@ impl EncounterInstance {
             height: terrain_params.height,
             round: 1,
             lair_acted_round: None,
+            pending_concentration_review: Vec::new(),
             terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
@@ -12575,6 +12603,96 @@ impl EncounterInstance {
         // somebody's way.
         self.tick_zones();
         self.tick_conjured_terrain();
+        // Every timer has now ticked, so this is the first moment at
+        // which "does this caster still have a spell up" has a stable
+        // answer.
+        self.release_concentration_with_nothing_left();
+    }
+
+    /// Release any concentration whose last anchor lapsed on a timer.
+    ///
+    /// Concentration used to end only when something *happened* to the
+    /// caster — damage broke the grip, a second concentration spell
+    /// replaced it, the caster died, a target broke free. Nothing ended
+    /// it when the spell simply ran out, and every concentration spell
+    /// in the game runs out: a Web's zone disperses after ten rounds, a
+    /// Fear's Frightened cohort ticks to zero, a Wall of Fire crumbles.
+    /// The caster went on "concentrating" on a spell with nothing left
+    /// of it for the rest of the encounter, and since
+    /// `caster_can_concentrate` is what gates a concentration cast, they
+    /// could never cast one again. One Fear at round two cost a wizard
+    /// every Web, Haste, Slow and Hold Monster for the rest of the
+    /// fight, and the log said nothing.
+    ///
+    /// Two shapes of anchor, and both have to be gone:
+    ///
+    ///   - **Map layers.** A zone or a conjured patch that declared
+    ///     itself concentration-held. Reached through
+    ///     `pending_concentration_review`, which the two tick routines
+    ///     fill with the owners of anything that just expired — so a
+    ///     caster is only asked about at all when something of theirs
+    ///     actually ran out, and never merely for holding a spell.
+    ///   - **Tracked conditions.** The `(target, condition)` pairs the
+    ///     cast recorded on its `ConcentrationData`. Swept every round
+    ///     rather than reported, because a condition can leave for
+    ///     several reasons that have no single chokepoint — its timer,
+    ///     a cleanse, an immunity that bounced the install at cast time.
+    ///
+    /// A `ConcentrationData` that recorded no conditions and holds no
+    /// map layer is deliberately left alone. That combination is the
+    /// untracked-aura shape — Crusader's Mantle, Mordenkainen's Sword,
+    /// Crown of Stars — whose whole effect is the concentration marker
+    /// itself, and which has no anchor to lose. Nothing here can tell
+    /// "the marker is the spell" apart from "the anchors are gone", so
+    /// the sweep declines to guess and the queue is what reaches the
+    /// map-layer cases the sweep cannot see.
+    fn release_concentration_with_nothing_left(&mut self) {
+        let reported: Vec<usize> = std::mem::take(&mut self.pending_concentration_review);
+        let mut doomed: Vec<usize> = Vec::new();
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let Some(data) = self.actors.get(&id).and_then(|a| a.concentration()).cloned()
+            else {
+                continue;
+            };
+            let tracks_conditions = !data.conditions.is_empty();
+            if !tracks_conditions && !reported.contains(&id) {
+                // Neither anchor is in play for this caster: either they
+                // hold an untracked aura, or their map layers are all
+                // still standing. Nothing to review.
+                continue;
+            }
+            let condition_alive = data.conditions.iter().any(|&(target_id, condition)| {
+                self.actors
+                    .get(&target_id)
+                    .is_some_and(|t| t.has_condition(condition))
+            });
+            if condition_alive || self.sustains_concentration_layer(id) {
+                continue;
+            }
+            doomed.push(id);
+        }
+        for id in doomed {
+            self.drop_concentration(id);
+        }
+    }
+
+    /// Whether `actor_id` is still holding up any concentration-bound
+    /// map layer — a persistent area or a conjured patch.
+    ///
+    /// The read-side counterpart of `release_map_layers_of`, which is
+    /// the write side of the same question, and phrased over both layers
+    /// for the same reason: a spell that put down one of each is still
+    /// up while either stands.
+    fn sustains_concentration_layer(&self, actor_id: usize) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.concentration && z.owner_id == actor_id)
+            || self
+                .conjured_terrain
+                .iter()
+                .any(|p| p.concentration && p.owner_id == actor_id)
     }
 
     /// Move `actor_id`'s stamp on the occupancy grid from wherever it is

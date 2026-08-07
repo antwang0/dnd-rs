@@ -74420,3 +74420,188 @@ fn every_spell_in_the_new_batch_is_carried_by_some_playable_template() {
         );
     }
 }
+
+/// Concentration that has lost every anchor it recorded is released at
+/// round end, rather than being held forever on a spell that is over.
+///
+/// The condition-anchored half. The fixture installs the shape a
+/// short-timer control spell produces — a tracked `(target, condition)`
+/// pair on a timer — and runs the clock past it.
+///
+/// Before this, `caster_can_concentrate` stayed false for the rest of
+/// the encounter, and since that predicate is what gates a
+/// concentration cast, one Fear in round two cost a wizard every Web,
+/// Haste and Hold Monster it would ever cast.
+#[test]
+fn concentration_ends_when_the_condition_it_installed_lapses() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Frightened, ConditionTimer::Rounds(2));
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(ConcentrationData::with_conditions(
+            "Probe",
+            vec![(goblin, Condition::Frightened)],
+        ));
+
+    // Still anchored while the condition is standing.
+    e.round_end();
+    assert!(
+        e.actors[&wiz].is_concentrating(),
+        "a spell whose effect is still up is still being concentrated on"
+    );
+
+    // Two more round-ends take the timer past zero.
+    e.round_end();
+    e.round_end();
+    assert!(!e.actors[&goblin].has_condition(Condition::Frightened));
+    assert!(
+        !e.actors[&wiz].is_concentrating(),
+        "nothing is left of the spell, so nothing is left to concentrate on"
+    );
+    assert!(e.caster_can_concentrate(wiz));
+}
+
+/// The map-layer half of the same rule: a concentration-held area that
+/// runs out its own timer takes the caster's concentration with it, and
+/// one that is still standing does not.
+#[test]
+fn concentration_ends_when_the_area_it_placed_disperses() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::InstallZone;
+    use crate::engine::zones::Zone;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // The bare-marker shape every zone spell uses: no tracked
+    // conditions, the area itself is the anchor.
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(ConcentrationData::new("Probe Cloud"));
+    InstallZone {
+        zone: Zone {
+            id: 0,
+            name: "probe cloud",
+            owner_id: wiz,
+            origin: Coordinate::new(8, 8),
+            radius: 1,
+            effect: ZoneEffect::OBSCURING,
+            rounds_remaining: 2,
+            concentration: true,
+            motion: ZoneMotion::Fixed,
+        },
+        catch_present: false,
+    }
+    .apply(&mut e);
+
+    e.round_end();
+    assert!(
+        e.actors[&wiz].is_concentrating(),
+        "the cloud is still on the board"
+    );
+    e.round_end();
+    assert!(
+        !e.actors[&wiz].is_concentrating(),
+        "the cloud dispersed, so the spell is over"
+    );
+}
+
+/// The case the sweep must not touch: a concentration marker that
+/// recorded no anchors at all is the whole spell, and is left alone.
+///
+/// Crusader's Mantle, Mordenkainen's Sword and Crown of Stars all ship
+/// this shape — `ConcentrationData::new` with the effect read straight
+/// off the marker — so a sweep that treated "no live anchor" as "the
+/// spell is over" would end all three on the first round end after the
+/// cast.
+#[test]
+fn an_untracked_concentration_aura_survives_the_sweep() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(ConcentrationData::new("Mordenkainen's Sword"));
+    for _ in 0..5 {
+        e.round_end();
+    }
+    assert!(
+        e.actors[&wiz].is_concentrating(),
+        "an aura with no anchor to lose keeps its marker"
+    );
+}
+
+/// A spell with both anchors — Web restrains creatures *and* clings to
+/// the floor — survives on either one alone.
+#[test]
+fn a_two_anchor_spell_survives_on_whichever_anchor_is_left() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::InstallZone;
+    use crate::engine::zones::Zone;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+    // The condition lapses first; the web itself outlasts it.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Restrained, ConditionTimer::Rounds(1));
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .start_concentration(ConcentrationData::with_conditions(
+            "Probe Web",
+            vec![(goblin, Condition::Restrained)],
+        ));
+    InstallZone {
+        zone: Zone {
+            id: 0,
+            name: "probe web",
+            owner_id: wiz,
+            origin: Coordinate::new(8, 8),
+            radius: 1,
+            effect: ZoneEffect::OBSCURING,
+            rounds_remaining: 6,
+            concentration: true,
+            motion: ZoneMotion::Fixed,
+        },
+        catch_present: false,
+    }
+    .apply(&mut e);
+
+    e.round_end();
+    assert!(!e.actors[&goblin].has_condition(Condition::Restrained));
+    assert!(
+        e.actors[&wiz].is_concentrating(),
+        "the web is still on the floor even with nobody stuck in it"
+    );
+}
