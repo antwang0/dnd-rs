@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::REEF_SHARK_BITE;
 use crate::actors::actor_template::CreatureTemplate;
@@ -71,6 +72,9 @@ pub static REEF_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Beast,
         actions,
         has_pack_tactics: true,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

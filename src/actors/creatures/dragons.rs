@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     DRAGON_BITE, DRAGON_BREATH_COLD, DRAGON_BREATH_FIRE, DRAGON_BREATH_LIGHTNING,
@@ -123,6 +124,9 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         // breath weapon is still on a 5-6 recharge.
         recharge_abilities: vec![("breath_weapon", 5)],
         has_extra_attack: true,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

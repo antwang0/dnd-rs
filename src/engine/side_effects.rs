@@ -182,6 +182,80 @@ pub const SPELL_TYPICAL_DAMAGE_TYPES: &[DamageType] = &[
     DamageType::Thunder,
 ];
 
+/// One row in the `POSITIONAL_DAMAGE_HALVINGS` cohort — a halving that
+/// belongs to *where the target is standing* rather than to anything on
+/// its sheet.
+///
+/// The distinguishing property, and the reason these can't ride the
+/// existing template / condition / item resistance lanes: none of them
+/// is a fact about the creature. `ActorInstance::effective_damage` is
+/// handed a raw number and a damage type and nothing else — no board,
+/// no coordinates, no aura membership — so a rule that depends on the
+/// creature's *position* has nowhere to be asked from in there. It has
+/// to be asked here, where `DealDamage::apply` still holds the whole
+/// encounter, and it has to be asked *before* `effective_damage` so
+/// 5e's "multiple instances of resistance count as only one" still
+/// holds.
+struct PositionalDamageHalving {
+    /// Does the row apply to this actor, standing where it is standing?
+    applies: fn(&EncounterInstance, usize) -> bool,
+    /// Which damage types the row answers. Every row is type-filtered —
+    /// a positional halving that covered everything would be a
+    /// resistance to all damage, which nothing in 5e grants for free.
+    types: &'static [DamageType],
+    /// Log-friendly source name ("aura of warding", "fully immersed").
+    label: &'static str,
+    /// Verb for the log line, so each row reads as its own sentence
+    /// rather than as a shared euphemism.
+    verb: &'static str,
+}
+
+/// Every halving the board grants, walked once by `DealDamage::apply`.
+///
+/// **At most one row fires per damage instance**, and the walk stops at
+/// the first match rather than compounding — that is 5e's stacking rule
+/// (PHB p.197), not an optimisation. A paladin's aura and a lake do not
+/// quarter a fireball between them.
+///
+/// The whole cohort is additionally skipped when the target already
+/// has a resistance, vulnerability or immunity to the type from its own
+/// sheet, for the same reason: whichever halving would have applied is
+/// the second one, and the second one does nothing. A fire-resistant
+/// magmin standing in a pool takes half, not a quarter.
+///
+/// Entries (in order):
+///   - **Aura of Warding** (Ancients Paladin lv7): allies inside the
+///     10-ft aura resist damage from spells, approximated by
+///     `SPELL_TYPICAL_DAMAGE_TYPES` — see that constant for why the set
+///     is what it is.
+///   - **Fully immersed** (5e Underwater Combat, PHB p.198): "creatures
+///     and objects that are fully immersed in water have resistance to
+///     fire damage." The only rule in the engine that a creature gets
+///     purely by standing somewhere, with no feature, spell or item
+///     behind it — which makes it the row that justifies the cohort's
+///     existence rather than a second `if` beside the aura's.
+///
+/// Order matters only when a single instance could match both rows,
+/// which is a fire spell landing on an ally who is both in the aura and
+/// in the water. The aura wins because it is the narrower, chosen
+/// effect — somebody spent a class feature to be standing there — and
+/// because the two halve by the same amount, so the choice is only ever
+/// visible in the log line.
+const POSITIONAL_DAMAGE_HALVINGS: &[PositionalDamageHalving] = &[
+    PositionalDamageHalving {
+        applies: EncounterInstance::is_in_aura_of_warding,
+        types: SPELL_TYPICAL_DAMAGE_TYPES,
+        label: "aura of warding",
+        verb: "shrugs off spell magic",
+    },
+    PositionalDamageHalving {
+        applies: EncounterInstance::is_immersed,
+        types: &[DamageType::Fire],
+        label: "fully immersed",
+        verb: "is shielded by the water",
+    },
+];
+
 /// Walk `side_effects` and call `extend_duration` on each entry. Returns
 /// true if at least one entry doubled its timer (i.e. the cast carried
 /// an eligible long-duration install). Used by both the original
@@ -603,29 +677,27 @@ impl ApplicableSideEffect for DealDamage {
             )
         };
 
-        // 5e Ancients Paladin **Aura of Warding** (lv7): allies inside
-        // a paladin's 10-ft aura resist damage from spells. We
-        // approximate "damage from spells" with the closed set of
-        // spell-typical damage types (`SPELL_TYPICAL_DAMAGE_TYPES`);
-        // weapon-only physical types + poison are excluded so a
-        // greatsword swing through the bubble doesn't get accidentally
-        // halved. The halving runs BEFORE `effective_damage` so the
-        // standard "one halving per damage instance" rule still holds —
-        // if the target already halves / zeros / doubles the type via
-        // their own template / condition / item lanes, the aura no-ops
-        // and the existing resistance pipeline fires unchanged.
-        let aura_halves = SPELL_TYPICAL_DAMAGE_TYPES.contains(&self.damage_type)
-            && !has_own_reduction
-            && ei.is_in_aura_of_warding(self.actor_id);
-        let raw_amount = if aura_halves {
-            let halved = self.amount / 2;
-            ei.log(format!(
-                "  {} shrugs off spell magic (aura of warding: {} \u{2192} {} {:?})",
-                name, self.amount, halved, self.damage_type
-            ));
-            halved
-        } else {
-            self.amount
+        // Halvings the *board* grants rather than the sheet — see
+        // `POSITIONAL_DAMAGE_HALVINGS`. At most one fires, and only when
+        // the target has no resistance of their own to the type, so 5e's
+        // "multiple instances of resistance count as only one" holds by
+        // construction rather than by the order the lanes happen to be
+        // tested in.
+        let positional = POSITIONAL_DAMAGE_HALVINGS.iter().find(|row| {
+            !has_own_reduction
+                && row.types.contains(&self.damage_type)
+                && (row.applies)(ei, self.actor_id)
+        });
+        let raw_amount = match positional {
+            Some(row) => {
+                let halved = self.amount / 2;
+                ei.log(format!(
+                    "  {} {} ({}: {} \u{2192} {} {:?})",
+                    name, row.verb, row.label, self.amount, halved, self.damage_type
+                ));
+                halved
+            }
+            None => self.amount,
         };
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;

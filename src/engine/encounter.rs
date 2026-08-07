@@ -246,6 +246,7 @@ use crate::engine::actor_gen::{ActorGenParams, generate_actors};
 use crate::engine::errors::{NoLegalPosition, OffMapCoord};
 use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
+use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::zones::Zone;
@@ -5300,6 +5301,99 @@ impl EncounterInstance {
         self.terrain.get(idx)
     }
 
+    /// 5e Underwater Combat's "fully immersed" — is this actor *in* the
+    /// water, rather than beside it or above it?
+    ///
+    /// The single predicate behind every underwater rule the engine
+    /// enforces: the melee and ranged attack clauses in
+    /// `engine::underwater`, and the fire resistance on the
+    /// environmental-halving cohort in `engine::side_effects`. The
+    /// movement surcharge is the one water rule that does *not* read it,
+    /// because that one is charged per step taken rather than per tile
+    /// stood on.
+    ///
+    /// Two clauses, and RAW puts the emphasis on the first:
+    ///
+    ///   - **Every tile of the footprint is water.** "Fully immersed",
+    ///     not "touching water". A Huge kraken with two of its four
+    ///     tiles on the shingle is hauled half out of the sea, and a
+    ///     knight standing at the water's edge with one boot wet is not
+    ///     swimming. Reading only the anchor tile would have made both
+    ///     of those turn on which corner of the creature the engine
+    ///     happens to store, which is not a rule anybody could play
+    ///     around.
+    ///
+    ///   - **Flight lifts you out of it.** A creature aloft over a lake
+    ///     is over it. Deliberately the same `has_magical_flight`
+    ///     predicate `WATER_SURCHARGE_IMMUNITIES` reads, so the two
+    ///     lanes cannot disagree about what counts — an actor that
+    ///     crossed the water for free is exactly an actor the water has
+    ///     no other hold on.
+    ///
+    /// A derived query rather than a stored condition on purpose. Every
+    /// path that moves a creature would otherwise have to remember to
+    /// resync it — and the engine has a dozen of them (a walk, a shove,
+    /// a teleport, a summon's placement, a dismount's landing, a
+    /// round-end drift) — so a stored flag would be correct only until
+    /// the next one was added. Recomputing costs one terrain lookup per
+    /// footprint tile, on paths that already do more work than that.
+    pub fn is_immersed(&self, actor_id: usize) -> bool {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        if actor.has_magical_flight() {
+            return false;
+        }
+        let anchor = actor.location();
+        let width = get_tiles_from_size(actor.size()) as isize;
+        (0..width).all(|dx| {
+            (0..width).all(|dy| {
+                self.terrain_at(anchor + Coordinate::new(dx, dy))
+                    .is_some_and(|t| t.terrain_type.is_water())
+            })
+        })
+    }
+
+    /// What 5e's Underwater Combat rules do to one attack — the shared
+    /// chokepoint the die and the AI's attack picker both read, so the
+    /// two can never disagree about whether a swing is worth making.
+    ///
+    /// `weapon_name` is the action's own name, which is what the two
+    /// RAW weapon cohorts are keyed on; see
+    /// `engine::underwater::names_weapon` for why.
+    /// `beyond_normal_range` is the caller's, because the two callers
+    /// measure it from different things: the attack site already holds
+    /// `AttackParams::long_range` and a resolved footprint distance,
+    /// while the picker asks the action for `normal_range` and the
+    /// board for the gap.
+    pub fn underwater_verdict(
+        &self,
+        attacker_id: usize,
+        weapon_name: &str,
+        is_melee: bool,
+        is_weapon_attack: bool,
+        beyond_normal_range: bool,
+    ) -> UnderwaterVerdict {
+        // Cheapest gate first, and by a wide margin: on a map with no
+        // water on it — which is most of them — this is one hash lookup
+        // and one terrain read, and nothing below it runs.
+        if !self.is_immersed(attacker_id) {
+            return UnderwaterVerdict::Unaffected;
+        }
+        let Some(attacker) = self.actors.get(&attacker_id) else {
+            return UnderwaterVerdict::Unaffected;
+        };
+        UnderwaterVerdict::for_attack(AttackInWater {
+            immersed: true,
+            waived: attacker.underwater_penalties_waived(),
+            swims: attacker.has_swim_speed(),
+            is_weapon_attack,
+            is_melee,
+            weapon_name,
+            beyond_normal_range,
+        })
+    }
+
     /// Retype one tile. Returns false — and changes nothing — for a
     /// coordinate off the map.
     ///
@@ -7726,6 +7820,15 @@ impl EncounterInstance {
         // a single path is being searched, and the inner loop below runs
         // eight times per expanded tile.
         let ignores_rough = body.ignores_difficult_terrain();
+        // …and its water-side twin. 5e charges the same double rate for
+        // swimming that it charges for difficult terrain and waives the
+        // two with different things — a ranger's Land's Stride is no
+        // help in a lake and a shark's swimming speed is no help in
+        // rubble — so the waiver the inner loop applies depends on which
+        // kind of tile the step lands on. Resolved once out here for the
+        // same reason `ignores_rough` is: neither answer can change
+        // while a single path is being searched.
+        let swims = body.swims_freely();
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -7777,11 +7880,37 @@ impl EncounterInstance {
                     // rubble — is still just difficult. `max`, not
                     // product: 5e's difficult terrain is a property of
                     // the space, not a counter that stacks.
-                    let terrain_mult = if ignores_rough {
-                        1.0
+                    //
+                    // Which waiver applies is keyed off the tile: water
+                    // charges the swimming surcharge and everything else
+                    // charges the difficult-terrain one. A shark's
+                    // swimming speed makes the lake free and does
+                    // nothing about the rubble on its shore; a ranger's
+                    // Land's Stride is the exact mirror.
+                    //
+                    // Either waiver cancels the *terrain* surcharge and
+                    // not the *zone* one, which is a change: the older
+                    // shape returned a flat 1.0 the moment
+                    // `ignores_rough` held, so a creature under Freedom
+                    // of Movement crossed a Web or an Entangle for free
+                    // as well. That was never the rule — RAW's Land's
+                    // Stride is "nonmagical difficult terrain", and even
+                    // Freedom of Movement's broader clause is about the
+                    // terrain rather than about a spell holding you —
+                    // and it was invisible while the two surcharges were
+                    // waived by the same predicate. Splitting the lane
+                    // put both halves of the expression on screen at
+                    // once, which is where it showed.
+                    let tile = self.terrain_at(next).map(|t| t.terrain_type);
+                    let waived = if tile.is_some_and(|t| t.is_water()) {
+                        swims
                     } else {
-                        self.terrain_at(next)
-                            .map(|t| t.terrain_type.movement_cost())
+                        ignores_rough
+                    };
+                    let terrain_mult = if waived {
+                        self.zone_movement_multiplier(next)
+                    } else {
+                        tile.map(|t| t.movement_cost())
                             .unwrap_or(1.0)
                             .max(self.zone_movement_multiplier(next))
                     };

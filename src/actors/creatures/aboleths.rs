@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ABOLETH_MULTI, ABOLETH_TENTACLE};
 use crate::actors::actor_template::CreatureTemplate;
@@ -49,6 +50,9 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and Frightened (it has watched stars die).
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
         regen_per_round: 10,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

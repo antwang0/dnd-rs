@@ -1671,6 +1671,72 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[DifficultTerrainImmunity] = &[
     },
 ];
 
+/// Sources of "this actor pays no movement surcharge for
+/// `TerrainType::Water`" — read by `ActorInstance::swims_freely`, the
+/// water-side twin of `ignores_difficult_terrain`.
+///
+/// Two cohorts rather than one because 5e prices swimming and difficult
+/// terrain identically and waives them differently, and every row below
+/// is a row that is *not* on `DIFFICULT_TERRAIN_IMMUNITIES` or is there
+/// for a different reason:
+///
+///   - **A swimming speed** (`SWIM_SPEED_TAG`) is the whole rule — "if
+///     you have a swimming speed, you can use it to swim without
+///     spending extra movement" — and it does nothing whatsoever for
+///     rubble. The shark is not nimble on land.
+///   - **Land's Stride** is the mirror image and is deliberately absent
+///     here: RAW scopes it to "nonmagical difficult terrain", which a
+///     lake is not. A ranger crossing a river swims like anybody else.
+///   - **Freedom of Movement** is on both, and it is the only row that
+///     is, because RAW puts it on both: "the target's movement is
+///     unaffected by difficult terrain… being underwater imposes no
+///     penalties on the target's movement or attacks."
+///   - **Magical flight** is on both for a reason that is not a rule at
+///     all — a creature sixty feet up is not swimming, in the same
+///     sense and for the same reason it is not wading through the mud.
+///     It is the one row here that answers "is this actor in the water"
+///     rather than "does the water charge this actor", which is why
+///     `EncounterInstance::is_immersed` reads the same predicate: a
+///     flying creature that paid nothing to cross a lake must also not
+///     be swinging at disadvantage over it.
+const WATER_SURCHARGE_IMMUNITIES: &[DifficultTerrainImmunity] = &[
+    DifficultTerrainImmunity {
+        flag: ActorInstance::has_swim_speed,
+    },
+    DifficultTerrainImmunity {
+        flag: |a| a.has_condition(Condition::Footloose),
+    },
+    DifficultTerrainImmunity {
+        flag: ActorInstance::has_magical_flight,
+    },
+];
+
+/// Sources of a swimming speed, read by `ActorInstance::has_swim_speed`.
+///
+/// Split out from `WATER_SURCHARGE_IMMUNITIES` rather than folded into
+/// it because the two answer different questions and only one of them
+/// is "a swimming speed". 5e's melee Underwater Combat clause is
+/// specifically "a creature that doesn't have a swimming speed", and a
+/// wizard hovering on *Fly* does not have one — they are simply not in
+/// the water, which is a different exemption arriving down a different
+/// road. Keeping the narrower predicate separate is what lets
+/// `UnderwaterVerdict::for_attack` take `swims` and `waived` as two
+/// arguments and give the bow and the trident different answers.
+const SWIM_SPEED_SOURCES: &[DifficultTerrainImmunity] = &[
+    DifficultTerrainImmunity {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::SWIM_SPEED_TAG),
+    },
+    // 5e Scout Rogue **Superior Mobility** (subclass lv9, XGtE): "you
+    // also gain a climbing speed and a swimming speed equal to your
+    // walking speed." The tag's own docstring used to note that the
+    // swimming half had no combat surface in this engine because there
+    // was no water to swim in; there is now, and this row is that
+    // sentence finally meaning something.
+    DifficultTerrainImmunity {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::SUPERIOR_MOBILITY_TAG),
+    },
+];
+
 /// The 5e exhaustion ladder, one constant per rung, named for what the
 /// rung does rather than for its number.
 ///
@@ -7177,6 +7243,56 @@ impl ActorInstance {
         DIFFICULT_TERRAIN_IMMUNITIES
             .iter()
             .any(|row| (row.flag)(self))
+    }
+
+    /// True if this actor has a swimming speed — natural (the tag on an
+    /// aquatic template) or granted (Scout Rogue's Superior Mobility).
+    ///
+    /// The narrow question, and the one 5e's melee Underwater Combat
+    /// clause asks by name: "a creature that doesn't have a swimming
+    /// speed (either natural or granted by magic) has disadvantage on
+    /// the attack roll." Deliberately *not* satisfied by flight or by
+    /// Freedom of Movement — both of those exempt an attacker from the
+    /// water's penalties, and neither is a swimming speed. See
+    /// `SWIM_SPEED_SOURCES`.
+    pub fn has_swim_speed(&self) -> bool {
+        SWIM_SPEED_SOURCES.iter().any(|row| (row.flag)(self))
+    }
+
+    /// True if this actor crosses `TerrainType::Water` at no movement
+    /// surcharge — the water-side twin of `ignores_difficult_terrain`,
+    /// read once per path by `EncounterInstance::dijkstra_path`.
+    ///
+    /// Wider than `has_swim_speed`: a creature does not have to be
+    /// swimming to cross a lake for free, it merely has to not be
+    /// paying for it. Flight and Freedom of Movement both qualify. See
+    /// `WATER_SURCHARGE_IMMUNITIES` for why the two cohorts are not one.
+    pub fn swims_freely(&self) -> bool {
+        WATER_SURCHARGE_IMMUNITIES
+            .iter()
+            .any(|row| (row.flag)(self))
+    }
+
+    /// True if 5e's Underwater Combat penalties are waived for this
+    /// actor outright, whatever weapon they are holding and whichever
+    /// half of the rule is being asked about.
+    ///
+    /// Exactly one thing does that, and it does it in so many words:
+    /// **Freedom of Movement** — "being underwater imposes no penalties
+    /// on the target's movement or attacks." A swimming speed is not
+    /// enough (it saves the swing and not the shot) and neither is
+    /// flight (a flying creature is exempt because it is not in the
+    /// water at all, which `is_immersed` answers a step earlier).
+    ///
+    /// A named predicate on a cohort of one, because the alternative is
+    /// a bare `has_condition(Footloose)` at the attack site with a
+    /// comment explaining which of Freedom of Movement's four clauses
+    /// is being read — and because the next effect that grants this
+    /// (a Cap of Water Breathing rider, a Fathomless invocation) should
+    /// land as a row rather than as a second `||` somewhere in
+    /// `engine::attack`.
+    pub fn underwater_penalties_waived(&self) -> bool {
+        self.has_condition(Condition::Footloose)
     }
 
     pub fn item_save_bonus(&self) -> i32 {

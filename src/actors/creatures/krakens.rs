@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     KRAKEN_LIGHTNING_STORM, KRAKEN_MULTI, KRAKEN_TENTACLE,
@@ -131,6 +132,9 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::KRAKEN_LAIR,
         has_extra_attack: true,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

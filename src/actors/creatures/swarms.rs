@@ -36,7 +36,7 @@
 //! board, not to a creature.
 
 use crate::actions::action_template::Action;
-use crate::actions::class_features::BLOOD_FRENZY_TAG;
+use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_POISONOUS_SNAKES_BITES,
@@ -282,7 +282,11 @@ pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         1.0,
         &SWARM_OF_QUIPPERS_BITES,
         true,
-        HashSet::from([BLOOD_FRENZY_TAG]),
+        // The one swarm of the five that lives in the water — RAW's
+        // "Speed 0 ft., swim 40 ft.", the only entry on the ladder with
+        // no walking speed at all. The tag is what stops a pool from
+        // charging it double to cross.
+        HashSet::from([BLOOD_FRENZY_TAG, SWIM_SPEED_TAG]),
     )
 });
 

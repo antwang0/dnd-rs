@@ -1,4 +1,4 @@
-use crate::actions::class_features::BLOOD_FRENZY_TAG;
+use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HUNTER_SHARK_BITE;
 use crate::actors::actor_template::CreatureTemplate;
@@ -74,7 +74,7 @@ pub static HUNTER_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // through the engine's BLOOD_FRENZY_TAG feature tag — same
         // chokepoint in `compute_attack_mode`, no new branch in the
         // engine for this template.
-        features: HashSet::from([BLOOD_FRENZY_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, BLOOD_FRENZY_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -36796,6 +36796,407 @@ fn lands_stride_ships_on_the_ranger_line_and_the_land_druid() {
     }
 }
 
+// ---------------------------------------------------------------------
+// 5e Underwater Combat (PHB p.198)
+// ---------------------------------------------------------------------
+
+/// The `rough_corridor_walker` board with the middle tile flooded
+/// instead of strewn with rubble. The two helpers are deliberately
+/// twins: every claim below about what the water charges is a claim
+/// about how it differs from the rubble, and comparing two boards that
+/// differ in one tile is the only way to say that cleanly.
+fn flooded_corridor_walker(
+    template: &'static crate::actors::actor_template::CreatureTemplate,
+) -> (EncounterInstance, usize) {
+    use crate::engine::terrain::{TerrainInfo, TerrainType};
+    let (mut e, id) = rough_corridor_walker(template);
+    e.terrain[4 + 3 * 20] = TerrainInfo {
+        terrain_type: TerrainType::Water,
+    };
+    (e, id)
+}
+
+/// Swimming costs what wading through rubble costs — RAW prices both
+/// at "1 extra foot per foot of movement".
+#[test]
+fn crossing_water_costs_a_non_swimmer_the_same_as_difficult_terrain() {
+    use crate::engine::terrain::{TerrainInfo, TerrainType};
+    let (mut e, f_id) =
+        flooded_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+    let wet = e
+        .path_cost_to(f_id, Coordinate::new(5, 3))
+        .expect("corridor is walkable");
+
+    e.terrain[4 + 3 * 20] = TerrainInfo {
+        terrain_type: TerrainType::DifficultTerrain,
+    };
+    let rough = e
+        .path_cost_to(f_id, Coordinate::new(5, 3))
+        .expect("corridor is walkable");
+
+    assert!(
+        (wet - rough).abs() < 0.01,
+        "water and rubble cost the same: {wet} vs {rough}"
+    );
+    assert!((wet - 7.5).abs() < 0.01, "one clean step plus one doubled step, got {wet}");
+}
+
+/// …and the two surcharges are waived by different things, which is the
+/// entire reason `WATER_SURCHARGE_IMMUNITIES` is a second cohort rather
+/// than three more rows on the first.
+///
+/// The cross is the test. A ranger's Land's Stride covers "nonmagical
+/// difficult terrain" and a lake is not that; a shark's swimming speed
+/// is no help at all on a pile of rubble. Asserting each waiver against
+/// only its own tile would pass just as happily if both cohorts had been
+/// collapsed into one.
+#[test]
+fn the_two_surcharges_are_waived_by_different_things() {
+    use crate::actions::class_features::{LANDS_STRIDE_TAG, SWIM_SPEED_TAG};
+    let dest = Coordinate::new(5, 3);
+
+    // Land's Stride: free over rubble, charged in water.
+    let (e, ranger) =
+        rough_corridor_walker(&crate::actors::creatures::rangers::RANGER_TEMPLATE);
+    assert!(e.actors[&ranger].has_passive_feature(LANDS_STRIDE_TAG));
+    let stride_rough = e.path_cost_to(ranger, dest).unwrap();
+    let (e, ranger) =
+        flooded_corridor_walker(&crate::actors::creatures::rangers::RANGER_TEMPLATE);
+    let stride_wet = e.path_cost_to(ranger, dest).unwrap();
+    assert!(
+        (stride_rough - 5.0).abs() < 0.01,
+        "Land's Stride waives the rubble, got {stride_rough}"
+    );
+    assert!(
+        (stride_wet - 7.5).abs() < 0.01,
+        "Land's Stride does not waive the water, got {stride_wet}"
+    );
+
+    // A swimming speed: the exact mirror. The scout rogue is the one
+    // player build with one, which is what makes this comparison
+    // possible on the same chassis size as the ranger.
+    let (e, scout) =
+        rough_corridor_walker(&crate::actors::creatures::rogues::SCOUT_ROGUE_TEMPLATE);
+    assert!(e.actors[&scout].has_swim_speed(), "the Scout swims");
+    assert!(
+        !e.actors[&scout].has_passive_feature(SWIM_SPEED_TAG),
+        "…via Superior Mobility rather than via the monster tag"
+    );
+    let swim_rough = e.path_cost_to(scout, dest).unwrap();
+    let (e, scout) =
+        flooded_corridor_walker(&crate::actors::creatures::rogues::SCOUT_ROGUE_TEMPLATE);
+    let swim_wet = e.path_cost_to(scout, dest).unwrap();
+    assert!(
+        (swim_rough - 7.5).abs() < 0.01,
+        "a swimming speed does not waive the rubble, got {swim_rough}"
+    );
+    assert!(
+        (swim_wet - 5.0).abs() < 0.01,
+        "a swimming speed waives the water, got {swim_wet}"
+    );
+}
+
+/// Freedom of Movement is the one row on both cohorts, because RAW puts
+/// it on both.
+#[test]
+fn freedom_of_movement_waives_the_swimming_surcharge_too() {
+    let (mut e, f_id) =
+        flooded_corridor_walker(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+    let taxed = e.path_cost_to(f_id, Coordinate::new(5, 3)).unwrap();
+    e.actors
+        .get_mut(&f_id)
+        .unwrap()
+        .add_condition(Condition::Footloose, ConditionTimer::Rounds(10));
+    let free = e.path_cost_to(f_id, Coordinate::new(5, 3)).unwrap();
+    assert!(free < taxed, "Footloose should waive the swim: {free} vs {taxed}");
+    assert!((free - 5.0).abs() < 0.01, "two clean tile-steps is 5.0 ft, got {free}");
+}
+
+/// A pool with one creature standing in it and one on the bank, both
+/// Medium, adjacent, ids returned in that order.
+///
+/// "Fully immersed" is a footprint-wide claim, and a Medium creature is
+/// 2x2 tiles on this grid, so the pool has to be at least that — a
+/// single flooded tile would leave the swimmer three-quarters dry and
+/// every test below would silently assert nothing.
+fn swimmer_and_bystander() -> (EncounterInstance, usize, usize) {
+    use crate::engine::terrain::TerrainType;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=5isize {
+        for y in 2..=5isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let swimmer = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            1,
+        )
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(8, 3),
+            1,
+            1,
+        )
+        .unwrap();
+    (e, swimmer, bystander)
+}
+
+/// "Fully immersed" means every tile, not any tile.
+#[test]
+fn a_creature_half_out_of_the_water_is_not_immersed() {
+    use crate::engine::terrain::TerrainType;
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+    assert!(e.is_immersed(swimmer), "all four tiles are water");
+    assert!(!e.is_immersed(bystander), "the bank is dry");
+
+    // Drain one corner of the swimmer's own 2x2 footprint. RAW's
+    // "fully immersed" is now false, and every underwater rule has to
+    // switch off with it.
+    e.set_terrain_at(Coordinate::new(4, 4), TerrainType::Floor);
+    assert!(
+        !e.is_immersed(swimmer),
+        "one dry tile under the footprint is enough to haul them out"
+    );
+}
+
+/// Flight lifts a creature out of the water without draining it — the
+/// row `is_immersed` shares with the movement cohort so the two can't
+/// disagree about who the water has a hold on.
+#[test]
+fn a_flying_creature_over_a_pool_is_not_in_it() {
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    assert!(e.is_immersed(swimmer));
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    assert!(!e.is_immersed(swimmer), "they are over the pool, not in it");
+}
+
+/// The melee clause, end to end through the real verdict chokepoint:
+/// the weapon decides, and a swimming speed excuses the whole question.
+#[test]
+fn the_melee_clause_reads_the_weapon_and_the_swimming_speed() {
+    use crate::engine::underwater::UnderwaterVerdict;
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+
+    let verdict = |e: &EncounterInstance, weapon: &str| {
+        e.underwater_verdict(swimmer, weapon, true, true, false)
+    };
+    assert_eq!(verdict(&e, "longsword"), UnderwaterVerdict::Disadvantage);
+    assert_eq!(verdict(&e, "trident"), UnderwaterVerdict::Unaffected);
+
+    // A swimming speed excuses the longsword as well — RAW exempts the
+    // creature, not just the five weapons.
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .grant_feature_for_test(crate::actions::class_features::SWIM_SPEED_TAG);
+    assert_eq!(verdict(&e, "longsword"), UnderwaterVerdict::Unaffected);
+}
+
+/// The ranged clause, and the asymmetry that is easiest to get wrong: a
+/// swimming speed saves the swing and not the shot.
+#[test]
+fn the_ranged_clause_ignores_a_swimming_speed() {
+    use crate::engine::underwater::UnderwaterVerdict;
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .grant_feature_for_test(crate::actions::class_features::SWIM_SPEED_TAG);
+
+    assert_eq!(
+        e.underwater_verdict(swimmer, "longbow", false, true, false),
+        UnderwaterVerdict::Disadvantage,
+        "a swimming speed does not restring a bow"
+    );
+    assert_eq!(
+        e.underwater_verdict(swimmer, "heavy crossbow", false, true, false),
+        UnderwaterVerdict::Unaffected,
+        "a crossbow is on the ranged cohort"
+    );
+    assert_eq!(
+        e.underwater_verdict(swimmer, "heavy crossbow", false, true, true),
+        UnderwaterVerdict::AutoMiss,
+        "and nothing survives the range cut"
+    );
+}
+
+/// A shot past normal range from the water misses, however good the
+/// roll — and it misses as a *swing that happened*, spending its
+/// resource and printing a line, rather than as an action that was
+/// never taken.
+#[test]
+fn a_shot_past_normal_range_from_the_water_cannot_land() {
+    use crate::engine::dice::Dice;
+    use crate::engine::types::DamageType;
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+    // Park the target well outside a 2-tile normal range but inside the
+    // reach the attack is allowed to try at.
+    e.place_actor_at(bystander, Coordinate::new(14, 3)).unwrap();
+
+    let params = crate::engine::attack::AttackParams {
+        caster_id: swimmer,
+        target_id: bystander,
+        action_name: "longbow",
+        // Absurd enough that no AC on the board could survive it.
+        attack_bonus: 50,
+        damage_dice: Dice::new(1, 8),
+        damage_bonus: 0,
+        damage_type: DamageType::Piercing,
+        is_melee: false,
+        long_range: Some(2),
+        min_range: None,
+        is_spell: false,
+    };
+    let (effects, damage) = crate::engine::attack::resolve_attack_outcome(&mut e, params);
+    assert_eq!(damage, 0, "the shot cannot hit");
+    assert!(effects.is_empty(), "and lands no damage side effect");
+    assert!(
+        e.messages()
+            .iter()
+            .any(|l| l.contains("underwater, past normal range")),
+        "the log says why: {:?}",
+        e.messages().last()
+    );
+}
+
+/// The same shot from dry land, with everything else identical, lands.
+/// Without this the test above would pass on a bug that made every
+/// longbow shot miss.
+#[test]
+fn the_same_shot_from_the_bank_connects() {
+    use crate::engine::dice::Dice;
+    use crate::engine::types::DamageType;
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+    e.place_actor_at(bystander, Coordinate::new(14, 3)).unwrap();
+    // Haul the archer onto dry ground; the pool is at 2..=5.
+    e.place_actor_at(swimmer, Coordinate::new(8, 8)).unwrap();
+    assert!(!e.is_immersed(swimmer));
+
+    let params = crate::engine::attack::AttackParams {
+        caster_id: swimmer,
+        target_id: bystander,
+        action_name: "longbow",
+        attack_bonus: 50,
+        damage_dice: Dice::new(1, 8),
+        damage_bonus: 0,
+        damage_type: DamageType::Piercing,
+        is_melee: false,
+        long_range: Some(2),
+        min_range: None,
+        is_spell: false,
+    };
+    let (_, damage) = crate::engine::attack::resolve_attack_outcome(&mut e, params);
+    assert!(damage > 0, "a +50 shot from the bank connects");
+}
+
+/// "Weapon attack", throughout: a spell attack out of the water is
+/// unaffected by all three clauses, including the range cut.
+#[test]
+fn a_spell_attack_out_of_the_water_is_untouched() {
+    use crate::engine::underwater::UnderwaterVerdict;
+    let (e, swimmer, _) = swimmer_and_bystander();
+    for (melee, past_range) in [(true, false), (false, false), (false, true)] {
+        assert_eq!(
+            e.underwater_verdict(swimmer, "fire bolt", melee, false, past_range),
+            UnderwaterVerdict::Unaffected,
+            "melee={melee} past_range={past_range}"
+        );
+    }
+}
+
+/// "Creatures and objects that are fully immersed in water have
+/// resistance to fire damage."
+#[test]
+fn being_immersed_halves_fire_damage() {
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+
+    // Small enough that neither fighter's HP pool clamps the subtraction
+    // — a creature dropped to 0 would report the halving and the clamp
+    // as the same number and prove nothing.
+    for (id, expected, who) in [(swimmer, 4u32, "the swimmer"), (bystander, 8, "the bystander")] {
+        let before = e.actors[&id].hitpoints();
+        assert!(before > 8, "{who} has room to take the hit");
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let took = before - e.actors[&id].hitpoints();
+        assert_eq!(took, expected, "{who} took {took} of 8 fire");
+    }
+}
+
+/// The water shields against fire and nothing else — the row is
+/// type-filtered, and a positional halving that covered everything
+/// would be a resistance to all damage.
+#[test]
+fn the_water_does_not_shield_against_anything_but_fire() {
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+    for dt in [DamageType::Cold, DamageType::Lightning, DamageType::Slashing] {
+        let (mut e, swimmer, _) = swimmer_and_bystander();
+        let before = e.actors[&swimmer].hitpoints();
+        assert!(before > 8, "the swimmer has room to take the hit");
+        DealDamage {
+            actor_id: swimmer,
+            amount: 8,
+            damage_type: dt,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            before - e.actors[&swimmer].hitpoints(),
+            8,
+            "{dt:?} is not halved by standing in a pool"
+        );
+    }
+}
+
+/// 5e's "multiple instances of resistance count as only one": a
+/// fire-resistant creature standing in a pool takes half, not a
+/// quarter. The gate that holds this is `has_own_typed_reduction`, and
+/// it is shared with the aura row rather than re-derived per row.
+#[test]
+fn a_fire_resistant_creature_in_a_pool_is_not_resistant_twice() {
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+    let (mut e, _, _) = swimmer_and_bystander();
+    // A magmin is fire-immune, which is the strongest form of "has its
+    // own reduction" — the positional row must stand down entirely
+    // rather than halving on top of a zero.
+    let magmin = e
+        .instantiate_creature(
+            &crate::actors::creatures::magmins::MAGMIN_TEMPLATE,
+            Coordinate::new(2, 2),
+            1,
+            1,
+        )
+        .unwrap();
+    assert!(e.is_immersed(magmin));
+    let before = e.actors[&magmin].hitpoints();
+    DealDamage {
+        actor_id: magmin,
+        amount: 20,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        before,
+        e.actors[&magmin].hitpoints(),
+        "immunity still wins outright"
+    );
+}
+
 #[test]
 fn short_rest_heals_some_hp() {
     let mut roller = FastRandRoller::with_seed(42);

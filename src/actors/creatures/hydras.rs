@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HYDRA_BITE, HYDRA_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
@@ -48,6 +49,9 @@ pub static HYDRA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (we don't model fire-cauterizing head stumps).
         regen_per_round: 10,
         has_extra_attack: true,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

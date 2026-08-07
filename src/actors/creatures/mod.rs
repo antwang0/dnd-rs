@@ -538,6 +538,61 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
     ]
 }
 
+/// Every template in the bestiary the engine considers aquatic — the
+/// creatures whose RAW stat block carries a swimming speed, and so the
+/// creatures that cross `TerrainType::Water` for free and swing in it
+/// without disadvantage.
+///
+/// A written-down list rather than a derived one, because there is
+/// nothing to derive it from: `CreatureTemplate` has one `speed`, and
+/// RAW's swimming speed lives on a line of the stat block the engine
+/// deliberately doesn't model as a separate number (see
+/// `SWIM_SPEED_TAG` for why). "Is this thing a swimmer?" is a fact
+/// about the monster manual, so the monster manual's answer is what
+/// gets stored.
+///
+/// Read by the sweep below, which enforces the list in **both**
+/// directions — every entry carries the tag, and nothing outside the
+/// list carries it. The second half is the one that earns the list's
+/// keep: a one-line tag is exactly the kind of thing that gets
+/// copy-pasted onto the next template down the file, and a fire
+/// elemental that swims is a bug nobody would go looking for.
+pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
+    vec![
+        &aboleths::ABOLETH_TEMPLATE,
+        &bullywugs::BULLYWUG_TEMPLATE,
+        &chuuls::CHUUL_TEMPLATE,
+        &constrictor_snakes::CONSTRICTOR_SNAKE_TEMPLATE,
+        &constrictor_snakes::GIANT_CONSTRICTOR_SNAKE_TEMPLATE,
+        &crocodiles::CROCODILE_TEMPLATE,
+        &crocodiles::GIANT_CROCODILE_TEMPLATE,
+        &deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+        &dragon_turtles::DRAGON_TURTLE_TEMPLATE,
+        &dragons::YOUNG_WHITE_DRAGON_TEMPLATE,
+        &frogs::FROG_TEMPLATE,
+        &giant_crabs::GIANT_CRAB_TEMPLATE,
+        &giant_frogs::GIANT_FROG_TEMPLATE,
+        &giant_octopuses::GIANT_OCTOPUS_TEMPLATE,
+        &giant_poisonous_snakes::GIANT_POISONOUS_SNAKE_TEMPLATE,
+        &giant_sharks::GIANT_SHARK_TEMPLATE,
+        &giant_toads::GIANT_TOAD_TEMPLATE,
+        &hunter_sharks::HUNTER_SHARK_TEMPLATE,
+        &hydras::HYDRA_TEMPLATE,
+        &killer_whales::KILLER_WHALE_TEMPLATE,
+        &krakens::KRAKEN_TEMPLATE,
+        &lizardfolk::LIZARDFOLK_TEMPLATE,
+        &marids::MARID_TEMPLATE,
+        &merrow::MERROW_TEMPLATE,
+        &plesiosauruses::PLESIOSAURUS_TEMPLATE,
+        &reef_sharks::REEF_SHARK_TEMPLATE,
+        &sahuagins::SAHUAGIN_TEMPLATE,
+        &sea_hags::SEA_HAG_TEMPLATE,
+        &storm_giants::STORM_GIANT_TEMPLATE,
+        &swarms::SWARM_OF_QUIPPERS_TEMPLATE,
+        &water_elementals::WATER_ELEMENTAL_TEMPLATE,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use crate::engine::types::Skill;
@@ -603,6 +658,85 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `aquatic_templates` is the whole truth about who swims: every
+    /// entry carries `SWIM_SPEED_TAG`, and no template anywhere else in
+    /// the engine does.
+    ///
+    /// The second half is a genuine invariant rather than a restatement
+    /// of the list. The tag is one short line inside a struct literal
+    /// that also holds Blood Frenzy, Pack Tactics and a dozen other
+    /// one-line tags, and the failure mode it guards is silent in both
+    /// directions: a swimmer that loses the tag pays double to cross a
+    /// pool it lives in, and a lander that gains one wades through a
+    /// lake and stabs out of it at no penalty. Neither shows up as a
+    /// crash, a warning, or a visibly wrong number — only as a fight
+    /// that plays slightly wrong.
+    ///
+    /// Swept across the whole engine's reach — the encounter template
+    /// pool plus every player template — rather than across the aquatic
+    /// list alone, because a list can only catch what is on it and the
+    /// interesting failure is a tag that ended up somewhere the list
+    /// never looks.
+    #[test]
+    fn the_swim_speed_tag_is_carried_by_exactly_the_aquatic_templates() {
+        use crate::actions::class_features::SWIM_SPEED_TAG;
+        use crate::engine::encounter::EncounterInstance;
+
+        let aquatic = super::aquatic_templates();
+        for t in &aquatic {
+            assert!(
+                t.features.contains(SWIM_SPEED_TAG),
+                "{} is on the aquatic list without a swimming speed",
+                t.name
+            );
+        }
+        let aquatic_names: Vec<&str> = aquatic.iter().map(|t| t.name).collect();
+
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            super::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.features.contains(SWIM_SPEED_TAG) {
+                continue;
+            }
+            assert!(
+                aquatic_names.contains(&t.name),
+                "{} carries a swimming speed but is not on the aquatic list",
+                t.name
+            );
+        }
+    }
+
+    /// The tag reaches the two predicates that read it, on a real
+    /// instance rather than on the template literal.
+    ///
+    /// Worth its own test because the two answer deliberately different
+    /// questions — `has_swim_speed` is RAW's narrow "does this creature
+    /// have a swimming speed", `swims_freely` the broader "does the
+    /// water charge this creature" — and a refactor that collapsed them
+    /// into one would still pass every test above.
+    #[test]
+    fn an_aquatic_template_instantiates_as_something_that_swims() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::Coordinate;
+
+        for template in super::aquatic_templates() {
+            let a = ActorInstance::from_creature_template(
+                template,
+                Coordinate::new(0, 0),
+                0,
+                &mut FastRandRoller::with_seed(0),
+                0,
+            )
+            .unwrap();
+            assert!(a.has_swim_speed(), "{}", template.name);
+            assert!(a.swims_freely(), "{}", template.name);
         }
     }
 }

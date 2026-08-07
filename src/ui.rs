@@ -218,26 +218,37 @@ pub fn render_map(
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
-                let s = Span::from(
-                    match encounter.terrain_at(coord).map(|t| &t.terrain_type) {
-                        Some(TerrainType::Floor) => '░',
-                        Some(TerrainType::Wall) => '█',
-                        Some(TerrainType::DifficultTerrain) => '▒',
-                        // Denser than rubble's '▒' and lighter than a
-                        // wall's '█', which is what a low wall is: you
-                        // can cross it and you can shoot over it, but
-                        // both cost you something.
-                        Some(TerrainType::LowWall) => '▓',
-                        // A pane you can see through and not walk
-                        // through. Drawn as an outline rather than a
-                        // fill for exactly that reason — what is behind
-                        // it is still in play.
-                        Some(TerrainType::ForceWall) => '╬',
-                        _ => ' ',
-                    }
-                    .to_string(),
-                );
-                row.push(s);
+                // Terrain draws in the shade ramp — the denser the
+                // block, the more the tile costs you — with one
+                // exception. Water is the only tile whose rules are not
+                // about how hard it is to cross (it charges the same
+                // double every scatter tile does), so a place on the
+                // ramp would say the wrong thing about it: a player
+                // reading '▒' has learned the tile is slow, and needs
+                // to have learned that their bow does not work there.
+                // It gets a colour instead, which is the only channel
+                // the map has left that the ramp isn't already using.
+                let (glyph, color) = match encounter.terrain_at(coord).map(|t| t.terrain_type) {
+                    Some(TerrainType::Floor) => ('░', None),
+                    Some(TerrainType::Wall) => ('█', None),
+                    Some(TerrainType::DifficultTerrain) => ('▒', None),
+                    // Denser than rubble's '▒' and lighter than a
+                    // wall's '█', which is what a low wall is: you
+                    // can cross it and you can shoot over it, but
+                    // both cost you something.
+                    Some(TerrainType::LowWall) => ('▓', None),
+                    // A pane you can see through and not walk
+                    // through. Drawn as an outline rather than a
+                    // fill for exactly that reason — what is behind
+                    // it is still in play.
+                    Some(TerrainType::ForceWall) => ('╬', None),
+                    Some(TerrainType::Water) => ('≈', Some(Color::Blue)),
+                    _ => (' ', None),
+                };
+                row.push(match color {
+                    Some(c) => Span::styled(glyph.to_string(), Style::default().fg(c)),
+                    None => Span::from(glyph.to_string()),
+                });
             }
         }
         text.push(Line::from(row));
@@ -872,6 +883,54 @@ mod tests {
             "the panel names the pairing from both ends:\n{}",
             panel
         );
+    }
+
+    /// Water is drawn, and drawn as something other than the shade ramp
+    /// the other five terrain types share.
+    ///
+    /// The glyph matters more here than it does for rubble. Every other
+    /// tile on the map costs a creature movement and nothing else, so a
+    /// player who misreads one loses a step; a pool switches off a
+    /// build's ranged offense entirely, and a player who cannot see
+    /// where it is has no way to make the decision the tile exists to
+    /// pose. The '≈' is deliberately not on the '░▒▓█' ladder — a tile
+    /// that reads as "slower floor" would be the wrong lesson.
+    #[test]
+    fn water_is_drawn_as_water_and_not_as_another_rung_of_the_shade_ramp() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0)]);
+        // Counted rather than merely present: the generator lays pools
+        // of its own, so a bare `contains` would pass without the tiles
+        // this test flooded ever being drawn.
+        let before = rendered_map(&e).matches('≈').count();
+
+        let mut flooded = 0;
+        for x in 3..=6isize {
+            for y in 3..=6isize {
+                if e.terrain_at(Coordinate::new(x, y)).map(|t| t.terrain_type)
+                    == Some(TerrainType::Floor)
+                {
+                    assert!(e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water));
+                    flooded += 1;
+                }
+            }
+        }
+        assert!(flooded > 0, "the fixture map has open floor to flood");
+        let map = rendered_map(&e);
+        assert_eq!(
+            map.matches('≈').count(),
+            before + flooded,
+            "every flooded tile is drawn as water:\n{}",
+            map
+        );
+        for ramp in ['░', '▒', '▓', '█'] {
+            assert_ne!(
+                '≈', ramp,
+                "water must not borrow a glyph from the movement-cost ramp"
+            );
+        }
     }
 
     /// The seed is on screen. Every encounter has one now, and it is

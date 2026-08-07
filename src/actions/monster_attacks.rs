@@ -922,6 +922,12 @@ impl Action for SimpleWeapon {
     fn min_effective_reach(&self) -> Option<isize> {
         self.min_effective_range
     }
+    fn normal_range(&self) -> Option<isize> {
+        self.normal_range
+    }
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
     fn requires_los(&self) -> bool {
         self.requires_los
     }

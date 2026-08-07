@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     CONSTRICTOR_SNAKE_BITE, CONSTRICTOR_SNAKE_CONSTRICT, GIANT_CONSTRICTOR_SNAKE_BITE,
@@ -60,6 +61,9 @@ pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -113,6 +117,9 @@ pub static GIANT_CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLo
         size: Size::Huge,
         creature_type: CreatureType::Beast,
         actions,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

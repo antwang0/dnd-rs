@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     DRAGON_TURTLE_BITE, DRAGON_TURTLE_CLAW, DRAGON_TURTLE_MULTI, DRAGON_TURTLE_STEAM_BREATH,
@@ -96,6 +97,9 @@ pub static DRAGON_TURTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // turn refresher uses the same chassis.
         recharge_abilities: vec![("breath_weapon", 5)],
         has_extra_attack: true,
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

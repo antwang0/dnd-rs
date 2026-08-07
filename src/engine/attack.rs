@@ -7,6 +7,7 @@ use crate::engine::side_effects::{
     ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
+use crate::engine::underwater::UnderwaterVerdict;
 
 /// Caster-side attack-bump source: a labeled scalar computed from the
 /// caster's template flags / conditions. `u32` because every current
@@ -1693,6 +1694,35 @@ pub fn resolve_attack_outcome_with_rider(
     {
         mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }
+    // 5e Underwater Combat (PHB p.198). Both clauses at once, because
+    // both are questions about the same swing and the answer to one
+    // excludes the other — see `UnderwaterVerdict`.
+    //
+    // Reuses the long-range threshold rather than a second range
+    // number: RAW's underwater clause and the long-range clause are
+    // written about the same "normal range", and a shot that was
+    // already at disadvantage for the distance becomes an automatic
+    // miss rather than a second helping of disadvantage. Passing
+    // `false` for a melee swing (which has no `long_range`) is what
+    // keeps the range cut off that half — a lance underwater is at
+    // disadvantage, never an auto-miss.
+    let beyond_normal_range = p
+        .long_range
+        .zip(encounter.footprint_distance(p.caster_id, p.target_id))
+        .is_some_and(|(nr, dist)| dist > nr);
+    let underwater = encounter.underwater_verdict(
+        p.caster_id,
+        p.action_name,
+        p.is_melee,
+        // The authoritative answer to `Action::is_weapon_attack`, and
+        // the one that trait method exists to approximate: down here
+        // the caller has already told us which kind of attack this is.
+        !p.is_spell,
+        beyond_normal_range,
+    );
+    if underwater == UnderwaterVerdict::Disadvantage {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+    }
     // Caster-side flat bonuses. `attack_bonus_buff` is the install-side
     // ledger (Bless's AdjustAttackBuff(+2), etc.). `condition_attack_bonus`
     // is the read-side flag table — Sacred Weapon's +CHA modifier and
@@ -1822,6 +1852,26 @@ pub fn resolve_attack_outcome_with_rider(
     } else {
         String::new()
     };
+    // 5e Underwater Combat's hardest clause: "a ranged weapon attack
+    // automatically misses a target beyond the weapon's normal range."
+    //
+    // Applied here rather than as an early return before the die, and
+    // the placement is the whole point. RAW says the attack *misses*,
+    // not that it cannot be made — so the swing still happens: it
+    // spends its resource, it burns the attacker's one-shot Help /
+    // Hidden / Inspired priming the way any other miss does, it lets
+    // the defender's Riposte fire, and it prints a line the player can
+    // read. An early return would have quietly skipped all four and
+    // looked, from the log, like the action had simply not been taken.
+    //
+    // Last of the three things that can un-hit a swing (the nat-1, Bend
+    // Luck, and this), and unconditionally last: nothing downstream
+    // may revive it, which is why it also clears `nat_crit` — a natural
+    // 20 does not reach across a lake.
+    if underwater == UnderwaterVerdict::AutoMiss {
+        hit = false;
+        nat_crit = false;
+    }
     // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
     // crit. The promotion happens after we've decided the swing connected
     // so a flat miss still misses — the rider only upgrades a regular
@@ -1832,6 +1882,11 @@ pub fn resolve_attack_outcome_with_rider(
             && encounter.target_grants_melee_auto_crit(p.caster_id, p.target_id, p.is_melee));
     let outcome = if is_nat_one {
         "miss (nat 1)"
+    } else if underwater == UnderwaterVerdict::AutoMiss {
+        // Named rather than left as a bare "miss", because the total
+        // printed beside it will often be well over the target's AC and
+        // a reader with no explanation would take it for a bug.
+        "miss (underwater, past normal range)"
     } else if is_crit {
         "CRIT!"
     } else if hit {
@@ -1840,8 +1895,18 @@ pub fn resolve_attack_outcome_with_rider(
         "miss"
     };
     let cover_note = EncounterInstance::cover_log_suffix(cover_bonus);
+    // `mode.log_suffix()` says the swing rolled at disadvantage; it
+    // cannot say why, and the water is the one source of disadvantage on
+    // the board that is invisible from the two creatures involved. A
+    // reader looking at a fighter and an orc standing next to each other
+    // has no way to account for the second d20 unless the line names the
+    // pool they are standing in.
+    let water_note = match underwater.note() {
+        Some(why) => format!(" [{why}]"),
+        None => String::new(),
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+}{}{} = {} vs AC {}{}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{}{} = {} vs AC {}{}{}{} \u{2014} {}",
         p.action_name,
         raw_attack,
         p.attack_bonus + buff + cond_attack_bonus + archery_bonus,
@@ -1851,6 +1916,7 @@ pub fn resolve_attack_outcome_with_rider(
         target_ac,
         cover_note,
         mode.log_suffix(),
+        water_note,
         outcome,
     ));
     if !hit {

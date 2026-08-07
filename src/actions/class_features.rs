@@ -12478,16 +12478,49 @@ pub const ROVING_SPEED_BONUS: f32 = 5.0;
 /// long-rest tables — nothing consumes it and nothing refreshes it.
 pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
 
+/// A **swimming speed** — the monster-stat-block line ("Speed 30 ft.,
+/// swim 40 ft.") rather than a class feature, which is why it sits on
+/// the `shared.` namespace next to Land's Stride rather than under a
+/// class.
+///
+/// Read by `ActorInstance::has_swim_speed`, and through it by both
+/// halves of 5e's Underwater Combat rules: the movement surcharge a
+/// swimmer doesn't pay (`WATER_SURCHARGE_IMMUNITIES`) and the melee
+/// disadvantage a swimmer doesn't take ("a creature that doesn't have a
+/// swimming speed… has disadvantage on the attack roll").
+///
+/// A boolean tag rather than a `swim_speed: f32` field on
+/// `CreatureTemplate` because nothing in the engine reads the
+/// *magnitude*. Both rules that exist ask whether the creature has one
+/// at all, and the engine has no third dimension for a separate
+/// swimming budget to be spent in — a shark in the water moves at its
+/// `speed`, and the only thing its swimming speed buys is that the
+/// water stops charging double for it. A number would be a field every
+/// aquatic template had to pick a value for and no code would ever
+/// compare.
+///
+/// Ships on the aquatic bestiary — see `AQUATIC_TEMPLATES` in
+/// `creatures::mod`'s sweep, which is what stops a new sea monster from
+/// being added without one.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const SWIM_SPEED_TAG: &str = "shared.swim_speed";
+
 /// 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE).
 /// Passive: the scout's walking speed increases by 10 feet, and they
 /// also gain climbing and swimming speeds matching that walking speed.
-/// In this engine only the flat +10 ft walking-speed bump has a combat
-/// surface — climbing / swimming speeds fold into the same `speed()`
-/// accessor (no 3D terrain to differentiate). Read at the shared
+/// The flat +10 ft walking-speed bump is read at the shared
 /// `passive_feature_speed_bonus` chokepoint in `condition_speed_bonus`
 /// next to the barbarian's Fast Movement (+10 ft), the ranger's Roving
 /// (+5 ft), and the monk's Unarmored Movement (+10 ft) — one lookup
 /// table, one source of truth.
+///
+/// The **swimming** half is a second, separate surface: this tag is a
+/// row on `SWIM_SPEED_SOURCES`, so a Scout crosses `TerrainType::Water`
+/// at no surcharge and swings underwater without the disadvantage
+/// everyone else takes — the only build on the player roster that does.
+/// The climbing half still folds into `speed()`, and will until the
+/// engine grows a third dimension for it to mean anything in.
 ///
 /// Sibling to `FAST_MOVEMENT_TAG` / `UNARMORED_MOVEMENT_TAG` on the
 /// always-on passive-speed-bump lane at the same magnitude (+10 ft) —

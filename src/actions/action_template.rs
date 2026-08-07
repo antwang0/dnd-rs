@@ -806,6 +806,56 @@ pub trait Action {
         None
     }
 
+    /// The footprint gap *above* which this action's shot rolls at
+    /// disadvantage — 5e's "normal range", as distinct from the
+    /// `reach_tiles` long range it can still reach at all. `None` for
+    /// melee weapons and for every spell, neither of which has one.
+    ///
+    /// The exact mirror of `min_effective_reach`, and declared on the
+    /// trait for the same two consumers. `engine::attack::resolve_attack`
+    /// has always applied it to the die through
+    /// `AttackParams::long_range`; what it could not do until now was
+    /// answer 5e's Underwater Combat clause — "a ranged weapon attack
+    /// automatically misses a target beyond the weapon's normal range" —
+    /// on the AI's side of the fence, because the number lived on the
+    /// weapon struct and the picker only ever sees a `&dyn Action`.
+    ///
+    /// So an archer standing in a lake used to line up a longbow shot
+    /// across it, spend its Action, and miss on every roll for the rest
+    /// of the fight, with nothing on the sheet the picker could have
+    /// read to know better.
+    fn normal_range(&self) -> Option<isize> {
+        None
+    }
+
+    /// True if this action resolves as a 5e **weapon attack** — a swing
+    /// or a shot with something the creature is holding — rather than
+    /// as a spell attack, a save-or-suck, or a class feature.
+    ///
+    /// The distinction 5e's Underwater Combat rules are written on:
+    /// every one of their clauses says "melee **weapon** attack" or
+    /// "ranged **weapon** attack", and a Fire Bolt cast in a lake is
+    /// unaffected by all of them. `engine::attack` has always known the
+    /// answer — it is `!AttackParams::is_spell` — but the AI's attack
+    /// picker holds a `&dyn Action` and cannot see an `AttackParams`,
+    /// so the answer has to be askable from the sheet.
+    ///
+    /// **Defaults to `false`, which is the conservative direction and
+    /// deliberately so.** A missing `true` costs the picker a ranking
+    /// hint; a wrong `true` would have it apply a penalty RAW doesn't
+    /// impose. `SimpleWeapon` overrides it, which covers every shared
+    /// weapon static in the bestiary — and, not coincidentally, every
+    /// weapon named on either of the two underwater cohorts, since
+    /// those cohorts are RAW's list of ordinary armoury weapons. A
+    /// bespoke natural weapon (a claw, a bite, a tentacle) leaves it
+    /// `false` and loses nothing by it: nothing of that shape is on
+    /// either cohort, so every one of a creature's bespoke swings is
+    /// penalised identically underwater and the ranking between them
+    /// is unchanged either way.
+    fn is_weapon_attack(&self) -> bool {
+        false
+    }
+
     /// True when resolving this action lands more than one attack — the
     /// `Multiattack` and `CompoundAttack` wrappers, which sit on the
     /// same action list as the swings they contain.

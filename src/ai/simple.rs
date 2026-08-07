@@ -12,6 +12,7 @@ use crate::conditions::Condition;
 use crate::engine::dice::RollMode;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::types::AbilityScoreType;
+use crate::engine::underwater::UnderwaterVerdict;
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
 /// Tactical heuristic AI. The decision pipeline runs in priority order:
@@ -7489,14 +7490,41 @@ fn best_attack_against(
         let crowded = action
             .min_effective_reach()
             .is_some_and(|min| dist < min);
+        // …and the other penalty the pair of creatures can't account
+        // for: the water one of them is standing in. Same shape as
+        // `crowded` and the same argument — the verdict depends on the
+        // weapon, which `compute_attack_mode` never sees — but with one
+        // outcome `crowded` doesn't have. A ranged weapon fired
+        // underwater past its normal range cannot hit at all, so the
+        // candidate is dropped outright rather than ranked last: an
+        // attack that provably misses is not a worse option than the
+        // alternatives, it is not an option.
+        //
+        // Dropping it is also what keeps the picker from starving. The
+        // rung below this one closes on the nearest enemy, so an archer
+        // that has waded into a pool and lost its shot walks back out
+        // and finds dry land, instead of standing in the water firing
+        // at something it cannot reach for the rest of the fight.
+        let underwater = encounter.underwater_verdict(
+            actor_id,
+            action.name(),
+            action.is_melee_attack(),
+            action.is_weapon_attack(),
+            action.normal_range().is_some_and(|nr| dist > nr),
+        );
+        if underwater == UnderwaterVerdict::AutoMiss {
+            continue;
+        }
         let mode = mode_priority(
             encounter
                 .compute_attack_mode(actor_id, target_id, action.is_melee_attack())
-                .combine(if crowded {
-                    crate::engine::dice::RollMode::Disadvantage
-                } else {
-                    crate::engine::dice::RollMode::Normal
-                }),
+                .combine(
+                    if crowded || underwater == UnderwaterVerdict::Disadvantage {
+                        crate::engine::dice::RollMode::Disadvantage
+                    } else {
+                        crate::engine::dice::RollMode::Normal
+                    },
+                ),
         );
         let damage = action.expected_damage(encounter, actor_id);
         let pick = match &best {
@@ -13942,3 +13970,4 @@ mod tests {
         );
     }
 }
+

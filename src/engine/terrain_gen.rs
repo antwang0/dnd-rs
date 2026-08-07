@@ -217,7 +217,127 @@ fn door_in_wall(rng: &mut Rng, wall_len: usize) -> (usize, usize) {
 pub fn generate_terrain(params: &TerrainGenParams, rng: &mut Rng) -> Vec<TerrainInfo> {
     let mut terrain = binary_space_partition(params, rng);
     scatter_obstructions(&mut terrain, params, rng);
+    // Strictly after the scatter, and every random draw it makes comes
+    // after every draw the scatter makes. That ordering is the only
+    // reason this pass could be added at all: `fastrand` is a stream,
+    // and a new draw inserted anywhere earlier would have shifted every
+    // seeded map in the suite out from under the tests that pin them.
+    flood_pools(&mut terrain, params, rng);
     terrain
+}
+
+/// How many steps a pool's random walk takes. Each step floods a 2x2
+/// block, and the blocks overlap heavily, so a pool ends up somewhere
+/// between one and three times this many tiles.
+///
+/// Sized so the biggest pool is a swim of a few strokes rather than a
+/// lake nobody can cross: a Medium creature with 30 ft of speed gets
+/// through the widest part of one in a single turn even paying double,
+/// which is what keeps the water a decision instead of a wall. A pool
+/// that cannot be crossed in a turn is a `Wall` the player can see
+/// through, and the map already has a tile for that.
+const POOL_WALK_STEPS: usize = 10;
+
+/// One in this many open floor tiles seeds a pool.
+///
+/// Deliberately an order of magnitude rarer than the rubble scatter's
+/// 8%, because a pool is not one tile — each seed spends a couple of
+/// dozen of them — and because water is the most consequential scatter
+/// on the map. Rubble taxes movement, a low wall taxes one attack roll,
+/// and a pool switches off a whole build's offense: an archer standing
+/// in one cannot reach anything past its normal range at all. That is a
+/// good thing to have on a map and a bad thing to have on every square
+/// of it, which is what this rate buys.
+const POOL_SEED_CHANCE: f32 = 0.006;
+
+/// Dig a handful of pools into the open floor.
+///
+/// Each pool starts at a seed tile and grows by a random walk, which
+/// gives an irregular blob rather than the rectangle a flood-to-radius
+/// would. Shape matters more here than it does for the scatter: rubble
+/// is read one tile at a time, but a pool is read as a thing to go
+/// around or through, and a creature deciding that needs to be able to
+/// see where the far side is.
+///
+/// **Every step floods a 2x2 block rather than a single tile**, and
+/// that is not a cosmetic choice — it is the difference between the
+/// feature working and not working at all. `is_immersed` implements
+/// RAW's "fully immersed" as *every tile of the footprint is water*,
+/// and a Medium creature's footprint is 2x2 on this grid. A bare random
+/// walk lays one-tile-wide channels, so the first version of this pass
+/// put water on every map and immersed nobody, ever: measured across
+/// twenty-five generated encounters driven to completion, the
+/// underwater rules fired exactly zero times. Widening the brush is
+/// what turned a tile that existed into a tile that does something.
+///
+/// It also makes a better map on its own terms. A one-tile ribbon of
+/// water deep enough to swim in is not a thing anybody can picture, and
+/// a creature that stepped into one would take every underwater penalty
+/// while visibly standing in a puddle.
+///
+/// Only `Floor` is flooded. Walls stop the walk (a pool does not eat a
+/// corridor), and the scatter's own tiles are left alone — rubble in
+/// the water would be a tile charging two different surcharges that
+/// two different creatures are exempt from, which the pathfinder
+/// resolves correctly and no player could predict.
+fn flood_pools(terrain: &mut [TerrainInfo], params: &TerrainGenParams, rng: &mut Rng) {
+    let (w, h) = (params.width, params.height);
+    if w < 3 || h < 3 {
+        return;
+    }
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            if terrain[idx(x, y, params)].terrain_type != TerrainType::Floor {
+                continue;
+            }
+            if rng.f32() >= POOL_SEED_CHANCE {
+                continue;
+            }
+            let (mut cx, mut cy) = (x, y);
+            for _ in 0..POOL_WALK_STEPS {
+                // The 2x2 brush. A block that runs into a wall floods
+                // the tiles it can and leaves the rest — clipping the
+                // brush rather than refusing the step is what lets a
+                // pool sit against a wall without either eating it or
+                // stopping a tile short of it.
+                let mut flooded_any = false;
+                for bx in cx..=cx + 1 {
+                    for by in cy..=cy + 1 {
+                        if bx + 1 >= w || by + 1 >= h {
+                            continue;
+                        }
+                        let i = idx(bx, by, params);
+                        if terrain[i].terrain_type == TerrainType::Floor {
+                            terrain[i].terrain_type = TerrainType::Water;
+                            flooded_any = true;
+                        }
+                    }
+                }
+                if !flooded_any {
+                    // The brush landed entirely on walls or on water it
+                    // had already laid; there is nothing here to grow
+                    // into.
+                    break;
+                }
+                // Step to a random orthogonal neighbour, staying clear
+                // of the map edge so a pool never touches the border.
+                // The bounds check ends the walk rather than resampling:
+                // a pool that has run into the edge of the room is
+                // finished, and resampling would let it crawl along the
+                // wall.
+                let (nx, ny) = match rng.u8(0..4) {
+                    0 => (cx + 1, cy),
+                    1 => (cx.wrapping_sub(1), cy),
+                    2 => (cx, cy + 1),
+                    _ => (cx, cy.wrapping_sub(1)),
+                };
+                if nx == 0 || ny == 0 || nx + 2 >= w || ny + 2 >= h {
+                    break;
+                }
+                (cx, cy) = (nx, ny);
+            }
+        }
+    }
 }
 
 /// Randomly obstruct ~8% of open floor tiles: three parts difficult
@@ -387,4 +507,184 @@ mod tests {
             }
         }
     }
+
+    /// Pools appear, they are pools rather than isolated puddles, and
+    /// they stay much rarer than the rubble scatter.
+    ///
+    /// The middle clause is the one worth pinning. A single tile of
+    /// water is a trap rather than a feature — a creature standing on
+    /// it takes every underwater penalty and has no reason to be there
+    /// and no warning it mattered — so the random walk has to actually
+    /// produce contiguous blobs. Averaging tiles-per-seed is how that
+    /// shows: a walk that terminated on its first step every time would
+    /// still put water on the map and would score 1.0 here.
+    #[test]
+    fn the_generator_digs_pools_rather_than_puddles() {
+        let params = TerrainGenParams {
+            width: 60,
+            height: 40,
+            branch_depth: 3,
+            branch_prob: 1.0,
+        };
+        let (mut water, mut rough, mut maps_with_water) = (0usize, 0usize, 0usize);
+        for seed in 0..16u64 {
+            let mut rng = Rng::with_seed(seed);
+            let terrain = generate_terrain(&params, &mut rng);
+            let here = terrain
+                .iter()
+                .filter(|t| t.terrain_type == TerrainType::Water)
+                .count();
+            if here > 0 {
+                maps_with_water += 1;
+                // Every pool on a map this size is several tiles across.
+                assert!(here >= 3, "seed {seed}: {here} water tiles is a puddle");
+            }
+            water += here;
+            rough += terrain
+                .iter()
+                .filter(|t| t.terrain_type == TerrainType::DifficultTerrain)
+                .count();
+        }
+        assert!(maps_with_water > 0, "water should appear across 16 maps");
+        assert!(
+            water < rough,
+            "water is the rarer scatter: {water} against {rough}"
+        );
+    }
+
+    /// A generated map has somewhere a Medium creature can actually be
+    /// **fully immersed** — at least one 2x2 block of nothing but water.
+    ///
+    /// This is the test the feature needed and didn't have. The first
+    /// version of `flood_pools` walked one tile at a time, which put
+    /// water on 40 maps out of 40 and satisfied every other assertion in
+    /// this module — and immersed nobody, ever, because `is_immersed`
+    /// asks about the whole footprint and a Medium footprint is 2x2. The
+    /// underwater rules fired exactly zero times across twenty-five
+    /// generated encounters driven to completion. Every visible signal
+    /// said the feature was working.
+    ///
+    /// So the property worth pinning is not "water exists" but "water
+    /// exists in the shape the rules read", and it is worth pinning
+    /// cheaply and deterministically here rather than by sampling AI
+    /// behaviour: a threshold on how often a fight happens to produce an
+    /// underwater swing would be slow, flaky, and would still pass at a
+    /// tenth of the intended rate.
+    #[test]
+    fn a_generated_map_has_room_to_be_fully_immersed_in() {
+        let params = TerrainGenParams {
+            width: 40,
+            height: 30,
+            branch_depth: 4,
+            branch_prob: 0.5,
+        };
+        let mut maps_with_a_swimmable_block = 0;
+        const SEEDS: u64 = 12;
+        for seed in 0..SEEDS {
+            let mut rng = Rng::with_seed(seed);
+            let terrain = generate_terrain(&params, &mut rng);
+            let wet = |x: usize, y: usize| {
+                terrain[idx(x, y, &params)].terrain_type == TerrainType::Water
+            };
+            let has_block = (0..params.height - 1).any(|y| {
+                (0..params.width - 1)
+                    .any(|x| wet(x, y) && wet(x + 1, y) && wet(x, y + 1) && wet(x + 1, y + 1))
+            });
+            if has_block {
+                maps_with_a_swimmable_block += 1;
+            }
+        }
+        // Not every map — a small or heavily-walled one may have no room
+        // — but the common case has to be that it does, or the rules the
+        // tile carries are unreachable in play.
+        assert!(
+            maps_with_a_swimmable_block * 2 > SEEDS,
+            "only {maps_with_a_swimmable_block}/{SEEDS} maps have a 2x2 pool a Medium creature could swim in"
+        );
+    }
+
+    /// A pool never touches the map border, and never eats a wall.
+    ///
+    /// Both are load-bearing rather than cosmetic. Water on the border
+    /// would be reachable only from one side, which makes the tile a
+    /// dead end that costs double to enter and nothing to look at; and
+    /// a pool that flooded a wall would open a route the BSP never cut,
+    /// silently merging two rooms and changing what "a doorway" means
+    /// for every consumer of the map.
+    #[test]
+    fn a_pool_stays_off_the_border_and_out_of_the_walls() {
+        for (w, h) in [(60usize, 40usize), (20, 20), (9, 7)] {
+            let params = TerrainGenParams {
+                width: w,
+                height: h,
+                branch_depth: 3,
+                branch_prob: 1.0,
+            };
+            for seed in 0..12u64 {
+                let mut rng = Rng::with_seed(seed);
+                let terrain = generate_terrain(&params, &mut rng);
+                // The walls the BSP laid are still walls: re-running the
+                // partition with the same seed prefix gives the map as
+                // it was before the pools, and no `Wall` may have
+                // become `Water`.
+                let mut fresh = Rng::with_seed(seed);
+                let before = binary_space_partition(&params, &mut fresh);
+                for y in 0..h {
+                    for x in 0..w {
+                        let i = idx(x, y, &params);
+                        if terrain[i].terrain_type != TerrainType::Water {
+                            continue;
+                        }
+                        assert_eq!(
+                            before[i].terrain_type,
+                            TerrainType::Floor,
+                            "{w}x{h} seed {seed}: pool flooded a non-floor tile at ({x},{y})"
+                        );
+                        assert!(
+                            x > 0 && y > 0 && x + 1 < w && y + 1 < h,
+                            "{w}x{h} seed {seed}: pool reached the border at ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The pool pass draws only after every draw the older passes make,
+    /// so adding it left every seeded map's rooms, doors, rubble and low
+    /// walls exactly where they were.
+    ///
+    /// This is the invariant that made the feature addable at all, and
+    /// it is not self-evident from reading `generate_terrain` — it holds
+    /// because `flood_pools` is called last and for no other reason.
+    /// Pinned so that a later reordering fails here rather than by
+    /// silently shifting a hundred seeded encounters in the suite.
+    #[test]
+    fn digging_the_pools_left_every_older_tile_where_it_was() {
+        let params = TerrainGenParams {
+            width: 60,
+            height: 40,
+            branch_depth: 3,
+            branch_prob: 1.0,
+        };
+        for seed in 0..8u64 {
+            let mut rng = Rng::with_seed(seed);
+            let mut expected = binary_space_partition(&params, &mut rng);
+            scatter_obstructions(&mut expected, &params, &mut rng);
+
+            let mut rng = Rng::with_seed(seed);
+            let actual = generate_terrain(&params, &mut rng);
+
+            for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+                if a.terrain_type == TerrainType::Water {
+                    continue;
+                }
+                assert_eq!(
+                    a.terrain_type, e.terrain_type,
+                    "seed {seed} tile {i}: the pool pass moved an older tile"
+                );
+            }
+        }
+    }
 }
+

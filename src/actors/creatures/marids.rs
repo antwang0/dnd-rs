@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MARID_MULTI, MARID_TRIDENT, MARID_WATER_JET};
 use crate::actors::actor_template::CreatureTemplate;
@@ -106,6 +107,9 @@ pub static MARID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // of-turn recharge hook flips the resource back on automatically;
         // `MaridWaterJet::custom_validate_input` gates the cast.
         recharge_abilities: vec![("water_jet", 4)],
+        // RAW swim speed: the tag is what makes `TerrainType::Water`
+        // free to cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
