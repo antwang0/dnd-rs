@@ -819,6 +819,66 @@ pub static UNICORN_SHEPHERD_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
     )
 });
 
+/// Dreams Druid — Circle of Dreams (XGtE), and the ninth druid on the
+/// roster. The circle that never has to be where the fighting is.
+///
+/// Two subclass features ship:
+///
+///   - **Balm of the Summer Court** (lv2) — a bonus action once per
+///     short rest: 4d6 hit points to one creature within 120 ft, plus
+///     four temporary hit points on top. See
+///     `BALM_OF_THE_SUMMER_COURT`.
+///   - **Hidden Paths** (lv10) — a bonus action once per short rest: a
+///     sixty-foot blink out of wherever the druid has ended up. See
+///     `HIDDEN_PATHS`.
+///
+/// **Both features are about distance, from opposite ends.** The balm
+/// reaches 120 ft, which is further than any other healing feature in
+/// the engine by a factor of four — every other one is touch or 30 ft,
+/// and all of them make the healer walk toward the wounded. Hidden
+/// Paths is the same idea inverted: when something has closed on the
+/// druid anyway, the blink undoes it for a bonus action and no slot.
+///
+/// That combination is worth more on this chassis than it would be on
+/// most. A druid's concentration is usually holding something — a
+/// Moonbeam, a Spike Growth, a Call Lightning — and both of the
+/// alternative escapes on the teleport lane cost a slot the druid would
+/// rather have spent replacing it. Hidden Paths is the only exit that
+/// leaves both the slot and the concentration alone, which makes the
+/// Dreams druid the one circle that can hold a control spell up through
+/// being charged.
+///
+/// The balm is also the roster's only *pre-emptive* heal. Every other
+/// healing feature overheals into nothing on a body at full hit points;
+/// this one is worth four temporary hit points on anybody, because RAW
+/// hands out a second pool alongside the first.
+///
+/// Left out: **Hearth of Moonlight and Shadow** (lv6, a camp ward that
+/// exists between fights rather than in them) and **Walker in Dreams**
+/// (lv14, three spells cast over a short rest, none of them combat).
+/// The willing-creature half of Hidden Paths is left out too — see its
+/// docstring for why the engine's targeting schemas can carry a
+/// destination or a target but not both.
+///
+/// Glyph 'M' — for the sum**M**er court, since 'D' is the baseline
+/// druid's. Distinct from baseline 'D', Land 'L', Moon 'B', Spores 'F',
+/// Stars 'S', Wildfire 'W', Bear Shepherd 'R' and Unicorn Shepherd 'U'.
+pub static DREAMS_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    use crate::actions::class_features::{
+        BALM_OF_THE_SUMMER_COURT, BALM_OF_THE_SUMMER_COURT_TAG, HIDDEN_PATHS, HIDDEN_PATHS_TAG,
+    };
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(&*BALM_OF_THE_SUMMER_COURT);
+    actions.push(&*HIDDEN_PATHS);
+    CreatureTemplate {
+        name: "Dreams Druid",
+        glyph: 'M',
+        actions,
+        features: HashSet::from([BALM_OF_THE_SUMMER_COURT_TAG, HIDDEN_PATHS_TAG]),
+        ..DRUID_TEMPLATE.clone()
+    }
+});
+
 #[cfg(test)]
 mod wildfire_tests {
     use super::*;

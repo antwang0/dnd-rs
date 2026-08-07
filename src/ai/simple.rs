@@ -5886,15 +5886,30 @@ fn try_hypnotic_gaze(
 ///   1. **Benign Transposition** (Conjuration Wizard lv6) — a charge
 ///      that the conjurer's own casting refills, so it is very nearly
 ///      free. Costs the action.
-///   2. **Misty Step** — a 2nd-level slot, but only a bonus action, so
+///   2. **Hidden Paths** (Circle of Dreams Druid lv10) — a bonus
+///      action and a per-short-rest charge, and no slot at all. Below
+///      Benign Transposition only because the conjurer's charge refills
+///      itself mid-fight and this one does not; against everything
+///      below it, a blink that costs no slot is strictly cheaper.
+///
+///      It matters most on the chassis that carries it: a druid holding
+///      a Moonbeam or a Spike Growth would have to spend the slot that
+///      replaces it to take either of the two escapes below, and this
+///      one leaves both the slot and the concentration alone.
+///   3. **Misty Step** — a 2nd-level slot, but only a bonus action, so
 ///      the caster still gets to cast on the turn they escape.
-///   3. **Dimension Door** — a 4th-level slot and an action, with
+///   4. **Dimension Door** — a 4th-level slot and an action, with
 ///      double the range. The last resort, and the only one that
 ///      reliably clears a whole engagement.
 ///
 /// A new self-teleport (Thunder Step's damage-on-arrival variant, a
 /// Horizon Walker's Planar Step) drops in as one row.
-const SELF_TELEPORT_ESCAPES: &[&str] = &["benign transposition", "misty step", "dimension door"];
+const SELF_TELEPORT_ESCAPES: &[&str] = &[
+    "benign transposition",
+    "hidden paths",
+    "misty step",
+    "dimension door",
+];
 
 /// The eight unit steps on a Chebyshev grid, used to probe teleport
 /// destinations outward from the caster.
@@ -6006,6 +6021,23 @@ fn try_teleport_escape(
                     continue;
                 }
                 let cand = Coordinate::new(my_loc.x + dx * dist, my_loc.y + dy * dist);
+                // Off the map is not a landing spot, and dropping those
+                // here rather than at `validate` is what keeps the
+                // validation budget for candidates that could work.
+                //
+                // It used to be `validate`'s job, and the cost fell
+                // entirely on the longest-reaching blinks: candidates
+                // are scored by distance gained and the far ones score
+                // best, so a 60 ft teleport from mid-map spent all
+                // eight of its validations on coordinates past the
+                // wall and reported that it could not escape. A 30 ft
+                // one never noticed, because half its probe ring landed
+                // inside the map to begin with — which is how a picker
+                // can be wrong in a way that only the next feature
+                // finds.
+                if !encounter.in_bounds(cand) {
+                    continue;
+                }
                 let gap = gap_to_nearest_threat(cand);
                 // Only landing spots that actually improve on standing
                 // still are worth a slot.
@@ -11821,6 +11853,62 @@ mod tests {
         );
     }
 
+    /// The Dreams Druid takes the escape lane's cheapest exit, and it
+    /// is cheaper than either spell on the list: a bonus action and a
+    /// per-rest charge, no slot at all.
+    ///
+    /// That is the row's whole argument on this chassis. A druid pinned
+    /// while holding a Moonbeam has to choose between the concentration
+    /// and the slot that would replace it if the only exits are Misty
+    /// Step and Dimension Door; Hidden Paths costs neither, which is
+    /// why it sits above both in `SELF_TELEPORT_ESCAPES`.
+    #[test]
+    fn the_dreams_druid_blinks_out_without_spending_a_slot() {
+        use crate::actions::class_features::HIDDEN_PATHS_TAG;
+        use crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let (e, druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+        let slots_before = e.actors[&druid].lowest_available_spell_slot();
+        let aei = try_teleport_escape(&e, druid).expect("two adjacent hostiles is pinned");
+        assert_eq!(aei.action().name(), "hidden paths");
+
+        let dest = aei.target_locations().as_ref().unwrap()[0];
+        let me = &e.actors[&druid];
+        let my_size = get_tiles_from_size(me.size());
+        let gap = |c| {
+            e.actors
+                .values()
+                .filter(|a| a.team() != me.team() && a.is_combat_active())
+                .map(|a| {
+                    footprint_chebyshev(c, my_size, a.location(), get_tiles_from_size(a.size()))
+                })
+                .min()
+                .unwrap_or(0)
+        };
+        assert!(
+            gap(dest) > gap(me.location()),
+            "the blink has to actually gain distance"
+        );
+        assert_eq!(
+            e.actors[&druid].lowest_available_spell_slot(),
+            slots_before,
+            "the picker chose an exit that touches no slot"
+        );
+
+        // With the charge spent the lane comes back empty, because the
+        // blink is the only exit this chassis carries — the druid spell
+        // list has neither Misty Step nor Dimension Door. So the whole
+        // subclass feature is one press per rest, and the AI does not
+        // pretend otherwise by re-proposing a spent charge.
+        let (mut e, druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .spend_feature(HIDDEN_PATHS_TAG);
+        assert!(try_teleport_escape(&e, druid).is_none());
+    }
+
     /// Shapechanger's two thresholds. The form costs the wizard their
     /// concentration, so the AI demands a worse position before it will
     /// trade one away — and it never re-fires while already
@@ -12794,7 +12882,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 53] = [
+        let cases: [(&CreatureTemplate, &str); 54] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -13065,6 +13153,18 @@ mod tests {
             (
                 &crate::actors::creatures::druids::UNICORN_SHEPHERD_DRUID_TEMPLATE,
                 "unicorn spirit",
+            ),
+            // The balm reaches the heal rungs through `is_heal()` alone,
+            // which is the fact worth pinning: no rung of its own, and a
+            // druid that is the only creature on its team still finds
+            // itself when the hit points call for it. Not Hidden Paths —
+            // the escape lane wants a pinned *ranged* actor at half hit
+            // points or with two bodies on it, and one ogre closing on a
+            // druid is neither. Its row on `SELF_TELEPORT_ESCAPES` and
+            // its blink are pinned engine-side.
+            (
+                &crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE,
+                "balm of the summer court",
             ),
         ];
 

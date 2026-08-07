@@ -73165,3 +73165,82 @@ fn the_giant_paths_rage_grows_the_board_footprint_and_gives_it_back() {
         "the footprint outlived the rage that grew it"
     );
 }
+
+/// Balm of the Summer Court heals *and* wards, which is what separates
+/// it from every other healing feature on the roster: the second pool
+/// is worth something on a body the first pool cannot help.
+#[test]
+fn the_balm_pays_out_twice_and_reaches_across_the_arena() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{
+        BALM_OF_THE_SUMMER_COURT, BALM_OF_THE_SUMMER_COURT_TAG,
+    };
+    use crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 10, &[]);
+    let druid = e
+        .instantiate_creature(&DREAMS_DRUID_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    // Forty tiles away — past every other healing feature's reach and
+    // well inside the balm's 120 ft.
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(42, 4), 0, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&ally)
+        .unwrap()
+        .take_typed_damage(25, crate::engine::types::DamageType::Slashing);
+    let before = e.actors[&ally].hitpoints();
+
+    let action: &dyn Action = &*BALM_OF_THE_SUMMER_COURT;
+    let targets = vec![ally];
+    assert!(action.custom_validate_input(&e, druid, Some(&targets), None, None));
+    for eff in action.side_effects(&mut e, druid, Some(&targets), None, None) {
+        eff.apply(&mut e);
+    }
+    let healed = e.actors[&ally].hitpoints() - before;
+    assert!(
+        (4..=24).contains(&healed),
+        "4d6 lands between 4 and 24: {}",
+        healed
+    );
+    assert_eq!(
+        e.actors[&ally].temp_hp(),
+        4,
+        "the ward is the half no other heal pays"
+    );
+    assert!(!e.actors[&druid].feature_available(BALM_OF_THE_SUMMER_COURT_TAG));
+}
+
+/// Hidden Paths is a blink, not a walk: it crosses the board without
+/// spending movement and without passing through the tiles between.
+#[test]
+fn hidden_paths_moves_the_druid_without_walking_them() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{HIDDEN_PATHS, HIDDEN_PATHS_TAG};
+    use crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 10, &[]);
+    let druid = e
+        .instantiate_creature(&DREAMS_DRUID_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    let dest = Coordinate::new(20, 4);
+    let action: &dyn Action = &*HIDDEN_PATHS;
+    let points = vec![dest];
+    assert!(action.custom_validate_input(&e, druid, None, Some(&points), None));
+    for eff in action.side_effects(&mut e, druid, None, Some(&points), None) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(e.actors[&druid].location(), dest);
+    assert!(!e.actors[&druid].feature_available(HIDDEN_PATHS_TAG));
+
+    // A destination the druid's footprint cannot hold is refused rather
+    // than silently clamped — off the map is the cheapest such case.
+    e.actors
+        .get_mut(&druid)
+        .unwrap()
+        .restore_feature_charge(HIDDEN_PATHS_TAG);
+    let offmap = vec![Coordinate::new(-5, 4)];
+    assert!(!action.custom_validate_input(&e, druid, None, Some(&offmap), None));
+}

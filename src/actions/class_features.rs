@@ -317,6 +317,12 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // so the charge belongs on this cadence next to its Wildfire-circle
     // sibling.
     SPIRIT_TOTEM_TAG,
+    // 5e Circle of Dreams Druid, both presses. RAW refills the balm's
+    // die pool and the blink's uses on a long rest; the short-rest
+    // cadence matches every other subclass charge on the roster, so a
+    // Dreams druid arrives at the next engagement with a subclass.
+    BALM_OF_THE_SUMMER_COURT_TAG,
+    HIDDEN_PATHS_TAG,
     // 5e Drakewarden Ranger — the summon charge. RAW's drake is a
     // permanent bond re-summoned with a spell slot or an hour's ritual;
     // the short-rest cadence here is the same translation the tentacle
@@ -3724,6 +3730,247 @@ impl Action for LayOnHands {
 }
 
 pub static LAY_ON_HANDS: LazyLock<LayOnHands> = LazyLock::new(|| LayOnHands {});
+
+/// 5e Circle of Dreams Druid **Balm of the Summer Court** (subclass
+/// level 2) — the charge. One press per short rest.
+///
+/// RAW's resource is a pool of `d6`s equal to the druid's level, spent
+/// a proficiency-bonus's worth at a time and refilled on a long rest.
+/// The engine's charge lane counts presses rather than dice, so this is
+/// one press of the largest legal spend — see `BALM_OF_THE_SUMMER_COURT`
+/// for what that comes to. Collapsing a die pool to a press is the same
+/// translation the Battle Master's maneuvers took before superiority
+/// dice got a counter, and it costs the same thing: a druid cannot
+/// dribble the pool out in small sips across a long fight.
+pub const BALM_OF_THE_SUMMER_COURT_TAG: &str = "druid.balm_of_the_summer_court";
+
+/// Balm of the Summer Court — Circle of Dreams Druid bonus action
+/// (subclass level 2). Four d6 of healing to one creature within 120
+/// ft, plus four temporary hit points.
+///
+/// **The temporary hit points are the feature, not the healing.** Four
+/// d6 is fourteen on average, which a levelled Cure Wounds matches for
+/// a slot the druid was going to have anyway. What no slot buys is the
+/// second pool on top: a balmed ally is fourteen points healed *and*
+/// four points harder to drop for the rest of the fight, and the second
+/// number is the one that keeps working after the target goes back to
+/// full.
+///
+/// Which makes it the roster's cheapest pre-emptive heal. Every other
+/// healing feature is worth nothing on a body at full hit points — Lay
+/// on Hands, Cure Wounds, Preserve Life all overheal into nothing — and
+/// this one is worth four points on anybody. The AI's heal rungs still
+/// hold it for the wounded, because that is where the other fourteen go.
+///
+/// A bonus action, and 120 ft of reach: RAW's range is what separates
+/// the Dreams druid from every touch-range healer in the game. The balm
+/// reaches the far side of any arena this engine generates, so the
+/// druid never has to walk into the fight to spend it.
+pub struct BalmOfTheSummerCourt {}
+
+impl Action for BalmOfTheSummerCourt {
+    fn name(&self) -> &str {
+        "balm of the summer court"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["balm", "summer court", "botsc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft on the 2.5 ft grid.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, BALM_OF_THE_SUMMER_COURT_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(druid) = encounter.actors.get_mut(&caster_id) {
+            druid.spend_feature(BALM_OF_THE_SUMMER_COURT_TAG);
+        }
+        // RAW spends up to a proficiency bonus worth of dice per use,
+        // and heals the total rolled while granting temporary hit points
+        // equal to the *number of dice*. Four is the proficiency bonus
+        // on the level-9 chassis every druid template is built to.
+        let dice = Dice::new(BALM_OF_THE_SUMMER_COURT_DICE, 6);
+        let healed = encounter.roll(&dice);
+        encounter.log(format!(
+            "  balm of the summer court: {}({}) HP and {} temporary hit points",
+            dice, healed, BALM_OF_THE_SUMMER_COURT_DICE
+        ));
+        vec![
+            Box::new(Heal {
+                actor_id: target_id,
+                amount: healed,
+            }),
+            Box::new(crate::engine::side_effects::GainTempHp {
+                actor_id: target_id,
+                amount: BALM_OF_THE_SUMMER_COURT_DICE,
+            }),
+        ]
+    }
+}
+
+/// How many dice the balm spends per press — RAW's proficiency bonus,
+/// four on the level-9 chassis. Doubles as the temporary-hit-point
+/// grant, because RAW ties the two to the same number: "the creature
+/// regains hit points equal to the total... and gains 1 temporary hit
+/// point per die spent".
+const BALM_OF_THE_SUMMER_COURT_DICE: u32 = 4;
+
+pub static BALM_OF_THE_SUMMER_COURT: LazyLock<BalmOfTheSummerCourt> =
+    LazyLock::new(|| BalmOfTheSummerCourt {});
+
+/// 5e Circle of Dreams Druid **Hidden Paths** (subclass level 10) — the
+/// charge. One press per short rest.
+///
+/// RAW gives proficiency-bonus uses per long rest; the short-rest
+/// cadence matches every other subclass charge on the roster, and one
+/// press is what `FEATURE_CHARGES`' own preamble asks for — a second
+/// blink inside a single fight is a blink the druid would rarely reach.
+pub const HIDDEN_PATHS_TAG: &str = "druid.hidden_paths";
+
+/// Hidden Paths — Circle of Dreams Druid bonus action (subclass level
+/// 10). Teleport up to 60 ft to an unoccupied space the druid can see.
+///
+/// **The fourth row on `SELF_TELEPORT_ESCAPES`, and the first that
+/// isn't a spell.** Benign Transposition spends a charge the conjurer's
+/// own casting refills, Misty Step spends a 2nd-level slot and Dimension
+/// Door a 4th; this one spends nothing but a bonus action and a
+/// per-rest charge, which makes it the cheapest exit on the roster and
+/// the only one a full caster can take without touching their slots.
+///
+/// That matters more on a druid than it would on a wizard. A druid's
+/// concentration is usually holding something — Moonbeam, Spike Growth,
+/// Call Lightning — and the alternative escapes either cost the slot
+/// that would have replaced it or cost the action the concentration was
+/// bought with. Hidden Paths costs neither.
+///
+/// RAW also lets the druid send a willing creature instead of
+/// themselves. That half is left out: it needs both a target *and* a
+/// destination, and the engine's targeting schemas carry one or the
+/// other. The self half is the one the escape lane can drive.
+pub struct HiddenPaths {}
+
+impl Action for HiddenPaths {
+    fn name(&self) -> &str {
+        "hidden paths"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hp", "hidden path", "paths"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft on the 2.5 ft grid — the same envelope Shadow Step and
+        // Misty Step blink across.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, HIDDEN_PATHS_TAG) {
+            return false;
+        }
+        // The destination has to hold the druid's whole footprint — the
+        // same constraint Misty Step and Shadow Step apply, minus the
+        // movement budget a teleport does not spend.
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        if let Some(druid) = encounter.actors.get_mut(&caster_id) {
+            druid.spend_feature(HIDDEN_PATHS_TAG);
+        }
+        encounter
+            .log("  hidden paths: the druid steps through the Plane of Faerie and back.".to_string());
+        // Teleport, not movement — no intervening tiles, so no
+        // opportunity attacks. Same reasoning as Misty Step.
+        vec![Box::new(crate::engine::side_effects::TeleportActor {
+            actor_id: caster_id,
+            dest: point,
+        })]
+    }
+}
+
+pub static HIDDEN_PATHS: LazyLock<HiddenPaths> = LazyLock::new(|| HiddenPaths {});
 
 /// Class-feature tag for the Paladin's Cleansing Touch (Oath capstone,
 /// once per long rest in our model — RAW: CHA-mod uses per long rest;
