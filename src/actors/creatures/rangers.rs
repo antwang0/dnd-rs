@@ -960,9 +960,11 @@ pub static BEAST_MASTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 /// the harsher one because RAW's criticism of that conclave — lose the
 /// beast, lose the subclass for the day — is a real part of what it is.
 ///
-/// Left out: Draconic Gift (lv3, a cantrip and a language), Drake
-/// Mount / Perfected Bond (lv15, the drake grows Large and the ranger
-/// rides it). The second is the interesting omission — the engine has a
+/// Left out: Draconic Gift (lv3, a cantrip and a language), the
+/// resistance half of Bond of Fang and Scale (see
+/// `BOND_OF_FANG_AND_SCALE_TAG` for why the die ships and the
+/// resistance doesn't), and Drake Mount / Perfected Bond (lv15, the
+/// drake grows Large and the ranger rides it). The second is the interesting omission — the engine has a
 /// mount lane that would carry the riding half — but the drake is built
 /// at the level-9 chassis the ranger templates target, and a Large
 /// drake is a different creature.

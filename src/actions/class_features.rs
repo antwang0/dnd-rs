@@ -10808,6 +10808,16 @@ pub const SPELL_SUMMON_BAND_FLOOR: usize = 80;
 /// `DRAKE_COMPANION_TEMPLATE`. Fixed rather than read off the drake
 /// because the element is a template constant on both sides; the day a
 /// second drake element ships, the two rows move together.
+///
+/// RAW's other half — resistance to the drake's element while it is
+/// summoned — is left out, and the ellipsis in the quote above is
+/// hiding it. The two passive-resistance cohorts key off template flags
+/// and held conditions respectively, and neither can ask where a second
+/// body is standing; a resistance that ignored the leash would be a
+/// Drakewarden collecting half of fire damage for the whole fight for
+/// having pressed a button once. That is a third cohort's worth of
+/// widening for one row, and the die is the half of the feature that
+/// makes the leash worth pulling on.
 pub const BOND_OF_FANG_AND_SCALE_TAG: &str = "ranger.bond_of_fang_and_scale";
 
 /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
@@ -12430,7 +12440,22 @@ fn unicorn_spirit_spill(
     caster_id: usize,
     targets: &[usize],
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let Some(team) = encounter.actors.get(&caster_id).map(|c| c.team()) else {
+    // RAW's clause is "whenever **you** cast a spell that restores hit
+    // points", so the spill is the Shepherd's own, not a bonus every
+    // healer on the team collects for standing near somebody else's
+    // totem. Gated on the caster carrying the subclass the same way
+    // Enhanced Bond gates on the druid holding `ENHANCED_BOND_TAG`
+    // rather than merely on a spirit being on the board.
+    //
+    // `has_passive_feature` rather than `feature_available`: the tag is
+    // also the summon's charge, and a druid who has spent it is still a
+    // Shepherd.
+    let Some(team) = encounter
+        .actors
+        .get(&caster_id)
+        .filter(|c| c.has_passive_feature(SPIRIT_TOTEM_TAG))
+        .map(|c| c.team())
+    else {
         return Vec::new();
     };
     let Some(origin) = encounter

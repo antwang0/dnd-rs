@@ -73073,3 +73073,47 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         orphaned
     );
 }
+
+/// The unicorn's spill is the Shepherd's own. An ally healer standing
+/// inside somebody else's aura casts an ordinary Cure Wounds.
+///
+/// RAW's clause is "whenever **you** cast a spell that restores hit
+/// points", and the difference matters as soon as a party has two
+/// casters: without the gate, a Life Cleric on the same team would
+/// collect a Shepherd's subclass feature for free.
+#[test]
+fn the_unicorn_spill_belongs_to_the_druid_who_planted_the_totem() {
+    use crate::actions::class_features::slot_heal_effects;
+    use crate::actors::creatures::clerics::LIFE_CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&LIFE_CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let healed = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 4), 0, 1)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 0, 2)
+        .unwrap();
+    e.instantiate_creature(&UNICORN_SPIRIT_TOTEM_TEMPLATE, Coordinate::new(7, 4), 0, 0)
+        .unwrap();
+    for id in [healed, bystander] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .take_typed_damage(30, crate::engine::types::DamageType::Slashing);
+    }
+
+    let before = e.actors[&bystander].hitpoints();
+    for eff in slot_heal_effects(&mut e, cleric, &[healed], 5, 1) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&bystander].hitpoints(),
+        before,
+        "a cleric collected the druid's aura"
+    );
+}
