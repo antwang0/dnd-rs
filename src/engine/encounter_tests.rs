@@ -72849,3 +72849,131 @@ fn elemental_cleaver_waits_for_the_rage_and_then_rides_every_swing() {
         "the cleaver's die should ride more than one swing per turn"
     );
 }
+
+/// The Bear Spirit's whole feature happens at the moment it lands: a
+/// ward on every ally inside the totem's aura, measured from the
+/// spirit and not from the druid.
+///
+/// The far ally is the assertion that matters. It stands well outside
+/// the aura, so a druid-centred reading and a totem-centred one differ
+/// on it — and a self-buff wearing an aura's clothes would ward it
+/// anyway.
+#[test]
+fn the_bear_spirit_wards_the_aura_it_lands_in_and_nobody_further() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{
+        BEAR_SPIRIT_TAG, BEAR_SPIRIT_WARD, SPIRIT_TOTEM_BEAR, SPIRIT_TOTEM_TAG,
+    };
+    use crate::actors::creatures::druids::BEAR_SHEPHERD_DRUID_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let druid = e
+        .instantiate_creature(&BEAR_SHEPHERD_DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 0, 1)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(38, 18), 0, 2)
+        .unwrap();
+
+    let action: &dyn Action = &*SPIRIT_TOTEM_BEAR;
+    assert!(action.custom_validate_input(&e, druid, None, None, None));
+    for eff in action.side_effects(&mut e, druid, None, None, None) {
+        eff.apply(&mut e);
+    }
+
+    assert!(
+        !e.actors[&druid].feature_available(SPIRIT_TOTEM_TAG),
+        "the call left the charge unspent"
+    );
+    assert!(
+        e.actors
+            .iter()
+            .any(|(id, a)| *id != druid && a.has_passive_feature(BEAR_SPIRIT_TAG)),
+        "the bear should be on the board"
+    );
+    assert_eq!(e.actors[&druid].temp_hp(), BEAR_SPIRIT_WARD);
+    assert_eq!(e.actors[&near].temp_hp(), BEAR_SPIRIT_WARD);
+    assert_eq!(
+        e.actors[&far].temp_hp(),
+        0,
+        "the ward reached past the aura"
+    );
+}
+
+/// The Unicorn Spirit pays nothing on arrival and everything
+/// afterwards: each slot heal the druid casts spills onto the allies
+/// standing inside the totem's aura who the spell itself never
+/// reached.
+#[test]
+fn the_unicorn_spirit_spills_the_druids_heals_across_its_aura() {
+    use crate::actions::class_features::{
+        SPIRIT_TOTEM_UNICORN, UNICORN_SPIRIT_SPILL, slot_heal_effects,
+    };
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::druids::UNICORN_SHEPHERD_DRUID_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let druid = e
+        .instantiate_creature(&UNICORN_SHEPHERD_DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let healed = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 4), 0, 1)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 0, 2)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(38, 18), 0, 3)
+        .unwrap();
+    for id in [healed, bystander, far] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .take_typed_damage(30, crate::engine::types::DamageType::Slashing);
+    }
+
+    // With no totem on the board, a slot heal reaches only its target.
+    let before: Vec<u32> = [healed, bystander, far]
+        .iter()
+        .map(|id| e.actors[id].hitpoints())
+        .collect();
+    for eff in slot_heal_effects(&mut e, druid, &[healed], 5, 1) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&healed].hitpoints() > before[0]);
+    assert_eq!(e.actors[&bystander].hitpoints(), before[1]);
+
+    let action: &dyn Action = &*SPIRIT_TOTEM_UNICORN;
+    for eff in action.side_effects(&mut e, druid, None, None, None) {
+        eff.apply(&mut e);
+    }
+    // Nothing on arrival — that is the difference from the bear.
+    assert_eq!(e.actors[&druid].temp_hp(), 0);
+
+    let before: Vec<u32> = [healed, bystander, far]
+        .iter()
+        .map(|id| e.actors[id].hitpoints())
+        .collect();
+    for eff in slot_heal_effects(&mut e, druid, &[healed], 5, 1) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&bystander].hitpoints(),
+        before[1] + UNICORN_SPIRIT_SPILL,
+        "an ally inside the aura should collect the spill"
+    );
+    assert_eq!(
+        e.actors[&far].hitpoints(),
+        before[2],
+        "the spill reached past the aura"
+    );
+    assert_eq!(
+        e.actors[&healed].hitpoints(),
+        before[0] + 5,
+        "the spell's own target should not be paid twice"
+    );
+}

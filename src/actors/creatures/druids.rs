@@ -717,6 +717,108 @@ pub static WILDFIRE_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     }
 });
 
+/// Shared body of the two Circle of the Shepherd builds. Same baseline
+/// druid chassis, one totem action, one charge tag; the flavors differ
+/// only in which spirit the action calls and therefore in when the aura
+/// pays.
+///
+/// Two templates rather than one with a picker for the same reason the
+/// seven totem barbarians and the three storm heralds are separate
+/// templates: the engine has no channel for an option chosen at press
+/// time, and a build whose identity is its choice is better spelled as
+/// two builds than as one with a coin flip in it.
+fn shepherd_druid_template(
+    name: &'static str,
+    glyph: char,
+    totem: &'static (dyn crate::actions::action_template::Action + Send + Sync),
+) -> CreatureTemplate {
+    use crate::actions::class_features::SPIRIT_TOTEM_TAG;
+    let mut actions = DRUID_TEMPLATE.actions.clone();
+    actions.push(totem);
+    CreatureTemplate {
+        name,
+        glyph,
+        actions,
+        features: HashSet::from([SPIRIT_TOTEM_TAG]),
+        ..DRUID_TEMPLATE.clone()
+    }
+}
+
+/// Bear Shepherd Druid — Circle of the Shepherd (XGtE), **Bear Spirit**
+/// flavor, and the seventh druid on the roster.
+///
+/// One subclass feature ships: **Spirit Totem** (lv2), a bonus action
+/// once per short rest that plants an incorporeal bear and hands every
+/// ally inside its thirty-foot aura a fourteen-point shield the instant
+/// it lands.
+///
+/// **It is the only summon on the roster whose position stops mattering
+/// the moment it arrives.** The wildfire spirit, the tentacle and the
+/// drake all pay out continuously and so keep asking where they should
+/// be standing; the bear pays once, in full, at spawn — which turns the
+/// whole feature into a timing question. Called on round one it shields
+/// whoever happened to be nearby; held for a round it shields the party
+/// that has closed up, and costs a round of shielding to do it.
+///
+/// That makes it the mirror of its Unicorn sibling, which pays nothing
+/// on arrival and everything afterwards. The two share a chassis, a
+/// charge and an action shape, and disagree entirely about when a
+/// summon is worth calling.
+///
+/// Left out: **Mighty Summoner** (lv6, extra hit points and magical
+/// attacks for anything the druid conjures) would need a per-summon
+/// scaling hook the spawn path doesn't expose, and **Guardian Spirit**
+/// (lv10) heals summoned creatures rather than allies, which on this
+/// roster is a rider on a population of one.
+///
+/// Glyph 'R' — for bea**R**, since 'B' belongs to the Moon druid.
+/// Distinct from baseline druid 'D', Land 'L', Moon 'B', Spores 'F',
+/// Stars 'S' and Wildfire 'W', and paired with the bear spirit's
+/// lowercase 'r'.
+pub static BEAR_SHEPHERD_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    shepherd_druid_template(
+        "Bear Shepherd Druid",
+        'R',
+        &*crate::actions::class_features::SPIRIT_TOTEM_BEAR,
+    )
+});
+
+/// Unicorn Shepherd Druid — Circle of the Shepherd (XGtE), **Unicorn
+/// Spirit** flavor, and the eighth druid on the roster.
+///
+/// One subclass feature ships: **Spirit Totem** (lv2), a bonus action
+/// once per short rest that plants an incorporeal unicorn. Nothing
+/// happens when it lands. From then on, every healing spell the druid
+/// spends a slot on also pays nine hit points to each ally standing
+/// inside the totem's thirty-foot aura who the spell did not already
+/// reach.
+///
+/// **The aura is measured from the spirit, and the druid is not the
+/// spirit.** That is the whole subclass: a Unicorn Shepherd plants the
+/// totem where the party is going to be, walks away, and keeps healing
+/// the front line from wherever they are safe. No other healing feature
+/// in the engine separates the caster's position from the heal's — Balm
+/// of Peace measures five feet from the cleric, Mass Cure Wounds
+/// measures from the cast, and both of them require the healer to be
+/// where the wounded are.
+///
+/// The trade against its Bear sibling is exact. The bear is worth a
+/// fixed amount immediately and nothing later; the unicorn is worth
+/// nothing immediately and grows with every slot the druid spends. A
+/// fight that ends in two rounds wanted the bear. A fight that does not
+/// wanted this.
+///
+/// Glyph 'U' — for **U**nicorn. Distinct from baseline druid 'D', Land
+/// 'L', Moon 'B', Spores 'F', Stars 'S', Wildfire 'W' and Bear Shepherd
+/// 'R', and paired with the unicorn spirit's lowercase 'u'.
+pub static UNICORN_SHEPHERD_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    shepherd_druid_template(
+        "Unicorn Shepherd Druid",
+        'U',
+        &*crate::actions::class_features::SPIRIT_TOTEM_UNICORN,
+    )
+});
+
 #[cfg(test)]
 mod wildfire_tests {
     use super::*;

@@ -312,6 +312,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // of Pact Magic and of both of these by name.
     TENTACLE_OF_THE_DEEP_TAG,
     GUARDIAN_COIL_TAG,
+    // 5e Circle of the Shepherd Druid — the Spirit Totem call. RAW
+    // spends a Wild Shape use, and Wild Shape recovers on a short rest,
+    // so the charge belongs on this cadence next to its Wildfire-circle
+    // sibling.
+    SPIRIT_TOTEM_TAG,
     // 5e Drakewarden Ranger — the summon charge. RAW's drake is a
     // permanent bond re-summoned with a spell slot or an hour's ritual;
     // the short-rest cadence here is the same translation the tentacle
@@ -10518,6 +10523,216 @@ pub static SUMMON_DRAKE_COMPANION: FeatureSummon = FeatureSummon {
     cost_resource: Resource::Action,
 };
 
+/// 5e Circle of the Shepherd Druid **Spirit Totem** (subclass level 2)
+/// — the charge, carried by the druid. One press per short rest, and
+/// the same tag on both builds because a druid only ever has one totem
+/// to call.
+///
+/// RAW spends a Wild Shape use, which on this chassis belongs to the
+/// Moon Druid's `COMBAT_WILD_SHAPE_TAG`. A per-short-rest charge is the
+/// same translation `SUMMON_WILDFIRE_SPIRIT_TAG` makes for the same
+/// reason, and it is the same shape RAW is charging for: once per
+/// engagement, and you only get one spirit.
+pub const SPIRIT_TOTEM_TAG: &str = "druid.spirit_totem";
+
+/// Marker tag carried by the **bear spirit** totem itself. The needle
+/// `SpiritTotem`'s arrival payload counts allies against, and the reason
+/// the beacon is not the same tag as the charge: the druid carries
+/// `SPIRIT_TOTEM_TAG`, so sharing one tag would have made the druid
+/// their own beacon and put every ally standing near *them* inside an
+/// aura that belongs to the spirit.
+///
+/// That collision is not hypothetical — it is the bug
+/// `friendly_beacon_within` was carrying until the Drakewarden's bond
+/// tripped over it. Two tags cost one line and cannot have it.
+pub const BEAR_SPIRIT_TAG: &str = "druid.bear_spirit";
+
+/// Marker tag carried by the **unicorn spirit** totem itself. Read at
+/// `slot_heal_effects`, where the spill-over half of the Shepherd's
+/// aura lives — see `UNICORN_SPIRIT_SPILL`.
+pub const UNICORN_SPIRIT_TAG: &str = "druid.unicorn_spirit";
+
+/// The aura a Circle of the Shepherd totem projects, in tiles on the
+/// 2.5 ft grid — RAW's 30 ft, and the same number the Drakewarden's
+/// leash uses.
+pub const SPIRIT_TOTEM_AURA_TILES: isize = 12;
+
+/// What the unicorn's aura spills onto each ally inside it whenever the
+/// druid spends a slot on a heal — RAW's "hit points equal to your
+/// druid level", on the level-9 chassis every druid template targets.
+///
+/// Flat rather than rolled because RAW's clause is flat, and the
+/// flatness is what makes the totem worth planting somewhere: the druid
+/// knows exactly what a second body in the aura is worth before
+/// deciding where to put the spirit.
+pub const UNICORN_SPIRIT_SPILL: u32 = 9;
+
+/// Temporary hit points the bear's arrival hands to every ally inside
+/// the aura — RAW's "5 + your druid level" on the level-9 chassis.
+pub const BEAR_SPIRIT_WARD: u32 = 14;
+
+/// Spirit Totem — Circle of the Shepherd Druid action (subclass level
+/// 2). Once per short rest: an incorporeal spirit appears near the
+/// druid and projects a thirty-foot aura for the rest of the fight.
+///
+/// **A summon whose body is irrelevant.** The three feature summons
+/// already on the roster are all creatures first — the drake bites, the
+/// tentacle lashes, the wildfire spirit shoots — and their auras or
+/// bonds are riders on top of a thing that fights. A totem has no
+/// attack at all, so the only question the feature ever asks is where
+/// thirty feet of aura should sit. That is why this is not a
+/// `FeatureSummon`: the shared chassis spawns a body and stops, and the
+/// bear's whole payout is the thing that happens *as* it arrives.
+///
+/// The two flavors differ in when they pay:
+///
+///   - **Bear** hands every ally inside the aura a shield of temporary
+///     hit points the instant it appears, and then does nothing. Its
+///     decision is timing.
+///   - **Unicorn** does nothing on arrival and adds a flat spill to
+///     every healing spell the druid casts thereafter, to each ally
+///     inside the aura. Its decision is placement — see
+///     `UNICORN_SPIRIT_TAG`.
+///
+/// Search radius 3 rather than the roster's usual 2, for the reason the
+/// tentacle's is: RAW places the spirit anywhere within 60 ft, it never
+/// moves again, and where it lands is the only placement decision the
+/// feature makes. A slightly wider search is the cheapest approximation
+/// the engine has, absent a destination picker the AI could answer.
+pub struct SpiritTotem {
+    display_name: &'static str,
+    aliases: &'static [&'static str],
+    template: &'static LazyLock<crate::actors::actor_template::CreatureTemplate>,
+    base_instance_id: usize,
+    /// Temporary hit points handed to every ally inside the aura the
+    /// moment the spirit lands, or 0 for the flavors whose payout comes
+    /// later. The bear's whole feature; the unicorn's zero.
+    arrival_ward: u32,
+}
+
+impl Action for SpiritTotem {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn summons_allies(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The charge, and then the part the AI shouldn't have to guess
+        // at: whether a body fits anywhere nearby.
+        feature_ready(encounter, caster_id, SPIRIT_TOTEM_TAG)
+            && encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+                .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Charge first, spawn second — the same order every feature
+        // summon uses, and for the same reason: a spawn that fails
+        // because the arena filled in between should still cost the
+        // druid the call rather than leaving a charge to retry with.
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(SPIRIT_TOTEM_TAG);
+        }
+        let spawned = crate::actions::spells::spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            self.template,
+            crate::engine::types::Size::Medium,
+            1,
+            3,
+            self.base_instance_id,
+            self.display_name,
+        );
+        if self.arrival_ward == 0 {
+            return Vec::new();
+        }
+        let Some(&totem_id) = spawned.first() else {
+            // The aura has no centre, so there is nobody to ward. The
+            // charge is still gone, which is the same call the summons
+            // make.
+            return Vec::new();
+        };
+        let Some(origin) = encounter.actors.get(&totem_id).map(|t| t.location()) else {
+            return Vec::new();
+        };
+        // Measured from the spirit rather than from the druid, which is
+        // the whole difference between an aura and a self-buff.
+        let warded = encounter.ally_heal_burst_targets(caster_id, origin, SPIRIT_TOTEM_AURA_TILES);
+        encounter.log(format!(
+            "  {}: {} temporary hit points to {} inside the aura.",
+            self.display_name,
+            self.arrival_ward,
+            warded.len()
+        ));
+        warded
+            .into_iter()
+            .map(|actor_id| {
+                Box::new(crate::engine::side_effects::GainTempHp {
+                    actor_id,
+                    amount: self.arrival_ward,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+/// Spirit Totem (Bear) — the ward-on-arrival flavor. See `SpiritTotem`.
+pub static SPIRIT_TOTEM_BEAR: LazyLock<SpiritTotem> = LazyLock::new(|| SpiritTotem {
+    display_name: "bear spirit",
+    aliases: &["bear", "bear totem", "spirit totem"],
+    template: &crate::actors::creatures::spirit_totems::BEAR_SPIRIT_TOTEM_TEMPLATE,
+    base_instance_id: 74,
+    arrival_ward: BEAR_SPIRIT_WARD,
+});
+
+/// Spirit Totem (Unicorn) — the spill-over flavor. See `SpiritTotem`
+/// and `UNICORN_SPIRIT_TAG`.
+pub static SPIRIT_TOTEM_UNICORN: LazyLock<SpiritTotem> = LazyLock::new(|| SpiritTotem {
+    display_name: "unicorn spirit",
+    aliases: &["unicorn", "unicorn totem", "spirit totem"],
+    template: &crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE,
+    base_instance_id: 75,
+    // Nothing on arrival: the unicorn's whole payout is downstream, at
+    // `slot_heal_effects`.
+    arrival_ward: 0,
+});
+
 /// Every feature summon on the roster, in one place.
 ///
 /// The sweeps that have to hold across all of them — distinct instance
@@ -12150,7 +12365,76 @@ pub fn slot_heal_effects(
         targets,
         spell_slot_lvl,
     ));
+    effects.extend(unicorn_spirit_spill(encounter, caster_id, targets));
     effects
+}
+
+/// 5e Circle of the Shepherd Druid **Unicorn Spirit** (subclass level
+/// 2), the spill-over clause: "whenever you cast a spell that restores
+/// hit points, each creature of your choice in the aura also regains
+/// hit points equal to your druid level."
+///
+/// The third rider on the slot-heal chokepoint, and the only one that
+/// widens the *target list* rather than the amount. Disciple of Life
+/// and Enhanced Bond both make the spell's own recipients heal for
+/// more; this one pays creatures the spell never touched, which is why
+/// it emits its own `Heal` effects instead of moving a number.
+///
+/// **Measured from the spirit, not from the druid**, which is the whole
+/// difference between this and every other party-wide heal in the game.
+/// A Shepherd druid who plants the unicorn in the middle of the front
+/// line and then falls back is still healing the front line — the
+/// feature does not care where the caster is, only where the totem is,
+/// and that is the decision the subclass exists to pose.
+///
+/// The `targets` the spell already picked are excluded rather than paid
+/// twice: RAW's "each creature of your choice" is a fresh selection,
+/// and stacking the spill onto the spell's own recipient would make a
+/// single-target Cure Wounds on a body standing beside the unicorn
+/// strictly better than the same cast anywhere else, for no reason RAW
+/// gives.
+fn unicorn_spirit_spill(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    targets: &[usize],
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(origin) = encounter
+        .actors
+        .iter()
+        .find(|(_, a)| {
+            a.is_combat_active()
+                && a.has_passive_feature(UNICORN_SPIRIT_TAG)
+                && encounter
+                    .actors
+                    .get(&caster_id)
+                    .is_some_and(|c| c.team() == a.team())
+        })
+        .map(|(_, a)| a.location())
+    else {
+        return Vec::new();
+    };
+    let spilled: Vec<usize> = encounter
+        .ally_heal_burst_targets(caster_id, origin, SPIRIT_TOTEM_AURA_TILES)
+        .into_iter()
+        .filter(|id| !targets.contains(id))
+        .collect();
+    if spilled.is_empty() {
+        return Vec::new();
+    }
+    encounter.log(format!(
+        "  unicorn spirit: +{} HP to {} more inside the aura",
+        UNICORN_SPIRIT_SPILL,
+        spilled.len()
+    ));
+    spilled
+        .into_iter()
+        .map(|actor_id| {
+            Box::new(Heal {
+                actor_id,
+                amount: UNICORN_SPIRIT_SPILL,
+            }) as Box<dyn ApplicableSideEffect>
+        })
+        .collect()
 }
 
 /// 5e Grave Domain Cleric — **Circle of Mortality** subclass feature tag

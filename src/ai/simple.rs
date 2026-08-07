@@ -8417,6 +8417,10 @@ mod tests {
         assert_eq!(
             free,
             vec![
+                // The two Circle of the Shepherd totems, which share
+                // one charge and are two builds rather than one — see
+                // `SPIRIT_TOTEM_TAG`.
+                "bear spirit",
                 // The Artillerist's three cannon modes, which share one
                 // charge and so are one summon wearing three names —
                 // see `ELDRITCH_CANNON_TAG`.
@@ -8428,6 +8432,7 @@ mod tests {
                 "summon drake",
                 "summon wildfire spirit",
                 "tentacle of the deep",
+                "unicorn spirit",
             ],
             "the free rung's membership changed"
         );
@@ -12789,7 +12794,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 51] = [
+        let cases: [(&CreatureTemplate, &str); 53] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -13040,6 +13045,26 @@ mod tests {
             (
                 &crate::actors::creatures::barbarians::GIANT_BARBARIAN_TEMPLATE,
                 "elemental cleaver: +",
+            ),
+            // Both totems reach the free-summon rung on their own, which
+            // is the fact worth pinning: they are not `FeatureSummon`s,
+            // so the rung finds them through `summons_allies()` and
+            // nothing else. The bear's ward lands in the same breath
+            // because this fixture is one PC — the druid is the only
+            // creature in its own aura, which is exactly one of the
+            // creatures RAW lets it ward.
+            //
+            // Not the unicorn's spill: it needs a slot heal *and* an
+            // ally inside the aura who the heal missed, and this fixture
+            // has neither. It is pinned engine-side, where a second body
+            // can be put on the board.
+            (
+                &crate::actors::creatures::druids::BEAR_SHEPHERD_DRUID_TEMPLATE,
+                "bear spirit",
+            ),
+            (
+                &crate::actors::creatures::druids::UNICORN_SHEPHERD_DRUID_TEMPLATE,
+                "unicorn spirit",
             ),
         ];
 
@@ -13717,6 +13742,8 @@ mod tests {
             ("summon celestial", true),
             ("summon draconic spirit", true),
             ("summon fiend", true),
+            ("bear spirit", false),
+            ("unicorn spirit", false),
             ("ranger's companion", false),
             ("summon drake", false),
             ("summon wildfire spirit", false),

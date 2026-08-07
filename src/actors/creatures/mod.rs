@@ -264,6 +264,7 @@ pub mod goats;
 pub mod mules;
 pub mod ponies;
 pub mod elks;
+pub mod spirit_totems;
 pub mod summoned_spirits;
 pub mod swarms;
 
@@ -379,6 +380,8 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*druids::SPORES_DRUID_TEMPLATE,
                     &*druids::STARS_DRUID_TEMPLATE,
                     &*druids::WILDFIRE_DRUID_TEMPLATE,
+                    &*druids::BEAR_SHEPHERD_DRUID_TEMPLATE,
+                    &*druids::UNICORN_SHEPHERD_DRUID_TEMPLATE,
                 ],
             ),
             (
