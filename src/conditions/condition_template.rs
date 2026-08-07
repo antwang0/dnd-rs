@@ -835,6 +835,24 @@ pub enum Condition {
     /// magically become larger"), unlike the maneuver primes it sits
     /// beside on the fighter's sheet.
     GiantsMight,
+    /// **Elemental Cleaver** (5e Path of the Giant Barbarian, subclass
+    /// level 3). A bonus action spent wreathing the barbarian's weapon
+    /// in one of the four giant elements: while it lasts, every hit
+    /// they land carries an extra 1d6 of that element.
+    ///
+    /// A condition rather than a passive tag because RAW makes the
+    /// element a choice the barbarian re-makes — "you can change the
+    /// damage type... as a bonus action" — and because the rider it
+    /// feeds keys off conditions. What the condition is *not* is the
+    /// rage: RAW's extra die is priced on "while you're raging", and
+    /// the action refuses to install unless the rage is already up, so
+    /// the two clauses stay separate without the rider needing to read
+    /// both.
+    ///
+    /// On `is_dispellable_buff`: RAW's cleaver is elemental power the
+    /// barbarian pulls into the weapon, which is the same magical
+    /// self-buff the Rune Knight's rune above it is.
+    ElementalCleaver,
     /// **Fire Rune** invoked (5e Rune Knight Fighter, subclass level 3).
     /// A bonus action spent kindling the rune etched on the fighter's
     /// weapon: the next hit burns for an extra 2d6 fire and forces a STR
@@ -2208,6 +2226,7 @@ impl Condition {
             Condition::Enlarged => "enlarged",
             Condition::Reduced => "reduced",
             Condition::GiantsMight => "wreathed in giant's might",
+            Condition::ElementalCleaver => "weapon wreathed in elemental fury",
             Condition::FireRuneInvoked => "burning with a fire rune",
             Condition::TouchingDeath => "wreathed in the reaper's touch",
             Condition::DivineStrikingNecrotic => "primed to strike withering",
@@ -2392,6 +2411,7 @@ impl Condition {
                 | Condition::Shillelaghed
                 | Condition::Enlarged
                 | Condition::GiantsMight
+                | Condition::ElementalCleaver
                 | Condition::WardingBonded
                 | Condition::MindBlanked
                 | Condition::Barkskinned

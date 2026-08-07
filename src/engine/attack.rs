@@ -3756,6 +3756,34 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
         // rider on every melee swing the holder lands. Mirrors Crown of
         // Stars but cold-typed and melee-only.
+        // 5e Path of the Giant Barbarian **Elemental Cleaver** (subclass
+        // level 3): the weapon the barbarian kindled deals an extra 1d6
+        // of the chosen element on every hit.
+        //
+        // Every hit, not once a turn — RAW puts no cadence on it, and
+        // the cadence is what separates this from the once-per-turn
+        // cohort one table over. That makes it the barbarian's answer
+        // to Extra Attack: two swings carry two dice, and a Frenzied
+        // third carries a third. The rage is not read here; it was read
+        // at the install, which is what `ElementalCleaver` being its
+        // own condition buys.
+        //
+        // Cold is the element on the roster's build; RAW lets the
+        // barbarian choose among five, and the choice has no engine
+        // surface to hang on until a template wants a second one.
+        OnHitRider {
+            condition: Condition::ElementalCleaver,
+            dice: Dice::new(1, 6),
+            label: "elemental cleaver",
+            damage_type: DamageType::Cold,
+            // RAW says "your weapon", which is any swing the barbarian
+            // makes with it — a hand axe thrown across the room is
+            // still the kindled axe.
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+        },
         OnHitRider {
             condition: Condition::SpiritShrouded,
             dice: Dice::new(1, 8),

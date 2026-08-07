@@ -298,7 +298,30 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3c''''. Arms of the Astral Self — the Astral Self Monk's
+        // 3c''''. Elemental Cleaver — the Path of the Giant Barbarian's
+        //         bonus-action kindling. Below Rage rather than beside
+        //         it, and the order is load-bearing: the action refuses
+        //         to install unless the rage is already up, so a rung
+        //         above Rage would spend the turn deciding nothing. The
+        //         melee-ish gate is Giant's Might's, for the same
+        //         reason — the die rides swings, and a barbarian with
+        //         nothing in reach has nothing to ride.
+        //
+        //         The bonus action it spends is the one Frenzy wants,
+        //         which is the trade the subclass is priced on. Ranking
+        //         the kindling first is right anyway: the cleaver pays
+        //         out on every hit for the rest of the rage, and
+        //         Frenzy's extra swing pays out once.
+        if let Some(aei) = try_self_action_when_enemy_within(
+            encounter,
+            actor_id,
+            IMMINENT_CONTACT_GAP,
+            "elemental cleaver",
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3c'''''. Arms of the Astral Self — the Astral Self Monk's
         //         bonus-action summon. Same rung and the same argument
         //         as Rage, Form of Dread and Giant's Might: a
         //         bonus-action posture worth more the earlier it is up.
@@ -12766,7 +12789,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 49] = [
+        let cases: [(&CreatureTemplate, &str); 51] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -12999,6 +13022,24 @@ mod tests {
             (
                 &crate::actors::creatures::rangers::DRAKEWARDEN_RANGER_TEMPLATE,
                 "bite",
+            ),
+            // The kindling and the die it turns on are two separate
+            // facts, and the first is the interesting one: the rung
+            // sits below Rage because the action refuses to install
+            // without it, so seeing the log line at all is the proof
+            // that a bonus-action press gated on a condition the
+            // barbarian acquires one rung earlier is still reachable in
+            // the same turn order. Not Giant Stature: it has no press —
+            // the size follows the rage — and its gate is pinned
+            // engine-side where an ordinary barbarian can stand beside
+            // it for comparison.
+            (
+                &crate::actors::creatures::barbarians::GIANT_BARBARIAN_TEMPLATE,
+                "elemental cleaver",
+            ),
+            (
+                &crate::actors::creatures::barbarians::GIANT_BARBARIAN_TEMPLATE,
+                "elemental cleaver: +",
             ),
         ];
 

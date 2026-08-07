@@ -1147,6 +1147,21 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
 struct ResizingCondition {
     condition: Condition,
     steps: i32,
+    /// Extra holder-side precondition beyond carrying `condition`, or
+    /// `None` for the rows that resize whoever holds it.
+    ///
+    /// The Path of the Giant Barbarian's Giant's Havoc is the first row
+    /// with one, and it is there because the condition it keys off —
+    /// `Raging` — is carried by every barbarian on the roster. RAW
+    /// grows the giant-path barbarian automatically while raging rather
+    /// than through a press of its own, so the alternative to a gate
+    /// here was a second condition installed by a bonus action that RAW
+    /// does not charge.
+    ///
+    /// Named and shaped to match `OnHitConditionMark::holder_gate` and
+    /// `OncePerTurnWeaponRiderSpec::caster_gate`, which grew the same
+    /// column for the same reason.
+    holder_gate: Option<fn(&ActorInstance) -> bool>,
 }
 
 /// Every condition that changes its holder's size category, and by how
@@ -1160,6 +1175,9 @@ struct ResizingCondition {
 ///   - **Reduced** (Enlarge / Reduce, the shrink half): -1 category.
 ///   - **GiantsMight** (Rune Knight Fighter, subclass level 3): +1
 ///     category.
+///   - **Raging**, gated on `GIANT_STATURE_TAG` (Path of the Giant
+///     Barbarian, subclass level 3): +1 category, and the only row that
+///     carries a gate — see `ResizingCondition::holder_gate`.
 ///
 /// A new growth or shrink effect lands as one row here and inherits the
 /// room check, the retry-when-space-appears behavior, and the restore-on-
@@ -1168,14 +1186,33 @@ const RESIZING_CONDITIONS: &[ResizingCondition] = &[
     ResizingCondition {
         condition: Condition::Enlarged,
         steps: 1,
+        holder_gate: None,
     },
     ResizingCondition {
         condition: Condition::Reduced,
         steps: -1,
+        holder_gate: None,
     },
     ResizingCondition {
         condition: Condition::GiantsMight,
         steps: 1,
+        holder_gate: None,
+    },
+    // 5e Path of the Giant Barbarian **Giant's Havoc**, the Giant
+    // Stature half (subclass level 3): "your size becomes Large, if
+    // there is enough room."
+    //
+    // Keyed off `Raging` rather than off a condition of its own,
+    // because RAW hands it out automatically the moment the rage starts
+    // — there is no press, and inventing one would have charged the
+    // barbarian a bonus action the rules do not. The gate is what keeps
+    // the other sixteen barbarian builds their own size.
+    ResizingCondition {
+        condition: Condition::Raging,
+        steps: 1,
+        holder_gate: Some(|a| {
+            a.has_passive_feature(crate::actions::class_features::GIANT_STATURE_TAG)
+        }),
     },
 ];
 
@@ -7406,7 +7443,10 @@ impl ActorInstance {
     pub fn desired_size(&self) -> Size {
         let step = RESIZING_CONDITIONS
             .iter()
-            .filter(|entry| self.has_condition(entry.condition))
+            .filter(|entry| {
+                self.has_condition(entry.condition)
+                    && entry.holder_gate.is_none_or(|gate| gate(self))
+            })
             .map(|entry| entry.steps)
             .sum::<i32>();
         if step == 0 {

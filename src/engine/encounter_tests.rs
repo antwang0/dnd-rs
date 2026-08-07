@@ -72731,3 +72731,121 @@ fn summoning_the_drake_spends_the_charge_and_lands_the_beacon() {
     // pair of drakes off one charge.
     assert!(!action.custom_validate_input(&e, r, None, None, None));
 }
+
+/// The Path of the Giant's Giant Stature is the first gated row on
+/// `RESIZING_CONDITIONS`: the same `Raging` condition that grows this
+/// barbarian leaves every other one exactly the size they started.
+///
+/// Pinned through `desired_size` rather than through the board so the
+/// gate is tested on its own — `reconcile_footprints` can decline the
+/// growth for want of room, which would make a size-on-the-map
+/// assertion a test of the terrain as much as of the feature.
+#[test]
+fn only_the_giant_path_grows_when_it_rages() {
+    use crate::actions::class_features::RAGE_TAG;
+    use crate::actors::creatures::barbarians::{BARBARIAN_TEMPLATE, GIANT_BARBARIAN_TEMPLATE};
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::types::Size;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let giant = e
+        .instantiate_creature(&GIANT_BARBARIAN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(12, 4), 0, 1)
+        .unwrap();
+
+    // Both are Medium before either rages, and both hold the rage
+    // feature — the difference between them is the subclass tag alone.
+    for id in [giant, plain] {
+        assert_eq!(e.actors[&id].desired_size(), Size::Medium);
+        assert!(e.actors[&id].has_passive_feature(RAGE_TAG));
+    }
+
+    for id in [giant, plain] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+    }
+    assert_eq!(
+        e.actors[&giant].desired_size(),
+        Size::Large,
+        "the giant path should be Large while raging"
+    );
+    assert_eq!(
+        e.actors[&plain].desired_size(),
+        Size::Medium,
+        "an ordinary barbarian's rage is not a growth effect"
+    );
+
+    // And it is the rage that does it: the tag alone grows nobody.
+    e.actors
+        .get_mut(&giant)
+        .unwrap()
+        .remove_condition(Condition::Raging);
+    assert_eq!(e.actors[&giant].desired_size(), Size::Medium);
+}
+
+/// Elemental Cleaver refuses to kindle a weapon that isn't already
+/// raging, and once kindled rides every swing rather than the first one
+/// of the turn — the distinction between `ON_HIT_RIDERS` and the
+/// once-per-turn cohort beside it.
+#[test]
+fn elemental_cleaver_waits_for_the_rage_and_then_rides_every_swing() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::ELEMENTAL_CLEAVER;
+    use crate::actions::monster_attacks::GREATAXE;
+    use crate::actors::creatures::barbarians::GIANT_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 15, &[]);
+    let b = e
+        .instantiate_creature(&GIANT_BARBARIAN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let action: &dyn Action = &*ELEMENTAL_CLEAVER;
+
+    assert!(
+        !action.custom_validate_input(&e, b, None, None, None),
+        "the cleaver kindled outside a rage"
+    );
+    e.actors
+        .get_mut(&b)
+        .unwrap()
+        .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+    assert!(action.custom_validate_input(&e, b, None, None, None));
+    for eff in action.side_effects(&mut e, b, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&b].has_condition(Condition::ElementalCleaver));
+    assert!(
+        !action.custom_validate_input(&e, b, None, None, None),
+        "re-kindling a lit weapon should be refused"
+    );
+
+    // Two connecting swings on one turn, two dice. A once-per-turn
+    // rider would have printed the second line only after a round
+    // boundary, which is exactly the difference being pinned.
+    let mut hits = 0;
+    for seed in 0..60 {
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, seed as usize)
+            .unwrap();
+        let before = e.messages().len();
+        let tv = vec![ogre];
+        let _ = GREATAXE.side_effects(&mut e, b, Some(&tv), None, None);
+        hits += e.messages()[before..]
+            .iter()
+            .filter(|s| s.contains("elemental cleaver"))
+            .count();
+        e.despawn_actor(ogre, "steps back out of reach");
+        if hits >= 2 {
+            break;
+        }
+    }
+    assert!(
+        hits >= 2,
+        "the cleaver's die should ride more than one swing per turn"
+    );
+}

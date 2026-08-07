@@ -15501,6 +15501,134 @@ impl Action for GiantsMightAction {
 
 pub static GIANTS_MIGHT: LazyLock<GiantsMightAction> = LazyLock::new(|| GiantsMightAction {});
 
+/// 5e Path of the Giant Barbarian **Giant's Havoc**, the Giant Stature
+/// half (subclass level 3): "while you're raging... your size becomes
+/// Large, if there is enough room, and your reach increases by 5 feet."
+///
+/// A passive tag and nothing else — the whole implementation is one
+/// gated row on `RESIZING_CONDITIONS`, keyed off `Raging` rather than
+/// off a condition of its own because RAW hands the growth out with the
+/// rage and charges nothing for it. The gate is the reason the row
+/// needed a `holder_gate` column: every barbarian on the roster carries
+/// `Raging`, and only this one grows.
+///
+/// The reach half comes free with the size. The engine measures reach
+/// from footprints, so a Large barbarian already threatens a wider ring
+/// than a Medium one — which is the same fact that makes the Rune
+/// Knight's Giant's Might worth a bonus action, arriving here on a
+/// chassis that was going to rage anyway.
+///
+/// What that buys the giant-path barbarian over its sixteen siblings is
+/// a *shape*. Every other path sharpens the swing (Berserker, Zealot),
+/// hardens the body (Bear Totem, Ancestral Guardian) or adds a rider
+/// (Storm Herald); this one takes up four tiles instead of one from the
+/// round the rage starts. A Large barbarian in a corridor is the whole
+/// corridor, and a Large barbarian beside a caster is an opportunity
+/// attack the caster could not step out of.
+///
+/// RAW's Crushing Throw — the rage damage bonus riding thrown weapons —
+/// is left out: the engine has no thrown-weapon lane distinct from the
+/// ranged one, so the clause would either apply to every bow on the
+/// board or to nothing.
+pub const GIANT_STATURE_TAG: &str = "barbarian.giant_stature";
+
+/// Elemental Cleaver — Path of the Giant Barbarian bonus action
+/// (subclass level 3). RAW: "when you rage, you can choose... acid,
+/// cold, fire, lightning, or thunder. Your weapon deals an extra 1d6
+/// damage of the chosen type."
+///
+/// **The rage is a precondition rather than a cost.** The action refuses
+/// unless the barbarian is already raging, which is how RAW's "while
+/// you're raging" clause is enforced without the rider having to read
+/// two conditions at once — see `Condition::ElementalCleaver`. There is
+/// no charge: RAW's cleaver is on for the whole rage and re-chooseable
+/// at will, so a per-rest counter would have been the engine inventing
+/// a limit the rules don't have.
+///
+/// What it costs instead is the bonus action, and on this chassis that
+/// is a real price: the barbarian's bonus action is also Frenzy's extra
+/// swing, and the round spent kindling the weapon is a round not spent
+/// hitting with it. A giant-path barbarian who opens with rage and
+/// cleaver has spent two turns' bonus actions before landing the first
+/// extra die.
+pub struct ElementalCleaverAction {}
+
+impl Action for ElementalCleaverAction {
+    fn name(&self) -> &str {
+        "elemental cleaver"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cleaver", "ec", "elemental weapon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the die lands on the swing, not on the kindling.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                // Tag-gated the way Frenzy is, so the action is inert on
+                // any barbarian chassis that ends up sharing an action
+                // pool without sharing the path.
+                && a.has_passive_feature(GIANT_STATURE_TAG)
+                // RAW's "while you're raging", enforced at the install
+                // rather than at every swing.
+                && a.has_condition(Condition::Raging)
+                // Re-kindling an already-lit weapon buys nothing but a
+                // refreshed timer, and costs the bonus action Frenzy
+                // wants.
+                && !a.has_condition(Condition::ElementalCleaver)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log(
+            "  elemental cleaver: frost creeps down the haft and the axe head goes white.",
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::ElementalCleaver,
+            // The rage's own ten rounds. RAW ends the cleaver with the
+            // rage; matching the timer is the closest the engine's
+            // condition clock gets to saying so, and a barbarian whose
+            // rage lapsed has bigger problems than a stray die.
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static ELEMENTAL_CLEAVER: LazyLock<ElementalCleaverAction> =
+    LazyLock::new(|| ElementalCleaverAction {});
+
 /// Per-rest charge for the Rune Knight Fighter's **Fire Rune** (subclass
 /// level 3). RAW recharges every rune on a short rest, which is the
 /// cadence `SHORT_REST_FEATURES` already carries.

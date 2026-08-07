@@ -1,9 +1,10 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, ELK_TOTEM_TAG,
-    FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG,
-    MINDLESS_RAGE_TAG, PANTHER_TOTEM_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG,
-    WOLF_TOTEM_TAG, WOLVERINE_TOTEM_TAG, ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
+    BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, ELEMENTAL_CLEAVER,
+    ELK_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, GIANT_STATURE_TAG,
+    INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG, MINDLESS_RAGE_TAG, PANTHER_TOTEM_TAG, RAGE,
+    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG, WOLVERINE_TOTEM_TAG,
+    ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -951,5 +952,56 @@ pub static TAIL_BEAST_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         'L',
         crate::actions::class_features::FORM_OF_THE_BEAST_TAIL_TAG,
         &[&*crate::actions::class_attacks::BEAST_TAIL],
+    )
+});
+
+/// Giant Barbarian — Path of the Giant (Bigby's Presents: Glory of the
+/// Giants), and the seventeenth barbarian on the roster. The one whose
+/// headline feature is a *shape* rather than a number.
+///
+/// Two subclass features ship, both at level 3:
+///
+///   - **Giant's Havoc / Giant Stature** — while raging, the barbarian
+///     is Large. A gated row on `RESIZING_CONDITIONS` and nothing else;
+///     see `GIANT_STATURE_TAG`.
+///   - **Elemental Cleaver** — a bonus action while raging that
+///     kindles the greataxe, after which every hit carries an extra 1d6
+///     cold. A row on `ON_HIT_RIDERS`; see `ELEMENTAL_CLEAVER`.
+///
+/// **Growing is the feature, and it is worth more than the die.** The
+/// engine measures reach from footprints, so a Large barbarian threatens
+/// a wider ring of opportunity attacks, blocks a wider piece of corridor
+/// and can reach a caster standing one tile further back than a Medium
+/// one could. No other barbarian on the roster changes the geometry of
+/// the fight; the Bear Totem changes what the barbarian survives, the
+/// Berserker changes how often it swings, and both of those are numbers
+/// on a sheet. This one changes where the enemy is allowed to stand.
+///
+/// It also composes with the chassis in a way the other paths don't.
+/// Reckless Attack buys advantage at the cost of being hit back, and a
+/// barbarian who is Large is a barbarian more things can reach — so the
+/// path pushes the same button the base class already pushes, twice.
+/// Whether that is good is a matchup question, which is the most this
+/// engine can ask of a subclass.
+///
+/// **The cleaver is the tax on the bonus action.** RAW hands it out with
+/// the rage; here it costs a press, and the press competes with Frenzy's
+/// extra swing on a chassis where the bonus action is the scarcest thing
+/// the barbarian has. A giant-path barbarian spends round one raging,
+/// round two kindling, and lands the first extra die on round two's
+/// attack — which is a real opening cost against a fight that may be
+/// three rounds long.
+///
+/// Glyph 'S' — for giant **S**tature, since 'G' belongs to the
+/// Ancestral Guardian. Distinct from baseline Barbarian 'B', Totem 'T',
+/// Wolf 'W', Eagle 'A', Tiger 'I', Elk 'E', Wolverine 'V', Panther 'P',
+/// the Storm Heralds' 'H' / 'R' / 'N', Berserker 'Z', Zealot 'X',
+/// Ancestral Guardian 'G' and the Beast forms' 'J' / 'C' / 'L'.
+pub static GIANT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Giant Barbarian",
+        'S',
+        GIANT_STATURE_TAG,
+        &[&*ELEMENTAL_CLEAVER],
     )
 });
