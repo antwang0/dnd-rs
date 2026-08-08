@@ -1457,6 +1457,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5f. Make light. Sits immediately above focus-fire because
+        //     that is exactly the rung it is standing in for: it fires
+        //     only on a turn where the picker can see nothing to shoot
+        //     at, and every rung below is about what to do when there
+        //     is nothing to shoot at. See `try_make_light` for the
+        //     gate, which is written to be a no-op on any lit board.
+        if let Some(aei) = try_make_light(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 6. Focus-fire: pick targets with advantage > normal > disadv;
         //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
@@ -1503,6 +1513,83 @@ impl Controller for SimpleAi {
         // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// How far away an enemy can be and still be revealed by a light the
+/// actor lights on themselves: the bright core plus the dim collar of
+/// a torch or a Light cantrip, which are the same radius.
+///
+/// The band is what makes the rung honest. Lighting up does not help
+/// you see something forty tiles away — it only tells *it* where *you*
+/// are. An AI that struck a light at any unseen enemy would be handing
+/// away its position for nothing, which is the single worst thing to
+/// do in the dark and exactly what a naive "I can't see, make light"
+/// gate would produce.
+const LIGHT_REVEAL_BAND: isize =
+    crate::engine::lighting::TORCH_BRIGHT_TILES + crate::engine::lighting::TORCH_DIM_TILES;
+
+/// Strike a light when the dark is the only reason this turn has
+/// nothing in it.
+///
+/// Three gates, and each of them is doing real work:
+///
+///   1. **Nothing is visible.** Not "something is invisible" — *nothing*
+///      is. The rung sits above focus-fire, so an actor who can see any
+///      enemy at all should be shooting it; a light struck on that turn
+///      costs an Action that had a target.
+///   2. **Something is close enough to reveal.** See
+///      `LIGHT_REVEAL_BAND`. Outside it, striking a light is pure
+///      giveaway.
+///   3. **The actor is not already lit.** Both actions refuse this
+///      themselves, so this is only about not walking the enemy scan
+///      on every turn of every fight for an answer that cannot change.
+///
+/// Between them the three make the rung a no-op on a lit board — where
+/// `darkness_blinds` is false for everybody — which is where it needs
+/// to be free, because every AI turn in the suite walks past it.
+///
+/// **A creature with darkvision never reaches this rung, and that is
+/// the interesting half.** The reveal band is 16 tiles and the
+/// shortest darkvision in the bestiary is 24, so anything close enough
+/// to be worth revealing is already visible to anyone who can see in
+/// the dark. A goblin does not light a torch to fight a human in an
+/// unlit corridor, and it should not: the dark is the goblin's
+/// advantage, and the fastest way to lose it is to carry a lamp.
+///
+/// The torch is preferred to the cantrip where both are available,
+/// because it is a bonus action and the cantrip is an Action — the
+/// torch leaves the turn intact, and the loop comes straight back
+/// around to a board the actor can now see.
+fn try_make_light(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if encounter.actor_carries_light(actor_id) {
+        return None;
+    }
+    let team = actor.team();
+    let here = actor.location();
+    let mut worth_revealing = false;
+    for (id, other) in encounter.actors.iter() {
+        if *id == actor_id || other.team() == team || !other.is_combat_active() {
+            continue;
+        }
+        if !encounter.darkness_blinds(actor_id, *id) {
+            // Something is visible; the attack rungs below own this
+            // turn.
+            return None;
+        }
+        worth_revealing |= here.chebyshev_to(other.location()) <= LIGHT_REVEAL_BAND;
+    }
+    if !worth_revealing {
+        return None;
+    }
+    // The torch is a carried consumable, so it is reachable only
+    // through the `available_actions()` lookup — `try_self_action`
+    // searches the template list, where a torch has never been.
+    try_self_action_inc_items(encounter, actor_id, "light torch")
+        .or_else(|| try_self_action(encounter, actor_id, "light"))
 }
 
 /// True if the actor's current HP fraction is below `frac`. Stable /
@@ -10289,6 +10376,157 @@ mod tests {
             e.actors[&steed].location(),
             "and rides where it stands"
         );
+    }
+
+    /// The AI can fight in the dark.
+    ///
+    /// Every rung of the picker that reads visibility now reads the
+    /// lighting layer too — `peek_attack_mode` folds in the two
+    /// darkness clauses, `viewer_can_see` gates the reactive taxes, and
+    /// the target ranking sits on top of both. This driver is the proof
+    /// that none of that stalls the AI: an unlit board is the one
+    /// configuration in which *every* creature on it is potentially
+    /// unable to see *every* other, which is a state nothing before the
+    /// lighting layer could produce.
+    ///
+    /// Deliberately a mixed board. The goblins and the kobold see 60 ft
+    /// in the dark and the humans see nothing, so the two sides are
+    /// asymmetric in exactly the way the layer is about; the warlock
+    /// carries Darkness and Devil's Sight, so a sphere can go down
+    /// mid-fight on top of an already-unlit board and the AI has to
+    /// keep working underneath it.
+    ///
+    /// What is asserted is that the fight *happens* — the driver
+    /// terminates and blood is drawn. Which side wins, and whether
+    /// anybody thinks to light a torch, are picker decisions this test
+    /// deliberately does not pin: they are exactly the judgements that
+    /// should be free to improve without a test having to be edited.
+    #[test]
+    fn the_ai_fights_on_an_unlit_board() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
+        use crate::actors::creatures::monks::SHADOW_MONK_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::engine::lighting::AmbientLight;
+        use crate::engine::types::Coordinate;
+
+        for seed in [5u64, 23] {
+            let tp = TerrainGenParams {
+                width: 30,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.set_ambient_light(AmbientLight::Darkness);
+            // Team 0 sees nothing without help and carries two ways to
+            // get it: the cleric's Light cantrip and the fighter's
+            // torch.
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .pickup_item(&crate::items::item_template::TORCH);
+            let _ = e.instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 4), 0, 1);
+            let _ = e.instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(2, 6), 0, 2);
+            // Team 1 sees 60 ft in the dark for free, and the warlock
+            // can make more of it.
+            let _ = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 2), 1, 0);
+            let _ = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 4), 1, 1);
+            let _ = e.instantiate_creature(&KOBOLD_TEMPLATE, Coordinate::new(16, 6), 1, 2);
+            let _ = e.instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(16, 8), 1, 3);
+
+            let ai = SimpleAi;
+            let total_hp = |e: &EncounterInstance| -> u32 {
+                e.actors.values().map(|a| a.hitpoints()).sum()
+            };
+            let opening_hp = total_hp(&e);
+            let mut last_total = opening_hp;
+            let mut idle_streak = 0usize;
+            // Wider than the main driver's window. Fighting in the
+            // dark is slow by construction — a turn spent striking a
+            // light, and several spent walking toward a noise, all pass
+            // without anybody's hit points moving — and a window tuned
+            // for a lit board reads that as a stalemate and bails out
+            // before the first swing.
+            let stalemate_window = 12 * e.actors.len().max(1);
+            let mut steps = 0usize;
+            for _ in 0..50_000 {
+                steps += 1;
+                e.process_stack();
+                if e.is_complete() {
+                    break;
+                }
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => {
+                        panic!("seed {}: SimpleAi returned AwaitInput in the dark", seed)
+                    }
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+                let cur = total_hp(&e);
+                if cur == last_total {
+                    idle_streak += 1;
+                    if idle_streak >= stalemate_window {
+                        break;
+                    }
+                } else {
+                    last_total = cur;
+                    idle_streak = 0;
+                }
+            }
+            assert!(
+                steps < 50_000,
+                "seed {}: the driver never terminated on an unlit board",
+                seed
+            );
+            assert!(
+                total_hp(&e) < opening_hp,
+                "seed {}: nobody managed to hit anybody in the dark",
+                seed
+            );
+            // Somebody on the sightless team struck a light. Which of
+            // the two ways they did it is a picker decision and is not
+            // pinned; that one of them happened is the whole point of
+            // the `try_make_light` rung, and a driver in which nobody
+            // ever does is one where the humans spent the fight
+            // swinging at noises.
+            assert!(
+                e.messages()
+                    .iter()
+                    .any(|m| m.contains("lights a torch") || m.contains("begins to glow")),
+                "seed {}: nobody struck a light on an unlit board",
+                seed
+            );
+            // …and the goblins did not, because they can already see.
+            // The reveal band is 16 tiles and their darkvision is 24,
+            // so a goblin that lights up has handed away the only
+            // advantage the dark was giving it.
+            for (id, actor) in e.actors.iter() {
+                if actor.team() == 1 && actor.darkvision_tiles() >= LIGHT_REVEAL_BAND {
+                    assert!(
+                        !e.actor_carries_light(*id),
+                        "seed {}: {} can see in the dark and lit itself up anyway",
+                        seed,
+                        actor.name()
+                    );
+                }
+            }
+        }
     }
 
     fn empty_arena() -> EncounterInstance {

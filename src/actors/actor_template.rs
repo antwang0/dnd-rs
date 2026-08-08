@@ -5516,6 +5516,18 @@ impl ActorInstance {
     /// school, and an exact comparison would silently never match —
     /// failing closed in a way that looks exactly like "this spell has
     /// no school tag".
+    ///
+    /// **Searches the template list only.** An action that arrives on a
+    /// carried consumable — everything with an `Item::on_use` — is not
+    /// in `self.actions` and is not found here. That is the right
+    /// default for the thirty-odd callers that are asking "does this
+    /// creature's stat block have X", and a trap for anyone asking
+    /// "can this creature do X right now": the lookup returns `None`
+    /// and reads exactly like the creature not having the action,
+    /// rather than like the search having been aimed at the wrong list.
+    /// `available_actions` is the list that includes them, and
+    /// `ai::simple::try_self_action_inc_items` is the AI-side lookup
+    /// built on it.
     pub fn find_action(&self, name: &str) -> Option<&'static (dyn Action + Send + Sync)> {
         self.actions
             .iter()

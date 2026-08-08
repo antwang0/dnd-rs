@@ -75729,3 +75729,96 @@ fn the_light_cantrip_declines_the_casts_that_would_do_nothing() {
         "and it will not re-light somebody who is already lit"
     );
 }
+
+/// The Darkness spell, driven through `Action::execute` rather than
+/// through its `side_effects` builder — the path a real cast takes,
+/// with validation, cost and the side-effect queue all in it.
+///
+/// The three tests above it exercise the layer's primitives directly;
+/// this is the one that proves a player pressing the button gets the
+/// sphere, gets the tile driven to `Dark`, and gets the torch they cast
+/// it over snuffed. All three used to be reachable only through the
+/// builder, which is exactly the coverage shape where a `cost()` typo
+/// or a validation gate lives forever.
+#[test]
+fn casting_darkness_installs_the_sphere_and_snuffs_the_torch_under_it() {
+    let mut e = ei_with_terrain(30, 10, &[]);
+    let warlock = e
+        .instantiate_creature(
+            &crate::actors::creatures::warlocks::WARLOCK_TEMPLATE,
+            Coordinate::new(2, 4),
+            0,
+            0,
+        )
+        .unwrap();
+    let point = Coordinate::new(10, 4);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(point),
+        bright_tiles: 8,
+        dim_tiles: 8,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    assert_eq!(e.light_at(point), LightLevel::Bright);
+
+    let effects = crate::actions::spells::DARKNESS.execute(
+        &mut e,
+        warlock,
+        None,
+        Some(&vec![point]),
+        None,
+    );
+    for effect in effects {
+        effect.apply(&mut e);
+    }
+    assert_eq!(e.light_at(point), LightLevel::Dark);
+    assert!(
+        e.light_sources().is_empty(),
+        "the torch under a Darkness sphere goes out"
+    );
+    assert!(e.actors[&warlock].is_concentrating());
+    // And the warlock, alone among the creatures in the engine, is
+    // still looking out of it.
+    assert_eq!(e.perceived_light(warlock, point), LightLevel::Bright);
+}
+
+/// Lighting a torch, driven through `Action::execute`: the item is
+/// consumed, the light is carried, and it travels with the bearer.
+///
+/// The torch is the one light source in the game a non-caster can
+/// make, so the path a fighter takes to it is the path that decides
+/// whether a dark encounter is playable at all.
+#[test]
+fn lighting_a_torch_consumes_it_and_leaves_the_bearer_carrying_the_light() {
+    let mut e = ei_with_terrain(30, 10, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(4, 4),
+            0,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&crate::items::item_template::TORCH);
+
+    let action = &crate::actions::item_actions::LIGHT_TORCH;
+    let effects = action.execute(&mut e, fighter, None, None, None);
+    for effect in effects {
+        effect.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&fighter].has_item_named("Torch"),
+        "the torch is spent when it is lit"
+    );
+    assert!(e.actor_carries_light(fighter));
+    assert_eq!(e.light_at(Coordinate::new(4, 4)), LightLevel::Bright);
+    // A second press does nothing — there is no second torch, and the
+    // validator would refuse even if there were.
+    assert!(!action.validate_input(&e, fighter, None, None, None));
+}
