@@ -49,10 +49,13 @@ impl fmt::Display for Dice {
     }
 }
 
-/// 5e advantage / disadvantage. Applied to attack rolls and saving throws
-/// (not damage). `combine` cancels opposite sources and idempotently
-/// folds same-direction sources — matching 5e's "you don't stack
-/// advantage; one of each cancels."
+/// 5e advantage / disadvantage. Applied to attack rolls and saving
+/// throws (not damage).
+///
+/// This is the *answer*, not the accumulator. Anything collecting more
+/// than two sources builds a `RollModeTally` and resolves it once —
+/// `combine` is not associative and a fold over it gets three sources
+/// wrong in an order-dependent way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollMode {
     Normal,
@@ -61,6 +64,17 @@ pub enum RollMode {
 }
 
 impl RollMode {
+    /// Fold two modes together.
+    ///
+    /// **Correct for two sources and wrong for three or more**, which
+    /// is why `RollModeTally` exists and why every multi-source site in
+    /// the engine uses that instead. See its docstring for the failing
+    /// case; the short version is that this operation is not
+    /// associative, so a left-fold over a list of clauses gives an
+    /// answer that depends on the order they were written in.
+    ///
+    /// Kept for the genuinely two-sided callers — a base mode plus one
+    /// rider — where there is no list and no order to get wrong.
     pub fn combine(self, other: RollMode) -> RollMode {
         use RollMode::*;
         match (self, other) {
@@ -78,6 +92,83 @@ impl RollMode {
             RollMode::Normal => "",
             RollMode::Advantage => " (adv)",
             RollMode::Disadvantage => " (dis)",
+        }
+    }
+}
+
+/// Two independent flags — "something granted advantage" and "something
+/// imposed disadvantage" — resolved into a `RollMode` once, at the end.
+///
+/// This is 5e's actual stacking rule, and it is not what folding
+/// `RollMode::combine` over a list of clauses computes. PHB p.173:
+///
+/// > If circumstances cause a roll to have both advantage and
+/// > disadvantage, you are considered to have neither of them, no
+/// > matter how many circumstances of each kind you have.
+///
+/// "No matter how many" is the clause a fold cannot express, because
+/// `combine` is not associative. Three sources — advantage, then
+/// disadvantage, then disadvantage — fold to `Disadvantage`: the first
+/// pair cancels to `Normal` and the third source lands on an empty
+/// slate that has forgotten the advantage ever existed. RAW's answer is
+/// `Normal`. Worse, the wrong answer depends on the order the clauses
+/// happen to be written in: the *same* three sources folded
+/// advantage-last give `Normal`, correctly, by accident.
+///
+/// `EncounterInstance::compute_attack_mode` is where this bit. It reads
+/// something like twenty independent clauses — cover, obscurement, the
+/// dark, sunlight, Pack Tactics, Blood Frenzy, prone targets, the
+/// condition cohorts on both sides, mounted combat, the totem auras —
+/// and folded every one of them into a running `RollMode` in source
+/// order. A kobold is the smallest creature that demonstrates the bug,
+/// because it carries two of those clauses at once: standing in
+/// sunlight (disadvantage) with an ally beside its target (Pack
+/// Tactics, advantage), swinging at a prone target (advantage), it
+/// resolved to **Advantage** where RAW says **Normal**.
+///
+/// The tally makes the order irrelevant, which is the property the
+/// function needs: a clause can be added anywhere in two hundred lines
+/// without changing what the clauses above and below it compute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RollModeTally {
+    advantage: bool,
+    disadvantage: bool,
+}
+
+impl RollModeTally {
+    /// No sources yet — the starting point for every accumulation.
+    pub const NONE: Self = Self {
+        advantage: false,
+        disadvantage: false,
+    };
+
+    /// Record one source. `Normal` is a no-op, so a caller with a
+    /// conditional mode (`if is_melee { Advantage } else { Disadvantage }`,
+    /// or a helper that returns `Normal` for "nothing applies") can hand
+    /// it over without branching.
+    pub fn add(&mut self, mode: RollMode) {
+        match mode {
+            RollMode::Normal => {}
+            RollMode::Advantage => self.advantage = true,
+            RollMode::Disadvantage => self.disadvantage = true,
+        }
+    }
+
+    /// Record one source when `condition` holds. The shape most clauses
+    /// want, and it keeps the `if` on the same line as the rule it
+    /// gates.
+    pub fn add_if(&mut self, condition: bool, mode: RollMode) {
+        if condition {
+            self.add(mode);
+        }
+    }
+
+    /// The rule, applied once: both is neither.
+    pub fn resolve(self) -> RollMode {
+        match (self.advantage, self.disadvantage) {
+            (true, true) | (false, false) => RollMode::Normal,
+            (true, false) => RollMode::Advantage,
+            (false, true) => RollMode::Disadvantage,
         }
     }
 }
@@ -445,5 +536,86 @@ mod tests {
         // A negative constant subtracts rather than being dropped.
         let negative: DiceExpr = "1d4-2".parse().unwrap();
         assert_eq!(negative.average_roll(), 0.5);
+    }
+
+    /// A tally of nothing is a normal roll, and a tally of one thing is
+    /// that thing.
+    #[test]
+    fn a_tally_of_one_source_is_that_source() {
+        assert_eq!(RollModeTally::NONE.resolve(), RollMode::Normal);
+        for mode in [RollMode::Advantage, RollMode::Disadvantage] {
+            let mut t = RollModeTally::NONE;
+            t.add(mode);
+            assert_eq!(t.resolve(), mode);
+        }
+    }
+
+    /// Sources of the same kind don't stack, however many there are.
+    #[test]
+    fn same_direction_sources_do_not_stack() {
+        let mut t = RollModeTally::NONE;
+        for _ in 0..5 {
+            t.add(RollMode::Advantage);
+        }
+        assert_eq!(t.resolve(), RollMode::Advantage);
+    }
+
+    /// The rule this type exists for, and the case a left-fold over
+    /// `combine` gets wrong: one advantage against *two* disadvantages
+    /// is still Normal. Folding gives `Disadvantage` — the first pair
+    /// cancels and the third source lands on a slate that has forgotten
+    /// the advantage — and the assertion below is the proof that the
+    /// tally does not.
+    #[test]
+    fn one_advantage_against_many_disadvantages_is_still_neither() {
+        let mut t = RollModeTally::NONE;
+        t.add(RollMode::Advantage);
+        t.add(RollMode::Disadvantage);
+        t.add(RollMode::Disadvantage);
+        assert_eq!(t.resolve(), RollMode::Normal);
+
+        // The fold, for contrast. Not an assertion about what the
+        // engine should do — an assertion about what it used to.
+        let folded = RollMode::Normal
+            .combine(RollMode::Advantage)
+            .combine(RollMode::Disadvantage)
+            .combine(RollMode::Disadvantage);
+        assert_eq!(folded, RollMode::Disadvantage);
+    }
+
+    /// Order cannot matter. Every permutation of the same three sources
+    /// resolves the same way, which is the property that lets a clause
+    /// be added anywhere in a two-hundred-line sweep.
+    #[test]
+    fn the_tally_is_order_independent() {
+        use RollMode::*;
+        let sources = [Advantage, Disadvantage, Disadvantage];
+        let permutations = [
+            [sources[0], sources[1], sources[2]],
+            [sources[1], sources[0], sources[2]],
+            [sources[1], sources[2], sources[0]],
+        ];
+        for p in permutations {
+            let mut t = RollModeTally::NONE;
+            for m in p {
+                t.add(m);
+            }
+            assert_eq!(t.resolve(), Normal, "{:?}", p);
+        }
+    }
+
+    /// `add` treats `Normal` as "no source", so a caller with a
+    /// conditional or a helper that returns `Normal` for "nothing
+    /// applies" can hand it straight over.
+    #[test]
+    fn a_normal_source_is_no_source_at_all() {
+        let mut t = RollModeTally::NONE;
+        t.add(RollMode::Advantage);
+        t.add(RollMode::Normal);
+        assert_eq!(t.resolve(), RollMode::Advantage);
+        t.add_if(false, RollMode::Disadvantage);
+        assert_eq!(t.resolve(), RollMode::Advantage);
+        t.add_if(true, RollMode::Disadvantage);
+        assert_eq!(t.resolve(), RollMode::Normal);
     }
 }

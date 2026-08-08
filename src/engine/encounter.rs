@@ -256,7 +256,7 @@ use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, Spell
 use crate::engine::util::{TILE_FEET, footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
-use crate::engine::dice::{Dice, FastRandRoller, RollMode, Roller};
+use crate::engine::dice::{Dice, FastRandRoller, RollMode, RollModeTally, Roller};
 
 /// Single entry in the round-end repeated-save table. 5e spells like
 /// Hold Person / Hold Monster allow the target to repeat the saving throw
@@ -2218,7 +2218,6 @@ const FOCUS_LINK_DISADVANTAGES: &[Condition] = &[
 ];
 
 fn focus_link_mode(
-    current: RollMode,
     holder: &ActorInstance,
     counterparty: usize,
     condition: Condition,
@@ -2228,9 +2227,9 @@ fn focus_link_mode(
         .linked_by(condition)
         .is_some_and(|linked| linked != counterparty)
     {
-        current.combine(mode_on_mismatch)
+        mode_on_mismatch
     } else {
-        current
+        RollMode::Normal
     }
 }
 
@@ -2243,22 +2242,23 @@ fn focus_link_mode(
 ///   subclass: the paladin who swore the vow gets advantage on attack
 ///   rolls against the sworn quarry; non-sworn allies get no benefit).
 ///
-/// Returns the (possibly combined) mode so the call sites stay terse:
-/// `mode = matched_link_mode(mode, holder, counterparty, cond, m);`.
+/// Returns the mode this rider contributes, or `Normal` when it does
+/// not apply, so the call site reads
+/// `tally.add(matched_link_mode(holder, counterparty, cond, m));` and
+/// the tally decides what a contribution is worth.
 /// Adding a future "buff against this specific foe" rider (Favored Foe
 /// damage rider, Mark of Vendetta, etc.) becomes a one-liner instead of a
 /// re-inlined `has_condition + link == Some(counterparty)` block.
 fn matched_link_mode(
-    current: RollMode,
     holder: &ActorInstance,
     counterparty: usize,
     condition: Condition,
     mode_on_match: RollMode,
 ) -> RollMode {
     if holder.linked_by(condition) == Some(counterparty) {
-        current.combine(mode_on_match)
+        mode_on_match
     } else {
-        current
+        RollMode::Normal
     }
 }
 
@@ -3231,7 +3231,7 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
-        let mut mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        let mut tally = self.attack_mode_tally(attacker_id, target_id, is_melee);
         // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
         // mirror of the mark placed at the top of
         // `engine::attack::resolve_attack` — every melee attack that
@@ -3261,13 +3261,18 @@ impl EncounterInstance {
             .get_mut(&attacker_id)
             .map(|a| a.consume_help_for(target_id))
             .unwrap_or(false);
-        if help_active {
-            mode = mode.combine(RollMode::Advantage);
-        }
+        tally.add_if(help_active, RollMode::Advantage);
         // Bless gives a flat +2 (handled at roll time via condition_attack_bonus);
         // we don't promote it to Advantage. Keep this method focused on
         // mode (advantage / disadvantage) only.
-        mode
+        //
+        // Resolved here rather than by `compute_attack_mode` so the Help
+        // grant is one more source in the same tally as everything the
+        // sweep found — a swing that already held one of each stays
+        // Normal, which is RAW's "no matter how many circumstances of
+        // each kind you have", and the Rogue's Elusive cap gets to see
+        // the grant instead of being applied before it.
+        self.resolve_attack_mode_against(target_id, tally)
     }
 
     /// Read-only twin of `attack_mode_with_riders`: the mode an attack
@@ -3294,16 +3299,13 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
-        let mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        let mut tally = self.attack_mode_tally(attacker_id, target_id, is_melee);
         let helped = self
             .actors
             .get(&attacker_id)
             .is_some_and(|a| a.help_grant(target_id));
-        if helped {
-            mode.combine(RollMode::Advantage)
-        } else {
-            mode
-        }
+        tally.add_if(helped, RollMode::Advantage);
+        self.resolve_attack_mode_against(target_id, tally)
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
@@ -3314,8 +3316,13 @@ impl EncounterInstance {
     /// - Target Stunned / Restrained / Blinded / Incapacitated → advantage
     ///   on attacks vs them.
     ///
-    /// Multiple sources of the same direction don't stack; opposing
-    /// sources cancel via `RollMode::combine`.
+    /// Multiple sources of the same direction don't stack, and any
+    /// advantage against any disadvantage cancels to Normal however
+    /// many of each there are — PHB p.173's "no matter how many
+    /// circumstances of each kind you have". Both halves come from
+    /// `RollModeTally`, which is what `attack_mode_tally` accumulates
+    /// into and this method resolves; see that type for what a
+    /// left-fold over `RollMode::combine` got wrong instead.
     ///
     /// Attacker side (disadvantage):
     /// Prone, Poisoned, Blinded, Restrained, Frightened.
@@ -3334,12 +3341,41 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
-        let mut mode = RollMode::Normal;
+        self.resolve_attack_mode_against(
+            target_id,
+            self.attack_mode_tally(attacker_id, target_id, is_melee),
+        )
+    }
+
+    /// Every advantage and disadvantage source an attack is subject to,
+    /// collected as two flags rather than folded into a running
+    /// `RollMode` — see `RollModeTally` for why, and for the kobold
+    /// that demonstrated the difference.
+    ///
+    /// Split out of `compute_attack_mode` so the riders its two wrappers
+    /// layer on (the per-target Help grant) can join the *tally* rather
+    /// than being combined onto an already-resolved mode. Combining onto
+    /// a resolved mode loses exactly the information the rule needs: a
+    /// sweep that came out `Normal` because it held one of each is
+    /// indistinguishable from one that held nothing, and a Help grant
+    /// landing on the first should still be `Normal` and on the second
+    /// should be `Advantage`.
+    ///
+    /// Deliberately excludes the Rogue's Elusive clause, which is not a
+    /// source but a cap on the result — see
+    /// `resolve_attack_mode_against`.
+    fn attack_mode_tally(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> RollModeTally {
+        let mut tally = RollModeTally::NONE;
 
         // 5e: ranged attacks have disadvantage when a hostile creature
         // is footprint-adjacent to the shooter.
         if !is_melee && self.has_adjacent_enemy(attacker_id) {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
 
         // 5e heavy obscurement, both ways. "A creature effectively
@@ -3368,10 +3404,10 @@ impl EncounterInstance {
         // takes the disadvantage and hands out no advantage, because
         // the darkness is on the target's side of the line only.
         if self.sight_denied_between(attacker_id, target_id) {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
         if self.sight_denied_between(target_id, attacker_id) {
-            mode = mode.combine(RollMode::Advantage);
+            tally.add(RollMode::Advantage);
         }
 
         // 5e Sunlight Sensitivity / Weakness / Hypersensitivity: "while
@@ -3386,7 +3422,7 @@ impl EncounterInstance {
                 .is_some_and(|f| f.disadvantages_attacks())
             && self.is_sunlit(attacker.location())
         {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
 
         // 5e **Mounted Combatant**: "You have advantage on melee attack
@@ -3396,7 +3432,7 @@ impl EncounterInstance {
         // whole point of the clause: a Medium knight on a Large
         // warhorse rides down anything Medium or smaller.
         if is_melee && self.rides_down(attacker_id, target_id) {
-            mode = mode.combine(RollMode::Advantage);
+            tally.add(RollMode::Advantage);
         }
 
         // 5e concealment-piercing snapshot: does the attacker see through
@@ -3434,11 +3470,11 @@ impl EncounterInstance {
             if attacker.exhaustion_level()
                 >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
             {
-                mode = mode.combine(RollMode::Disadvantage);
+                tally.add(RollMode::Disadvantage);
             }
             for c in attacker.conditions().keys() {
                 if c.imposes_attacker_disadvantage() {
-                    mode = mode.combine(RollMode::Disadvantage);
+                    tally.add(RollMode::Disadvantage);
                 }
                 if c.grants_self_attack_advantage() {
                     // 5e concealment-piercing on the target (Truesight /
@@ -3448,7 +3484,7 @@ impl EncounterInstance {
                     // Bless / etc. are unaffected — they're not concealment.
                     let suppressed = target_piercing.pierces(*c);
                     if !suppressed {
-                        mode = mode.combine(RollMode::Advantage);
+                        tally.add(RollMode::Advantage);
                     }
                 }
                 // Ranged-only attacker disadvantage cohort: Storm Sphere's
@@ -3457,7 +3493,7 @@ impl EncounterInstance {
                 // target-side `imposes_disadvantage_to_ranged_attackers`
                 // clause, but on the attacker side.
                 if !is_melee && c.imposes_attacker_disadvantage_on_ranged() {
-                    mode = mode.combine(RollMode::Disadvantage);
+                    tally.add(RollMode::Disadvantage);
                 }
                 // Melee-only attacker advantage cohort: the Shadow Monk's
                 // Shadow Step buffs "the first melee attack you make",
@@ -3469,7 +3505,7 @@ impl EncounterInstance {
                 // Truesight does nothing about a monk who is simply
                 // somewhere else now.
                 if is_melee && c.grants_self_melee_attack_advantage() {
-                    mode = mode.combine(RollMode::Advantage);
+                    tally.add(RollMode::Advantage);
                 }
             }
             // 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on
@@ -3479,7 +3515,7 @@ impl EncounterInstance {
             if attacker.has_pack_tactics()
                 && self.has_ally_adjacent_to(attacker_id, target_id, |_| true)
             {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             // 5e Sahuagin Blood Frenzy: melee attacks against a wounded
             // target get advantage. Passive trait tagged via the features
@@ -3494,7 +3530,7 @@ impl EncounterInstance {
                     .get(&target_id)
                     .is_some_and(|t| t.is_wounded())
             {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             // 5e Barbarian Path of the Totem Warrior — Wolf Totem Spirit.
             // While a teammate (not the attacker themselves) is raging
@@ -3514,7 +3550,7 @@ impl EncounterInstance {
                         && a.has_condition(Condition::Raging)
                 })
             {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             // 5e Rogue Assassin **Assassinate** (level 3 subclass). The
             // assassin rolls with advantage on every attack against any
@@ -3533,18 +3569,17 @@ impl EncounterInstance {
                     .get(&target_id)
                     .is_some_and(|t| !t.has_taken_turn_in_combat())
             {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             // Every "locked onto someone, and this isn't them" debuff,
             // through one walk. See `FOCUS_LINK_DISADVANTAGES`.
             for &condition in FOCUS_LINK_DISADVANTAGES {
-                mode = focus_link_mode(
-                    mode,
+                tally.add(focus_link_mode(
                     attacker,
                     target_id,
                     condition,
                     RollMode::Disadvantage,
-                );
+                ));
             }
         }
 
@@ -3553,7 +3588,7 @@ impl EncounterInstance {
             // Prone target: melee attackers get advantage, ranged get
             // disadvantage. Single source of truth for the prone clause.
             if target.has_condition(Condition::Prone) {
-                mode = mode.combine(if is_melee {
+                tally.add(if is_melee {
                     RollMode::Advantage
                 } else {
                     RollMode::Disadvantage
@@ -3565,7 +3600,7 @@ impl EncounterInstance {
             // `Condition` helpers, not a re-edit of this function.
             for c in target.conditions().keys() {
                 if c.grants_advantage_to_attackers() {
-                    mode = mode.combine(RollMode::Advantage);
+                    tally.add(RollMode::Advantage);
                 }
                 if c.imposes_disadvantage_to_attackers() {
                     // 5e concealment-piercing on the attacker (Truesight
@@ -3577,14 +3612,14 @@ impl EncounterInstance {
                     // illusory concealment.
                     let suppressed = attacker_piercing.pierces(*c);
                     if !suppressed {
-                        mode = mode.combine(RollMode::Disadvantage);
+                        tally.add(RollMode::Disadvantage);
                     }
                 }
                 // Ranged-only disadvantage cohort: Wind Wall deflects
                 // arrows but does nothing against a sword swing. Gated on
                 // `!is_melee` so melee attackers eat no penalty.
                 if !is_melee && c.imposes_disadvantage_to_ranged_attackers() {
-                    mode = mode.combine(RollMode::Disadvantage);
+                    tally.add(RollMode::Disadvantage);
                 }
             }
             // Two attacker-type-gated disadvantage lanes. Neither can live
@@ -3618,7 +3653,7 @@ impl EncounterInstance {
                 if (warded && attacker_type.affected_by_protection())
                     || (target.has_condition(Condition::Daylit) && attacker_type.is_undead())
                 {
-                    mode = mode.combine(RollMode::Disadvantage);
+                    tally.add(RollMode::Disadvantage);
                 }
             }
             // 5e Battle Master Distracting Strike — target-side mirror
@@ -3631,13 +3666,12 @@ impl EncounterInstance {
             // as Dueled / Goaded, but reversed polarity (advantage
             // instead of disadvantage) and reversed side (target-side
             // rather than attacker-side).
-            mode = focus_link_mode(
-                mode,
+            tally.add(focus_link_mode(
                 target,
                 attacker_id,
                 Condition::Distracted,
                 RollMode::Advantage,
-            );
+            ));
             // 5e Vengeance Paladin Vow of Enmity (lv3 subclass Channel
             // Divinity). Positive-polarity sibling of Distracted: the
             // paladin who swore the vow gets advantage on attack rolls
@@ -3648,36 +3682,50 @@ impl EncounterInstance {
             // through `matched_link_mode` so any future "I marked you
             // — I get the buff" rider (Hunter's Quarry single-target
             // damage prime, etc.) lands as a one-liner.
-            mode = matched_link_mode(
-                mode,
+            tally.add(matched_link_mode(
                 target,
                 attacker_id,
                 Condition::Sworn,
                 RollMode::Advantage,
-            );
-            // 5e Rogue **Elusive** (level 18 capstone): no attack roll
-            // has advantage against the holder while they aren't
-            // Incapacitated. Applied AFTER every attacker- and
-            // target-side source has combined so a Hidden / Vow of
-            // Enmity / Pack Tactics attacker still gets Normal instead
-            // of Advantage, but a Restrained / Prone / Poisoned
-            // attacker's Disadvantage passes through untouched. The
-            // "not Incapacitated" cohort matches RAW: Stunned /
-            // Paralyzed / Unconscious inherit Incapacitated, so a
-            // stun-locked rogue loses the perk (the swings go back to
-            // Advantage via the target-side condition sweep above,
-            // and Elusive stops suppressing).
-            if target.has_elusive()
-                && !target.has_condition(Condition::Incapacitated)
-                && !target.has_condition(Condition::Stunned)
-                && !target.has_condition(Condition::Paralyzed)
-                && !target.has_condition(Condition::Unconscious)
-                && matches!(mode, RollMode::Advantage)
-            {
-                mode = RollMode::Normal;
-            }
+            ));
         }
-        mode
+        tally
+    }
+
+    /// Resolve a completed tally into the mode the d20 is actually
+    /// rolled at, applying the one clause that is a *cap on the result*
+    /// rather than a source feeding into it.
+    ///
+    /// 5e Rogue **Elusive** (level 18 capstone): "no attack roll has
+    /// advantage against you" while the rogue isn't Incapacitated. It
+    /// has to run after every source has been counted — a Hidden / Vow
+    /// of Enmity / Pack Tactics attacker gets `Normal` instead of
+    /// `Advantage`, while a Restrained / Prone / Poisoned attacker's
+    /// `Disadvantage` passes through untouched — and it has to run
+    /// after the *riders* too, which is why it lives here rather than
+    /// at the bottom of `attack_mode_tally`. Before the split it ran
+    /// inside the sweep, so the Help grant that
+    /// `attack_mode_with_riders` combines on afterwards handed the
+    /// advantage straight back to an attacker RAW says cannot have it.
+    ///
+    /// The "not Incapacitated" cohort matches RAW: Stunned / Paralyzed
+    /// / Unconscious inherit Incapacitated, so a stun-locked rogue
+    /// loses the perk — the swings go back to Advantage through the
+    /// target-side condition sweep, and Elusive stops suppressing.
+    fn resolve_attack_mode_against(&self, target_id: usize, tally: RollModeTally) -> RollMode {
+        let mode = tally.resolve();
+        let elusive = self.actors.get(&target_id).is_some_and(|t| {
+            t.has_elusive()
+                && !t.has_condition(Condition::Incapacitated)
+                && !t.has_condition(Condition::Stunned)
+                && !t.has_condition(Condition::Paralyzed)
+                && !t.has_condition(Condition::Unconscious)
+        });
+        if elusive && matches!(mode, RollMode::Advantage) {
+            RollMode::Normal
+        } else {
+            mode
+        }
     }
 
     /// True if `viewer` can "see" `subject` in the RAW sense used by
@@ -4233,9 +4281,9 @@ impl EncounterInstance {
     ) -> RollMode {
         use crate::conditions::Condition;
         use crate::engine::types::AbilityScoreType;
-        let mut mode = RollMode::Normal;
+        let mut tally = RollModeTally::NONE;
         let Some(actor) = self.actors.get(&actor_id) else {
-            return mode;
+            return RollMode::Normal;
         };
         // Blanket save-mode cohorts — conditions that flip the mode
         // regardless of which ability the save rolls off of. Each list
@@ -4244,12 +4292,12 @@ impl EncounterInstance {
         // times over.
         for c in BLANKET_SAVE_DISADVANTAGE_CONDITIONS {
             if actor.has_condition(*c) {
-                mode = mode.combine(RollMode::Disadvantage);
+                tally.add(RollMode::Disadvantage);
             }
         }
         for c in BLANKET_SAVE_ADVANTAGE_CONDITIONS {
             if actor.has_condition(*c) {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
         }
         // 5e exhaustion tier 3: "disadvantage on attack rolls and saving
@@ -4259,7 +4307,7 @@ impl EncounterInstance {
         if actor.exhaustion_level()
             >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
         {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
         // 5e Sunlight Weakness / Hypersensitivity: "disadvantage on
         // attack rolls, ability checks, and saving throws" while in
@@ -4274,7 +4322,7 @@ impl EncounterInstance {
             .is_some_and(|f| f.disadvantages_saves())
             && self.is_sunlit(actor.location())
         {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
         // DEX-save cluster — every clause here gates on
         // `AbilityScoreType::Dexterity` in RAW so we branch once and
@@ -4289,19 +4337,19 @@ impl EncounterInstance {
             if actor.has_condition(Condition::Restrained)
                 || actor.has_condition(Condition::Sphered)
             {
-                mode = mode.combine(RollMode::Disadvantage);
+                tally.add(RollMode::Disadvantage);
             }
             // Dodge → advantage on DEX saves (5e).
             if actor.is_dodging() {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             // Haste → advantage on DEX saves; Slow → disadvantage on
             // DEX saves. Both clauses are DEX-specific per the 5e PHB.
             if actor.has_condition(Condition::Hasted) {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
             if actor.has_condition(Condition::Slowed) {
-                mode = mode.combine(RollMode::Disadvantage);
+                tally.add(RollMode::Disadvantage);
             }
         }
         // STR-save cluster. Every entry gates on Strength in RAW, so the
@@ -4313,7 +4361,7 @@ impl EncounterInstance {
         if matches!(ability, AbilityScoreType::Strength) {
             for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
-                    mode = mode.combine(*effect);
+                    tally.add(*effect);
                 }
             }
         }
@@ -4329,7 +4377,7 @@ impl EncounterInstance {
         ) {
             for (condition, effect) in MENTAL_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
-                    mode = mode.combine(*effect);
+                    tally.add(*effect);
                 }
             }
         }
@@ -4342,9 +4390,9 @@ impl EncounterInstance {
         // Aspect of the Sun, etc.) lands as one cohort row rather than
         // another if-branch here.
         if actor.has_flag_driven_save_advantage(ability) {
-            mode = mode.combine(RollMode::Advantage);
+            tally.add(RollMode::Advantage);
         }
-        mode
+        tally.resolve()
     }
 
     /// 5e Paralyzed / Unconscious / Petrified clause: "any attack that

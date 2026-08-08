@@ -75822,3 +75822,208 @@ fn lighting_a_torch_consumes_it_and_leaves_the_bearer_carrying_the_light() {
     // validator would refuse even if there were.
     assert!(!action.validate_input(&e, fighter, None, None, None));
 }
+
+
+// ---------------------------------------------------------------------
+// Advantage / disadvantage stacking — PHB p.173's "no matter how many
+// circumstances of each kind you have."
+//
+// `compute_attack_mode` reads some twenty independent clauses and used
+// to fold each into a running `RollMode` in source order. `combine` is
+// not associative, so that answer depended on the order the clauses
+// happened to be written in, and got three-source cases wrong. The
+// tests below are the cases; see `RollModeTally`.
+// ---------------------------------------------------------------------
+
+/// The kobold that found the bug.
+///
+/// Standing in sunlight is disadvantage (Sunlight Sensitivity); an ally
+/// beside the target is advantage (Pack Tactics); the target being prone
+/// is advantage again on a melee swing. RAW: one of each kind, so
+/// neither — `Normal`. The old left-fold cancelled the sunlight against
+/// Pack Tactics and then let the prone clause land on a clean slate,
+/// giving the kobold **Advantage** on a swing it should have been
+/// rolling straight.
+///
+/// A kobold is the smallest creature that shows it because it is the
+/// only one in the bestiary carrying two of those clauses at once.
+#[test]
+fn a_kobold_in_the_sun_with_pack_tactics_still_rolls_straight() {
+    use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    e.set_ambient_light(AmbientLight::Daylight);
+    let kobold = e
+        .instantiate_creature(&KOBOLD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    // An ally on the target's far side turns Pack Tactics on.
+    let _ally = e
+        .instantiate_creature(&KOBOLD_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .add_condition(Condition::Prone, ConditionTimer::Permanent);
+
+    assert_eq!(
+        e.compute_attack_mode(kobold, target, true),
+        RollMode::Normal,
+        "two advantages against one disadvantage is neither, not advantage"
+    );
+    // And with the sun taken away, the two advantages are advantage.
+    e.set_ambient_light(AmbientLight::BrightLight);
+    assert_eq!(
+        e.compute_attack_mode(kobold, target, true),
+        RollMode::Advantage
+    );
+}
+
+/// The mirror case: two disadvantages against one advantage is also
+/// neither. The old fold got this one right or wrong depending purely
+/// on which clause the source happened to list first, which is the
+/// property that makes the bug so easy to reintroduce.
+#[test]
+fn two_disadvantages_against_one_advantage_is_also_neither() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    // A Fighter, not a zombie: the undead are immune to Poisoned and
+    // Frightened both, so a zombie handed those conditions is a test
+    // that quietly measures nothing.
+    let attacker = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    // Attacker: Poisoned and Frightened — two independent
+    // disadvantages. Target: Stunned — one advantage.
+    for c in [Condition::Poisoned, Condition::Frightened] {
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(c, ConditionTimer::Permanent);
+        assert!(
+            e.actors[&attacker].has_condition(c),
+            "{:?} has to actually stick for this test to measure anything",
+            c
+        );
+    }
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+    assert!(e.actors[&target].has_condition(Condition::Stunned));
+    assert_eq!(
+        e.compute_attack_mode(attacker, target, true),
+        RollMode::Normal
+    );
+}
+
+/// The Help grant joins the tally rather than landing on an
+/// already-resolved mode.
+///
+/// The attacker here is Poisoned (disadvantage) against a Stunned
+/// target (advantage) — a swing that resolves to `Normal` *because* it
+/// holds one of each. Helping them must leave it `Normal`: RAW still
+/// counts the poison. Combining the grant onto the resolved `Normal`
+/// would have promoted it to `Advantage`, because a `Normal` that came
+/// from a cancellation and a `Normal` that came from nothing are
+/// indistinguishable once the flags are gone.
+#[test]
+fn a_help_grant_cannot_undo_a_disadvantage_the_sweep_already_counted() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    // A Fighter for the same reason as the test above: a zombie is
+    // immune to Poisoned, so the disadvantage would never install.
+    let attacker = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&attacker)
+        .unwrap()
+        .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+    assert!(e.actors[&attacker].has_condition(Condition::Poisoned));
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+    assert_eq!(
+        e.compute_attack_mode(attacker, target, true),
+        RollMode::Normal,
+        "one of each, before anybody helps"
+    );
+    e.actors
+        .get_mut(&attacker)
+        .unwrap()
+        .set_help_grant(Some(crate::actors::actor_template::HelpGrant {
+            helper_id: attacker,
+            against: target,
+        }));
+    assert_eq!(
+        e.peek_attack_mode(attacker, target, true),
+        RollMode::Normal,
+        "and still one of each after"
+    );
+    // The mutating twin agrees, and consumes the grant.
+    assert_eq!(
+        e.attack_mode_with_riders(attacker, target, true),
+        RollMode::Normal
+    );
+}
+
+/// The Rogue's Elusive cap now sees the Help grant.
+///
+/// "No attack roll has advantage against you" is a cap on the result,
+/// so it has to run last. It used to run at the bottom of the sweep,
+/// which is *before* `attack_mode_with_riders` combined the Help grant
+/// on — so helping an attacker handed back exactly the advantage the
+/// capstone exists to deny.
+#[test]
+fn elusive_denies_the_advantage_a_help_grant_would_have_smuggled_past_it() {
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let attacker = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // The level-18 capstone template, so `has_elusive` is a stat-block
+    // fact rather than something the test poked in.
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&rogue].has_elusive(),
+        "this test needs a rogue that actually has the capstone"
+    );
+    e.actors
+        .get_mut(&attacker)
+        .unwrap()
+        .set_help_grant(Some(crate::actors::actor_template::HelpGrant {
+            helper_id: attacker,
+            against: rogue,
+        }));
+    assert_eq!(
+        e.peek_attack_mode(attacker, rogue, true),
+        RollMode::Normal,
+        "the capstone caps the grant too"
+    );
+}
