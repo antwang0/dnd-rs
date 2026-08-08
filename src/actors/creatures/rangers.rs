@@ -5,7 +5,8 @@ use crate::actions::class_features::{
     SUMMON_DRAKE_COMPANION, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
+use crate::actions::monster_attacks::{LONGBOW, SCIMITAR, SHORTSWORD};
+use crate::actions::two_weapon::OFF_HAND_SHORTSWORD;
 use crate::actions::spells::{
     CONJURE_VOLLEY, CURE_WOUNDS, ENSNARING_STRIKE, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK,
     LESSER_RESTORATION, LIGHTNING_ARROW, SPIKE_GROWTH, ZEPHYR_STRIKE,
@@ -246,6 +247,57 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG, LANDS_STRIDE_TAG]),
         skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// Two-Weapon Ranger — the baseline Ranger with the **Two-Weapon
+/// Fighting** style taken at level 2 instead of the kite, and a blade
+/// in each hand to spend it on.
+///
+/// The canonical 5e dual-wielder, and the build the style exists for.
+/// Where every other ranger on the roster opens at longbow range and
+/// backs away from contact, this one wants to be in it: main-hand
+/// shortsword at Action cost, off-hand shortsword on the bonus action,
+/// both DEX-based off the chassis's 16.
+///
+/// The two swings are deliberately asymmetric, and the asymmetry is
+/// the whole feature:
+///
+///   - The **main hand** rolls 1d6 + DEX, and Extra Attack doubles it.
+///   - The **off hand** rolls 1d6 + DEX *only because of the style* —
+///     without it the bonus swing would be dice alone, which is RAW's
+///     default and what every other light-weapon holder in the engine
+///     gets. Extra Attack does not touch it.
+///
+/// So the style is worth exactly one DEX modifier per turn here, which
+/// is what RAW grants, and the template is the roster's demonstration
+/// that it is granted once rather than per swing.
+///
+/// The longbow stays on the list. A dual-wielder still has to cross
+/// the room, and the round spent crossing it is a round with nothing
+/// in reach — the bow is what that round does. What is *not* on the
+/// list is the baseline's scimitar: it is the same 1d6 off a Strength
+/// the chassis does not have, and leaving it on would have the attack
+/// picker weighing a +1 swing against a +3 one every turn.
+///
+/// Glyph 'T' so a two-weapon-vs-Hunter encounter renders unambiguously
+/// next to the baseline 'R' and the Hunter's 'H'.
+pub static TWO_WEAPON_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let base = RANGER_TEMPLATE.clone();
+    let mut actions: Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)> =
+        base.actions
+            .iter()
+            .copied()
+            .filter(|a| a.name() != SCIMITAR.display_name)
+            .collect();
+    actions.push(&SHORTSWORD);
+    actions.push(&OFF_HAND_SHORTSWORD);
+    CreatureTemplate {
+        name: "Two-Weapon Ranger",
+        glyph: 'T',
+        actions,
+        has_two_weapon_fighting_style: true,
+        ..base
     }
 });
 

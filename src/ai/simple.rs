@@ -13009,7 +13009,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 54] = [
+        let cases: [(&CreatureTemplate, &str); 57] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -13292,6 +13292,32 @@ mod tests {
             (
                 &crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE,
                 "balm of the summer court",
+            ),
+            // The two-weapon pair, and the reason both halves are
+            // listed: the off-hand swing is the first action in the
+            // engine whose legality depends on what the *same actor*
+            // already did this turn, so seeing it in the log is the
+            // check that the attack picker's ordering opens the gate
+            // before it tries the door. A picker that reached for the
+            // bonus swing first would find it invalid, spend the turn
+            // on the main hand alone, and leave nothing in the log
+            // that looked wrong.
+            (
+                &crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE,
+                "uses shortsword",
+            ),
+            (
+                &crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE,
+                "off-hand shortsword",
+            ),
+            // The unstyled half of the same rule. A rogue gets no
+            // fighting style, so the dagger is dice alone — and it is
+            // still worth a bonus action, because Sneak Attack is once
+            // per turn rather than once per attack and the off hand is
+            // a second roll to land it on.
+            (
+                &crate::actors::creatures::rogues::SWASHBUCKLER_ROGUE_TEMPLATE,
+                "off-hand dagger",
             ),
         ];
 

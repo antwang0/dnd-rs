@@ -735,6 +735,25 @@ pub struct SimpleWeapon {
     /// knight with a longsword on their belt doesn't jab with the wrong
     /// end of a lance at point-blank.
     pub min_effective_range: Option<isize>,
+    /// 5e's **light** weapon property — the one that opens two-weapon
+    /// fighting. Set on the small armoury weapons RAW marks light
+    /// (dagger, shortsword, scimitar, handaxe, light hammer, sickle,
+    /// club) and left `false` on everything else, including every
+    /// natural weapon: RAW's light property belongs to objects you
+    /// hold in a hand, and a bite is not one.
+    ///
+    /// Read through `Action::is_light_melee_weapon` at the stack's
+    /// execution chokepoint, which stamps the swinger's per-turn
+    /// ledger; `OffHandAttack` gates on that ledger. Nothing else
+    /// reads it, and in particular the swing itself is unchanged — a
+    /// light weapon rolls exactly as it did before.
+    ///
+    /// Defaulted to `false` by every constructor and turned on with
+    /// the `light()` builder, for the same reason `gated_on` is a
+    /// builder: the property is orthogonal to all four shapes above
+    /// it, and pairing it with each would be four more near-identical
+    /// constructors to keep in step.
+    pub is_light: bool,
 }
 
 impl SimpleWeapon {
@@ -796,6 +815,7 @@ impl SimpleWeapon {
             normal_range: None,
             requires_condition: None,
             min_effective_range: None,
+            is_light: false,
         }
     }
 
@@ -836,6 +856,7 @@ impl SimpleWeapon {
             normal_range: None,
             requires_condition: None,
             min_effective_range: None,
+            is_light: false,
         }
     }
 
@@ -873,6 +894,7 @@ impl SimpleWeapon {
             normal_range: Some(normal_range),
             requires_condition: None,
             min_effective_range: None,
+            is_light: false,
         }
     }
 
@@ -887,21 +909,33 @@ impl SimpleWeapon {
     /// keep in step. Written out field-by-field rather than with
     /// functional-record-update syntax, which `const fn` does not
     /// accept.
+    ///
+    /// Every field but the one being set is copied across verbatim.
+    /// That is worth stating because it did not used to be true:
+    /// `min_effective_range` was written as a literal `None` here
+    /// rather than as `self.min_effective_range`, so gating a weapon
+    /// silently discarded its point-blank penalty. Nothing in the
+    /// bestiary paired the two — the only gated weapon is the Astral
+    /// Self Monk's arms and the only min-range weapon is the lance —
+    /// so the bug had no victim yet, which is exactly the kind that
+    /// waits for the first lance somebody has to summon.
     pub const fn gated_on(self, condition: Condition) -> Self {
         Self {
-            display_name: self.display_name,
-            aliases: self.aliases,
-            attack_ability: self.attack_ability,
-            damage_ability: self.damage_ability,
-            damage_dice: self.damage_dice,
-            damage_type: self.damage_type,
-            reach: self.reach,
-            is_melee: self.is_melee,
-            requires_los: self.requires_los,
-            cost_resource: self.cost_resource,
-            normal_range: self.normal_range,
             requires_condition: Some(condition),
-            min_effective_range: None,
+            ..self
+        }
+    }
+
+    /// Const builder that marks an already-constructed weapon 5e
+    /// **light** — `SimpleWeapon::melee(...).light()`.
+    ///
+    /// A builder for the same reason `gated_on` is one: the property
+    /// is orthogonal to every shape above it. See `is_light` for what
+    /// reads it.
+    pub const fn light(self) -> Self {
+        Self {
+            is_light: true,
+            ..self
         }
     }
 }
@@ -953,6 +987,13 @@ impl Action for SimpleWeapon {
     /// decision leading up to it was made on a wrong answer.
     fn is_melee_attack(&self) -> bool {
         self.is_melee
+    }
+    /// Both halves of the question, and the `is_melee` half is not
+    /// redundant: a dagger and a handaxe are light *and* throwable, so
+    /// the same weapon can be declared twice — once as a swing and
+    /// once as a toss — and only the swing opens the bonus attack.
+    fn is_light_melee_weapon(&self) -> bool {
+        self.is_light && self.is_melee
     }
     fn requires_los(&self) -> bool {
         self.requires_los
@@ -1919,7 +1960,7 @@ pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Slashing,
-);
+).light();
 
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
@@ -1937,6 +1978,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     normal_range: Some(8),
     requires_condition: None,
     min_effective_range: None,
+    is_light: false,
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -1947,7 +1989,7 @@ pub static DAGGER: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 4),
     DamageType::Piercing,
-);
+).light();
 
 /// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
 /// **reach 2** (10ft) — first polearm-style attack in the codebase.
@@ -2016,7 +2058,7 @@ pub static SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 6),
     DamageType::Piercing,
-);
+).light();
 
 /// Club — STR-based 1d4 bludgeoning simple weapon. The peasant's only
 /// sidearm — a stick. Lowest damage tier in the weapon pool (tied with
@@ -2031,7 +2073,7 @@ pub static CLUB: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 4),
     DamageType::Bludgeoning,
-);
+).light();
 
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures

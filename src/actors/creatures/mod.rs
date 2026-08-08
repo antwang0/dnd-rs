@@ -433,6 +433,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                 "ranger",
                 vec![
                     &*rangers::RANGER_TEMPLATE,
+                    &*rangers::TWO_WEAPON_RANGER_TEMPLATE,
                     &*rangers::HUNTER_RANGER_TEMPLATE,
                     &*rangers::GLOOM_STALKER_RANGER_TEMPLATE,
                     &*rangers::FEY_WANDERER_RANGER_TEMPLATE,

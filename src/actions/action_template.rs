@@ -872,6 +872,30 @@ pub trait Action {
         false
     }
 
+    /// True if this action is a swing with a 5e **light** melee weapon —
+    /// the property that opens RAW's two-weapon fighting option:
+    /// "when you take the Attack action and attack with a light melee
+    /// weapon that you're holding in one hand, you can use a bonus
+    /// action to attack with a different light melee weapon".
+    ///
+    /// Read once per resolved action, at the stack's execution
+    /// chokepoint in `EncounterInstance::process_stack`, which stamps
+    /// the swinger's per-turn light-weapon ledger. `OffHandAttack`
+    /// reads that ledger back as its gate, so the bonus swing is legal
+    /// exactly when a light main-hand swing has actually happened this
+    /// turn — not merely when the Action slot is gone.
+    ///
+    /// **Defaults to `false`, the conservative direction.** A missing
+    /// `true` costs a dual-wielder their bonus swing; a wrong `true`
+    /// would hand one out for a greataxe. `SimpleWeapon` overrides it
+    /// from its `is_light` field, which covers every shared armoury
+    /// static; a bespoke natural weapon leaves it `false`, which is
+    /// correct — RAW's light property is a property of *weapons*, and
+    /// a bear's claw is not one.
+    fn is_light_melee_weapon(&self) -> bool {
+        false
+    }
+
     /// True when resolving this action lands more than one attack — the
     /// `Multiattack` and `CompoundAttack` wrappers, which sit on the
     /// same action list as the swings they contain.

@@ -53453,87 +53453,307 @@ fn great_weapon_fighting_helper_no_op_when_flag_off() {
     );
 }
 
-/// 5e Fighting Style: **Two-Weapon Fighting** — the flag adds a
-/// passive +STR-mod (min 0) to melee weapon damage. The bonus is
-/// gated on `p.is_melee` so a ranged shot doesn't pick it up.
-/// Templates don't ship it by default; the flag exists so
-/// custom builds can opt in.
+/// 5e **two-weapon fighting**, the opening clause: the off-hand
+/// bonus swing is legal only after a light melee weapon has been
+/// swung at Action cost this turn.
+///
+/// The gate is the ledger, not the empty Action slot, and this test
+/// is the difference between the two. A ranger who spent their
+/// Action on the longbow has no Action left and no blade in motion,
+/// and RAW gives them no bonus swing for it.
 #[test]
-fn two_weapon_fighting_flag_scales_with_strength() {
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
-    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+fn off_hand_swing_needs_a_light_main_hand_swing_first() {
+    use crate::actions::monster_attacks::{LONGBOW, SHORTSWORD};
+    use crate::actions::two_weapon::OFF_HAND_SHORTSWORD;
+    use crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&TWO_WEAPON_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+
+    // Turn start: nothing has swung, so the off-hand is not yet legal.
+    let offhand =
+        ActionExecutionInfo::new(&OFF_HAND_SHORTSWORD, ranger, Some(vec![target]), None, None);
+    assert!(
+        !offhand.validate(&e),
+        "off-hand swing should be illegal before the main hand goes in"
+    );
+
+    // Spending the Action on the bow does not open it: the bow is not
+    // a light melee weapon, which is the half of RAW's clause an
+    // `action_slots() == 0` gate would have missed.
+    e.push_action(ActionExecutionInfo::new(
+        &LONGBOW,
+        ranger,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        !e.actors[&ranger].has_swung_light_weapon_this_turn(),
+        "a longbow shot is not a two-weapon opening"
+    );
+
+    // The shortsword is. Refund the Action the bow took so the swing
+    // can be declared, then check the ledger flips.
+    e.actors.get_mut(&ranger).unwrap().reset_for_new_round();
+    e.push_action(ActionExecutionInfo::new(
+        &SHORTSWORD,
+        ranger,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        e.actors[&ranger].has_swung_light_weapon_this_turn(),
+        "a light melee swing at Action cost opens the off-hand"
+    );
+    let offhand =
+        ActionExecutionInfo::new(&OFF_HAND_SHORTSWORD, ranger, Some(vec![target]), None, None);
+    assert!(
+        offhand.validate(&e),
+        "off-hand swing should be legal once the main hand has gone in"
+    );
+}
+
+/// The opening is good for one turn only. A dual-wielder who holds
+/// their bonus action cannot cash it next round against last round's
+/// main-hand swing.
+#[test]
+fn the_two_weapon_opening_does_not_survive_the_turn() {
+    use crate::actions::monster_attacks::SHORTSWORD;
+    use crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&TWO_WEAPON_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.push_action(ActionExecutionInfo::new(
+        &SHORTSWORD,
+        ranger,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(e.actors[&ranger].has_swung_light_weapon_this_turn());
+
+    e.actors.get_mut(&ranger).unwrap().reset_for_new_round();
+    assert!(
+        !e.actors[&ranger].has_swung_light_weapon_this_turn(),
+        "the opening should clear with the rest of the per-turn ledgers"
+    );
+}
+
+/// 5e two-weapon fighting, the damage clause: "you don't add your
+/// ability modifier to the damage of the bonus attack, unless that
+/// modifier is negative" — and the **Two-Weapon Fighting** fighting
+/// style is precisely the permission to add it anyway.
+///
+/// Rolled over a seed sweep with both wielders on the same seeds, so
+/// the only difference between the two totals is the modifier.
+#[test]
+fn the_two_weapon_style_pays_the_off_hand_and_only_the_off_hand() {
+    use crate::actions::monster_attacks::SHORTSWORD;
+    use crate::actions::two_weapon::OFF_HAND_SHORTSWORD;
+    use crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE;
 
     let trials = 200u64;
-    let mut styled_dmg: u32 = 0;
-    let mut unstyled_dmg: u32 = 0;
-    for seed in 0..trials {
-        let mut e = ei_with_terrain(15, 15, &[]);
-        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let attacker = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        // Dial off the fighter's own Dueling flag so the TWF signal
-        // isn't drowned out by the +2 dueling flat bonus.
-        e.actors.get_mut(&attacker).unwrap().set_dueling_style(false);
-        e.actors
-            .get_mut(&attacker)
-            .unwrap()
-            .set_two_weapon_fighting_style(true);
-        let target = e
-            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-            .unwrap();
-        let (_, dealt) = resolve_attack_outcome(
-            &mut e,
-            AttackParams {
-                caster_id: attacker,
-                target_id: target,
-                action_name: "scimitar",
-                attack_bonus: 5,
-                damage_dice: Dice::new(1, 6),
-                damage_bonus: 3,
-                damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
-            },
-        );
-        styled_dmg = styled_dmg.saturating_add(dealt);
-    }
-    for seed in 0..trials {
-        let mut e = ei_with_terrain(15, 15, &[]);
-        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let attacker = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        e.actors.get_mut(&attacker).unwrap().set_dueling_style(false);
-        let target = e
-            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-            .unwrap();
-        let (_, dealt) = resolve_attack_outcome(
-            &mut e,
-            AttackParams {
-                caster_id: attacker,
-                target_id: target,
-                action_name: "scimitar",
-                attack_bonus: 5,
-                damage_dice: Dice::new(1, 6),
-                damage_bonus: 3,
-                damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
-            },
-        );
-        unstyled_dmg = unstyled_dmg.saturating_add(dealt);
-    }
+    // (off-hand damage, main-hand damage) summed across the sweep, for
+    // a wielder with the style and one without.
+    let sweep = |styled: bool| -> (u32, u32) {
+        let (mut off, mut main) = (0u32, 0u32);
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let ranger = e
+                .instantiate_creature(&TWO_WEAPON_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&ranger)
+                .unwrap()
+                .set_two_weapon_fighting_style(styled);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let before = e.actors[&target].hitpoints();
+            e.push_action(ActionExecutionInfo::new(
+                &SHORTSWORD,
+                ranger,
+                Some(vec![target]),
+                None,
+                None,
+            ));
+            e.process_stack();
+            let mid = e
+                .actors
+                .get(&target)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            main += before.saturating_sub(mid);
+            if e.actors.contains_key(&target) {
+                e.push_action(ActionExecutionInfo::new(
+                    &OFF_HAND_SHORTSWORD,
+                    ranger,
+                    Some(vec![target]),
+                    None,
+                    None,
+                ));
+                e.process_stack();
+                let after = e
+                    .actors
+                    .get(&target)
+                    .map(|a| a.hitpoints())
+                    .unwrap_or(0);
+                off += mid.saturating_sub(after);
+            }
+        }
+        (off, main)
+    };
+
+    let (styled_off, styled_main) = sweep(true);
+    let (unstyled_off, unstyled_main) = sweep(false);
+
     assert!(
-        styled_dmg > unstyled_dmg,
-        "TWF should raise average melee damage vs baseline (styled {} vs unstyled {})",
-        styled_dmg,
-        unstyled_dmg,
+        styled_off > unstyled_off,
+        "the style should raise off-hand damage (styled {} vs unstyled {})",
+        styled_off,
+        unstyled_off,
+    );
+    // The half that used to be wrong. As a blanket melee bump the
+    // style paid out on the main hand too — and on every Extra Attack
+    // swing chained off it — for a clause that grants one modifier to
+    // one attack.
+    assert_eq!(
+        styled_main, unstyled_main,
+        "the style must not touch the main-hand swing (styled {} vs unstyled {})",
+        styled_main, unstyled_main,
+    );
+}
+
+/// The `light` property is a property of *weapons*, and the roster
+/// agrees with the PHB about which ones have it.
+///
+/// A sweep rather than a behavior test, because the failure it guards
+/// is silent in exactly the way a data tag is: a `.light()`
+/// copy-pasted onto the greataxe below it hands every barbarian on
+/// the roster a bonus swing they never earned, and nothing in the
+/// engine would complain.
+#[test]
+fn only_the_phbs_light_weapons_are_light() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{
+        CLUB, DAGGER, GREATAXE, GREATCLUB, GREATSWORD, LANCE, LONGBOW, LONGSWORD, MACE, SCIMITAR,
+        SHORTBOW, SHORTSWORD, SPEAR, WARHAMMER,
+    };
+
+    for w in [&CLUB, &DAGGER, &SCIMITAR, &SHORTSWORD] {
+        assert!(
+            w.is_light_melee_weapon(),
+            "{} is light in the PHB",
+            w.display_name
+        );
+    }
+    for w in [
+        &GREATAXE,
+        &GREATCLUB,
+        &GREATSWORD,
+        &LANCE,
+        &LONGSWORD,
+        &MACE,
+        &SPEAR,
+        &WARHAMMER,
+        // Ranged weapons are never a two-weapon opening, whatever
+        // else they are — a hand crossbow's bonus shot is Crossbow
+        // Expert, a different rule with a different gate.
+        &LONGBOW,
+        &SHORTBOW,
+    ] {
+        assert!(
+            !w.is_light_melee_weapon(),
+            "{} is not a light melee weapon",
+            w.display_name
+        );
+    }
+}
+
+/// The off-hand swing costs a bonus action and does not chain Extra
+/// Attack. Both are RAW and both are the reason the option is a
+/// decision rather than free damage: Extra Attack multiplies the
+/// Attack action, and the bonus action is the same slot Hunter's Mark
+/// wants.
+#[test]
+fn the_off_hand_swing_costs_a_bonus_action_and_swings_once() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::SHORTSWORD;
+    use crate::actions::two_weapon::OFF_HAND_SHORTSWORD;
+    use crate::actors::creatures::rangers::TWO_WEAPON_RANGER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&TWO_WEAPON_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert_eq!(
+        OFF_HAND_SHORTSWORD.cost(&e, ranger, None, None, None),
+        vec![Resource::BonusAction]
+    );
+
+    // The chassis has Extra Attack, so the main hand swings twice and
+    // the off hand once. Counted off the log rather than the damage,
+    // which a miss would zero.
+    assert!(
+        e.actors[&ranger].has_extra_attack(),
+        "the ranger chassis should carry Extra Attack for this to mean anything"
+    );
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    // Counted off the attack-roll line, which every swing logs exactly
+    // once whatever it then does. Damage lines are a bad marker — a
+    // miss logs none and a resisted hit logs three.
+    let count_swings = |e: &EncounterInstance, from: usize, name: &str| {
+        e.messages()[from..]
+            .iter()
+            .filter(|l: &&String| l.contains(&format!("{}: 1d20(", name)))
+            .count()
+    };
+
+    let mark = e.messages().len();
+    e.push_action(ActionExecutionInfo::new(
+        &SHORTSWORD,
+        ranger,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    let main_lines = count_swings(&e, mark, "shortsword");
+
+    let mark = e.messages().len();
+    e.push_action(ActionExecutionInfo::new(
+        &OFF_HAND_SHORTSWORD,
+        ranger,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    let off_lines = count_swings(&e, mark, "shortsword");
+
+    assert_eq!(
+        (main_lines, off_lines),
+        (2, 1),
+        "Extra Attack should chain the main hand and not the bonus swing"
     );
 }
 

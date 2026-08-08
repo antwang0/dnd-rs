@@ -48,6 +48,17 @@ pub struct RogueWeapon {
     /// Whether this counts as a melee swing — read by the rider lanes,
     /// the opportunity-attack predicate and the reach-extension gates.
     pub is_melee: bool,
+    /// 5e's **light** weapon property, the one that opens the
+    /// bonus-action off-hand swing. See `SimpleWeapon::is_light` for
+    /// what reads it; the two fields mean the same thing and are read
+    /// through the same `Action::is_light_melee_weapon`.
+    ///
+    /// True on the baseline shortsword. False on both psychic blades:
+    /// RAW gives Psychic Blades finesse and thrown and pointedly not
+    /// light, because the Soulknife's second blade is its *own*
+    /// two-weapon clause with its own gate — and a blade that was both
+    /// would let a Soulknife open a generic off-hand swing as well.
+    pub is_light: bool,
     /// What the swing costs. `Action` for a primary weapon;
     /// `BonusAction` for the Soulknife's second blade.
     pub cost_resource: Resource,
@@ -78,6 +89,12 @@ impl Action for RogueWeapon {
         // A thrown blade needs to see where it is going; a melee swing
         // is already in contact.
         !self.is_melee
+    }
+
+    /// Both halves, as on `SimpleWeapon`: the thrown psychic blade is
+    /// neither light nor melee and would fail either check alone.
+    fn is_light_melee_weapon(&self) -> bool {
+        self.is_light && self.is_melee
     }
 
     fn damage_types(&self) -> Vec<DamageType> {
@@ -381,6 +398,7 @@ pub static ROGUE_SHORTSWORD: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapo
     damage_type: DamageType::Piercing,
     reach: MELEE_REACH,
     is_melee: true,
+    is_light: true,
     cost_resource: Resource::Action,
     extra_gate: None,
 });
@@ -403,6 +421,7 @@ pub static PSYCHIC_BLADE: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapon {
     // RAW's 60 ft thrown range on the engine's 2.5 ft grid.
     reach: 24,
     is_melee: false,
+    is_light: false,
     cost_resource: Resource::Action,
     extra_gate: None,
 });
@@ -425,6 +444,7 @@ pub static PSYCHIC_BLADE_FLOURISH: LazyLock<RogueWeapon> = LazyLock::new(|| Rogu
     damage_type: DamageType::Psychic,
     reach: 24,
     is_melee: false,
+    is_light: false,
     cost_resource: Resource::BonusAction,
     extra_gate: Some(|encounter, caster_id| {
         encounter

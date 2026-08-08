@@ -2303,6 +2303,38 @@ impl EncounterInstance {
             .is_some_and(|t| t.effectively_immune_to_condition(c))
     }
 
+    /// Stamp the swinger's two-weapon ledger if `aei` is the swing RAW
+    /// asks for: "the Attack action … with a light melee weapon that
+    /// you're holding in one hand".
+    ///
+    /// Both halves are checked here, and both are facts about the
+    /// action rather than about the attack it resolves into — which is
+    /// why the write lives at this chokepoint and not in
+    /// `engine::attack`. `AttackParams` knows the die, the reach and
+    /// the damage type; it does not know whether the swing cost an
+    /// Action or which weapon on the sheet produced it, and both of
+    /// those are load-bearing. A bonus-action shortbow shot and an
+    /// opportunity attack are melee-or-not by the same resolver and
+    /// neither opens a second swing.
+    ///
+    /// Runs before `execute` rather than after, so the ledger is
+    /// already stamped for anything the swing itself enqueues. Nothing
+    /// today reads it that early — the off-hand swing is declared on a
+    /// later pass through the stack — but the ordering costs nothing
+    /// and the other order would be a latent trap.
+    fn mark_two_weapon_opening(&mut self, aei: &ActionExecutionInfo) {
+        use crate::engine::side_effects::Resource;
+        if !aei.action().is_light_melee_weapon() {
+            return;
+        }
+        if !aei.cost(self).contains(&Resource::Action) {
+            return;
+        }
+        if let Some(caster) = self.actors.get_mut(&aei.caster_id()) {
+            caster.mark_light_weapon_swing_this_turn();
+        }
+    }
+
     /// Logs a play-by-play line for an action that consumes the
     /// action-economy (Action / BonusAction / Reaction / LegendaryAction).
     /// Movement and free actions are intentionally excluded — the AI takes
@@ -13581,6 +13613,7 @@ impl EncounterInstance {
                 }
                 StackElementEntry::Action(a) => {
                     self.log_action_use(&a);
+                    self.mark_two_weapon_opening(&a);
                     let mut side_effects = a.execute(self);
                     for sen in side_effects.drain(..) {
                         self.enqueue_event(StackElementEntry::SideEffect(sen));

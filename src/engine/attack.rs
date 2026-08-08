@@ -132,15 +132,22 @@ impl ActionOnHitRider for NoRider {
 ///   - **Dueling (+2)**: Fighting Style flag; RAW's "one-handed and
 ///     no other weapon" clause collapses to "melee weapon attack" in
 ///     this engine.
-///   - **Two-Weapon Fighting (+STR mod)**: Fighting Style flag; RAW's
-///     "second attack" clause collapses to "every melee swing on the
-///     holder" since we don't distinguish off-hand swings at the
-///     action-list level.
 ///   - **Aura of Hate (+CHA mod, min +1)**: Oathbreaker Paladin lv7
 ///     subclass feature. RAW's ally-side aura on adjacent fiends /
 ///     undead is dropped since the engine doesn't tag those as an
 ///     aura-eligible cohort — the self-side +CHA damage is the
 ///     mechanical core.
+///
+/// **Two-Weapon Fighting is deliberately not on this list**, though it
+/// used to be. RAW's style adds the wielder's ability modifier to the
+/// damage of *the second attack* — the bonus-action off-hand swing —
+/// and nothing else. As a blanket melee bump it was paid out on every
+/// swing the holder made, so a Ranger with Extra Attack collected it
+/// three times a turn for a clause that grants it once, and it was
+/// paid to holders who had never made an off-hand swing at all. It
+/// now lives where the clause puts it, on
+/// `actions::two_weapon::OffHandAttack`, which is the only swing RAW
+/// lets it modify.
 ///
 /// A new melee-side bump (Ancestral Guardians retribution, Rage
 /// tier-scaling to +3/+4, a Warlock's Lifedrinker) drops in here as
@@ -151,12 +158,6 @@ const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
     }),
     ("dueling", |a| {
         if a.has_dueling_style() { 2 } else { 0 }
-    }),
-    ("two-weapon fighting", |a| {
-        if !a.has_two_weapon_fighting_style() {
-            return 0;
-        }
-        a.ability_modifier(AbilityScoreType::Strength).max(0) as u32
     }),
     // 5e Bladesinging Wizard **Song of Victory** (subclass level 14):
     // "add your Intelligence modifier (minimum of +1) to the damage of

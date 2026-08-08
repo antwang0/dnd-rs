@@ -3081,20 +3081,26 @@ pub struct CreatureTemplate {
     /// Dueling and GWF stay mutually exclusive on the baseline lanes.
     pub has_great_weapon_fighting: bool,
     /// 5e Fighting Style: **Two-Weapon Fighting** (Fighter / Ranger lv1
-    /// pick): when the holder engages in two-weapon fighting, they add
-    /// their ability modifier to the damage of the second (off-hand)
-    /// attack. The engine doesn't distinguish the "off-hand" attack from
-    /// the main-hand swing at the action-list level, but every Extra
-    /// Attack chain past the first swing behaves like a bonus swing in
-    /// the RAW two-weapon fighting economy — so the flag adds a passive
-    /// per-swing +STR mod (min 0) to melee weapon damage on chassis
-    /// that stack this style. Distinct from Dueling: Dueling ships a
-    /// flat +2, TWF scales with the attacker's STR mod. Read at the
-    /// damage-roll chokepoint in `engine::attack`, gated on `p.is_melee`
-    /// so a ranged weapon (or spell) doesn't pick up the bonus. Not
-    /// shipped on any current template — the flag is defined so the
-    /// racial "off-hand mastery" tag surfaces as a template lane rather
-    /// than a scattered set of per-actor overrides.
+    /// pick): "when you engage in two-weapon fighting, you can add your
+    /// ability modifier to the damage of the second attack."
+    ///
+    /// Read by `actions::two_weapon::offhand_damage_ability`, and by
+    /// nothing else. The style's entire content is that one clause, and
+    /// the "second attack" it names is the bonus-action off-hand swing
+    /// — so the flag turns `OffHandAttack`'s damage roll from dice-only
+    /// into dice-plus-modifier and has no other effect anywhere.
+    ///
+    /// It used to be a blanket `+STR mod` on every melee swing the
+    /// holder made, on the reasoning that the engine could not tell an
+    /// off-hand swing from a main-hand one. It can now, and the
+    /// approximation was generous in both directions that mattered: a
+    /// holder with Extra Attack collected it two or three times a turn,
+    /// and a holder who never dual-wielded collected it for free.
+    ///
+    /// Distinct from Dueling on more than the number: Dueling's flat +2
+    /// really does ride every qualifying swing, so it stays a
+    /// `MELEE_CASTER_BUMPS` entry. The two are also mutually exclusive
+    /// in RAW — one hand or two — and no template ships both.
     pub has_two_weapon_fighting_style: bool,
     /// 5e Fighting Style: **Protection** (Fighter / Paladin lv1 pick):
     /// when a creature the holder can see attacks a target OTHER than
@@ -4372,6 +4378,26 @@ pub struct ActorInstance {
     /// flag, keeping the write-side a single unconditional insert. A
     /// non-swashbuckler attacker's ledger just goes unread.
     melee_attack_targets_this_turn: HashSet<usize>,
+    /// 5e two-weapon fighting ledger: has this actor swung a **light
+    /// melee weapon** at Action cost during their current turn?
+    ///
+    /// RAW's clause is "when you take the Attack action and attack with
+    /// a light melee weapon that you're holding in one hand", and this
+    /// flag is that whole clause: the Action-cost half and the
+    /// light-weapon half both have to be true for it to be set. Read by
+    /// `OffHandAttack`'s gate, which is the only reader.
+    ///
+    /// A flag rather than a target set, unlike the ledger above it: the
+    /// off-hand swing may go at anybody in reach, not only at whoever
+    /// the main hand hit. Written at the stack's execution chokepoint
+    /// in `process_stack` rather than inside the swing, because the
+    /// fact being recorded is about the *action* — its cost and its
+    /// weapon — and the attack resolver sees neither.
+    ///
+    /// Cleared at turn-start alongside the other per-turn ledgers, so a
+    /// dual-wielder who saves their bonus action cannot spend it on
+    /// last turn's main-hand swing.
+    light_weapon_swing_this_turn: bool,
     /// 5e Dragonborn Draconic Ancestry damage type, if any. Drives the
     /// breath weapon's typing and the matching damage resistance.
     draconic_ancestry: Option<DamageType>,
@@ -4562,6 +4588,7 @@ impl ActorInstance {
             has_fancy_footwork: ct.has_fancy_footwork,
             has_dread_ambusher: ct.has_dread_ambusher,
             melee_attack_targets_this_turn: HashSet::new(),
+            light_weapon_swing_this_turn: false,
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
             sorcery_points_max: ct.sorcery_points,
@@ -5189,6 +5216,22 @@ impl ActorInstance {
     /// `has_melee_attacked_this_turn` instead.
     pub fn melee_attack_targets_this_turn_snapshot(&self) -> HashSet<usize> {
         self.melee_attack_targets_this_turn.clone()
+    }
+
+    /// 5e two-weapon fighting ledger read: has this actor spent their
+    /// Action on a light melee weapon this turn? `OffHandAttack`'s
+    /// gate, and the only reader of the flag.
+    pub fn has_swung_light_weapon_this_turn(&self) -> bool {
+        self.light_weapon_swing_this_turn
+    }
+
+    /// Stamp the two-weapon fighting ledger. Called from
+    /// `EncounterInstance::process_stack` for every resolved action
+    /// that answers `true` to both `Action::is_light_melee_weapon` and
+    /// an Action-cost check — see `light_weapon_swing_this_turn` for
+    /// why the write lives there rather than inside the swing.
+    pub fn mark_light_weapon_swing_this_turn(&mut self) {
+        self.light_weapon_swing_this_turn = true;
     }
 
     /// 5e Dragonborn Draconic Ancestry — damage type of the breath weapon
@@ -7951,6 +7994,11 @@ impl ActorInstance {
         // attacker's ledger populates and clears the same as the
         // swash's without any read-side effect.
         self.melee_attack_targets_this_turn.clear();
+        // 5e two-weapon fighting: the main-hand light swing that opens
+        // the off-hand bonus attack is good for this turn only. Cleared
+        // here so a dual-wielder who holds their bonus action can't
+        // cash it against last turn's swing.
+        self.light_weapon_swing_this_turn = false;
         // 5e Fighter Champion — Survivor (level 18): passive at-start-of-
         // turn regen. While combat-active AND at or below half max HP,
         // the holder regains `5 + CON modifier` HP (floor 1, so a -2 CON

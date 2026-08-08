@@ -5,6 +5,7 @@ use crate::actions::class_features::{
     STEADY_AIM, SUPERIOR_MOBILITY_TAG, VERSATILE_TRICKSTER, VERSATILE_TRICKSTER_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::two_weapon::OFF_HAND_DAGGER;
 use crate::actions::spells::{
     COLOR_SPRAY, INVISIBILITY, MIND_SLIVER, MIRROR_IMAGE, RAY_OF_FROST, SLEEP,
     TASHAS_HIDEOUS_LAUGHTER,
@@ -219,10 +220,33 @@ pub static SWASHBUCKLER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     // class template" lane — the rogue chassis's DEX 16 primary stays
     // intact for the shortsword's attack roll, so the bump is additive
     // rather than a stat swap.
+    //
+    // The off-hand dagger is the one action-list difference. RAW's
+    // Swashbuckler is the blade-in-each-hand duelist — the archetype's
+    // whole shape is closing to contact alone and staying there, which
+    // Rakish Audacity rewards and Fancy Footwork makes survivable —
+    // and the bonus-action swing is what a duelist does with a bonus
+    // action once Cunning Action has nothing to disengage from.
+    //
+    // Notably *without* the Two-Weapon Fighting style: rogues get no
+    // fighting style in RAW, so the off-hand dagger rolls 1d4 and
+    // nothing else. That is the plain-RAW half of two-weapon fighting,
+    // and it is on the roster next to the Two-Weapon Ranger's styled
+    // version so the difference between them is visible in play rather
+    // than only in the rules.
+    //
+    // It is worth more to a rogue than the die suggests, for a reason
+    // the estimate does not show: Sneak Attack is once per *turn*, not
+    // once per attack, so a rogue whose main hand missed has a second
+    // roll to land it on. The whole sneak pool rides whichever swing
+    // connects first.
+    let mut actions = ROGUE_TEMPLATE.actions.clone();
+    actions.push(&OFF_HAND_DAGGER);
     CreatureTemplate {
         name: "Swashbuckler Rogue",
         glyph: 'S',
         charisma: 14,
+        actions,
         has_rakish_audacity: true,
         has_fancy_footwork: true,
         ..ROGUE_TEMPLATE.clone()
