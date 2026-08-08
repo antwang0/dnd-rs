@@ -119,15 +119,6 @@ impl LightLevel {
             LightLevel::Dim | LightLevel::Bright => LightLevel::Bright,
         }
     }
-
-    /// A short label for the side panel and the log.
-    pub fn label(self) -> &'static str {
-        match self {
-            LightLevel::Dark => "darkness",
-            LightLevel::Dim => "dim light",
-            LightLevel::Bright => "bright light",
-        }
-    }
 }
 
 /// The light the encounter has before anybody lights anything: the sky,

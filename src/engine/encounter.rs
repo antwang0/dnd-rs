@@ -4002,14 +4002,6 @@ impl EncounterInstance {
         self.ambient_light.is_sunlight() && !self.magically_dark_at(coord)
     }
 
-    /// True if `actor_id` is standing in sunlight. `false` for an
-    /// unknown id, so callers stay free of `is_some_and` chains.
-    pub fn actor_in_sunlight(&self, actor_id: usize) -> bool {
-        self.actors
-            .get(&actor_id)
-            .is_some_and(|a| self.is_sunlit(a.location()))
-    }
-
     /// How brightly lit `coord` is *as far as `viewer_id` is
     /// concerned* — the objective answer, then darkvision.
     ///
