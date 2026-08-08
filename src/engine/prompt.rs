@@ -106,24 +106,36 @@ impl Prompt {
             if let Some(act) = actions.iter().find(|e| candidate == e.name()) {
                 return Ok((n, *act));
             }
-            // Aliases are single-token by construction, so only the
-            // narrowest width can match one.
-            if n != 1 {
-                continue;
-            }
+            // Aliases at every width, which is what rule 2 above says
+            // and what this loop used to contradict. It skipped
+            // straight past any width but the narrowest, under a
+            // comment asserting that "aliases are single-token by
+            // construction" — an invariant nothing enforced and 222
+            // aliases broke. "bless scroll", "hideous laughter",
+            // "giant strength", "finger of death", "mirror image",
+            // every one of the arcane archer's "banishing shot" pairs:
+            // all written to be typed, none of them reachable, because
+            // the only width that checked aliases was the one where a
+            // two-word alias cannot possibly match.
+            //
+            // A player typing one of them got "unknown or unavailable
+            // action", naming only their first token — so `mirror
+            // image` came back as unknown action "mirror", which reads
+            // like the spell is missing rather than like the shorthand
+            // is.
             let by_alias: Vec<&'a (dyn Action + Send + Sync)> = actions
                 .iter()
-                .filter(|e| e.aliases().contains(&tokens[0]))
+                .filter(|e| e.aliases().contains(&candidate.as_str()))
                 .copied()
                 .collect();
             match by_alias.len() {
                 0 => {}
-                1 => return Ok((1, by_alias[0])),
+                1 => return Ok((n, by_alias[0])),
                 _ => {
                     let names: Vec<&str> = by_alias.iter().map(|a| a.name()).collect();
                     return Err(format!(
                         "{:?} is ambiguous — it is short for {}. Type the full name.",
-                        tokens[0],
+                        candidate,
                         names.join(", ")
                     ));
                 }
@@ -434,6 +446,129 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Every alias a player might reasonably type resolves to
+    /// *something* — the alias sweep, sibling to the canonical-name
+    /// one above.
+    ///
+    /// It is here because the canonical sweep could not see the bug it
+    /// misses. `resolve_action` used to check aliases only at
+    /// token-width 1, under a comment asserting that "aliases are
+    /// single-token by construction". Nothing enforced that, and 222
+    /// aliases across the codebase broke it — "bless scroll",
+    /// "hideous laughter", "giant strength", "finger of death",
+    /// "mirror image", every one of the arcane archer's four
+    /// "<effect> shot" pairs. Each was written to be typed and none of
+    /// them could be, because the one width that consulted aliases is
+    /// the one where a two-word alias cannot match.
+    ///
+    /// The assertion is deliberately weaker than the canonical sweep's.
+    /// A canonical name must resolve to *its own action*, because
+    /// nothing is allowed to shadow it. An alias only has to resolve
+    /// to something or be refused as ambiguous: aliases collide freely
+    /// — "sphere" is claimed by four spells on the sorcerer's list —
+    /// and refusing a collision with both names is the documented
+    /// behaviour, not a failure. What is *not* acceptable is
+    /// `unknown or unavailable action`, which is the parser saying the
+    /// shorthand does not exist.
+    #[test]
+    fn every_pc_action_alias_resolves_or_is_refused_as_ambiguous() {
+        use crate::actions::action_template::Action;
+        use super::Prompt;
+        let mut checked = 0usize;
+        let mut multi_token = 0usize;
+        for (_label, family) in crate::actors::creatures::pc_template_families() {
+            for template in family {
+                let actions: Vec<&'static (dyn Action + Send + Sync)> = template.actions.clone();
+                for action in &actions {
+                    for alias in action.aliases() {
+                        let tokens: Vec<&str> = alias.split_whitespace().collect();
+                        // An empty alias would resolve to nothing and
+                        // is a data error in its own right.
+                        assert!(
+                            !tokens.is_empty(),
+                            "{}: {} carries an empty alias",
+                            template.name,
+                            action.name()
+                        );
+                        checked += 1;
+                        multi_token += usize::from(tokens.len() > 1);
+                        match Prompt::resolve_action(&actions, &tokens) {
+                            Ok(_) => {}
+                            Err(msg) => assert!(
+                                msg.contains("ambiguous"),
+                                "{}: typing '{}' for {} gives {:?}",
+                                template.name,
+                                alias,
+                                action.name(),
+                                msg
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        // Floors, not counts. The second one is the load-bearing half:
+        // without it the sweep passes on a parser that has gone back to
+        // ignoring every alias wider than one token, since the
+        // single-token ones would all still resolve.
+        assert!(checked > 500, "the sweep only reached {} aliases", checked);
+        assert!(
+            multi_token > 20,
+            "the sweep saw only {} multi-token aliases — those are the ones it exists for",
+            multi_token
+        );
+    }
+
+    /// A multi-token alias resolves, end to end through the real
+    /// parser, to the action it is short for.
+    ///
+    /// The sweep above proves the property across the roster; this is
+    /// the one case driven through `process_input` so the thing pinned
+    /// is what a player actually types. Hideous Laughter is the
+    /// fixture because it is the shape the bug was worst on: the
+    /// spell's canonical name is "tasha's hideous laughter", which
+    /// nobody types, and "hideous laughter" — the name everyone knows
+    /// it by — was an alias that could not resolve.
+    #[test]
+    fn a_two_word_alias_reaches_the_spell_it_names() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use super::Prompt;
+
+        let mut e = ei();
+        let wizard = e
+            .instantiate_creature(
+                &WIZARD_TEMPLATE,
+                crate::engine::types::Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(
+                &WIZARD_TEMPLATE,
+                crate::engine::types::Coordinate::new(7, 5),
+                1,
+                0,
+            )
+            .unwrap();
+        let prompt = Prompt::new(wizard, e.actors[&wizard].available_actions());
+
+        // The fixture is only meaningful while the alias exists and is
+        // not the canonical name.
+        let laughter = e.actors[&wizard]
+            .available_actions()
+            .into_iter()
+            .find(|a| a.name() == "tasha's hideous laughter")
+            .expect("the wizard should carry Hideous Laughter");
+        assert!(laughter.aliases().contains(&"hideous laughter"));
+
+        let resolved = prompt
+            .process_input(&format!("hideous laughter #{}", target), &e)
+            .expect("a two-word alias should parse");
+        assert_eq!(resolved.action().name(), "tasha's hideous laughter");
+        assert_eq!(resolved.target_ids(), Some(&[target][..]));
     }
 
     /// An alias two actions on the same list both claim is refused with
