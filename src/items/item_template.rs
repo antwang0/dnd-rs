@@ -134,6 +134,20 @@ pub struct Item {
     /// bonus. Deriving one from the other would make both wrong the
     /// first time the loot table grew.
     pub grants_magical_attacks: bool,
+    /// True when carrying this item makes the holder's weapon attacks
+    /// count as **silvered** — 5e's other, narrower answer to a
+    /// creature's physical resistance, and the one the lycanthrope
+    /// clause is written around: "immunity to bludgeoning, piercing,
+    /// and slashing damage from nonmagical attacks that aren't
+    /// silvered."
+    ///
+    /// A separate flag from `grants_magical_attacks` because silver is
+    /// *not* magic and answers strictly less: it gets a werewolf and
+    /// nothing else on the roster. That is the whole point of the
+    /// 100 gp coating in RAW — it is the answer a party can buy in town
+    /// before they have found a magic weapon, and it stops being
+    /// relevant the moment they have.
+    pub grants_silvered_attacks: bool,
 }
 
 impl Item {
@@ -155,6 +169,7 @@ impl Item {
         damage_immunities: &[],
         passive_conditions: &[],
         grants_magical_attacks: false,
+        grants_silvered_attacks: false,
     };
 }
 
@@ -786,6 +801,25 @@ pub static WEAPON_PLUS_ONE: Item = Item {
         ..ItemBonuses::ZERO
     },
     grants_magical_attacks: true,
+    ..Item::DEFAULTS
+};
+
+/// Silvered Weapon — 5e's 100 gp weapon coating, and the cheapest
+/// answer in the game to a creature that shrugs off steel. "Silvered"
+/// is not "magical": it overcomes the lycanthrope clause
+/// ("...that aren't silvered") and nothing else on this roster, which
+/// is exactly the niche RAW gives it.
+///
+/// No attack or damage bonus, deliberately. RAW's silvering costs money
+/// and buys one specific exemption; a party that finds this and a `+1
+/// Weapon` in the same dungeon should be picking the `+1`, and the
+/// silvered blade should only ever come out for the wereboar. Making it
+/// a `+0` is what keeps it a *situational* answer rather than a strictly
+/// worse magic weapon that everybody carries anyway.
+pub static SILVERED_WEAPON: Item = Item {
+    name: "Silvered Weapon",
+    glyph: '|',
+    grants_silvered_attacks: true,
     ..Item::DEFAULTS
 };
 
@@ -2767,6 +2801,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // burst scrolls (offensive).
     &WEAPON_PLUS_ONE,
     &WEAPON_PLUS_ONE,
+    // As common as the +1, and worth less on almost every board — the
+    // silvered blade is the one loot roll whose value depends entirely
+    // on what walks round the next corner.
+    &SILVERED_WEAPON,
+    &SILVERED_WEAPON,
     &WEAPON_PLUS_TWO,
     // Bracers of Archery — +2 damage trinket. Same weight as the
     // single-element resistance rings; sits as an offensive-niche
@@ -3306,6 +3345,30 @@ mod tests {
                 item.name
             );
         }
+    }
+
+    /// Exactly one item silvers a swing, and it does not also magic it.
+    ///
+    /// The second half is the one worth pinning. Silver and magic are
+    /// different answers to different clauses — silver gets a
+    /// lycanthrope and nothing else — and a Silvered Weapon that also
+    /// set `grants_magical_attacks` would be a `+0` magic weapon
+    /// available two loot tiers below the `+1`, which is the whole
+    /// balance of the axis gone.
+    #[test]
+    fn silver_is_its_own_answer_and_not_a_cheap_magic_weapon() {
+        assert!(SILVERED_WEAPON.grants_silvered_attacks);
+        assert!(!SILVERED_WEAPON.grants_magical_attacks);
+        assert_eq!(SILVERED_WEAPON.bonuses, ItemBonuses::ZERO);
+        for item in LOOT_POOL {
+            if item.grants_silvered_attacks {
+                assert_eq!(item.name, SILVERED_WEAPON.name);
+            }
+        }
+        assert!(
+            LOOT_POOL.iter().any(|l| l.name == SILVERED_WEAPON.name),
+            "a silvered weapon nobody can find answers nothing"
+        );
     }
 
     /// The whole tier is findable. A magic-weapon axis nobody can arm

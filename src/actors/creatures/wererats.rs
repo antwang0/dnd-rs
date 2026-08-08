@@ -61,7 +61,7 @@ pub static WERERAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Humanoid,
         actions,
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
-        ..CreatureTemplate::resistant_to_nonmagical_physical()
+        ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });
 

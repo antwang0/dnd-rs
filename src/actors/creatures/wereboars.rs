@@ -66,15 +66,16 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        // Lycanthrope non-silver/non-magical BPS resistance — same
-        // envelope as Werewolf / Werebear, approximated as Resistance
-        // because we don't track silvered/magical weapon flags.
+        // Lycanthrope BPS resistance qualified to nonmagical attacks
+        // that aren't silvered — same envelope as Werewolf / Werebear,
+        // with RAW's immunity approximated as resistance for the
+        // reason the werewolf template gives.
         // RAW: when the wereboar closes at least the clause's distance in a
         // straight line and then connects with its tusks, the hit carries
         // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::WEREBOAR_CHARGE),
-        ..CreatureTemplate::resistant_to_nonmagical_physical()
+        ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });
 

@@ -2636,10 +2636,28 @@ pub struct CreatureTemplate {
     /// these rows. Applying them at the damage sink instead would have
     /// been the easier plumbing and the wrong rule.
     ///
-    /// Set by `CreatureTemplate::resistant_to_nonmagical_physical`,
-    /// which is the only thing in the engine that writes the B/P/S
-    /// triplet — see there.
+    /// Set by `CreatureTemplate::resistant_to_nonmagical_physical` and
+    /// its silvered sibling, which are the only things in the engine
+    /// that write the B/P/S triplet — see there.
     pub nonmagical_damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// True when a **silvered** weapon also gets through the rows in
+    /// `nonmagical_damage_modifiers` — the second half of 5e's
+    /// lycanthrope clause, "from nonmagical attacks that aren't
+    /// silvered."
+    ///
+    /// A flag on the creature rather than a second qualified map,
+    /// because silver never *grants* a modifier and never changes what
+    /// one is worth. It only ever removes one, and only for the five
+    /// wereXX stat blocks whose clause names it. Every other qualified
+    /// row on the roster stops at "nonmagical", and a silvered blade
+    /// does nothing at all to a wraith — which is RAW, and is the
+    /// reason the coating is a 100 gp purchase rather than an
+    /// alternative to a magic weapon.
+    ///
+    /// Set only by
+    /// `CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical`;
+    /// see there for why the pairing lives in a constructor.
+    pub silver_overcomes_physical_resistance: bool,
     /// Saving throws this creature is proficient with. Optional;
     /// templates that don't care can leave this empty (default new).
     pub proficient_saves: HashSet<AbilityScoreType>,
@@ -3704,6 +3722,7 @@ impl CreatureTemplate {
             rolls_death_saves: false,
             damage_modifiers: HashMap::new(),
             nonmagical_damage_modifiers: HashMap::new(),
+            silver_overcomes_physical_resistance: false,
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
             charge: None,
@@ -3833,6 +3852,33 @@ impl CreatureTemplate {
                 (DamageType::Slashing, DamageModifier::Resistance),
             ]),
             ..CreatureTemplate::defaults()
+        }
+    }
+
+    /// The lycanthrope's version of the clause above: "immunity to
+    /// bludgeoning, piercing, and slashing damage from nonmagical
+    /// attacks **that aren't silvered**."
+    ///
+    /// Two deliberate divergences from RAW, one kept and one closed.
+    ///
+    /// The engine models the lycanthrope's *immunity* as resistance,
+    /// and keeps doing so. That was a balance call made when there was
+    /// no silver in the game and no magic axis either, and full
+    /// immunity would have made a CR-2 wererat unkillable by a party
+    /// that had found neither — which is RAW and is not a fight.
+    /// Halving is the honest compromise: the wereXX still wants an
+    /// answer and a party without one still has a fight.
+    ///
+    /// The silvered exemption is the half that is now real. It is a
+    /// separate constructor rather than a `bool` parameter on the one
+    /// above for the same reason that one exists at all — the clause is
+    /// a pairing, and a template that set the map without the flag or
+    /// the flag without the map would be silently wrong in a direction
+    /// nothing else in the engine could catch.
+    pub fn resistant_to_nonmagical_nonsilvered_physical() -> CreatureTemplate {
+        CreatureTemplate {
+            silver_overcomes_physical_resistance: true,
+            ..CreatureTemplate::resistant_to_nonmagical_physical()
         }
     }
 }
@@ -4054,6 +4100,9 @@ pub struct ActorInstance {
     /// `CreatureTemplate::nonmagical_damage_modifiers` — the rows that
     /// only fire against damage from a nonmagical attack.
     nonmagical_damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// Whether a silvered weapon also gets through those rows. See
+    /// `CreatureTemplate::silver_overcomes_physical_resistance`.
+    silver_overcomes_physical_resistance: bool,
     /// 5e temporary hit points. Damage drains temp HP before regular HP.
     /// Doesn't stack: a new grant replaces existing temp HP only if
     /// larger. Cleared on long rest.
@@ -4593,6 +4642,7 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             damage_modifiers: ct.damage_modifiers.clone(),
             nonmagical_damage_modifiers: ct.nonmagical_damage_modifiers.clone(),
+            silver_overcomes_physical_resistance: ct.silver_overcomes_physical_resistance,
             temp_hp: 0,
             arcane_ward: 0,
             arcane_ward_formed: false,
@@ -5719,12 +5769,27 @@ impl ActorInstance {
     }
 
     /// True while the actor carries any item whose
-    /// `grants_magical_attacks` flag is set — the `+1` / `+2` weapon
-    /// tier. Read by the `MAGICAL_ATTACK_SOURCES` cohort in
+    /// `grants_magical_attacks` flag is set — the `+1` / `+2` / `+3`
+    /// weapon tier. Read by the `MAGICAL_ATTACK_SOURCES` cohort in
     /// `crate::engine::magic`; see there for the other six ways a swing
     /// can be magical.
     pub fn wields_enchanted_weapon(&self) -> bool {
         self.items.iter().any(|i| i.grants_magical_attacks)
+    }
+
+    /// True while the actor carries a silvered weapon. Answers strictly
+    /// less than `wields_enchanted_weapon` — silver gets through the
+    /// five lycanthrope stat blocks and nothing else.
+    pub fn wields_silvered_weapon(&self) -> bool {
+        self.items.iter().any(|i| i.grants_silvered_attacks)
+    }
+
+    /// Whether a silvered weapon gets through this creature's
+    /// source-qualified physical resistance. False for everything on
+    /// the roster except the five lycanthropes, whose clause names
+    /// silver in so many words.
+    pub fn silver_overcomes_physical_resistance(&self) -> bool {
+        self.silver_overcomes_physical_resistance
     }
 
     pub fn remove_item_by_name(&mut self, name: &str) -> bool {

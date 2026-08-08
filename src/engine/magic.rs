@@ -136,6 +136,40 @@ pub fn attack_is_magical(
     magical_attack_source(encounter, attacker_id, is_spell).is_some()
 }
 
+/// Whether this swing gets through `target_id`'s **source-qualified**
+/// damage modifiers, and what got it through.
+///
+/// The question the chokepoint actually asks, and deliberately not the
+/// same question as `attack_is_magical`. Most of the roster writes
+/// "from nonmagical attacks" and only magic answers it; the five
+/// lycanthropes write "from nonmagical attacks **that aren't
+/// silvered**", and a 100 gp coating answers that one too. Asking "is
+/// the attack magical" would have made the silvered blade useless
+/// against the one family of creatures it exists for.
+///
+/// Silver is checked second because it answers strictly less: a monk
+/// with a silvered sword in their pack is through on their fists, and
+/// the log should say so.
+pub fn resistance_bypass(
+    encounter: &EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    is_spell: bool,
+) -> Option<&'static str> {
+    if let Some(label) = magical_attack_source(encounter, attacker_id, is_spell) {
+        return Some(label);
+    }
+    let silver_helps = encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|t| t.silver_overcomes_physical_resistance());
+    let silvered = encounter
+        .actors
+        .get(&attacker_id)
+        .is_some_and(|a| a.wields_silvered_weapon());
+    (silver_helps && silvered).then_some("a silvered weapon")
+}
+
 /// Every stat block on the roster whose weapon attacks are magical, as
 /// a written-down list.
 ///
@@ -359,6 +393,94 @@ mod tests {
             .unwrap()
             .pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
         assert_eq!(matchup_penalty_against(&e, goblin, wraith, slashing), 1);
+    }
+
+    /// Silver gets through a lycanthrope and through nothing else.
+    ///
+    /// Both halves are the feature. RAW's silvering is a 100 gp
+    /// purchase whose entire value is one family of monsters, and a
+    /// silvered blade that also answered a wraith would be a magic
+    /// weapon that cost a hundredth as much.
+    #[test]
+    fn silver_answers_the_werewolf_and_not_the_wraith() {
+        use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
+        use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+        use crate::items::item_template::SILVERED_WEAPON;
+
+        let mut e = arena();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let werewolf = e
+            .instantiate_creature(&WEREWOLF_TEMPLATE, Coordinate::new(6, 3), 1, 0)
+            .unwrap();
+        let wraith = e
+            .instantiate_creature(&WRAITH_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+
+        // Bare-handed, neither is answerable.
+        assert_eq!(resistance_bypass(&e, goblin, werewolf, false), None);
+        assert_eq!(resistance_bypass(&e, goblin, wraith, false), None);
+
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .pickup_item(&SILVERED_WEAPON);
+        assert_eq!(
+            resistance_bypass(&e, goblin, werewolf, false),
+            Some("a silvered weapon")
+        );
+        assert_eq!(
+            resistance_bypass(&e, goblin, wraith, false),
+            None,
+            "silver is not magic and a wraith's clause does not name it"
+        );
+
+        // The silvered weapon does not make the swing magical — the two
+        // questions stay separate, which is what keeps the wraith
+        // answering no above.
+        assert!(!attack_is_magical(&e, goblin, false));
+    }
+
+    /// Exactly the five lycanthrope stat blocks name silver in their
+    /// clause. Swept in both directions for the same reason every
+    /// one-line flag here is: a wraith that quietly acquired it would
+    /// make the cheapest item in the loot pool answer the whole
+    /// incorporeal-undead family, and nothing about that reads as a
+    /// bug from any other angle.
+    #[test]
+    fn the_silver_exemption_belongs_to_exactly_the_lycanthropes() {
+        use crate::actors::creatures::*;
+        let expected = [
+            &werebears::WEREBEAR_TEMPLATE,
+            &wereboars::WEREBOAR_TEMPLATE,
+            &wererats::WERERAT_TEMPLATE,
+            &weretigers::WERETIGER_TEMPLATE,
+            &werewolves::WEREWOLF_TEMPLATE,
+        ];
+        for t in expected {
+            assert!(
+                t.silver_overcomes_physical_resistance,
+                "{} is a lycanthrope and does not name silver",
+                t.name
+            );
+        }
+        let listed: Vec<&str> = expected.iter().map(|t| t.name).collect();
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            crate::actors::creatures::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.silver_overcomes_physical_resistance {
+                continue;
+            }
+            assert!(
+                listed.contains(&t.name),
+                "{} lets silver through and is not a lycanthrope",
+                t.name
+            );
+        }
     }
 
     /// The monk's answer to the clause reaches an instantiated monk.

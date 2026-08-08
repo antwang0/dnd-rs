@@ -2397,10 +2397,13 @@ pub fn resolve_attack_outcome_with_rider(
 ///     separately. A wraith halves the sword and not the radiant smite
 ///     riding on it.
 ///
-///   - **It early-outs on a magical attack** before touching the
-///     effects at all. That is the whole point of the feature: the
-///     wraith that halved a +1 longsword for as long as this engine had
-///     no magic axis now takes it in full.
+///   - **It early-outs on an attack the target's clause does not
+///     answer** before touching the effects at all. That is the whole
+///     point of the feature: the wraith that halved a +1 longsword for
+///     as long as this engine had no magic axis now takes it in full,
+///     and so does the werewolf hit with a silvered blade. Which of the
+///     two exemptions applies is the target's business, not the
+///     attacker's — see `magic::resistance_bypass`.
 ///
 /// The immunity case falls out for free — `DamageModifier::apply` zeroes
 /// it, and `DealDamage::apply` returns early on a zeroed amount without
@@ -2421,7 +2424,9 @@ pub fn apply_nonmagical_resistance(
     target_id: usize,
     is_spell: bool,
 ) -> u32 {
-    if crate::engine::magic::attack_is_magical(encounter, attacker_id, is_spell) {
+    if crate::engine::magic::resistance_bypass(encounter, attacker_id, target_id, is_spell)
+        .is_some()
+    {
         return 0;
     }
     let mut removed: u32 = 0;

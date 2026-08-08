@@ -33,10 +33,10 @@ use std::sync::LazyLock;
 /// (18d8+54). Non-magical BPS resistance via the shared
 /// `damage_modifiers_from` helper — RAW: "Damage Immunities
 /// Bludgeoning, Piercing, and Slashing from Nonmagical Attacks that
-/// aren't Silvered". We approximate as Resistance because we don't
-/// track magical/silvered weapon flags (full immunity would make the
-/// werebear effectively untouchable for the test pool, same call as
-/// the werewolf at CR 3). Keen Smell (RAW advantage on Perception
+/// aren't Silvered". The qualifier is real on both halves — a magic
+/// weapon and a silvered one each get through; the *immunity* is
+/// approximated as resistance, the same call the werewolf makes at
+/// CR 3 and for the same reason. Keen Smell (RAW advantage on Perception
 /// using smell) omitted — the engine doesn't tag Perception by sense
 /// channel.
 ///
@@ -81,12 +81,11 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Humanoid,
         actions,
-        // Lycanthrope resistance to the physical trio (modeling
-        // non-magical/non-silver immunity as resistance — the test
-        // pool doesn't include silver weapons so full immunity would
-        // make werebears untouchable). Same call as the werewolf
-        // template; shared via `damage_modifiers_from`.
-        ..CreatureTemplate::resistant_to_nonmagical_physical()
+        // Lycanthrope resistance to the physical trio, qualified to
+        // nonmagical attacks that aren't silvered. Same call as the
+        // werewolf template, and shared with it through the
+        // constructor rather than restated here.
+        ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });
 

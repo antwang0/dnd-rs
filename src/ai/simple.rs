@@ -7740,7 +7740,8 @@ pub fn matchup_penalty_against(
     target_id: usize,
     damage_types: &[crate::engine::types::DamageType],
 ) -> u8 {
-    if crate::engine::magic::attack_is_magical(encounter, attacker_id, false) {
+    if crate::engine::magic::resistance_bypass(encounter, attacker_id, target_id, false).is_some()
+    {
         return matchup_penalty_vs_magic(encounter, target_id, damage_types);
     }
     matchup_penalty(encounter, target_id, damage_types, false)

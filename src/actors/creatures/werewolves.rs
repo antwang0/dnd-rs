@@ -7,9 +7,10 @@ use std::sync::LazyLock;
 
 /// Werewolf — CR 3 lycanthrope. Bite + claws multiattack, resistant to
 /// the physical trio (5e RAW: "Damage Immunities Bludgeoning, Piercing,
-/// and Slashing from Nonmagical Attacks That Aren't Silvered" — we
-/// approximate as Resistance because we don't track magical/silvered
-/// weapon flags). A bite that lands forces a CON save for a poisoned-
+/// and Slashing from Nonmagical Attacks That Aren't Silvered" — the
+/// qualifier is real (see `engine::magic`), the *immunity* is
+/// approximated as resistance; see the template body). A bite that
+/// lands forces a CON save for a poisoned-
 /// debuff lycanthropy-curse rider, paying the "is werewolf scary?" tax
 /// without having to model a multi-day curse. Speed is bumped to 40 to
 /// match the hybrid-form profile.
@@ -36,11 +37,15 @@ pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        // Lycanthrope resistance to the physical trio (modeling
-        // non-magical/non-silver immunity as resistance — the test pool
-        // doesn't include silver weapons so full immunity would make
-        // werewolves untouchable).
+        // Lycanthrope resistance to the physical trio, qualified to
+        // nonmagical attacks that aren't silvered — both exemptions
+        // real, through `engine::magic`. RAW's *immunity* is still
+        // approximated as resistance, and deliberately: a CR-3
+        // werewolf that a party without a magic weapon and without a
+        // 100 gp coating simply cannot hurt is RAW and is not a
+        // fight. Halving leaves them wanting an answer and still able
+        // to have the fight without one.
         skills: HashSet::from([Skill::Perception]),
-        ..CreatureTemplate::resistant_to_nonmagical_physical()
+        ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });
