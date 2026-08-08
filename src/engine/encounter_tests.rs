@@ -53640,6 +53640,141 @@ fn the_two_weapon_style_pays_the_off_hand_and_only_the_off_hand() {
     );
 }
 
+/// A weapon whose name says what it is should deal the damage that
+/// implies. A longsword slashes, a spear pierces, a club bludgeons.
+///
+/// This is a naming sweep rather than a rules check, and it exists
+/// because of what it caught: the marilith's six longswords dealt
+/// `Bludgeoning`, against RAW, against the weapon's own name, and
+/// against the line of doc comment directly above the literal saying
+/// "slashing". A single wrong enum variant, invisible in review, and
+/// load-bearing — the demon's whole threat is volume, so all six
+/// swings read the wrong column of every target's resistance table.
+///
+/// **Reads the armoury source rather than walking templates**, which
+/// is the second thing the marilith taught. The obvious sweep — every
+/// action on every template in `template_pool()` and the PC families
+/// — is the one this test was written as first, and it did not catch
+/// the bug it was written for: the marilith is not in the pool. Nor
+/// are the aboleth, the balor, the beholder, the lich, the pit fiend,
+/// the solar or the tarrasque. The apex bestiary reaches a
+/// battlefield through tests and through summons, not through the
+/// encounter generator, so a template walk misses the creatures whose
+/// stat blocks are the most intricate and the likeliest to carry a
+/// slip. Reading the declarations reaches every weapon, wired or not.
+///
+/// The exemption list is the interesting half. Every entry is a RAW
+/// stat block that deliberately breaks the naming convention, and
+/// writing down *why* is most of the value: "the shadow demon's claws
+/// really are psychic" is a fact about the monster manual that
+/// otherwise lives nowhere in the codebase.
+#[test]
+fn a_weapon_deals_the_damage_its_name_implies() {
+    use std::path::Path;
+
+    /// Word stems that name a damage type. **Order is load-bearing**:
+    /// the first group with a matching stem wins, so a more specific
+    /// name has to sit above the general one it contains.
+    ///
+    /// "shortsword" is the case that makes the point. RAW's shortsword
+    /// is a 1d6 *piercing* weapon and RAW's longsword is 1d8
+    /// *slashing*, so "sword" cannot be read as slashing without
+    /// reading the shortsword wrong — which is what the first draft of
+    /// this list did, and what the sprite's shortsword caught.
+    /// Piercing therefore goes first and claims "shortsword"; slashing
+    /// gets "sword" and so gets every other sword there is.
+    ///
+    /// Deliberately short. A stem earns its place by naming a weapon
+    /// the roster actually carries and by not colliding with anything
+    /// else — "lance" was tried and dropped, because Psychic Lance is
+    /// not a polearm.
+    const IMPLIED: &[(&str, &[&str])] = &[
+        (
+            "Piercing",
+            &["shortsword", "bite", "spear", "dagger", "javelin", "trident", "rapier", "pike"],
+        ),
+        (
+            "Slashing",
+            &["sword", "axe", "scimitar", "sickle", "glaive", "halberd", "slash"],
+        ),
+        (
+            "Bludgeoning",
+            &["club", "hammer", "mace", "maul", "slam", "hoof", "hooves"],
+        ),
+    ];
+
+    /// RAW stat blocks that break the convention on purpose, keyed by
+    /// the static's name, with the clause each one is quoting.
+    const EXEMPT: &[(&str, &str)] = &[
+        // "Claws. Melee Weapon Attack ... Hit: 10 (2d6 + 3) psychic
+        // damage." The demon is made of shadow; there is nothing there
+        // to cut with, which is also why it resists everything
+        // physical.
+        ("SHADOW_DEMON_CLAWS", "RAW: the shadow demon's claws deal psychic"),
+        // Animate Objects: "its attack deals 1d4 + 2 force damage."
+        // The object is a spell's animus wearing a candlestick, and
+        // RAW types the hit by the magic rather than by the thing.
+        ("TINY_ANIMATED_OBJECT_SLAM", "RAW: an animated object hits for force"),
+        // "Bite. Melee Weapon Attack ... Hit: 2 (1d4) bludgeoning
+        // damage." A camel does not so much bite as headbutt with its
+        // mouth open, and RAW says so.
+        ("CAMEL_BITE", "RAW: the camel's bite is bludgeoning"),
+        // Sun Soul Monk Radiant Sun Bolt — a bolt of light, not a bolt
+        // of ammunition. Caught by no stem today; listed because the
+        // word is one somebody will reach for.
+        ("RADIANT_SUN_BOLT", "a bolt of light, not a crossbow bolt"),
+    ];
+
+    // Matches a `SimpleWeapon` static declared through one of the
+    // const constructors, capturing the static's name, its display
+    // name and the `DamageType` variant.
+    //
+    // The constructors all share the same argument prefix — display
+    // name, aliases, ability, dice, damage type — which is what makes
+    // one pattern enough for all four. A weapon written as a struct
+    // literal instead is not matched and not swept; there are two of
+    // those and both are bows.
+    let decl = regex::Regex::new(
+        r#"pub static ([A-Z0-9_]+): SimpleWeapon = SimpleWeapon::(?:melee|reach_melee|flat_melee|ranged)\(\s*"([^"]*)",\s*&\[[^\]]*\],\s*AbilityScoreType::\w+,\s*Dice::new\(\d+, ?\d+\),\s*DamageType::(\w+)"#,
+    )
+    .unwrap();
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source = std::fs::read_to_string(root.join("actions/monster_attacks.rs"))
+        .expect("the armoury should be readable");
+
+    let mut checked = 0usize;
+    for caps in decl.captures_iter(&source) {
+        let (name, display, dealt) = (&caps[1], &caps[2], &caps[3]);
+        if EXEMPT.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        let lower = display.to_ascii_lowercase();
+        let Some((implied, _)) = IMPLIED
+            .iter()
+            .find(|(_, stems)| stems.iter().any(|w| lower.contains(w)))
+        else {
+            continue;
+        };
+        checked += 1;
+        assert_eq!(
+            dealt, *implied,
+            "{} (\"{}\") deals {} — put it on EXEMPT with the RAW clause if that is right",
+            name, display, dealt,
+        );
+    }
+
+    // A floor, not a count. The sweep is worthless if the pattern
+    // stops matching the declarations: it would pass loudly while
+    // checking nothing, which is the failure mode every source-reading
+    // test has.
+    assert!(
+        checked > 90,
+        "the naming sweep only reached {} weapons — it should see most of the armoury",
+        checked
+    );
+}
+
 /// 5e's **thrown** property: *"you can throw the weapon to make a
 /// ranged attack. If the weapon is a melee weapon, you use the same
 /// ability modifier for that attack roll and damage roll that you

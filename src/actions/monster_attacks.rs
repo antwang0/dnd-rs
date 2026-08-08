@@ -7785,12 +7785,22 @@ pub static GLABREZU_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundA
 /// wields six of these (one per arm) and they all swing per Action via
 /// the multiattack lane. Standard reach-1 melee — no rider; the volume
 /// of swings IS the threat.
+///
+/// The damage type used to be `Bludgeoning`, against RAW, against the
+/// weapon's own name, and against the line of documentation directly
+/// above it — six longswords doing blunt-force damage. It mattered
+/// more than a typo usually does, because the marilith's whole threat
+/// is volume: every one of those six swings read the wrong column of
+/// the target's resistance table, so a skeleton (vulnerable to
+/// bludgeoning, resistant to slashing) took the demon's routine at
+/// double rate instead of half, and everything carrying the ordinary
+/// physical-resistance package shrugged off the wrong half of it.
 pub static MARILITH_LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
     "marilith longsword",
     &["mls", "marilith-ls"],
     AbilityScoreType::Strength,
     Dice::new(2, 8),
-    DamageType::Bludgeoning,
+    DamageType::Slashing,
 );
 
 /// Marilith Tail — STR-based 2d10 + STR bludgeoning melee, reach 2 (the
