@@ -60842,7 +60842,7 @@ fn add_die_cohort_spends_tag_directly() {
             sorcerer,
             AbilityScoreType::Wisdom,
             dc,
-            RollMode::Normal,
+            crate::engine::dice::RollModeTally::NONE,
         );
         if !e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG) {
             spent = true;
@@ -76137,6 +76137,93 @@ fn an_attack_roll_counts_every_clause_before_it_picks_a_mode() {
     assert!(
         log.contains("(adv)"),
         "an unseen thrower inside normal range rolls with advantage:\n{}",
+        log
+    );
+}
+
+/// A saving throw counts its sources the same way an attack roll does,
+/// across the same kind of function boundary.
+///
+/// The target is Poisoned — disadvantage on every save, from the
+/// condition sweep. The spell text supplies advantage, the way Horrid
+/// Wilting's "plants and water elementals have disadvantage on this
+/// saving throw" clause supplies the opposite. RAW: one of each, so
+/// neither.
+///
+/// Two things used to get this wrong and both are fixed by the same
+/// change. `compute_save_mode(..).combine(extra_mode)` lost whether the
+/// sweep had already found a source; and the shortcut at the top of
+/// `roll_save_against_caster_at` — "if the extras cancelled to Normal,
+/// just call `roll_save`" — threw both flags away and let the poison
+/// through on its own.
+#[test]
+fn a_spell_clause_and_a_condition_cancel_on_a_saving_throw() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let caster = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(6, 6),
+            1,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+    assert_eq!(
+        e.compute_save_mode(target, AbilityScoreType::Constitution),
+        RollMode::Disadvantage,
+        "the poison on its own"
+    );
+
+    // A DC nothing can pass, so the outcome carries no information and
+    // the log line is what we read. What matters is the mode printed
+    // beside the die.
+    let before = e.messages().len();
+    e.roll_save_against_caster_at(
+        target,
+        AbilityScoreType::Constitution,
+        99,
+        caster,
+        RollMode::Advantage,
+    );
+    let log = e.messages()[before..].join("\n");
+    assert!(
+        !log.contains("(dis)"),
+        "the spell's advantage cancels the poison:\n{}",
+        log
+    );
+    assert!(
+        !log.contains("(adv)"),
+        "…and the poison cancels the spell's advantage:\n{}",
+        log
+    );
+    // The control, so the two assertions above cannot pass merely
+    // because the log never prints a mode: the same save with no spell
+    // clause is the poison on its own.
+    let before = e.messages().len();
+    e.roll_save_against_caster_at(
+        target,
+        AbilityScoreType::Constitution,
+        99,
+        caster,
+        RollMode::Normal,
+    );
+    let log = e.messages()[before..].join("\n");
+    assert!(
+        log.contains("(dis)"),
+        "the poison alone is disadvantage, and the log says so:\n{}",
         log
     );
 }

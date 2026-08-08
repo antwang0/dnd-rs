@@ -7810,17 +7810,21 @@ fn best_attack_against(
         if underwater == UnderwaterVerdict::AutoMiss {
             continue;
         }
-        let mode = mode_priority(
-            encounter
-                .compute_attack_mode(actor_id, target_id, action.is_melee_attack())
-                .combine(
-                    if crowded || underwater == UnderwaterVerdict::Disadvantage {
-                        crate::engine::dice::RollMode::Disadvantage
-                    } else {
-                        crate::engine::dice::RollMode::Normal
-                    },
-                ),
+        // Counted into the same tally the sweep filled rather than
+        // folded onto its resolved answer — the prediction has to agree
+        // with what `resolve_attack` will actually roll, and folding a
+        // disadvantage onto a `Normal` that came from a cancelled pair
+        // is precisely where the two used to diverge. The AI ranks
+        // targets by this number, so a prediction that says
+        // "disadvantage" about a swing the engine will roll straight
+        // sends it after the wrong one.
+        let mut tally =
+            encounter.attack_mode_tally(actor_id, target_id, action.is_melee_attack());
+        tally.add_if(
+            crowded || underwater == UnderwaterVerdict::Disadvantage,
+            crate::engine::dice::RollMode::Disadvantage,
         );
+        let mode = mode_priority(encounter.resolve_attack_mode_against(target_id, tally));
         let damage = action.expected_damage(encounter, actor_id);
         let pick = match &best {
             None => true,

@@ -715,8 +715,8 @@ pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
 /// rolls off of. Read by `compute_save_mode`. Adding a new "condition
 /// X gives disadvantage on every save" install (a future Sickened /
 /// Cursed-tier debuff) lands as a one-line entry here instead of
-/// another `if actor.has_condition(...) { mode = mode.combine(...) }`
-/// clause in the save-mode body.
+/// another `if actor.has_condition(...) { tally.add(...) }` clause in
+/// the save-mode body.
 const BLANKET_SAVE_DISADVANTAGE_CONDITIONS: &[Condition] = &[
     // 5e Poisoned: disadvantage on ability checks and saves.
     Condition::Poisoned,
@@ -3383,7 +3383,7 @@ impl EncounterInstance {
     /// Deliberately excludes the Rogue's Elusive clause, which is not a
     /// source but a cap on the result — see
     /// `resolve_attack_mode_against`.
-    fn attack_mode_tally(
+    pub fn attack_mode_tally(
         &self,
         attacker_id: usize,
         target_id: usize,
@@ -4302,11 +4302,29 @@ impl EncounterInstance {
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
+        self.save_mode_tally(actor_id, ability).resolve()
+    }
+
+    /// Every advantage and disadvantage source a save is subject to,
+    /// as a tally rather than a resolved mode — the save lane's twin of
+    /// `attack_mode_tally`, and split out for the same reason.
+    ///
+    /// The roll sites layer more sources on afterwards: a Heightened
+    /// Spell's disadvantage, a spell text's own clause ("plants and
+    /// water elementals have disadvantage on this saving throw"), and
+    /// the `CASTER_SAVE_MODE_RIDERS` cohort, which can contribute
+    /// several at once. Folding those onto a resolved mode loses
+    /// whether the sweep had already seen one of each.
+    fn save_mode_tally(
+        &self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> RollModeTally {
         use crate::conditions::Condition;
         use crate::engine::types::AbilityScoreType;
         let mut tally = RollModeTally::NONE;
         let Some(actor) = self.actors.get(&actor_id) else {
-            return RollMode::Normal;
+            return tally;
         };
         // Blanket save-mode cohorts — conditions that flip the mode
         // regardless of which ability the save rolls off of. Each list
@@ -4415,7 +4433,7 @@ impl EncounterInstance {
         if actor.has_flag_driven_save_advantage(ability) {
             tally.add(RollMode::Advantage);
         }
-        tally.resolve()
+        tally
     }
 
     /// 5e Paralyzed / Unconscious / Petrified clause: "any attack that
@@ -4796,22 +4814,28 @@ impl EncounterInstance {
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
-        self.roll_save_with_extra_mode(actor_id, ability, dc, RollMode::Normal)
+        self.roll_save_with_extra_mode(actor_id, ability, dc, RollModeTally::NONE)
     }
 
-    /// Roll a save with an extra advantage / disadvantage layer combined
-    /// on top of the actor's condition-derived mode. Used by callers that
-    /// have out-of-band reasons to skew the roll (Heightened Spell
-    /// metamagic — `RollMode::Disadvantage`). Pass `RollMode::Normal` to
-    /// get the same behavior as `roll_save`.
+    /// Roll a save with extra advantage / disadvantage sources counted
+    /// alongside the actor's condition-derived ones. Used by callers
+    /// that have out-of-band reasons to skew the roll (Heightened Spell
+    /// metamagic, a spell text's own clause, the caster-side rider
+    /// cohort). Pass `RollModeTally::NONE` to get the same behaviour as
+    /// `roll_save`.
+    ///
+    /// A tally rather than a `RollMode` because the caller can hold
+    /// more than one — `roll_save_against_caster_at` walks a cohort —
+    /// and because handing over an already-resolved mode is what let a
+    /// cancelled pair look like no sources at all.
     fn roll_save_with_extra_mode(
         &mut self,
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
-        extra_mode: RollMode,
+        extra: RollModeTally,
     ) -> crate::engine::saves::SaveOutcome {
-        self.roll_save_with_extra_mode_and_bonus(actor_id, ability, dc, extra_mode, 0, 0)
+        self.roll_save_with_extra_mode_and_bonus(actor_id, ability, dc, extra, 0, 0)
     }
 
     /// `roll_save_with_extra_mode` plus a flat bonus that applies to
@@ -4843,7 +4867,7 @@ impl EncounterInstance {
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
-        extra_mode: RollMode,
+        extra: RollModeTally,
         call_site_bonus: i32,
         d20_floor: u32,
     ) -> crate::engine::saves::SaveOutcome {
@@ -4860,7 +4884,9 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         }
 
-        let mode = self.compute_save_mode(actor_id, ability).combine(extra_mode);
+        let mut tally = self.save_mode_tally(actor_id, ability);
+        tally.merge(extra);
+        let mode = tally.resolve();
         // 5e Drunken Master Monk **Drunkard's Luck**: RAW names the
         // saving throw as one of the three contexts, so the cancel sits
         // on the final mode — after `extra_mode` has folded in, because
@@ -5233,15 +5259,13 @@ impl EncounterInstance {
             ));
             return crate::engine::saves::SaveOutcome::Pass;
         }
-        let extra_mode = if self
-            .actors
-            .get(&actor_id)
-            .is_some_and(|a| a.feature_available(ELDRITCH_MIND_TAG))
-        {
-            RollMode::Advantage
-        } else {
-            RollMode::Normal
-        };
+        let mut extra = RollModeTally::NONE;
+        extra.add_if(
+            self.actors
+                .get(&actor_id)
+                .is_some_and(|a| a.feature_available(ELDRITCH_MIND_TAG)),
+            RollMode::Advantage,
+        );
         // 5e Bladesinging Wizard **Bladesong**: "you gain a bonus to
         // Constitution saving throws you make to maintain your
         // concentration on a spell" equal to the wizard's Intelligence
@@ -5286,7 +5310,7 @@ impl EncounterInstance {
             actor_id,
             AbilityScoreType::Constitution,
             dc,
-            extra_mode,
+            extra,
             bladesong_bonus,
             dragon_floor,
         )
@@ -5381,9 +5405,11 @@ impl EncounterInstance {
     /// caster and the target; this parameter is a property of the spell
     /// text, and 5e has a steady trickle of them — Abi-Dalzim's Horrid
     /// Wilting's "plants and water elementals have disadvantage on this
-    /// saving throw" is the shape. Folded in with `combine` alongside
-    /// the rider rows, so a per-spell disadvantage and a Heightened
-    /// Spell prime still resolve at a single notch, per RAW.
+    /// saving throw" is the shape. Counted into the same
+    /// `RollModeTally` as the rider rows and as the target's own
+    /// conditions, so a per-spell disadvantage, a Heightened Spell
+    /// prime and a Magic Resistance advantage all resolve at a single
+    /// notch, per RAW.
     ///
     /// Passing `RollMode::Normal` is exactly `roll_save_against_caster`,
     /// which is how that function is written.
@@ -5395,7 +5421,8 @@ impl EncounterInstance {
         caster_id: usize,
         spell_mode: RollMode,
     ) -> crate::engine::saves::SaveOutcome {
-        let mut extra = spell_mode;
+        let mut extra = RollModeTally::NONE;
+        extra.add(spell_mode);
         for rider in CASTER_SAVE_MODE_RIDERS {
             if !(rider.applies)(self, caster_id, target_id) {
                 continue;
@@ -5418,9 +5445,16 @@ impl EncounterInstance {
                     RollMode::Normal => "normal",
                 }
             ));
-            extra = extra.combine(rider.mode);
+            extra.add(rider.mode);
         }
-        if extra == RollMode::Normal {
+        // `NONE`, not "resolved to Normal". A rider cohort that
+        // contributed one advantage and one disadvantage cancels *at
+        // the die*, together with whatever the target's own conditions
+        // contribute — it does not mean nothing was contributed. Taking
+        // the `roll_save` shortcut on a cancelled pair would have
+        // dropped both flags and let a Poisoned target roll a save at
+        // disadvantage that RAW says is straight.
+        if extra == RollModeTally::NONE {
             return self.roll_save(target_id, ability, dc);
         }
         self.roll_save_with_extra_mode(target_id, ability, dc, extra)
@@ -5460,18 +5494,18 @@ impl EncounterInstance {
     ) -> RollMode {
         use crate::conditions::Condition;
         use crate::engine::types::AbilityScoreType;
-        let mut mode = RollMode::Normal;
+        let mut tally = RollModeTally::NONE;
         let Some(actor) = self.actors.get(&actor_id) else {
-            return mode;
+            return RollMode::Normal;
         };
         for c in BLANKET_CHECK_DISADVANTAGE_CONDITIONS {
             if actor.has_condition(*c) {
-                mode = mode.combine(RollMode::Disadvantage);
+                tally.add(RollMode::Disadvantage);
             }
         }
         for c in BLANKET_CHECK_ADVANTAGE_CONDITIONS {
             if actor.has_condition(*c) {
-                mode = mode.combine(RollMode::Advantage);
+                tally.add(RollMode::Advantage);
             }
         }
         // 5e exhaustion tier 1: "disadvantage on ability checks", and
@@ -5480,12 +5514,12 @@ impl EncounterInstance {
         if actor.exhaustion_level()
             >= crate::actors::actor_template::EXHAUSTION_CHECK_DISADVANTAGE_TIER
         {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
         if matches!(ability, AbilityScoreType::Strength) {
             for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
-                    mode = mode.combine(*effect);
+                    tally.add(*effect);
                 }
             }
         }
@@ -5501,9 +5535,9 @@ impl EncounterInstance {
                     | AbilityScoreType::Charisma
             )
         {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
         }
-        mode
+        tally.resolve()
     }
 
     /// Roll one ability check: `1d20 + ability modifier + proficiency

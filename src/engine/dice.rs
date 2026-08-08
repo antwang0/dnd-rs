@@ -163,6 +163,16 @@ impl RollModeTally {
         }
     }
 
+    /// Fold another tally in, keeping both flags. Used where a roll's
+    /// sources are gathered in more than one place — the actor's own
+    /// condition sweep and the caller's out-of-band riders — so the two
+    /// halves compose without either having to collapse to a
+    /// `RollMode` first and lose a flag.
+    pub fn merge(&mut self, other: RollModeTally) {
+        self.advantage |= other.advantage;
+        self.disadvantage |= other.disadvantage;
+    }
+
     /// True if anything at all has imposed disadvantage.
     ///
     /// Read by the one caller that has to decide whether a *further*
@@ -613,6 +623,19 @@ mod tests {
             }
             assert_eq!(t.resolve(), Normal, "{:?}", p);
         }
+    }
+
+    /// Merging keeps both flags rather than collapsing either side
+    /// first — the property that lets a roll's sources be gathered in
+    /// two places.
+    #[test]
+    fn merging_two_tallies_keeps_both_flags() {
+        let mut a = RollModeTally::NONE;
+        a.add(RollMode::Advantage);
+        let mut b = RollModeTally::NONE;
+        b.add(RollMode::Disadvantage);
+        a.merge(b);
+        assert_eq!(a.resolve(), RollMode::Normal);
     }
 
     /// `add` treats `Normal` as "no source", so a caller with a
