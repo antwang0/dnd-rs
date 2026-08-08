@@ -36,6 +36,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*FAERIE_FIRE);
     actions.push(&*SPIKE_GROWTH);
+    // Darkvision (lv2) and Water Walk (lv3) — both on the ranger's RAW
+    // list, and both the scout's job rather than the caster's: the
+    // ranger is the one who goes first into the cave and the one who
+    // decides the party can cross here.
+    actions.push(&*crate::actions::spells::DARKVISION);
+    actions.push(&*crate::actions::spells::WATER_WALK);
     // Fog Cloud — lv1 conjuration on the ranger's RAW spell list. The
     // ranger uses it as a kite-cover: drop a 20-ft sphere of heavy
     // obscurement on advancing melee threats, then fall back behind it

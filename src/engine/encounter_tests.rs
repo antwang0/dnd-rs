@@ -76363,3 +76363,121 @@ fn a_huge_bearers_torch_is_centred_on_its_body_and_not_on_its_corner() {
         );
     }
 }
+
+/// Water Walk lifts a creature onto the lake rather than out of it:
+/// the movement surcharge is waived, and — the half that separates the
+/// spell from a swimming speed — the holder stops being immersed, so
+/// every Underwater Combat penalty and the fire resistance that comes
+/// with them switch off together.
+#[test]
+fn water_walk_puts_a_creature_on_the_lake_rather_than_in_it() {
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    assert!(e.is_immersed(swimmer), "the fixture starts submerged");
+    assert!(
+        !e.actors[&swimmer].swims_freely(),
+        "a fighter pays full price for water"
+    );
+
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .add_condition(Condition::WaterWalking, ConditionTimer::Rounds(100));
+
+    assert!(
+        e.actors[&swimmer].swims_freely(),
+        "the surcharge half: water stops costing double"
+    );
+    assert!(
+        !e.is_immersed(swimmer),
+        "the surface half: a creature standing on the lake is not in it"
+    );
+}
+
+/// The spell refuses a board with no water on it, and refuses a party
+/// that the water already does not charge.
+#[test]
+fn water_walk_declines_a_dry_board_and_a_party_that_already_swims() {
+    use crate::actions::spells::WATER_WALK;
+
+    let mut dry = ei_with_terrain(20, 20, &[]);
+    let druid = dry
+        .instantiate_creature(
+            &crate::actors::creatures::druids::DRUID_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    assert!(!dry.has_water());
+    assert!(
+        !WATER_WALK.custom_validate_input(&dry, druid, None, None, None),
+        "no lake, no spell"
+    );
+
+    // Now a wet board, but the only creature on the caster's side is
+    // one the water already does not charge — Freedom of Movement is
+    // the cheapest way to say so on an arbitrary chassis.
+    let mut wet = ei_with_terrain(20, 20, &[]);
+    for x in 2..=5isize {
+        for y in 2..=5isize {
+            wet.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let lone_druid = wet
+        .instantiate_creature(
+            &crate::actors::creatures::druids::DRUID_TEMPLATE,
+            Coordinate::new(8, 8),
+            0,
+            0,
+        )
+        .unwrap();
+    assert!(wet.has_water());
+    assert!(
+        WATER_WALK.custom_validate_input(&wet, lone_druid, None, None, None),
+        "a wet board and a druid who cannot swim is exactly the case"
+    );
+    wet.actors
+        .get_mut(&lone_druid)
+        .unwrap()
+        .add_condition(Condition::Footloose, ConditionTimer::Rounds(100));
+    assert!(
+        !WATER_WALK.custom_validate_input(&wet, lone_druid, None, None, None),
+        "a creature the water does not charge has nothing to gain"
+    );
+}
+
+/// The Darkvision spell raises a human's night vision to 60 feet and
+/// leaves a drow's 120 alone — a floor, not an assignment.
+#[test]
+fn the_darkvision_spell_is_a_floor_and_not_a_replacement() {
+    use crate::actions::spells::{DARKVISION, DARKVISION_SPELL_TILES};
+    use crate::actors::creatures::drow::DROW_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let human = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let drow = e
+        .instantiate_creature(&DROW_TEMPLATE, Coordinate::new(6, 3), 0, 0)
+        .unwrap();
+    let drow_innate = e.actors[&drow].darkvision_tiles();
+    assert!(
+        drow_innate > DARKVISION_SPELL_TILES,
+        "the drow fixture has to out-see the spell for this to mean anything"
+    );
+
+    // The human is the one the spell is for; the drow is refused
+    // outright rather than handed a buff that would do nothing.
+    assert!(DARKVISION.custom_validate_input(&e, human, Some(&vec![human]), None, None));
+    assert!(!DARKVISION.custom_validate_input(&e, human, Some(&vec![drow]), None, None));
+
+    for id in [human, drow] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Darkvisioned, ConditionTimer::Rounds(100));
+    }
+    assert_eq!(e.actors[&human].darkvision_tiles(), DARKVISION_SPELL_TILES);
+    assert_eq!(e.actors[&drow].darkvision_tiles(), drow_innate);
+}

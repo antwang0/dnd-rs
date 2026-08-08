@@ -5976,7 +5976,13 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&self.movement_body(actor_id)) else {
             return false;
         };
-        if actor.has_magical_flight() {
+        // Off the surface, or on top of it. Flight was the only way out
+        // of the water until Water Walk; RAW's "as if it were harmless
+        // solid ground" puts the holder on the lake rather than in it,
+        // which is what makes the spell more than a swimming speed —
+        // the surcharge waiver alone would leave them swinging at
+        // disadvantage and resisting fire while standing on the water.
+        if actor.has_magical_flight() || actor.has_condition(Condition::WaterWalking) {
             return false;
         }
         let anchor = actor.location();
@@ -5987,6 +5993,16 @@ impl EncounterInstance {
                     .is_some_and(|t| t.terrain_type.is_water())
             })
         })
+    }
+
+    /// True if any tile on the board is water.
+    ///
+    /// Read by Water Walk's validator, which has no business spending a
+    /// 3rd-level slot on a map with no lake in it. Deliberately not
+    /// "is the caster standing in water" — the spell's whole use is the
+    /// crossing you are about to make.
+    pub fn has_water(&self) -> bool {
+        self.terrain.iter().any(|t| t.terrain_type.is_water())
     }
 
     /// What 5e's Underwater Combat rules do to one attack — the shared

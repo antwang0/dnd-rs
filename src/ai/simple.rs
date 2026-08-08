@@ -256,6 +256,29 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3b**. Darkvision — level-2 transmutation, touch. Sits beside
+        //       See Invisibility because it answers the same question
+        //       from the other end: that one lifts the enemy's
+        //       concealment, this one lifts the room's. Both dominate
+        //       every offensive pick below for the same reason — a
+        //       caster who cannot see the target swings at
+        //       disadvantage and is swung at with advantage — and both
+        //       refuse to fire unless the problem is actually on the
+        //       board.
+        if let Some(aei) = try_darkvision(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3b***. Water Walk — level-3 transmutation, ally burst. A
+        //        movement buff rather than a sight one, so it ranks
+        //        below both: being slowed by a lake is a worse turn,
+        //        not a worse fight. Gated on the water being between
+        //        the party and the enemy, which is the only
+        //        configuration where the slot pays for itself.
+        if let Some(aei) = try_water_walk(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3b'. Armor of Agathys — warlock 1st-level self-buff: 5 temp
         //      HP + 5 cold reflected on melee hit. Pre-buff when an
         //      enemy is near so the retaliation will trigger. Costs
@@ -5347,6 +5370,79 @@ fn try_mantle_of_inspiration(
     }
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
     aei.validate(encounter).then_some(aei)
+}
+
+/// Darkvision — level-2 transmutation, touch. Cast on the ally in reach
+/// who most needs it, and only where the dark is a live problem.
+///
+/// Two gates, and the second is the one that stops the slot being
+/// thrown away. The board must actually be dark somewhere the caster
+/// can see — `ambient_light` below bright, or a magically dark patch —
+/// because a 2nd-level slot spent granting night vision on a lit board
+/// buys nothing at all. And the target must be someone the spell would
+/// change: the action's own validator refuses a creature that already
+/// sees 60 feet in the dark, so a party of dwarves and drow falls
+/// straight through this rung rather than passing the buff around.
+///
+/// Prefers the *caster* when they qualify — a wizard who cannot see is
+/// a wizard whose every attack is at disadvantage — and otherwise takes
+/// the nearest eligible ally, since touch range means "nearest" and
+/// "reachable" are the same question.
+fn try_darkvision(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    use crate::engine::lighting::LightLevel;
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("darkvision")?;
+    // Is the dark a problem here? The caster's own tile answers it
+    // most cheaply and most honestly — `perceived_light` already folds
+    // in ambient light, nearby torches, magical darkness and whatever
+    // the caster was born able to see through.
+    if encounter.perceived_light(actor_id, actor.location()) == LightLevel::Bright {
+        return None;
+    }
+    let team = actor.team();
+    std::iter::once(actor_id)
+        .chain(encounter.sorted_actor_ids())
+        .filter(|id| {
+            encounter
+                .actors
+                .get(id)
+                .is_some_and(|a| a.team() == team && a.is_combat_active())
+        })
+        .map(|id| ActionExecutionInfo::new(action, actor_id, Some(vec![id]), None, None))
+        .find(|aei| aei.validate(encounter))
+}
+
+/// Water Walk — level-3 transmutation, no-args ally burst. Fire only
+/// when the water is between the caster's side and somewhere they want
+/// to be.
+///
+/// The action's own validator already refuses a board with no water and
+/// a party that all swims; what it cannot ask is whether the water is
+/// *in the way*, and that is this rung's job. The test is an enemy on
+/// the far side of a wet tile — measured as "an enemy exists, and the
+/// straight line to them crosses water" — because a lake nobody needs
+/// to cross is scenery, and a 3rd-level slot spent on scenery is the
+/// whole failure mode a speculative buff rung has.
+fn try_water_walk(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Presence of the action on the sheet is the cheap gate; the
+    // action's own validator owns the rest and runs at `try_self_action`.
+    actor.find_action("water walk")?;
+    let (team, from) = (actor.team(), actor.location());
+    let water_in_the_way = encounter.actors.iter().any(|(id, other)| {
+        if *id == actor_id || other.team() == team || !other.is_combat_active() {
+            return false;
+        }
+        crate::engine::encounter::tiles_between(from, other.location()).any(|tile| {
+            encounter
+                .terrain_at(tile)
+                .is_some_and(|t| t.terrain_type.is_water())
+        })
+    });
+    if !water_in_the_way {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "water walk")
 }
 
 /// Bard Bardic Inspiration — bonus action giving an ally a +3 die for
@@ -13216,6 +13312,104 @@ mod tests {
             e.actors[&sorcerer].sorcery_points(),
             cap,
             "saturate at cap"
+        );
+    }
+
+    /// The Darkvision picker fires in the dark and not in the light,
+    /// and it never spends the slot on a creature that already sees.
+    ///
+    /// The lighting gate is the half worth pinning. A 2nd-level slot
+    /// cast on a lit board buys nothing whatsoever, and a rung sitting
+    /// this high in the ladder — above every offensive pick — would
+    /// otherwise open every fight in the engine with a wasted turn.
+    #[test]
+    fn the_darkvision_picker_waits_for_a_room_that_is_actually_dark() {
+        use crate::actors::creatures::drow::DROW_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::lighting::AmbientLight;
+
+        // A ranger rather than a ranger: the ranger chassis on this
+        // roster is born with 60 ft of darkvision, so the spell has
+        // nothing to give it and the picker would be right to stay
+        // quiet.
+        let mut e = empty_arena();
+        let ranger = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            super::try_darkvision(&e, ranger).is_none(),
+            "a lit board is not a problem this spell solves"
+        );
+
+        e.set_ambient_light(AmbientLight::Darkness);
+        assert!(
+            super::try_darkvision(&e, ranger).is_some(),
+            "an unlit board and a human ranger is exactly the case"
+        );
+
+        // A drow standing next to them changes nothing: the ranger is
+        // still the one who cannot see, and the picker prefers them.
+        let _drow = e
+            .instantiate_creature(&DROW_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let pick = super::try_darkvision(&e, ranger).expect("still the ranger's problem");
+        assert_eq!(pick.target_ids(), Some(&[ranger][..]));
+
+        // Buff the ranger and the rung falls silent — the drow is
+        // refused by the action's own validator, so there is nobody
+        // left to spend the slot on.
+        e.actors
+            .get_mut(&ranger)
+            .unwrap()
+            .add_condition(Condition::Darkvisioned, ConditionTimer::Rounds(100));
+        assert!(
+            super::try_darkvision(&e, ranger).is_none(),
+            "the drow needs nothing and the ranger already has it"
+        );
+    }
+
+    /// The Water Walk picker fires when the water is between the party
+    /// and the enemy, and stays quiet when it is scenery beside them.
+    #[test]
+    fn the_water_walk_picker_waits_for_water_in_the_way() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        let _goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        assert!(
+            super::try_water_walk(&e, druid).is_none(),
+            "a dry board between them is not a crossing"
+        );
+
+        // A pond off to one side is scenery, not an obstacle.
+        for x in 3..=6isize {
+            for y in 14..=17isize {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+            }
+        }
+        assert!(
+            super::try_water_walk(&e, druid).is_none(),
+            "water nobody has to cross is scenery"
+        );
+
+        // Flood the straight line to the goblin and the spell is worth
+        // its slot.
+        for x in 8..=11isize {
+            for y in 4..=6isize {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+            }
+        }
+        assert!(
+            super::try_water_walk(&e, druid).is_some(),
+            "the lake is now between the druid and the fight"
         );
     }
 

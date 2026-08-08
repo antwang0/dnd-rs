@@ -31474,3 +31474,268 @@ impl Action for BladeOfDisaster {
 }
 
 pub static BLADE_OF_DISASTER: LazyLock<BladeOfDisaster> = LazyLock::new(|| BladeOfDisaster {});
+
+/// RAW's "darkvision out to a range of 60 feet", in tiles on the
+/// 2.5-ft grid. Lives next to the spell rather than in the sense layer
+/// because the number is the spell's, not darkvision's — every stat
+/// block that has the sense carries its own radius.
+pub const DARKVISION_SPELL_TILES: isize = 24;
+
+/// Darkvision — level-2 transmutation (druid / ranger / sorcerer /
+/// wizard / artificer), action, touch, 8 hours, no concentration.
+/// "You touch a willing creature to grant it the ability to see in the
+/// dark. For the duration, that creature has darkvision out to a range
+/// of 60 feet."
+///
+/// The counter-spell the lighting layer was missing. Darkness, Daylight,
+/// Dawn, Moonbeam, Wall of Light and a torch all write light onto the
+/// board; two hundred stat blocks read it through
+/// `darkvision_tiles`; and nothing in the engine could put the sense on
+/// a creature that was not born with it. That is the gap the party
+/// notices first, because the party is the half of the board most
+/// likely to be human — a wizard and a fighter walking into an unlit
+/// corridor behind a goblin that can see them perfectly well.
+///
+/// The 60-foot grant is a **floor**, not a replacement. RAW nobody
+/// benefits from casting this on a creature that already sees further
+/// (a drow's 120 ft), and `custom_validate_input` refuses the cast
+/// rather than letting the AI burn a slot narrowing a dark elf's eyes;
+/// the floor in `darkvision_tiles` is what makes the refusal
+/// unnecessary for correctness as well as for economy.
+///
+/// Not concentration — the buff is one of the few in this file that
+/// survives the caster taking a hit, which is what makes it a
+/// before-the-corridor spell rather than an in-the-fight one. The
+/// `Rounds(100)` timer stands in for RAW's 8 hours, the same stand-in
+/// See Invisibility uses for its own hour.
+pub struct DarkvisionSpell {}
+
+impl Action for DarkvisionSpell {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "darkvision"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dv", "dark-vision"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if !actor_lacks_condition(encounter, target_id, Condition::Darkvisioned) {
+            return false;
+        }
+        // A creature that already sees at least this far in the dark —
+        // the drow, the devil, the dwarf — gains nothing. Refusing the
+        // cast is the whole of the gate: the floor in `darkvision_tiles`
+        // means installing it anyway would be harmless, and burning a
+        // 2nd-level slot for a harmless no-op is the trap this stops
+        // the AI walking into.
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.darkvision_tiles() < DARKVISION_SPELL_TILES)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Darkvisioned,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static DARKVISION: LazyLock<DarkvisionSpell> = LazyLock::new(|| DarkvisionSpell {});
+
+/// Water Walk — level-3 transmutation (cleric / druid / ranger /
+/// sorcerer / artificer), action, 30 ft, 1 hour, no concentration, and
+/// a ritual. "This spell grants the ability to move across any liquid
+/// surface — such as water, acid, mud, snow, quicksand, or lava — as if
+/// it were harmless solid ground."
+///
+/// The first spell in the engine that answers the water layer. Water
+/// tiles charge double to cross and impose 5e's Underwater Combat
+/// penalties on anything standing in them, and until now the only
+/// answers were being born with a swimming speed, casting Fly, or
+/// casting Freedom of Movement — a 4th-level slot spent on a clause
+/// that is one of its four.
+///
+/// The distinction the engine gets to make, and the reason this is not
+/// simply "another row on the swim cohort": a water-walker is **on**
+/// the surface, not **in** it. So the spell waives the movement
+/// surcharge *and* takes the caster out of `is_immersed`, which is the
+/// predicate every Underwater Combat penalty reads — and, symmetrically,
+/// the one that grants a submerged creature resistance to fire. Walking
+/// on a lake does not make you fireproof. A swimming speed answers the
+/// first two and none of the third; this answers all three, in the same
+/// direction RAW does.
+///
+/// RAW targets up to ten willing creatures within 30 feet. The engine
+/// takes the caster's whole side of the board within that radius, up to
+/// the RAW cap and closest-first — the same shape Mass Healing Word
+/// uses for its six, and for the same reason: a party crossing a lake
+/// crosses it together or not at all, and asking the player to name ten
+/// friends one at a time is not a decision, it is typing.
+pub struct WaterWalk {}
+
+impl WaterWalk {
+    /// RAW's "up to ten willing creatures".
+    const MAX_TARGETS: usize = 10;
+    /// RAW's 30-foot range, in tiles on the 2.5-ft grid.
+    const RANGE_TILES: isize = 12;
+}
+
+impl Action for WaterWalk {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "water walk"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ww", "water-walk", "waterwalk"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // A board with no water on it is a board this spell does
+        // nothing on, and the AI should not spend a 3rd-level slot to
+        // find that out. Gated on the *board* rather than on the
+        // caster's footing on purpose: the point of the spell is the
+        // lake you are about to cross, not the one you are standing in.
+        if !encounter.has_water() {
+            return false;
+        }
+        !self.beneficiaries(encounter, caster_id).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        self.beneficiaries(encounter, caster_id)
+            .into_iter()
+            .map(|id| {
+                Box::new(ApplyCondition {
+                    actor_id: id,
+                    condition: Condition::WaterWalking,
+                    // RAW 1 hour; the same `Rounds(100)` stand-in every
+                    // other hour-long buff in this file uses.
+                    timer: ConditionTimer::Rounds(100),
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+impl WaterWalk {
+    /// The caster's side of the board within range, closest first, up
+    /// to RAW's ten — minus anyone the spell would do nothing for.
+    ///
+    /// Shared by the validator and the resolver rather than computed
+    /// twice, so "the spell would land on nobody" and "the spell lands
+    /// on nobody" can never disagree.
+    fn beneficiaries(&self, encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let (team, loc, size) = (
+            caster.team(),
+            caster.location(),
+            get_tiles_from_size(caster.size()),
+        );
+        let mut candidates: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter(|(_, a)| a.team() == team && a.is_combat_active())
+            // Already walking on it, or already unbothered by it — a
+            // shark, a hovering wizard, anyone under Freedom of
+            // Movement. `swims_freely` is the engine's own answer to
+            // "does the water charge this creature", so anyone it says
+            // yes to has nothing to gain.
+            .filter(|(_, a)| !a.has_condition(Condition::WaterWalking) && !a.swims_freely())
+            .filter_map(|(id, a)| {
+                let dist =
+                    footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size()));
+                (dist <= Self::RANGE_TILES).then_some((dist, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(Self::MAX_TARGETS);
+        candidates.into_iter().map(|(_, id)| id).collect()
+    }
+}
+
+pub static WATER_WALK: LazyLock<WaterWalk> = LazyLock::new(|| WaterWalk {});

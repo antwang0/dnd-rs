@@ -1726,6 +1726,14 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: ActorInstance::has_magical_flight,
     },
+    // 5e **Water Walk**: "move across any liquid surface as if it were
+    // harmless solid ground." The surcharge half of the spell. Its
+    // other half is at `EncounterInstance::is_immersed` — a
+    // water-walker is on the surface rather than in it, which is the
+    // one thing separating this row from the swimming speed above it.
+    ActorFlagRow {
+        flag: |a| a.has_condition(Condition::WaterWalking),
+    },
 ];
 
 /// Sources of a swimming speed, read by `ActorInstance::has_swim_speed`.
@@ -6981,11 +6989,23 @@ impl ActorInstance {
     /// for the opposite reason: blindsight was unread because the
     /// engine had no invisibility to counter, and darkvision was unread
     /// because the engine had no darkness to see through.
+    /// The **Darkvision** spell raises this to 60 feet and never lowers
+    /// it — a `max` rather than an assignment, because RAW grants "out
+    /// to a range of 60 feet" and a drow's own 120 is not something a
+    /// 2nd-level slot can take away. It is also the only condition in
+    /// the engine that grants a sense, which is why the fold happens
+    /// here rather than by writing into `self.senses`: the sense map is
+    /// copied from the template at instantiation and is not a place
+    /// timers can safely be written.
     pub fn darkvision_tiles(&self) -> isize {
-        self.sense_tiles(|s| match s {
+        let innate = self.sense_tiles(|s| match s {
             SpecialSense::Darkvision(feet) => Some(*feet),
             _ => None,
-        })
+        });
+        if self.has_condition(Condition::Darkvisioned) {
+            return innate.max(crate::actions::spells::DARKVISION_SPELL_TILES);
+        }
+        innate
     }
 
     /// True if this creature sees normally in *magical* darkness — the

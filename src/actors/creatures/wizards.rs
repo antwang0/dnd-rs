@@ -640,6 +640,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // against a plain Invisible opponent the lv2 self-buff is the right
     // spend, and the lv6 slot stays free for Globe / Mass Suggestion.
     actions.push(&*crate::actions::spells::SEE_INVISIBILITY);
+    // Darkvision — the other half of "I cannot see". See Invisibility
+    // above answers a hidden enemy; this answers an unlit room, which
+    // is the far commoner problem and the one the wizard is least
+    // equipped for by birth.
+    actions.push(&*crate::actions::spells::DARKVISION);
     // The XGE / TCE lane the wizard had none of. Every one of these is
     // on the wizard's RAW list, and each fills a slot tier with a shape
     // the chassis was missing:

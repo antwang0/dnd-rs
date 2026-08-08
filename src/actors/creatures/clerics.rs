@@ -44,6 +44,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SHIELD_OF_FAITH);
     actions.push(&*BLESS);
     actions.push(&*GUIDING_BOLT);
+    // Water Walk (lv3) — on the cleric's RAW list, and the party's
+    // usual carrier of it. The cleric has no Darkvision: RAW does not
+    // give it to them, and the divine list's answer to a dark room is
+    // Daylight rather than better eyes.
+    actions.push(&*crate::actions::spells::WATER_WALK);
     actions.push(&*FAERIE_FIRE);
     actions.push(&*BANE);
     actions.push(&*SPIRITUAL_WEAPON);

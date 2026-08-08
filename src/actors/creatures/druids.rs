@@ -54,6 +54,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CALL_LIGHTNING);
     actions.push(&*SLEET_STORM);
     actions.push(&*DAYLIGHT);
+    // Darkvision (lv2) and Water Walk (lv3) — the druid's two rows on
+    // the environmental lane, and the two that make the board's own
+    // layers negotiable. Daylight above writes light onto the map;
+    // Darkvision changes who needs it. Water Walk is the only thing on
+    // any list here that answers a lake without a 4th-level slot.
+    actions.push(&*crate::actions::spells::DARKVISION);
+    actions.push(&*crate::actions::spells::WATER_WALK);
     actions.push(&*DISPEL_MAGIC);
     actions.push(&*PLANT_GROWTH);
     actions.push(&*FLY);

@@ -1651,6 +1651,32 @@ pub enum Condition {
     /// enchanted stops overcoming resistance the same instant it stops
     /// adding +1.
     WeaponEnchanted,
+    /// Darkvisioned (5e **Darkvision**, level-2 transmutation, touch, 8
+    /// hours). "That creature has darkvision out to a range of 60
+    /// feet."
+    ///
+    /// Read by `ActorInstance::darkvision_tiles` as a *floor* rather
+    /// than as a replacement: a drow under this spell still sees 120
+    /// feet, which is both RAW and the only reading that makes the
+    /// buff safe to hand out without checking what the target was born
+    /// with.
+    ///
+    /// Not concentration-bound and not dispellable-as-a-buff, matching
+    /// RAW's plain 8-hour duration — this is a spell you cast before
+    /// the corridor, not one you hold through a fight.
+    Darkvisioned,
+    /// Water-Walking (5e **Water Walk**, level-3 transmutation, 1
+    /// hour). "Grants the ability to move across any liquid surface as
+    /// if it were harmless solid ground."
+    ///
+    /// Two rows, and the second is the one that makes this different
+    /// from a swimming speed. It joins `WATER_SURCHARGE_IMMUNITIES`, so
+    /// a water tile stops charging double; and it is read by
+    /// `EncounterInstance::is_immersed`, so the holder is not *in* the
+    /// water at all — no melee disadvantage, no automatic miss past
+    /// normal range with a bow, and no resistance to fire, which a
+    /// creature standing on the surface has no business claiming.
+    WaterWalking,
     /// True-Sighted (5e True Seeing, level-6 divination). The holder
     /// perceives things as they actually are: invisible creatures, magical
     /// blur, and displacement illusions all stop hiding the truth from
@@ -2383,6 +2409,8 @@ impl Condition {
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::WeaponEnchanted => "wielding an enchanted weapon",
+            Condition::Darkvisioned => "seeing in the dark",
+            Condition::WaterWalking => "walking on water",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
