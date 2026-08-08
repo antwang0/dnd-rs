@@ -2405,6 +2405,15 @@ pub fn resolve_attack_outcome_with_rider(
 /// The immunity case falls out for free — `DamageModifier::apply` zeroes
 /// it, and `DealDamage::apply` returns early on a zeroed amount without
 /// touching HP, concentration or the dying track.
+///
+/// The returned figure can only ever *under*-report what the caller
+/// subtracts, never over-report it: a rider that pushed its own payload
+/// without folding it into `damage_dealt` (Hex does this) would have its
+/// halving counted against a total it was never in. That direction is
+/// the safe one — the riders that chain off `damage_dealt` scale a heal
+/// or a drain by it — and it is unreachable today besides, since every
+/// qualified row on the roster is one of the three physical types and
+/// every self-pushing rider deals something else.
 pub fn apply_nonmagical_resistance(
     encounter: &mut EncounterInstance,
     effects: &mut [Box<dyn ApplicableSideEffect>],

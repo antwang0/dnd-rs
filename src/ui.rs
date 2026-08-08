@@ -13,11 +13,12 @@ use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
 use crate::engine::util::get_colored_span;
 
-/// Render the actor's damage modifier table as up to three colored
-/// lines (Resistant / Immune / Vulnerable). Each line is suppressed if
-/// the corresponding bucket is empty so PCs without any modifiers don't
-/// show empty rows. Damage types are sorted alphabetically so the output
-/// is stable across runs.
+/// Render the actor's damage modifier table as up to four colored
+/// lines — Resistant / Immune / Vulnerable, plus the source-qualified
+/// "Resistant vs mundane" row. Each line is suppressed if the
+/// corresponding bucket is empty so PCs without any modifiers don't
+/// show empty rows. Damage types are sorted alphabetically so the
+/// output is stable across runs.
 fn push_damage_modifier_line(
     stats_lines: &mut Vec<Line<'static>>,
     actor: &crate::actors::actor_template::ActorInstance,
@@ -49,6 +50,28 @@ fn push_damage_modifier_line(
         stats_lines.push(Line::from(Span::styled(
             format!("{}: {}", label, buckets[i].join(", ")),
             Style::default().fg(*color),
+        )));
+    }
+    // The source-qualified rows, on their own line and named for the
+    // qualifier. Forty stat blocks on the roster carry
+    // "resistance to bludgeoning, piercing, and slashing damage from
+    // nonmagical attacks" and *only* that, so without this line the
+    // panel whose whole job is to be exhaustive shows a wraith as
+    // having no damage modifiers at all.
+    //
+    // Worth a separate line rather than folding into "Resistant"
+    // above, because the qualifier is the single most actionable fact
+    // on this panel: it is the difference between "do not bother
+    // swinging" and "swing, but draw the +1 first".
+    let qualified: Vec<String> = DamageType::ALL
+        .into_iter()
+        .filter(|dt| actor.nonmagical_damage_modifier(*dt) == Some(DamageModifier::Resistance))
+        .map(|dt| format!("{:?}", dt))
+        .collect();
+    if !qualified.is_empty() {
+        stats_lines.push(Line::from(Span::styled(
+            format!("Resistant vs mundane: {}", qualified.join(", ")),
+            Style::default().fg(Color::Cyan),
         )));
     }
 }
@@ -1020,6 +1043,68 @@ mod tests {
             panel.contains("darkness"),
             "an unlit board says so on the panel:\n{}",
             panel
+        );
+    }
+
+    /// A creature whose only damage modifier is source-qualified still
+    /// gets a line on the panel, and the line names the qualifier.
+    ///
+    /// The panel reads `damage_modifier`, which by construction answers
+    /// `None` for every qualified row — so the forty stat blocks that
+    /// carry "resistance to bludgeoning, piercing, and slashing damage
+    /// from nonmagical attacks" and nothing else would display as
+    /// having no damage modifiers whatsoever. That is the exact failure
+    /// this panel's docstring says it exists to prevent, arriving from
+    /// the one direction a "did somebody add a fourteenth damage type"
+    /// sweep could not see.
+    #[test]
+    fn a_creature_that_only_resists_mundane_steel_still_says_so_on_the_panel() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+
+        let wraith = ActorInstance::from_creature_template(
+            &WRAITH_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        push_damage_modifier_line(&mut lines, &wraith);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.starts_with("Resistant vs mundane:")
+                    && l.contains("Bludgeoning")
+                    && l.contains("Piercing")
+                    && l.contains("Slashing")),
+            "the wraith's whole physical defence is missing from the panel: {:?}",
+            rendered
+        );
+        // And the unqualified rows keep their own lines rather than
+        // being folded in with it.
+        assert!(
+            rendered.iter().any(|l| l.starts_with("Immune:")),
+            "the wraith's necrotic and poison immunity should still be there: {:?}",
+            rendered
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.starts_with("Resistant:") && !l.contains("Bludgeoning")),
+            "the unqualified line must not claim the qualified types: {:?}",
+            rendered
         );
     }
 

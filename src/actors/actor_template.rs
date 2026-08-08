@@ -1716,6 +1716,12 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[ActorFlagRow] = &[
 ///     `EncounterInstance::is_immersed` reads the same predicate: a
 ///     flying creature that paid nothing to cross a lake must also not
 ///     be swinging at disadvantage over it.
+///   - **Water Walk** joins magical flight on that second question
+///     rather than the swimming speed on the first. RAW's "as if it
+///     were harmless solid ground" puts the holder *on* the lake, so
+///     `is_immersed` has to answer no for them too — otherwise they
+///     would cross for free and still swing at disadvantage over it,
+///     and still resist fire while standing on the surface.
 const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: ActorInstance::has_swim_speed,
