@@ -749,3 +749,189 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod reachability {
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    /// Drop `//`-style comments so an identifier that survives only in
+    /// prose doesn't read as a use. Without this the sweep is nearly
+    /// useless: the natural way to unwire a template is to comment out
+    /// the line that pushes it, and the commented line still contains
+    /// the name.
+    fn strip_comments(text: &str) -> String {
+        text.lines()
+            .map(|line| match line.find("//") {
+                Some(i) => &line[..i],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The source of one function, from its signature to the closing
+    /// brace at column zero. Empty when the signature is not there.
+    ///
+    /// Function-granular rather than file-granular because
+    /// `creatures/mod.rs` holds both the player registry and
+    /// `aquatic_templates` — a list of three dozen monsters kept for an
+    /// entirely different reason, which would happily vouch for every
+    /// one of them.
+    fn fn_body<'a>(text: &'a str, signature: &str) -> &'a str {
+        let Some(start) = text.find(signature) else {
+            return "";
+        };
+        let body = &text[start..];
+        match body.find("\n}\n") {
+            Some(end) => &body[..end],
+            None => body,
+        }
+    }
+
+    /// Every creature template written in `src/actors/creatures/` is
+    /// something that can reach a battlefield.
+    ///
+    /// The engine has shipped finished, documented, tested stat blocks
+    /// that no encounter could produce, and did so eleven times over.
+    /// The lich and the beholder each carried a complete three-entry
+    /// lair-action table in `engine::lair_actions` whose only caller
+    /// was the test that checked it did not panic. The balor, the
+    /// marilith, the pit fiend, the solar and the deva were fully
+    /// written and reachable only from `ai::simple`'s own fixtures.
+    /// Nothing failed: a template nothing references is not a compile
+    /// error, not a dead-code warning (they are `pub`), and not a test
+    /// failure. It is content that does not exist, and the only symptom
+    /// is its absence.
+    ///
+    /// Sibling in shape and in motive to
+    /// `every_action_written_is_an_action_something_can_reach` in
+    /// `engine::encounter`'s tests — the same failure mode one layer
+    /// down. Like that one it reads the source rather than a registry,
+    /// because the registry is the thing that gets forgotten: the whole
+    /// bug is a line nobody wrote.
+    ///
+    /// **There are exactly three roads onto a board**, and the sweep
+    /// looks down all three rather than keeping an exempt list:
+    ///
+    ///   1. `EncounterInstance::template_pool` — the generator rolls it.
+    ///   2. `pc_template_families` — a player can be it.
+    ///   3. `src/actions/` — a spell or class feature summons it. The
+    ///      eight Summon-*-Spirit chassis, the two Shepherd totems, the
+    ///      wildfire spirit, the drake, the beast-master companion, the
+    ///      steel defender, the three eldritch cannons and Animate
+    ///      Objects' tiny object all arrive this way and nowhere else.
+    ///
+    /// Matching identifiers rather than `CreatureTemplate.name` on
+    /// purpose. The two agree for most of the roster and diverge
+    /// exactly where a hand-written mapping would be most tempting and
+    /// most wrong — `T_REX_TEMPLATE` is "Tyrannosaurus Rex",
+    /// `WISP_TEMPLATE` is "Will-o'-Wisp" — and a fuzzy name match would
+    /// quietly wave those through rather than failing on them.
+    #[test]
+    fn every_creature_template_written_is_one_something_can_put_on_a_board() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let creatures = root.join("actors/creatures");
+
+        // Every `pub static NAME: LazyLock<CreatureTemplate>` on the
+        // roster, and the file it came from.
+        let mut declared: Vec<(String, String)> = Vec::new();
+        for entry in std::fs::read_dir(&creatures).expect("src/actors/creatures/ is readable") {
+            let path = entry.expect("a readable dir entry").path();
+            let file = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if !file.ends_with(".rs") || file == "mod.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {}", file, e));
+            for line in strip_comments(&text).lines() {
+                let Some(rest) = line.trim_start().strip_prefix("pub static ") else {
+                    continue;
+                };
+                if !rest.contains("LazyLock<CreatureTemplate>") {
+                    continue;
+                }
+                if let Some(ident) = rest.split(':').next().map(str::trim) {
+                    declared.push((ident.to_string(), file.clone()));
+                }
+            }
+        }
+        assert!(
+            declared.len() > 300,
+            "only {} templates found — the directory scan has stopped working",
+            declared.len()
+        );
+
+        // Road 1 and road 3, read whole. Road 2 is the
+        // `pc_template_families` body only: this same file also holds
+        // `aquatic_templates`, which names three dozen monsters for an
+        // entirely different reason, and reading the file whole would
+        // let that list vouch for their reachability.
+        let mut haystack = String::new();
+        haystack.push_str(&strip_comments(
+            &std::fs::read_to_string(root.join("engine/encounter.rs")).expect("encounter.rs"),
+        ));
+        for entry in std::fs::read_dir(root.join("actions")).expect("src/actions/ is readable") {
+            let path = entry.expect("a readable dir entry").path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                haystack.push_str(&strip_comments(
+                    &std::fs::read_to_string(&path).expect("an action module"),
+                ));
+            }
+        }
+        let own = strip_comments(&std::fs::read_to_string(creatures.join("mod.rs")).expect("mod.rs"));
+        haystack.push_str(fn_body(&own, "pub fn pc_template_families()"));
+
+        // Road 1 has a branch: the pool delegates whole families to an
+        // aggregator next to the templates themselves —
+        // `swarms::all_swarm_templates()` today. Follow the
+        // delegation, one function body at a time, so a family list is
+        // as good as a line in the pool and a *different* function in
+        // the same file still is not.
+        let delegations: Vec<(String, String)> = haystack
+            .match_indices("crate::actors::creatures::")
+            .filter_map(|(i, _)| {
+                let rest = &haystack[i + "crate::actors::creatures::".len()..];
+                let call = rest.split('(').next()?;
+                let (module, function) = call.split_once("::")?;
+                if !function.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                    return None;
+                }
+                Some((module.to_string(), function.to_string()))
+            })
+            .collect();
+        for (module, function) in delegations {
+            let path = creatures.join(format!("{}.rs", module));
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let text = strip_comments(&text);
+            haystack.push_str(fn_body(&text, &format!("pub fn {}(", function)));
+        }
+
+        let mut unreachable: Vec<String> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
+        for (ident, file) in &declared {
+            assert!(
+                seen.insert(ident.as_str()),
+                "{} is declared twice",
+                ident
+            );
+            if !haystack.contains(ident.as_str()) {
+                unreachable.push(format!("{} ({})", ident, file));
+            }
+        }
+        unreachable.sort();
+        assert!(
+            unreachable.is_empty(),
+            "these templates are written but nothing can put them on a board — add each to \
+             `EncounterInstance::template_pool`, to `pc_template_families`, or to the action \
+             that summons it:\n  {}",
+            unreachable.join("\n  ")
+        );
+    }
+}

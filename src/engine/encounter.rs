@@ -9743,6 +9743,46 @@ impl EncounterInstance {
             // the pool inherits a sixth swarm the day one is written,
             // rather than needing a line here that someone has to
             // remember.
+
+            // The boss shelf. Twelve finished stat blocks that no
+            // encounter could roll — every one of them written,
+            // documented and tested, and reachable only from the test
+            // suite that tested them. The lich and the beholder each
+            // carry a complete three-entry lair-action table in
+            // `engine::lair_actions` that nothing but
+            // `every_lair_action_resolves_with_and_without_anybody_to_catch`
+            // ever fired.
+            //
+            // They are here rather than behind a separate boss pool
+            // because the budget is a ceiling now
+            // (`actor_gen::affordable_templates`), which is what makes
+            // this safe: a CR-30 tarrasque is unreachable at the CR-1
+            // budget the game opens with and becomes reachable exactly
+            // when the ramp can pay for it. Before that fix, adding
+            // them would have meant one first fight in two hundred and
+            // fifty being unwinnable.
+            //
+            // The three that were already in the pool — the iron
+            // golem, the androsphinx, the kraken — are the reason this
+            // reads as an oversight rather than a design: nothing
+            // distinguishes them from the eleven below except which
+            // line someone remembered to write.
+            // The aboleth is the twelfth, and the odd one out: a CR-10
+            // aberration rather than a boss, and the only entry here
+            // whose absence had no plausible reading at all — it is
+            // alphabetically the first creature file in the directory.
+            &crate::actors::creatures::aboleths::ABOLETH_TEMPLATE,
+            &crate::actors::creatures::balors::BALOR_TEMPLATE,
+            &crate::actors::creatures::beholders::BEHOLDER_TEMPLATE,
+            &crate::actors::creatures::death_knights::DEATH_KNIGHT_TEMPLATE,
+            &crate::actors::creatures::devas::DEVA_TEMPLATE,
+            &crate::actors::creatures::glabrezus::GLABREZU_TEMPLATE,
+            &crate::actors::creatures::liches::LICH_TEMPLATE,
+            &crate::actors::creatures::mariliths::MARILITH_TEMPLATE,
+            &crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE,
+            &crate::actors::creatures::solars::SOLAR_TEMPLATE,
+            &crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE,
+            &crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
         pool
