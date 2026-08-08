@@ -73,7 +73,12 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // closest the engine could get to it and got the crucial half
         // exactly backwards: RAW darkvision is precisely what magical
         // darkness defeats.
-        features: HashSet::from([crate::actions::class_features::DEVILS_SIGHT_TAG]),
+        features: HashSet::from([
+            crate::actions::class_features::DEVILS_SIGHT_TAG,
+            // 5e **Magic Weapons**: "the devil's weapon attacks
+            // are magical."
+            crate::actions::class_features::MAGICAL_ATTACKS_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

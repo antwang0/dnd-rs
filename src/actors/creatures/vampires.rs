@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{VAMPIRE_CHARMING_GAZE, VAMPIRE_MULTIATTACK};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::lighting::SunlightFrailty;
 use crate::conditions::Condition;
 use crate::engine::types::{
@@ -46,7 +46,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e MM Vampire: resistant to necrotic + non-magical BPS,
         // immune to poison. Radiant is the regen-suppressor (proxy
         // for the "sunlight / holy water" RAW downside).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -74,6 +74,6 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // exactly the point of the trait and the reason a vampire fight
         // happens at night.
         sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

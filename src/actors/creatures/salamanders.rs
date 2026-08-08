@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SALAMANDER_MULTI, SALAMANDER_SPEAR, SALAMANDER_TAIL};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::attack::{MeleeReflect, ReflectDamage};
 use crate::engine::dice::Dice;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
@@ -59,7 +59,7 @@ pub static SALAMANDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             // Fire immunity — they ARE fire.
             (DamageType::Fire, DamageModifier::Immunity),
             // Cold vulnerability — water and ice undo them.
@@ -69,6 +69,6 @@ pub static SALAMANDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // additively with condition-keyed reflects (a salamander wearing
         // Fire Shield rolls both reflects on the same incoming swing).
         natural_melee_reflect: Some(SALAMANDER_HEATED_BODY),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WERETIGER_BITE, WERETIGER_CLAWS, WERETIGER_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 12 (light armor + DEX). 120 HP (16d10+32).
 /// Non-magical BPS resistance via the shared
-/// `non_magical_physical_resistances` helper — the canonical
+/// `damage_modifiers_from` helper — the canonical
 /// lycanthrope envelope. RAW gives the weretiger **Keen Hearing and
 /// Smell** + **Pounce** (move 15+ ft toward a target then hit with
 /// claws → DC 14 STR save or Prone, free bonus-action bite) — both
@@ -67,9 +67,8 @@ pub static WERETIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Humanoid,
         actions,
-        damage_modifiers: non_magical_physical_resistances([]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -109,11 +108,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         assert!(!a.has_magic_resistance());

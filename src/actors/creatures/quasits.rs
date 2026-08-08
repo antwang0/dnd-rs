@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{QUASIT_CLAWS, QUASIT_SCARE};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
@@ -45,14 +45,14 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: non_magical_physical_resistances([(
+        damage_modifiers: damage_modifiers_from([(
             DamageType::Poison,
             DamageModifier::Immunity,
         )]),
         // Magic Resistance: advantage on saves vs spells and other
         // magical effects. Slots into the standard caster-counter lane.
         has_magic_resistance: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -78,7 +78,7 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

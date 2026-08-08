@@ -2591,7 +2591,41 @@ pub struct CreatureTemplate {
     pub rolls_death_saves: bool,
     /// Per-damage-type modifiers (resistance / immunity / vulnerability).
     /// Looked up by `damage_modifier` on the instance.
+    ///
+    /// **Unqualified.** Every row here applies to damage of its type
+    /// from any source whatsoever. A balor's fire immunity is this: it
+    /// does not care whether the fire came off a torch or off a Meteor
+    /// Swarm. The rows that *do* care live in
+    /// `nonmagical_damage_modifiers` next door.
     pub damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// Per-damage-type modifiers that apply **only to damage from a
+    /// nonmagical attack** — 5e's single most common defensive clause,
+    /// written on the stat block as "resistance to bludgeoning,
+    /// piercing, and slashing damage from nonmagical attacks".
+    ///
+    /// A second map rather than a qualifier on the first because the
+    /// two answer different questions and a creature can carry both:
+    /// a mummy is unqualifiedly immune to poison, unqualifiedly
+    /// vulnerable to fire, *and* resistant to mundane steel. Folding
+    /// them into one table would need a per-row qualifier that 200
+    /// templates would have to spell out on every row, almost all of
+    /// them writing "unqualified".
+    ///
+    /// Read at the two attack chokepoints
+    /// (`engine::attack::resolve_attack_outcome_with_rider` and
+    /// `spells::spell_attack_outcome`) rather than in
+    /// `DealDamage::apply`, because RAW's qualifier is *"from a
+    /// nonmagical **attack**"* — not "from a nonmagical source". Damage
+    /// that never came from an attack roll (a failed Dexterity save
+    /// against a collapsing ceiling, a spike growth's needles) is not
+    /// damage from an attack at all, and so is never reduced by one of
+    /// these rows. Applying them at the damage sink instead would have
+    /// been the easier plumbing and the wrong rule.
+    ///
+    /// Set by `CreatureTemplate::resistant_to_nonmagical_physical`,
+    /// which is the only thing in the engine that writes the B/P/S
+    /// triplet — see there.
+    pub nonmagical_damage_modifiers: HashMap<DamageType, DamageModifier>,
     /// Saving throws this creature is proficient with. Optional;
     /// templates that don't care can leave this empty (default new).
     pub proficient_saves: HashSet<AbilityScoreType>,
@@ -3655,6 +3689,7 @@ impl CreatureTemplate {
             spell_slots_by_level: Vec::new(),
             rolls_death_saves: false,
             damage_modifiers: HashMap::new(),
+            nonmagical_damage_modifiers: HashMap::new(),
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
             charge: None,
@@ -3730,28 +3765,62 @@ impl CreatureTemplate {
     }
 }
 
-/// 5e shorthand: "resistance to bludgeoning, piercing, and slashing damage
-/// from non-magical attacks." We don't track magical-vs-mundane weapon
-/// distinctions, so the resistance lands on the three physical damage types
-/// directly. Returns a fully assembled `damage_modifiers` map seeded with
-/// the BPS triplet and extended by `overlays`; mirrors
-/// `fire_elementals::elemental_damage_modifiers` in shape but without the
-/// elemental's poison-immunity baseline.
+/// Collect an explicit list of unqualified per-type damage modifiers
+/// into the map `CreatureTemplate::damage_modifiers` wants.
 ///
-/// Replaces the hand-copied B/P/S triplet that appeared in dozens of
-/// incorporeal-undead / fiend / extraplanar templates (Wraith, Specter,
-/// Banshee, Ghost, etc.). Overlays win on collision so a future "promote
-/// BPS to Immunity" variant can land cleanly without touching the helper.
-pub fn non_magical_physical_resistances(
-    overlays: impl IntoIterator<Item = (DamageType, DamageModifier)>,
+/// Exists so a template can write `damage_modifiers_from([])` — the
+/// empty case `HashMap::from([])` cannot infer — and so the forty
+/// templates that pair an unqualified overlay list with
+/// `resistant_to_nonmagical_physical` do not each have to import
+/// `HashMap` to say "no overlays".
+pub fn damage_modifiers_from(
+    entries: impl IntoIterator<Item = (DamageType, DamageModifier)>,
 ) -> HashMap<DamageType, DamageModifier> {
-    let mut m = HashMap::from([
-        (DamageType::Bludgeoning, DamageModifier::Resistance),
-        (DamageType::Piercing, DamageModifier::Resistance),
-        (DamageType::Slashing, DamageModifier::Resistance),
-    ]);
-    m.extend(overlays);
-    m
+    entries.into_iter().collect()
+}
+
+impl CreatureTemplate {
+    /// The three physical damage types, resisted, qualified to nonmagical
+    /// attacks — 5e's "resistance to bludgeoning, piercing, and slashing
+    /// damage from nonmagical attacks", and the only thing in the engine
+    /// that writes that triplet.
+    ///
+    /// Returned as a whole `CreatureTemplate` for the `..` tail of a
+    /// template literal rather than as a bare map for the
+    /// `nonmagical_damage_modifiers` field, and that is the point of it.
+    /// The clause is a *pairing* — a qualified resistance is only
+    /// correct alongside the absence of an unqualified one — and the
+    /// tail position is the one place a template cannot set the field
+    /// twice or set it with the wrong qualifier. Forty stat blocks carry
+    /// this clause; every one of them now says so by writing
+    ///
+    /// ```ignore
+    /// CreatureTemplate {
+    ///     damage_modifiers: damage_modifiers_from([
+    ///         (DamageType::Poison, DamageModifier::Immunity),
+    ///     ]),
+    ///     ..CreatureTemplate::resistant_to_nonmagical_physical()
+    /// }
+    /// ```
+    ///
+    /// and the unqualified overlays stay visibly unqualified.
+    ///
+    /// The predecessor of this constructor dropped the triplet straight
+    /// into `damage_modifiers` with a docstring conceding "we don't
+    /// track magical-vs-mundane weapon distinctions". The engine now
+    /// does — see `crate::engine::magic` — which turns a +1 longsword
+    /// and a paladin's Divine Smite into the answer to a wraith rather
+    /// than one more halved swing.
+    pub fn resistant_to_nonmagical_physical() -> CreatureTemplate {
+        CreatureTemplate {
+            nonmagical_damage_modifiers: HashMap::from([
+                (DamageType::Bludgeoning, DamageModifier::Resistance),
+                (DamageType::Piercing, DamageModifier::Resistance),
+                (DamageType::Slashing, DamageModifier::Resistance),
+            ]),
+            ..CreatureTemplate::defaults()
+        }
+    }
 }
 
 /// The 5e "incorporeal undead" envelope shared by Ghost / Wraith /
@@ -3967,6 +4036,10 @@ pub struct ActorInstance {
     rolls_death_saves: bool,
     /// Per-damage-type modifier table copied from the creature template.
     damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// The source-qualified half of the table, copied from
+    /// `CreatureTemplate::nonmagical_damage_modifiers` — the rows that
+    /// only fire against damage from a nonmagical attack.
+    nonmagical_damage_modifiers: HashMap<DamageType, DamageModifier>,
     /// 5e temporary hit points. Damage drains temp HP before regular HP.
     /// Doesn't stack: a new grant replaces existing temp HP only if
     /// larger. Cleared on long rest.
@@ -4505,6 +4578,7 @@ impl ActorInstance {
             concentration: None,
             rolls_death_saves: ct.rolls_death_saves,
             damage_modifiers: ct.damage_modifiers.clone(),
+            nonmagical_damage_modifiers: ct.nonmagical_damage_modifiers.clone(),
             temp_hp: 0,
             arcane_ward: 0,
             arcane_ward_formed: false,
@@ -5630,6 +5704,15 @@ impl ActorInstance {
         self.items.iter().any(|i| i.name == name)
     }
 
+    /// True while the actor carries any item whose
+    /// `grants_magical_attacks` flag is set — the `+1` / `+2` weapon
+    /// tier. Read by the `MAGICAL_ATTACK_SOURCES` cohort in
+    /// `crate::engine::magic`; see there for the other six ways a swing
+    /// can be magical.
+    pub fn wields_enchanted_weapon(&self) -> bool {
+        self.items.iter().any(|i| i.grants_magical_attacks)
+    }
+
     pub fn remove_item_by_name(&mut self, name: &str) -> bool {
         if let Some(pos) = self.items.iter().position(|i| i.name == name) {
             let removed = self.items.remove(pos);
@@ -6232,6 +6315,26 @@ impl ActorInstance {
         self.damage_modifiers.get(&dt).copied()
     }
 
+    /// The modifier this creature applies to `dt` damage **from a
+    /// nonmagical attack specifically**, or `None` if a nonmagical
+    /// attack is treated no differently from any other source.
+    ///
+    /// Returns `None` whenever the unqualified table already carries a
+    /// row for `dt`, and that early-out is the 5e "multiple instances
+    /// of resistance count as only one" rule holding by construction:
+    /// the unqualified row is applied by `DealDamage::apply` on every
+    /// damage instance, so a qualified row for the same type would be a
+    /// second halving of the same blow rather than a different rule. No
+    /// stat block on the roster carries both for one type — this is
+    /// what makes that stay true rather than a coincidence the next
+    /// template can break.
+    pub fn nonmagical_damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
+        if self.damage_modifiers.contains_key(&dt) {
+            return None;
+        }
+        self.nonmagical_damage_modifiers.get(&dt).copied()
+    }
+
     /// True iff this actor already has some form of typed damage
     /// modification (resistance / immunity / vulnerability) for `dt`
     /// coming from their OWN sources — template damage modifiers,
@@ -6310,6 +6413,19 @@ impl ActorInstance {
             self.damage_modifiers.get(&dt),
             Some(DamageModifier::Resistance)
         )
+    }
+
+    /// True when this creature halves `dt` damage from a **nonmagical
+    /// attack** specifically — the qualified sibling of
+    /// `is_resistant_to`, and the shape the forty stat blocks built on
+    /// `CreatureTemplate::resistant_to_nonmagical_physical` answer to.
+    ///
+    /// Deliberately not folded into `is_resistant_to`: a caller that
+    /// wants to know "will this blow be halved" has to know whose blow
+    /// it is, and every caller that cannot answer that should get
+    /// `false` from the unqualified predicate rather than a guess.
+    pub fn resists_nonmagical(&self, dt: DamageType) -> bool {
+        self.nonmagical_damage_modifier(dt) == Some(DamageModifier::Resistance)
     }
 
     pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
@@ -8987,7 +9103,6 @@ mod tests {
     use super::*;
     use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
-    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::dice::FastRandRoller;
 
@@ -9002,40 +9117,56 @@ mod tests {
         .unwrap()
     }
 
+    /// The paired constructor puts the B/P/S triplet in the qualified
+    /// table and leaves the unqualified one for the template's own
+    /// overlays. Pinned because the split *is* the feature: a triplet
+    /// that landed in `damage_modifiers` instead would halve a +2
+    /// longsword exactly as the pre-`engine::magic` engine did, and
+    /// every one of the forty stat blocks built on this constructor
+    /// would silently revert.
     #[test]
-    fn non_magical_physical_resistances_seeds_bps_triplet() {
-        // Empty overlay → the three physical types resist, nothing else.
-        let m = non_magical_physical_resistances([]);
-        assert_eq!(m.len(), 3);
+    fn the_nonmagical_physical_constructor_qualifies_the_triplet() {
+        let t = CreatureTemplate::resistant_to_nonmagical_physical();
+        assert!(t.damage_modifiers.is_empty());
+        assert_eq!(t.nonmagical_damage_modifiers.len(), 3);
         for dt in [
             DamageType::Bludgeoning,
             DamageType::Piercing,
             DamageType::Slashing,
         ] {
-            assert_eq!(m.get(&dt).copied(), Some(DamageModifier::Resistance));
+            assert_eq!(
+                t.nonmagical_damage_modifiers.get(&dt).copied(),
+                Some(DamageModifier::Resistance)
+            );
         }
     }
 
+    /// An unqualified row shadows the qualified one of the same type,
+    /// so the blow is halved once rather than twice. The 5e "multiple
+    /// instances of resistance count as only one" rule, enforced at the
+    /// accessor rather than left to whichever lane happened to run
+    /// first.
     #[test]
-    fn non_magical_physical_resistances_overlays_can_promote_bps() {
-        // Overlay collides with the base BPS Resistance — overlay wins,
-        // matching the `elemental_damage_modifiers` semantics: a future
-        // creature built on the chassis can promote one of the three to
-        // Immunity without touching the helper.
-        let m = non_magical_physical_resistances([
-            (DamageType::Bludgeoning, DamageModifier::Immunity),
-            (DamageType::Fire, DamageModifier::Resistance),
-        ]);
+    fn an_unqualified_row_shadows_the_qualified_one() {
+        static PROMOTED: std::sync::LazyLock<CreatureTemplate> =
+            std::sync::LazyLock::new(|| CreatureTemplate {
+                damage_modifiers: damage_modifiers_from([(
+                    DamageType::Bludgeoning,
+                    DamageModifier::Immunity,
+                )]),
+                ..CreatureTemplate::resistant_to_nonmagical_physical()
+            });
+        let a = make(&PROMOTED);
         assert_eq!(
-            m.get(&DamageType::Bludgeoning).copied(),
+            a.damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Immunity)
         );
+        assert_eq!(a.nonmagical_damage_modifier(DamageType::Bludgeoning), None);
+        // The types the overlay left alone still answer through the
+        // qualified lane.
+        assert_eq!(a.damage_modifier(DamageType::Slashing), None);
         assert_eq!(
-            m.get(&DamageType::Piercing).copied(),
-            Some(DamageModifier::Resistance)
-        );
-        assert_eq!(
-            m.get(&DamageType::Fire).copied(),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }
@@ -9057,12 +9188,13 @@ mod tests {
 
     #[test]
     fn resistance_halves_round_down() {
-        // Slime resists piercing / slashing (physical weapons gum up).
-        let s = make(&SLIME_TEMPLATE);
+        // The skeleton's piercing resistance is unqualified, so the
+        // damage sink applies it without needing to know who swung.
+        let s = make(&SKELETON_TEMPLATE);
         assert_eq!(s.effective_damage(7, DamageType::Piercing), 3);
         assert_eq!(s.effective_damage(0, DamageType::Piercing), 0);
-        // Acid is immune (zeroed).
-        assert_eq!(s.effective_damage(7, DamageType::Acid), 0);
+        // Poison is immune (zeroed).
+        assert_eq!(s.effective_damage(7, DamageType::Poison), 0);
     }
 
     #[test]

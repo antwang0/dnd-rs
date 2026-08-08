@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MARILITH_LONGSWORD, MARILITH_MULTI, MARILITH_TAIL};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -49,7 +49,7 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Standard demon envelope: immune to poison; resistant to cold +
         // fire + lightning + mundane B/P/S. Mirrors the Glabrezu / Balor
         // damage profile so radiant / force land cleanly on her.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
@@ -71,7 +71,9 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         has_magic_resistance: true,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        // 5e **Magic Weapons**: "the marilith's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -113,7 +115,7 @@ mod tests {
         assert!(m.is_resistant_to(DamageType::Cold));
         assert!(m.is_resistant_to(DamageType::Fire));
         assert!(m.is_resistant_to(DamageType::Lightning));
-        assert!(m.is_resistant_to(DamageType::Bludgeoning));
+        assert!(m.resists_nonmagical(DamageType::Bludgeoning));
         assert!(m.is_immune_to_condition(Condition::Poisoned));
         assert!(m.is_immune_to_condition(Condition::Charmed));
         assert!(m.is_immune_to_condition(Condition::Frightened));

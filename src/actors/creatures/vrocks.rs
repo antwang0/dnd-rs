@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{VROCK_BEAK, VROCK_MULTI, VROCK_SCREECH, VROCK_TALONS};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -48,7 +48,7 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Standard demon envelope: immune to poison; resistant to cold +
         // fire + lightning + mundane B/P/S.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
@@ -66,7 +66,7 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
         ]),
         has_magic_resistance: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 

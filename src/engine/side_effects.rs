@@ -43,6 +43,28 @@ pub trait ApplicableSideEffect {
         None
     }
 
+    /// If this side-effect is a damage payload, hand back who it is
+    /// aimed at, what it deals and how much — the read half of the
+    /// source-qualified-resistance hook.
+    ///
+    /// Wider than `elemental_damage_target` on purpose: that one is
+    /// Transmuted Spell's, and answers `None` for the physical types
+    /// the metamagic cannot remap, which are precisely the types
+    /// "resistance to nonmagical attacks" is written about.
+    ///
+    /// Default `None` — a side-effect that isn't damage.
+    fn damage_payload(&self) -> Option<(usize, DamageType, u32)> {
+        None
+    }
+
+    /// Overwrite this side-effect's damage amount in place, returning
+    /// true when it took. The write half of the pair above; called by
+    /// `engine::attack::apply_nonmagical_resistance` after scaling a
+    /// swing's payload. Default: no-op.
+    fn set_damage_amount(&mut self, _amount: u32) -> bool {
+        false
+    }
+
     /// If this side-effect starts a concentration, hand back the caster
     /// it belongs to together with the per-target payload it will clean
     /// up on drop. Default `None` — every side-effect that isn't a
@@ -910,6 +932,15 @@ impl ApplicableSideEffect for DealDamage {
             return None;
         }
         Some((self.actor_id, self.damage_type))
+    }
+
+    fn damage_payload(&self) -> Option<(usize, DamageType, u32)> {
+        Some((self.actor_id, self.damage_type, self.amount))
+    }
+
+    fn set_damage_amount(&mut self, amount: u32) -> bool {
+        self.amount = amount;
+        true
     }
 }
 

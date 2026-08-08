@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{RAKSHASA_CLAW, RAKSHASA_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -77,13 +77,12 @@ pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // damage-type resistances beyond the physical triplet — RAW
         // rakshasas don't share the broader fire/cold/lightning resistance
         // envelope of the demon / devil chain.
-        damage_modifiers: non_magical_physical_resistances([]),
         // 5e Magic Resistance — the engine's surface for the load-bearing
         // half of RAW's Limited Magic Immunity. See the template doc for
         // the simplification rationale.
         has_magic_resistance: true,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -105,15 +104,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // Necrotic / fire / etc. are NOT resisted — distinguishes the

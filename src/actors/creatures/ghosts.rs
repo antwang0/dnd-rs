@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GHOST_HORRIFYING_VISAGE, GHOST_WITHERING_TOUCH};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -43,7 +43,7 @@ pub static GHOST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Acid, DamageModifier::Resistance),
@@ -65,6 +65,6 @@ pub static GHOST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Prone,
             Condition::Restrained,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

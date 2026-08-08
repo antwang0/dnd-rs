@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GARGOYLE_CLAWS, GARGOYLE_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -37,7 +37,7 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Elemental,
         actions,
         // 5e MM: BPS resistance from non-magical attacks + poison immunity.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([
@@ -46,6 +46,6 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // Constructs ignore prone (they're not biological).
             Condition::Prone,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

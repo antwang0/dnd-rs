@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     FRIGHTFUL_PRESENCE, TARRASQUE_BITE, TARRASQUE_CLAW, TARRASQUE_MULTI, TARRASQUE_TAIL,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
@@ -57,7 +57,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             // Apex-tier elemental immunities. Carapace shrugs off mundane
             // weapon damage via the BPS resistance baseline.
             (DamageType::Fire, DamageModifier::Immunity),
@@ -90,6 +90,6 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

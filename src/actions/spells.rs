@@ -5338,11 +5338,16 @@ impl Action for Fireball {
 pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
 
 /// Magic Weapon — level-2 transmutation, concentration up to 1 hour.
-/// Touch a single weapon-wielding ally; their attack rolls and damage
-/// gain a flat +1 bonus for the duration. We track each half on its own
-/// concentration-managed ledger: `attack_bonus_buff` for the to-hit
-/// half, `damage_bonus_buff` for the damage half. Both drop cleanly
-/// when concentration ends. Targeting is touch (1 tile reach).
+/// "You touch a nonmagical weapon. Until the spell ends, that weapon
+/// becomes a magic weapon with a +1 bonus to attack rolls and damage
+/// rolls."
+///
+/// Three clauses, three lanes. The +1 to-hit rides
+/// `attack_bonus_buff`, the +1 damage rides `damage_bonus_buff`, and
+/// "becomes a magic weapon" rides `Condition::WeaponEnchanted` — the
+/// row `engine::magic` reads to let the swing through a wraith's
+/// resistance. All three are registered on the concentration, so
+/// dropping the spell takes all three back together.
 pub struct MagicWeapon {}
 
 impl Action for MagicWeapon {
@@ -5396,9 +5401,9 @@ impl Action for MagicWeapon {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Install +1 attack AND +1 damage buffs, registering both on the
-        // concentration so dropping the spell rolls back each delta on
-        // the right actor.
+        // Install +1 attack, +1 damage and the magic-weapon property,
+        // registering all three on the concentration so dropping the
+        // spell rolls back each delta on the right actor.
         vec![
             Box::new(AdjustAttackBuff {
                 actor_id: target_id,
@@ -5408,9 +5413,17 @@ impl Action for MagicWeapon {
                 actor_id: target_id,
                 delta: 1,
             }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::WeaponEnchanted,
+                timer: ConditionTimer::Permanent,
+            }),
             Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData::new("Magic Weapon")
+                data: ConcentrationData::with_conditions(
+                    "Magic Weapon",
+                    vec![(target_id, Condition::WeaponEnchanted)],
+                )
                     .with_attack_buffs(vec![(target_id, 1)])
                     .with_damage_buffs(vec![(target_id, 1)]),
             }),

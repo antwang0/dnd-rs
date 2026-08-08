@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MUMMY_DREADFUL_GLARE, MUMMY_ROTTING_FIST};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -39,7 +39,7 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Mummies: necrotic + poison immunity, resistance to physical
         // (non-magical) damage; vulnerable to fire (their wrappings burn).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Fire, DamageModifier::Vulnerability),
@@ -50,6 +50,6 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Charmed,
             Condition::Frightened,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

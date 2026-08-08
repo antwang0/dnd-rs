@@ -3967,15 +3967,22 @@ fn immunity_zeros_damage() {
 }
 
 #[test]
-fn slime_resists_piercing() {
-    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+fn slime_resists_piercing_from_a_mundane_attack_and_nothing_else() {
     use crate::engine::side_effects::DealDamage;
-    use crate::engine::types::DamageType;
+    use crate::engine::types::{DamageModifier, DamageType};
 
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
         .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
+    assert_eq!(
+        e.actors[&id].nonmagical_damage_modifier(DamageType::Piercing),
+        Some(DamageModifier::Resistance)
+    );
+    // The damage sink is not the attack chokepoint, and the qualifier
+    // is on the *attack*: a `DealDamage` that never came from a swing —
+    // a failed save, a zone tick, a falling rock — is not damage from a
+    // nonmagical attack and lands in full.
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
@@ -3983,8 +3990,7 @@ fn slime_resists_piercing() {
         damage_type: DamageType::Piercing,
     }
     .apply(&mut e);
-    // Resistance halves: 6 -> 3.
-    assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(3));
+    assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(6));
 }
 
 #[test]
@@ -8939,24 +8945,72 @@ fn zombie_immune_to_poison_v2() {
     assert_eq!(e.actors[&id].hitpoints(), before, "immune actor should take 0");
 }
 
+/// The end-to-end shape of the magical/nonmagical axis: the same
+/// swing, from the same attacker, against the same tarrasque, halved
+/// once and unhalved once — the only difference being a `+1 Weapon`
+/// in the attacker's pack.
+///
+/// Worth running through `resolve_attack_outcome` rather than
+/// asserting on the two accessors, because the accessors were never
+/// the thing that was broken. The rule lives in the chokepoint's
+/// decision to consult the qualified table at all, and a refactor
+/// that dropped the call would leave every accessor test green.
 #[test]
-fn slime_resists_bludgeoning() {
-    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
-    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+fn a_magic_weapon_carries_a_swing_through_mundane_resistance() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
     use crate::engine::types::DamageType;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let id = e
-        .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    let before = e.actors[&id].hitpoints();
-    DealDamage {
-        actor_id: id,
-        amount: 4,
-        damage_type: DamageType::Bludgeoning,
+
+    fn swing(magic: bool) -> u32 {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // A tarrasque for a target: it carries the clause, and it has
+        // enough hit points that neither swing can be clipped by the
+        // floor at 0.
+        let tarrasque = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        if magic {
+            e.actors
+                .get_mut(&goblin)
+                .unwrap()
+                .pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
+        }
+        // A fixed, dice-free swing so the two runs differ only in the
+        // resistance decision: 0d0 dice with a flat +20, against a
+        // target the attack roll cannot miss (attack bonus +100).
+        let (effects, _) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: goblin,
+                target_id: tarrasque,
+                action_name: "test club",
+                attack_bonus: 100,
+                damage_dice: Dice::new(0, 1),
+                damage_bonus: 20,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        let before = e.actors[&tarrasque].hitpoints();
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        before - e.actors[&tarrasque].hitpoints()
     }
-    .apply(&mut e);
-    // Resisted: 4 → 2.
-    assert_eq!(before - e.actors[&id].hitpoints(), 2);
+
+    let mundane = swing(false);
+    let enchanted = swing(true);
+    assert!(mundane > 0 && enchanted > 0, "the swing has to land");
+    // The +1 adds one point of damage on top of not being halved, so
+    // the enchanted swing is a shade more than double the mundane one.
+    assert_eq!(enchanted, mundane * 2 + 1);
 }
 
 #[test]
@@ -10331,20 +10385,20 @@ fn immune_target_takes_no_damage() {
 
 #[test]
 fn resistant_target_takes_half_damage() {
-    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
     use crate::engine::side_effects::DealDamage;
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
-    // Slimes are Resistant to slashing.
+    // The skeleton's piercing resistance is unqualified — the lane
+    // every damage instance is measured against, whatever produced it.
     let id = e
-        .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 6,
-        damage_type: DamageType::Slashing,
+        damage_type: DamageType::Piercing,
     }
     .apply(&mut e);
     // 6 / 2 = 3 lost.
@@ -11345,12 +11399,11 @@ fn damage_immunity_zeroes_damage_v2() {
 fn damage_resistance_halves_damage_v2() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
-    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 
     let mut e = ei_with_terrain(10, 10, &[]);
-    // Slimes resist piercing (set in template).
+    // Piercing is the skeleton's one unqualified resistance.
     let id = e
-        .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
@@ -11360,7 +11413,7 @@ fn damage_resistance_halves_damage_v2() {
     }
     .apply(&mut e);
     let after = e.actors[&id].hitpoints();
-    assert_eq!(before - after, 4, "slime should take half (4) of 8 piercing");
+    assert_eq!(before - after, 4, "skeleton should take half (4) of 8 piercing");
 }
 
 #[test]
@@ -13064,7 +13117,7 @@ fn wraith_is_immune_to_necrotic_and_poison() {
     assert!(e.actors[&id].is_immune_to(DamageType::Necrotic));
     assert!(e.actors[&id].is_immune_to(DamageType::Poison));
     assert!(e.actors[&id].is_resistant_to(DamageType::Cold));
-    assert!(e.actors[&id].is_resistant_to(DamageType::Slashing));
+    assert!(e.actors[&id].resists_nonmagical(DamageType::Slashing));
 }
 
 #[test]
@@ -13960,7 +14013,7 @@ fn specter_template_instantiable_and_immune_to_necrotic() {
         .unwrap();
     assert!(e.actors[&id].is_immune_to(DamageType::Necrotic));
     assert!(e.actors[&id].is_immune_to(DamageType::Poison));
-    assert!(e.actors[&id].is_resistant_to(DamageType::Slashing));
+    assert!(e.actors[&id].resists_nonmagical(DamageType::Slashing));
 }
 
 #[test]
@@ -14783,20 +14836,23 @@ fn werewolf_resists_physical_damage() {
         .instantiate_creature(&WEREWOLF_TEMPLATE, Coordinate::new(3, 3), 0, 0)
         .unwrap();
     let actor = &e.actors[&ww];
-    assert_eq!(
-        actor.damage_modifier(DamageType::Slashing),
-        Some(DamageModifier::Resistance)
-    );
-    assert_eq!(
-        actor.damage_modifier(DamageType::Piercing),
-        Some(DamageModifier::Resistance)
-    );
-    assert_eq!(
-        actor.damage_modifier(DamageType::Bludgeoning),
-        Some(DamageModifier::Resistance)
-    );
-    // Magic typings bypass the lycanthrope resistance lane.
+    for dt in [
+        DamageType::Slashing,
+        DamageType::Piercing,
+        DamageType::Bludgeoning,
+    ] {
+        assert_eq!(
+            actor.nonmagical_damage_modifier(dt),
+            Some(DamageModifier::Resistance)
+        );
+        // And not in the unqualified table, where it would halve a
+        // silvered blade exactly as it halves a farmer's pitchfork.
+        assert_eq!(actor.damage_modifier(dt), None);
+    }
+    // Elemental typings bypass the lycanthrope resistance lane
+    // entirely, qualified or not.
     assert_eq!(actor.damage_modifier(DamageType::Fire), None);
+    assert_eq!(actor.nonmagical_damage_modifier(DamageType::Fire), None);
 }
 
 #[test]
@@ -15188,7 +15244,7 @@ fn gargoyle_resists_slashing() {
         .instantiate_creature(&GARGOYLE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert_eq!(
-        e.actors[&id].damage_modifier(DamageType::Slashing),
+        e.actors[&id].nonmagical_damage_modifier(DamageType::Slashing),
         Some(DamageModifier::Resistance)
     );
     // Immune to poison.
@@ -25187,7 +25243,7 @@ fn tarrasque_template_immunities_and_regen() {
     let actor = &e.actors[&t];
     assert!(actor.is_immune_to(DamageType::Fire));
     assert!(actor.is_immune_to(DamageType::Poison));
-    assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+    assert!(actor.resists_nonmagical(DamageType::Bludgeoning));
     assert_eq!(actor.regen_per_round(), 40);
     // Tarrasque is condition-immune to mind-affecting effects.
     assert!(actor.is_immune_to_condition(Condition::Charmed));
@@ -29199,10 +29255,14 @@ fn salamander_fire_cold_envelope() {
     assert!(a.is_immune_to(DamageType::Fire));
     // Cold doubles raw damage.
     assert_eq!(a.effective_damage(10, DamageType::Cold), 20);
-    // Mundane physical resistance halves.
-    assert_eq!(a.effective_damage(10, DamageType::Bludgeoning), 5);
-    assert_eq!(a.effective_damage(10, DamageType::Piercing), 5);
-    assert_eq!(a.effective_damage(10, DamageType::Slashing), 5);
+    // Mundane physical resistance is source-qualified: it answers a
+    // nonmagical attack and nothing else, so `effective_damage` — which
+    // is the unqualified damage sink and knows nothing about who swung
+    // — passes the blow through in full.
+    assert!(a.resists_nonmagical(DamageType::Bludgeoning));
+    assert!(a.resists_nonmagical(DamageType::Piercing));
+    assert!(a.resists_nonmagical(DamageType::Slashing));
+    assert_eq!(a.effective_damage(10, DamageType::Bludgeoning), 10);
 }
 
 /// Medusa Petrifying Gaze: on a failed CON save, the target is
@@ -29664,7 +29724,7 @@ fn death_knight_damage_modifier_envelope() {
         Some(DamageModifier::Immunity)
     );
     assert_eq!(
-        dk.damage_modifier(DamageType::Slashing),
+        dk.nonmagical_damage_modifier(DamageType::Slashing),
         Some(DamageModifier::Resistance)
     );
 }
@@ -29692,7 +29752,7 @@ fn ghost_incorporeal_envelope() {
         Some(DamageModifier::Resistance)
     );
     assert_eq!(
-        ghost.damage_modifier(DamageType::Slashing),
+        ghost.nonmagical_damage_modifier(DamageType::Slashing),
         Some(DamageModifier::Resistance)
     );
     // Condition envelope.
@@ -31667,7 +31727,7 @@ fn glabrezu_template_carries_demon_envelope() {
     assert!(g.is_resistant_to(DamageType::Cold));
     assert!(g.is_resistant_to(DamageType::Fire));
     assert!(g.is_resistant_to(DamageType::Lightning));
-    assert!(g.is_resistant_to(DamageType::Bludgeoning));
+    assert!(g.resists_nonmagical(DamageType::Bludgeoning));
     assert!(g.is_immune_to_condition(Condition::Poisoned));
     assert!(g.is_immune_to_condition(Condition::Charmed));
     assert!(g.is_immune_to_condition(Condition::Frightened));
@@ -37977,13 +38037,13 @@ fn giant_scorpion_has_claw_and_sting() {
 fn grick_resists_physical_damage() {
     use crate::actors::creatures::gricks::GRICK_TEMPLATE;
     assert!(GRICK_TEMPLATE
-        .damage_modifiers
+        .nonmagical_damage_modifiers
         .contains_key(&DamageType::Bludgeoning));
     assert!(GRICK_TEMPLATE
-        .damage_modifiers
+        .nonmagical_damage_modifiers
         .contains_key(&DamageType::Piercing));
     assert!(GRICK_TEMPLATE
-        .damage_modifiers
+        .nonmagical_damage_modifiers
         .contains_key(&DamageType::Slashing));
     assert_eq!(GRICK_TEMPLATE.cr, 2.0);
 }

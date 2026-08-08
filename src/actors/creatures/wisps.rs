@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WISP_SHOCK;
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -34,7 +34,7 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Undead,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
@@ -55,6 +55,6 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Unconscious,
             Condition::Charmed,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     NALFESHNEE_BITE, NALFESHNEE_CLAW, NALFESHNEE_HORROR_NIMBUS, NALFESHNEE_MULTI,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -89,7 +89,7 @@ pub static NALFESHNEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // fire / lightning resistance + poison immunity. Mirrors the
         // Hezrou / Glabrezu damage profile (same demon family) but on
         // the CR-13 frame.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
@@ -104,7 +104,7 @@ pub static NALFESHNEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // located dragon.
         recharge_abilities: vec![("horror_nimbus", 5)],
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -167,7 +167,7 @@ mod tests {
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         assert!(a.has_magic_resistance());

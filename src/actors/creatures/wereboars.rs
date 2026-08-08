@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREBOAR_MAUL, WEREBOAR_MULTI, WEREBOAR_TUSKS};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 10 (no armor — just the boar's thick hide).
 /// 78 HP (12d8+24). Non-magical BPS resistance via the shared
-/// `non_magical_physical_resistances` helper — the canonical
+/// `damage_modifiers_from` helper — the canonical
 /// lycanthrope envelope. RAW also gives the wereboar **Charge** (when
 /// it moves 15+ ft and hits with a tusks attack, the target takes an
 /// extra 7 (2d6) damage and must succeed on a DC 13 STR save or be
@@ -69,13 +69,12 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Lycanthrope non-silver/non-magical BPS resistance — same
         // envelope as Werewolf / Werebear, approximated as Resistance
         // because we don't track silvered/magical weapon flags.
-        damage_modifiers: non_magical_physical_resistances([]),
         // RAW: when the wereboar closes at least the clause's distance in a
         // straight line and then connects with its tusks, the hit carries
         // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::WEREBOAR_CHARGE),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -173,15 +172,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // No magic resistance — the wereboar's defense is HP + BPS half-damage.

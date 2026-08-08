@@ -1628,6 +1628,29 @@ pub enum Condition {
     /// rollback in `drop_concentration`. Joins `is_dispellable_buff` so
     /// Dispel Magic / Counterspell can rip it.
     ElementallyWeaponed,
+    /// Weapon-Enchanted (5e **Magic Weapon**, level-2 transmutation,
+    /// concentration up to 1 hour). "You touch a nonmagical weapon.
+    /// Until the spell ends, that weapon **becomes a magic weapon** with
+    /// a +1 bonus to attack rolls and damage rolls."
+    ///
+    /// The +1/+1 half of the spell already rode the shared
+    /// `attack_bonus_buff` / `damage_bonus_buff` ledgers before this
+    /// condition existed, and the first clause of the sentence — the
+    /// one the spell is *named* after — did nothing at all, because the
+    /// engine had no magical/nonmagical axis for it to move a weapon
+    /// along. It has one now (`crate::engine::magic`), and this is
+    /// Magic Weapon's row on it.
+    ///
+    /// Worth its own condition rather than folding into
+    /// `ElementallyWeaponed`: the two spells are different levels with
+    /// different riders, they stack in neither RAW nor the engine's
+    /// ledger, and a caster who loses concentration on one should not
+    /// have the other's rider silently disappear with it.
+    ///
+    /// Concentration-bound and dispellable — a weapon that stops being
+    /// enchanted stops overcoming resistance the same instant it stops
+    /// adding +1.
+    WeaponEnchanted,
     /// True-Sighted (5e True Seeing, level-6 divination). The holder
     /// perceives things as they actually are: invisible creatures, magical
     /// blur, and displacement illusions all stop hiding the truth from
@@ -2359,6 +2382,7 @@ impl Condition {
             Condition::Footloose => "moving freely",
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
+            Condition::WeaponEnchanted => "wielding an enchanted weapon",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
@@ -2501,6 +2525,7 @@ impl Condition {
                 | Condition::Footloose
                 | Condition::MoilShrouded
                 | Condition::ElementallyWeaponed
+                | Condition::WeaponEnchanted
                 | Condition::TrueSighted
                 | Condition::SeeingInvisible
                 | Condition::GuidedStriking

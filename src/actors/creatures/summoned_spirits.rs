@@ -45,7 +45,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     BreathWeapon, Multiattack, SimpleWeapon, WeaponWithSaveCondition,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
     ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
 };
@@ -669,14 +669,14 @@ pub static FIENDISH_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 

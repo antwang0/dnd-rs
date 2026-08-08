@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FLESH_GOLEM_MULTI, FLESH_GOLEM_SLAM};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -89,7 +89,7 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (RAW Lightning Absorption — heals from lightning, collapsed
         // to flat immunity since the engine doesn't model damage-to-
         // heal conversion).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Lightning, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -105,7 +105,7 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Petrified,
             Condition::Poisoned,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -154,7 +154,7 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         // Standard construct condition envelope.

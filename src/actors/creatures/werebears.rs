@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREBEAR_BITE, WEREBEAR_CLAWS, WEREBEAR_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -31,7 +31,7 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 11 (natural armor — the bear-hide), 135 HP
 /// (18d8+54). Non-magical BPS resistance via the shared
-/// `non_magical_physical_resistances` helper — RAW: "Damage Immunities
+/// `damage_modifiers_from` helper — RAW: "Damage Immunities
 /// Bludgeoning, Piercing, and Slashing from Nonmagical Attacks that
 /// aren't Silvered". We approximate as Resistance because we don't
 /// track magical/silvered weapon flags (full immunity would make the
@@ -85,9 +85,8 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // non-magical/non-silver immunity as resistance — the test
         // pool doesn't include silver weapons so full immunity would
         // make werebears untouchable). Same call as the werewolf
-        // template; shared via `non_magical_physical_resistances`.
-        damage_modifiers: non_magical_physical_resistances([]),
-        ..CreatureTemplate::defaults()
+        // template; shared via `damage_modifiers_from`.
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -132,15 +131,15 @@ mod tests {
         // Lycanthrope-canonical BPS resistance — same as the werewolf
         // but on a thicker HP frame at the higher CR.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // No magic resistance — the werebear's defense is HP pool +

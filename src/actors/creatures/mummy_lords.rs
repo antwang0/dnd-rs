@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     MUMMY_LORD_DREADFUL_GLARE, MUMMY_LORD_MULTI, MUMMY_LORD_ROTTING_FIST,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
@@ -84,7 +84,7 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Fire, DamageModifier::Vulnerability),
@@ -105,7 +105,7 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature. Three failed saves per long rest are auto-promoted to
         // passes, neutralizing the party's save-or-suck control spells.
         legendary_resistances: 3,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -141,7 +141,7 @@ mod tests {
             Some(DamageModifier::Vulnerability)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

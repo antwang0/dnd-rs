@@ -12546,6 +12546,33 @@ pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const SWIM_SPEED_TAG: &str = "shared.swim_speed";
 
+/// Monster trait: "its weapon attacks are magical".
+///
+/// RAW writes this line onto the celestials, the greater fiends and a
+/// handful of ancient monstrosities — the creatures whose claws are
+/// supposed to cut through each other's resistance. It matters most
+/// when two of them meet: a balor and a marilith both resist nonmagical
+/// steel, and without this tag two demons would spend a fight halving
+/// each other's damage for no reason RAW recognises.
+///
+/// A tag on `CreatureTemplate::features` rather than a `bool` field
+/// because it belongs to the same family as every other one-line stat
+/// block clause the engine already stores that way, and because
+/// `MAGICAL_ATTACK_SOURCES` can then read it through the same
+/// predicate shape as the rest of the cohort.
+pub const MAGICAL_ATTACKS_TAG: &str = "shared.magical_attacks";
+
+/// 5e Monk **Ki-Empowered Strikes** (class level 6): "your unarmed
+/// strikes count as magical for the purpose of overcoming resistance
+/// and immunity to nonmagical attacks."
+///
+/// The only feature on the player side that magics a creature's own
+/// body rather than an object it is holding, which is why it is a
+/// separate tag from the item and spell lanes below: a monk who drops
+/// their weapon still punches through a wraith.
+pub const KI_EMPOWERED_STRIKES_TAG: &str = "monk.ki_empowered_strikes";
+
+
 /// 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE).
 /// Passive: the scout's walking speed increases by 10 feet, and they
 /// also gain climbing and swimming speeds matching that walking speed.

@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HEZROU_BITE, HEZROU_CLAW, HEZROU_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -66,7 +66,7 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Demon damage envelope: non-magical BPS resistance + cold / fire
         // / lightning resistance + poison immunity. Mirrors the Vrock /
         // Glabrezu damage profile (same demon family) at the CR-8 tier.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
@@ -78,7 +78,7 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects. Read by `compute_save_mode`.
         has_magic_resistance: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -116,7 +116,7 @@ mod tests {
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

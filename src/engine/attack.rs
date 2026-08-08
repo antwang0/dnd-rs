@@ -2359,8 +2359,94 @@ pub fn resolve_attack_outcome_with_rider(
     // chain off `damage_dealt` (a half-damage self-heal, a max-HP drain)
     // see the whole hit.
     damage = damage.saturating_add(rider.apply(encounter, &p, mode, is_crit, &mut effects));
+    // 5e "resistance to bludgeoning, piercing, and slashing damage from
+    // nonmagical attacks" — the target's source-qualified rows, applied
+    // to everything this swing is about to deal them. Runs after every
+    // rider has pushed its payload and before the vulnerability
+    // removals, so the walk sees the finished swing.
+    damage = damage.saturating_sub(apply_nonmagical_resistance(
+        encounter,
+        &mut effects,
+        p.caster_id,
+        p.target_id,
+        p.is_spell,
+    ));
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
     (effects, damage)
+}
+
+/// Scale every damage payload this attack aimed at `target_id` by the
+/// target's *source-qualified* damage modifiers, when the attack was
+/// nonmagical. Returns the total damage removed, so the caller's
+/// `damage_dealt` figure stays honest for riders that chain off it.
+///
+/// Three details of the walk are load-bearing:
+///
+///   - **It skips payloads aimed at anyone but the target.** A swing's
+///     effect vector routinely carries damage pointed the other way —
+///     Fire Shield, Armor of Agathys, a Scornful Rebuke — and the
+///     attacker's own resistances have nothing to do with whether the
+///     *attacker's* weapon was magical. Those payloads are a different
+///     attack's business (RAW they are not attacks at all), so they are
+///     left alone.
+///
+///   - **It reads the target fresh per payload** rather than
+///     snapshotting one modifier, because a single 5e swing lands
+///     several typed instances — the weapon die, a smite, Hunter's
+///     Mark, a rider — and the qualified table answers each type
+///     separately. A wraith halves the sword and not the radiant smite
+///     riding on it.
+///
+///   - **It early-outs on a magical attack** before touching the
+///     effects at all. That is the whole point of the feature: the
+///     wraith that halved a +1 longsword for as long as this engine had
+///     no magic axis now takes it in full.
+///
+/// The immunity case falls out for free — `DamageModifier::apply` zeroes
+/// it, and `DealDamage::apply` returns early on a zeroed amount without
+/// touching HP, concentration or the dying track.
+pub fn apply_nonmagical_resistance(
+    encounter: &mut EncounterInstance,
+    effects: &mut [Box<dyn ApplicableSideEffect>],
+    attacker_id: usize,
+    target_id: usize,
+    is_spell: bool,
+) -> u32 {
+    if crate::engine::magic::attack_is_magical(encounter, attacker_id, is_spell) {
+        return 0;
+    }
+    let mut removed: u32 = 0;
+    let mut notes: Vec<String> = Vec::new();
+    for effect in effects.iter_mut() {
+        let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
+            continue;
+        };
+        if aimed_at != target_id || amount == 0 {
+            continue;
+        }
+        let Some(modifier) = encounter
+            .actors
+            .get(&target_id)
+            .and_then(|a| a.nonmagical_damage_modifier(damage_type))
+        else {
+            continue;
+        };
+        let scaled = modifier.apply(amount);
+        if scaled == amount || !effect.set_damage_amount(scaled) {
+            continue;
+        }
+        removed = removed.saturating_add(amount.saturating_sub(scaled));
+        notes.push(format!("{} \u{2192} {} {:?}", amount, scaled, damage_type));
+    }
+    if !notes.is_empty() {
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "  {} shrugs off the mundane blow ({})",
+            name,
+            notes.join(", ")
+        ));
+    }
+    removed
 }
 
 /// Queue the removal of every one-shot vulnerability the target holds —

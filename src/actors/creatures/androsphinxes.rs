@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     ANDROSPHINX_CLAW, ANDROSPHINX_MULTI, ANDROSPHINX_ROAR,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, Language, Size, SpecialSense,
@@ -94,7 +94,6 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Nonmagical B/P/S resistance — the boss "magic weapons or
         // nothing" envelope. No damage-type resistances beyond physical;
         // RAW gives the androsphinx no elemental resistance lane.
-        damage_modifiers: non_magical_physical_resistances([]),
         // Sphinx is a guardian, not a thrall: immune to Charmed and
         // Frightened (the canonical boss-tier social-debuff envelope).
         condition_immunities: HashSet::from([
@@ -127,7 +126,9 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the bookkeeping is kept for forward compatibility.
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        // 5e **Magic Weapons**: "the sphinx's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -169,15 +170,15 @@ mod tests {
         // Nonmagical B/P/S resistance — the boss "magic weapons or
         // nothing" envelope.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // Guardian envelope: immune to charm + frighten.

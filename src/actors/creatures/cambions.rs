@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{CAMBION_FIRE_RAY, CAMBION_MULTI, CAMBION_SPEAR};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -48,14 +48,14 @@ pub static CAMBION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // 5e cambion: resistance to fire / cold / lightning / poison
         // plus the three physical types (RAW: vs non-magical weapons).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Resistance),
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 

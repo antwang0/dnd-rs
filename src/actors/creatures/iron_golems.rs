@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     IRON_GOLEM_BREATH, IRON_GOLEM_MULTI, IRON_GOLEM_SLAM, IRON_GOLEM_SWORD,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Size, SpecialSense,
@@ -89,7 +89,7 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // immunity to fire, poison, and psychic. Fire immunity is the
         // approximation of RAW's Fire Absorption (heals from fire) —
         // the engine doesn't yet model damage-to-heal conversion.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
@@ -118,7 +118,9 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // ish nuke rather than a turn-2 re-tap.
         recharge_abilities: vec![("iron poison breath", 6)],
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        // 5e **Magic Weapons**: "the golem's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -153,7 +155,7 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

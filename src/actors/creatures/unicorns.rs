@@ -108,6 +108,8 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d8 piercing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::UNICORN_CHARGE),
+        // 5e **Magic Weapons**: "the unicorn's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

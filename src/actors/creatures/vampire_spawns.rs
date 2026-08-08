@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::VAMPIRIC_BITE;
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::lighting::SunlightFrailty;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense};
@@ -36,7 +36,7 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         actions,
         // Necrotic-resistant + non-magical BPS resistance + poison
         // immunity (5e MM vampire damage envelope).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -46,6 +46,6 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // 20-radiant-per-turn clause the Vampire Lord carries, and on
         // the same radiant vulnerability. See `vampires.rs`.
         sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

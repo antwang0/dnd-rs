@@ -6,7 +6,7 @@ use crate::actions::spells::{
     MIND_SLIVER, MIRROR_IMAGE, POWER_WORD_KILL, POWER_WORD_STUN, SCORCHING_RAY, SHIELD,
     SYNAPTIC_STATIC, TOLL_THE_DEAD, VAMPIRIC_TOUCH,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -95,7 +95,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 2, 2, 2],
         // 5e Lich: necrotic / poison immunity, resistance to cold /
         // lightning / non-magical physical.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
@@ -126,6 +126,6 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e lair actions — the phylactery's home answers to it once
         // a round. See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::LICH_LAIR,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

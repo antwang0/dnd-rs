@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SUCCUBUS_CHARM, SUCCUBUS_CLAWS, SUCCUBUS_DRAINING_KISS};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
@@ -60,15 +60,15 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Fiend,
         actions,
         // Non-magical physical resistance approximated as flat B/P/S
-        // resistance via the shared `non_magical_physical_resistances`
+        // resistance via the shared `damage_modifiers_from`
         // helper — same shape as the quasit's envelope.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Resistance),
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -108,7 +108,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

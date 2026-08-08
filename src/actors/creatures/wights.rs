@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, WIGHT_LIFE_DRAIN};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -40,7 +40,7 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Undead,
         actions,
         // 5e Wight: necrotic + poison immunity, non-magical BPS resistance.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -53,6 +53,6 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
         ]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

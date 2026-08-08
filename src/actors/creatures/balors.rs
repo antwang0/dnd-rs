@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     BALOR_FIRE_AURA, BALOR_LONGSWORD, BALOR_MULTI, BALOR_WHIP,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -51,7 +51,7 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
@@ -73,6 +73,8 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 3,
         has_magic_resistance: true,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        // 5e **Magic Weapons**: "the balor's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

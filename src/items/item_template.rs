@@ -118,6 +118,22 @@ pub struct Item {
     /// "install on the inventory event" model. Empty for items without a
     /// persistent condition (the default for most loot).
     pub passive_conditions: &'static [crate::conditions::Condition],
+    /// True when carrying this item makes the holder's weapon attacks
+    /// count as magical — 5e's "for the purpose of overcoming
+    /// resistance and immunity to nonmagical attacks".
+    ///
+    /// The whole of the `+1` / `+2` loot tier, and nothing else on the
+    /// roster: a Ring of Protection does not sharpen the sword you are
+    /// holding. Read through `ActorInstance::wields_enchanted_weapon`
+    /// by the `MAGICAL_ATTACK_SOURCES` cohort in `engine::magic`.
+    ///
+    /// A separate flag rather than "any item with an `attack_bonus`"
+    /// because the two are not the same set in either direction:
+    /// Bracers of Archery add damage without being a weapon at all, and
+    /// a hypothetical +0 silvered blade would be a magic weapon with no
+    /// bonus. Deriving one from the other would make both wrong the
+    /// first time the loot table grew.
+    pub grants_magical_attacks: bool,
 }
 
 impl Item {
@@ -138,6 +154,7 @@ impl Item {
         damage_resistances: &[],
         damage_immunities: &[],
         passive_conditions: &[],
+        grants_magical_attacks: false,
     };
 }
 
@@ -768,6 +785,7 @@ pub static WEAPON_PLUS_ONE: Item = Item {
         damage_bonus: 1,
         ..ItemBonuses::ZERO
     },
+    grants_magical_attacks: true,
     ..Item::DEFAULTS
 };
 
@@ -782,6 +800,7 @@ pub static WEAPON_PLUS_TWO: Item = Item {
         damage_bonus: 2,
         ..ItemBonuses::ZERO
     },
+    grants_magical_attacks: true,
     ..Item::DEFAULTS
 };
 

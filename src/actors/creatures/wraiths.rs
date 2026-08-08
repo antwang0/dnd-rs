@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LIFE_DRAIN;
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -38,10 +38,10 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // 5e wraith: resistant to acid / cold / fire / lightning / thunder
         // and to non-magical bludgeoning / piercing / slashing. The BPS
-        // triplet lives in `non_magical_physical_resistances`; the rest of
+        // triplet lives in `damage_modifiers_from`; the rest of
         // the elemental envelope (and the necrotic / poison immunities)
         // overlay on top.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
@@ -61,6 +61,6 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Prone,
             Condition::Frightened,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

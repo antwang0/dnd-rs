@@ -86,6 +86,8 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 3,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        // 5e **Angelic Weapons**: "the solar's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

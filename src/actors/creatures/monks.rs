@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
     EMPTY_BODY, EMPTY_BODY_TAG, FANGS_OF_THE_FIRE_SNAKE, FANGS_OF_THE_FIRE_SNAKE_TAG,
-    FLURRY_OF_BLOWS, KI_POINTS_TAG, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
+    FLURRY_OF_BLOWS, KI_EMPOWERED_STRIKES_TAG, KI_POINTS_TAG, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
     SHADOW_ARTS_TAG, SHADOW_STEP, SHADOW_STEP_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
     STUNNING_STRIKE, STUNNING_STRIKE_TAG, TOUCH_OF_DEATH_TAG, UNARMORED_MOVEMENT_TAG,
     WATER_WHIP, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
@@ -114,6 +114,18 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             //     presses rather than on private charges of their own.
             //     Five, for the level-5 chassis; see `KI_POINTS_TAG`.
             KI_POINTS_TAG,
+            //   - `KI_EMPOWERED_STRIKES_TAG` (level 6): "your unarmed
+            //     strikes count as magical for the purpose of
+            //     overcoming resistance and immunity to nonmagical
+            //     attacks." Ships on the CR-1.5 chassis above its
+            //     strict RAW level gate for the same reason Purity of
+            //     Body (lv10) and Diamond Soul (lv14) do below — class
+            //     templates target a balanced playable level, not
+            //     lockstep PHB progression. It is also the monk's only
+            //     answer to the forty stat blocks that halve mundane
+            //     steel: a monk fights with their hands, so no amount
+            //     of loot could have given it to them.
+            KI_EMPOWERED_STRIKES_TAG,
         ]),
         has_evasion: true,
         has_deflect_missiles: true,

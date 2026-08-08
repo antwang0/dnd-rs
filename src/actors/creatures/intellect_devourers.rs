@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{INTELLECT_DEVOURER_CLAWS, INTELLECT_DEVOURER_DEVOUR};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -46,10 +46,9 @@ pub static INTELLECT_DEVOURER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         size: Size::Tiny,
         creature_type: CreatureType::Aberration,
         actions,
-        damage_modifiers: non_magical_physical_resistances([]),
         // Immune to Blinded — the devourer has no eyes to lose.
         condition_immunities: HashSet::from([crate::conditions::Condition::Blinded]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -84,7 +83,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
     }

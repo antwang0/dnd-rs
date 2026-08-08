@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size};
 use std::sync::LazyLock;
 
@@ -32,10 +32,10 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Acid slimes: immune to their own element. Resist BPS — physical
         // weapons gum up in the ooze. Cold turns the gel hard and brittle.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Acid, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Vulnerability),
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

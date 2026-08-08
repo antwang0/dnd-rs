@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WERERAT_BITE, WERERAT_MULTI, WERERAT_SHORTSWORD};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 ///   melee. Vanilla `SimpleWeapon`; the finesse-flavored secondary swing.
 ///
 /// Defensive identity: AC 12 (light armor + DEX). 33 HP (6d8+6). Non-
-/// magical BPS resistance via the shared `non_magical_physical_resistances`
+/// magical BPS resistance via the shared `damage_modifiers_from`
 /// helper — the canonical lycanthrope envelope. RAW gives the wererat
 /// **Keen Smell** (advantage on Perception checks using smell) — omitted
 /// because the engine doesn't tag Perception by sense channel.
@@ -60,9 +60,8 @@ pub static WERERAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        damage_modifiers: non_magical_physical_resistances([]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -102,7 +101,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert!(!a.has_magic_resistance());

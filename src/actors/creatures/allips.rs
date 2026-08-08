@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ALLIP_MADDENING_TOUCH;
 use crate::actors::actor_template::{
-    CreatureTemplate, INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES, non_magical_physical_resistances,
+    CreatureTemplate, INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES, damage_modifiers_from,
 };
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -36,7 +36,7 @@ use std::sync::LazyLock;
 /// undead envelope (necrotic + poison immunity, BPS resistance, and
 /// the long body-control condition immunity menu) routes through the
 /// shared `INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES` /
-/// `non_magical_physical_resistances` helpers so the allip slots in
+/// `damage_modifiers_from` helpers so the allip slots in
 /// next to the Ghost / Wraith / Specter / Shadow cohort with one-line
 /// shared-base reuse. Distinct from the Wraith: the allip's psychic
 /// touch is the offensive lane, not a necrotic life-drain.
@@ -93,9 +93,9 @@ pub static ALLIP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         // Incorporeal undead envelope — BPS resistance plus necrotic
         // + poison immunity. Routes through the shared
-        // `non_magical_physical_resistances` helper so the BPS triple
+        // `damage_modifiers_from` helper so the BPS triple
         // stays uniform across the incorporeal cohort.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -103,7 +103,7 @@ pub static ALLIP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Exhausted, Frightened, Grappled, Paralyzed, Petrified,
         // Poisoned, Prone, Restrained, Unconscious.
         condition_immunities: INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES.clone(),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -191,15 +191,15 @@ mod tests {
         let a = make();
         // BPS resistance — the incorporeal physical lane.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // Necrotic + Poison immunity — the undead purity overlay.

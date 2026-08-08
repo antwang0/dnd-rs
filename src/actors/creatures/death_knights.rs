@@ -6,7 +6,7 @@ use crate::actions::spells::{
     DISPEL_MAGIC, FIRE_BOLT, FIREBALL, HOLD_MONSTER, MAGIC_MISSILE, MIRROR_IMAGE, SHIELD,
     WALL_OF_FIRE,
 };
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -69,7 +69,7 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // loadout — the Death Knight leans on its Hellfire Orb + multi
         // pattern rather than a deep slot economy.
         spell_slots_by_level: vec![4, 3, 3, 1],
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -91,6 +91,6 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BANSHEE_WAIL, CORRUPTING_TOUCH};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -41,7 +41,7 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e: resistance to non-magical bludgeoning/piercing/slashing.
         // We don't track magical weapon flags so we apply the resistance
         // directly (mirrors the wraith / specter pattern).
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
@@ -55,6 +55,6 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Prone,
             Condition::Restrained,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

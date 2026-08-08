@@ -124,6 +124,8 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // role leans more on sustained healing than the unicorn's
         // burst-heal niche.
         recharge_abilities: vec![("healing_touch", 4)],
+        // 5e **Angelic Weapons**: "the deva's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

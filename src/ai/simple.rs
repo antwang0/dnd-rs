@@ -7623,14 +7623,106 @@ fn try_attack_focus_fire(
 /// Missile (reach 48, costs a spell slot) when no slots remain — the
 /// caller would then skip the target entirely instead of falling back
 /// to Fire Bolt at reach 24.
+/// How badly `attacker_id`'s damage types match up against
+/// `target_id`, as a penalty the picker sorts *ascending*:
+///
+///   - `0` — at least one type the target is vulnerable to.
+///   - `1` — neutral: no modifier the engine can see either way.
+///   - `2` — at least one type the target resists.
+///   - `3` — every type on the list is one the target is immune to;
+///     the action does nothing and should not be picked at all.
+///
+/// Split out of `best_attack_against`'s closure so the qualified half
+/// of the lookup is reachable from a test. It was a closure for as long
+/// as there was only one table to read; there are two now, and which
+/// one applies depends on who is swinging — which is exactly the kind
+/// of decision that should be assertable on its own rather than only
+/// through whichever weapon a goblin happened to pick.
+pub fn matchup_penalty_against(
+    encounter: &EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    damage_types: &[crate::engine::types::DamageType],
+) -> u8 {
+    if crate::engine::magic::attack_is_magical(encounter, attacker_id, false) {
+        return matchup_penalty_vs_magic(encounter, target_id, damage_types);
+    }
+    matchup_penalty(encounter, target_id, damage_types, false)
+}
+
+/// `matchup_penalty_against` for a source that is magical whoever holds
+/// it — every spell, and every weapon in a hand the magic axis has
+/// already answered for.
+pub fn matchup_penalty_vs_magic(
+    encounter: &EncounterInstance,
+    target_id: usize,
+    damage_types: &[crate::engine::types::DamageType],
+) -> u8 {
+    matchup_penalty(encounter, target_id, damage_types, true)
+}
+
+fn matchup_penalty(
+    encounter: &EncounterInstance,
+    target_id: usize,
+    damage_types: &[crate::engine::types::DamageType],
+    magical: bool,
+) -> u8 {
+    use crate::engine::types::DamageModifier;
+    if damage_types.is_empty() {
+        return 1;
+    }
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return 1;
+    };
+    let mut all_immune = true;
+    let mut has_vuln = false;
+    let mut has_resist = false;
+    for dt in damage_types {
+        // The target's source-qualified rows are the whole reason a
+        // wraith is a bad target for a mundane sword and a fine one for
+        // a Fire Bolt. Consulted only when this source would actually
+        // be answered by them — otherwise the picker would go on
+        // avoiding the wraith with the +1 longsword that is its best
+        // answer to it.
+        let modifier = target.damage_modifier(*dt).or_else(|| {
+            if magical {
+                None
+            } else {
+                target.nonmagical_damage_modifier(*dt)
+            }
+        });
+        match modifier {
+            Some(DamageModifier::Immunity) => {}
+            Some(DamageModifier::Vulnerability) => {
+                all_immune = false;
+                has_vuln = true;
+            }
+            Some(DamageModifier::Resistance) => {
+                all_immune = false;
+                has_resist = true;
+            }
+            None => {
+                all_immune = false;
+            }
+        }
+    }
+    if all_immune {
+        3
+    } else if has_vuln {
+        0
+    } else if has_resist {
+        2
+    } else {
+        1
+    }
+}
+
 fn best_attack_against(
     actor_id: usize,
     actor: &crate::actors::actor_template::ActorInstance,
     encounter: &EncounterInstance,
     target_id: usize,
 ) -> Option<(isize, &'static (dyn Action + Send + Sync))> {
-    use crate::engine::types::DamageModifier;
-
     let target = encounter.actors.get(&target_id)?;
     let dist = footprint_chebyshev(
         actor.location(),
@@ -7638,44 +7730,13 @@ fn best_attack_against(
         target.location(),
         get_tiles_from_size(target.size()),
     );
-    // Score the damage-type matchup: lower is better.
-    // 0 = at least one Vulnerable type and no Immune-only
-    // 1 = neutral (no info or all-neutral)
-    // 2 = at least one Resistant type
-    // 3 = every listed type is Immune (skip)
     let matchup_score = |a: &dyn Action| -> u8 {
-        let dts = a.damage_types();
-        if dts.is_empty() {
-            return 1;
+        // A spell is magical whatever the swinger is holding; a
+        // non-spell action rides the creature's own verdict.
+        if a.school().is_some() {
+            return matchup_penalty_vs_magic(encounter, target_id, &a.damage_types());
         }
-        let mut all_immune = true;
-        let mut has_vuln = false;
-        let mut has_resist = false;
-        for dt in &dts {
-            match target.damage_modifier(*dt) {
-                Some(DamageModifier::Immunity) => {}
-                Some(DamageModifier::Vulnerability) => {
-                    all_immune = false;
-                    has_vuln = true;
-                }
-                Some(DamageModifier::Resistance) => {
-                    all_immune = false;
-                    has_resist = true;
-                }
-                None => {
-                    all_immune = false;
-                }
-            }
-        }
-        if all_immune {
-            3
-        } else if has_vuln {
-            0
-        } else if has_resist {
-            2
-        } else {
-            1
-        }
+        matchup_penalty_against(encounter, actor_id, target_id, &a.damage_types())
     };
 
     // Best by (matchup score asc, roll mode asc, reach desc, expected

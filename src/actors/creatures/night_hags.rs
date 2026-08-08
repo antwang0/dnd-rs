@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{NIGHT_HAG_CLAWS, NIGHT_HAG_MULTI};
-use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -87,10 +87,10 @@ pub static NIGHT_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Cold + fire resistance on top of the non-magical-BPS triple —
         // the hag's infernal physiology bites back at the elemental
-        // edges. `non_magical_physical_resistances` returns the BPS
+        // edges. `damage_modifiers_from` returns the BPS
         // triple as a fresh map; we layer the two elemental entries
         // on top via the `overlays` argument.
-        damage_modifiers: non_magical_physical_resistances([
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
         ]),
@@ -101,7 +101,7 @@ pub static NIGHT_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Magic Resistance — advantage on saves vs spells / magical
         // effects. Standard mid-tier fiend defensive lane.
         has_magic_resistance: true,
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -169,15 +169,15 @@ mod tests {
         // aren't silvered"; we collapse to the BPS triple since we
         // don't track silvered-weapon typing.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
     }

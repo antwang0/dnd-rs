@@ -60,6 +60,8 @@ pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Couatls can't be magically charmed or frightened.
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
         has_magic_resistance: true,
+        // 5e **Magic Weapons**: "the couatl's weapon attacks are magical."
+        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
