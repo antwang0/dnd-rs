@@ -30,6 +30,13 @@
 //! usual reason — a new magic-weapon spell, item or monster trait
 //! should land as one row, and the log line that explains the
 //! unresisted swing should name the row that granted it.
+//!
+//! One clause on the roster is narrower than "nonmagical", and it is
+//! why the chokepoint asks `resistance_bypass` rather than
+//! `attack_is_magical`: the five lycanthropes write "from nonmagical
+//! attacks **that aren't silvered**", so a 100 gp coating answers them
+//! and nothing else. Which exemption applies is a property of the
+//! *target's* clause, not of the attacker's weapon.
 
 use crate::actions::class_features::{KI_EMPOWERED_STRIKES_TAG, MAGICAL_ATTACKS_TAG};
 use crate::actors::actor_template::ActorInstance;
@@ -54,8 +61,11 @@ struct MagicalAttackSource {
 ///
 ///   1. **The creature's own nature** — the monster tag, and the monk's
 ///      Ki-Empowered Strikes. Nothing can be taken away or dispelled.
-///   2. **The weapon in its hand** — the `+1` / `+2` loot tier. Read
-///      off the inventory, so losing the item loses the property.
+///   2. **The weapon in its hand** — the `+1` / `+2` / `+3` loot tier.
+///      Read off the inventory, so losing the item loses the property.
+///      The Silvered Weapon is deliberately *not* here: silver is not
+///      magic, answers only the lycanthrope clause, and rides
+///      `resistance_bypass` instead.
 ///   3. **A spell on the weapon** — Magic Weapon, Elemental Weapon,
 ///      Holy Weapon, Shillelagh. Every one of these RAW says in so many
 ///      words that the weapon "becomes a magic weapon", and every one
