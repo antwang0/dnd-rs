@@ -271,21 +271,6 @@ pub static OFF_HAND_SHORTSWORD: OffHandAttack = OffHandAttack {
     damage_type: DamageType::Piercing,
 };
 
-/// Off-hand scimitar — STR-based 1d6 slashing, for the Strength-build
-/// martial whose main hand is already a scimitar.
-///
-/// Distinct from the shortsword above on ability and damage type
-/// rather than on die size, which is the pairing that matters: a
-/// wielder resisted for slashing wants the piercing blade in reserve
-/// and vice versa.
-pub static OFF_HAND_SCIMITAR: OffHandAttack = OffHandAttack {
-    display_name: "off-hand scimitar",
-    aliases: &["ohs", "offhand scimitar"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Slashing,
-};
-
 /// Off-hand dagger — DEX-based 1d4 piercing. The smallest blade on the
 /// roster, and the one a caster-martial hybrid carries: a Bladesinger
 /// or an Arcane Trickster is holding a dagger because it is the weapon

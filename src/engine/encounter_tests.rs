@@ -14512,8 +14512,17 @@ fn vampire_spawn_resists_necrotic() {
     assert_eq!(before - after, 5);
 }
 
+/// RAW: "The captain makes three melee attacks: two with its scimitar
+/// and one with its dagger."
+///
+/// Both halves are asserted, and the second is the one that was wrong:
+/// the routine used to be three scimitars. The count was right and one
+/// of the weapons was not, which matters because the two weapons deal
+/// different damage types — a target that resists slashing and not
+/// piercing takes a materially different beating from the RAW routine
+/// than from the one the engine was running.
 #[test]
-fn bandit_captain_multiattack_is_three_swings() {
+fn bandit_captain_multiattack_is_two_scimitars_and_a_dagger() {
     use crate::actions::monster_attacks::BANDIT_CAPTAIN_MULTI;
     use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
@@ -14525,9 +14534,19 @@ fn bandit_captain_multiattack_is_three_swings() {
             .actions
             .iter()
             .any(|a| a.name() == BANDIT_CAPTAIN_MULTI.name()),
-        "bandit captain should have the triple-scimitar multiattack"
+        "bandit captain should carry its multiattack"
     );
-    assert_eq!(BANDIT_CAPTAIN_MULTI.count, 3);
+    let routine: Vec<(&str, u32)> = BANDIT_CAPTAIN_MULTI
+        .parts
+        .iter()
+        .map(|(a, n)| (a.name(), *n))
+        .collect();
+    assert_eq!(routine, vec![("scimitar", 2), ("dagger", 1)]);
+    assert_eq!(
+        routine.iter().map(|(_, n)| n).sum::<u32>(),
+        3,
+        "three melee attacks, whatever they are made with"
+    );
 }
 
 #[test]
@@ -69473,6 +69492,7 @@ fn every_action_written_is_an_action_something_can_reach() {
         "actions/metamagic.rs",
         "actions/item_actions.rs",
         "actions/monster_attacks.rs",
+        "actions/two_weapon.rs",
     ];
 
     // Collect every `pub static NAME` declared in the action

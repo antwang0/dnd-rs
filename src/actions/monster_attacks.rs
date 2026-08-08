@@ -2935,13 +2935,25 @@ pub static GOBLIN_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
     count: 2,
 });
 
-/// Bandit Captain multiattack: 3 scimitar swings per Action — a tougher
-/// version of the goblin boss's pattern. Pair with a heavy crossbow for
-/// the bonus-action ranged finisher.
-pub static BANDIT_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
-    display_name: "triple scimitar",
-    sub_attack: &SCIMITAR,
-    count: 3,
+/// Bandit Captain multiattack — RAW: "The captain makes three melee
+/// attacks: two with its scimitar and one with its dagger."
+///
+/// It used to be three scimitars, on the reasoning that the captain is
+/// "a tougher version of the goblin boss's pattern". Three swings is
+/// the right count and one of them was the wrong weapon, which is not
+/// a rounding error where it lands: the dagger is *piercing* and the
+/// scimitar is *slashing*, and the bestiary is full of creatures that
+/// resist one and not the other. A skeleton takes half from every
+/// slashing swing and full from a piercing one — so against the
+/// captain's own routine the engine was quietly deleting a third of
+/// its damage against some targets and inventing it against others.
+///
+/// A `CompoundAttack` rather than a `Multiattack` for exactly that
+/// reason: the two are the same shape until the swings differ, and
+/// these differ. Same pairing the bullywug and the merrow already use.
+pub static BANDIT_CAPTAIN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "scimitar flurry",
+    parts: vec![(&SCIMITAR, 2), (&DAGGER, 1)],
 });
 
 /// Thug multiattack — 2 mace swings per Action (RAW: "The thug makes
