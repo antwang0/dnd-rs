@@ -75190,20 +75190,35 @@ fn the_default_board_is_lit_and_the_lighting_layer_is_invisible_on_it() {
 /// past it — the rule the two hundred stat blocks carrying
 /// `Darkvision(60)` were written for and never got.
 ///
-/// 60 ft is 24 tiles on the 2.5-ft grid, so 24 is the last tile the
-/// zombie sees and 25 is the first it does not. The boundary is pinned
-/// on both sides because an off-by-one here is invisible in play and
-/// changes every dark encounter.
+/// 60 ft is 24 tiles on the 2.5-ft grid, and the 24 is a *gap between
+/// bodies*, the same measure `nonvisual_sense_reaches` uses for
+/// blindsight and tremorsense. Two Medium creatures each fill 2×2
+/// tiles, so a gap of 24 puts their anchors 26 apart and the last
+/// distance the zombie sees at is 26.
+///
+/// Both sides of the boundary are pinned, and the gap is asserted
+/// alongside them, because an off-by-one here is invisible in play and
+/// changes every dark encounter — and because the anchor distance on
+/// its own would silently absorb a change of measure.
 #[test]
 fn darkvision_reaches_exactly_its_radius_and_no_further() {
-    for (distance, seen) in [(24, true), (25, false)] {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    for (distance, seen) in [(26, true), (27, false)] {
         let (mut e, fighter, zombie) = lighting_pair((distance, 2), (0, 2));
         e.set_ambient_light(AmbientLight::Darkness);
+        let gap = footprint_chebyshev(
+            e.actors[&zombie].location(),
+            get_tiles_from_size(e.actors[&zombie].size()),
+            e.actors[&fighter].location(),
+            get_tiles_from_size(e.actors[&fighter].size()),
+        );
+        assert_eq!(gap, distance - 2, "two Medium bodies, {} apart", distance);
         assert_eq!(
             !e.darkness_blinds(zombie, fighter),
             seen,
-            "a zombie's 24-tile darkvision at distance {}",
-            distance
+            "a zombie's 24-tile darkvision across a {}-tile gap",
+            gap
         );
     }
 }
@@ -76226,4 +76241,65 @@ fn a_spell_clause_and_a_condition_cancel_on_a_saving_throw() {
         "the poison alone is disadvantage, and the log says so:\n{}",
         log
     );
+}
+
+/// A big creature's light comes from all of it, not from the corner of
+/// its space.
+///
+/// A Huge body fills 6×6 tiles and its `location` is one corner of
+/// that. Measuring a carried torch from the anchor would light six
+/// tiles further to the north-east than to the south-west, which is
+/// not a lamp anybody would recognise. The same `footprint_chebyshev`
+/// every sense envelope in the engine uses gets it right, and this
+/// test is the shape it is because the bug it guards is a *symmetry*
+/// failure rather than an off-by-one: the assertion is that the two
+/// opposite sides agree.
+#[test]
+fn a_huge_bearers_torch_is_centred_on_its_body_and_not_on_its_corner() {
+    use crate::engine::util::get_tiles_from_size;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let giant = e
+        .instantiate_creature(
+            &crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE,
+            Coordinate::new(16, 16),
+            0,
+            0,
+        )
+        .unwrap();
+    let span = get_tiles_from_size(e.actors[&giant].size()) as isize;
+    assert!(span > 2, "this test needs a body bigger than a Medium one");
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Carried(giant),
+        bright_tiles: 4,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    // The body occupies x = 16 ..= 16 + span - 1. `footprint_chebyshev`
+    // reports the *gap*, so the last lit tile on either side is
+    // `bright_tiles` clear of the nearest face — five tiles out from
+    // it, counting the face's own neighbour as gap zero.
+    let (west_face, east_face) = (16, 16 + span - 1);
+    let reach = 4 + 1;
+    for (label, lit, dark) in [
+        ("west", west_face - reach, west_face - reach - 1),
+        ("east", east_face + reach, east_face + reach + 1),
+    ] {
+        assert_eq!(
+            e.light_at(Coordinate::new(lit, 16)),
+            LightLevel::Bright,
+            "{} face at its full reach",
+            label
+        );
+        assert_eq!(
+            e.light_at(Coordinate::new(dark, 16)),
+            LightLevel::Dark,
+            "one tile past the {} face's reach",
+            label
+        );
+    }
 }

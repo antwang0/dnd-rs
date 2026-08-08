@@ -3958,11 +3958,34 @@ impl EncounterInstance {
             if level == LightLevel::Bright {
                 break;
             }
-            if let Some(origin) = source.origin_in(&self.actors) {
-                level = level.brighter_of(source.contribution(origin, coord));
+            if let Some(dist) = self.distance_from_light(source, coord) {
+                level = level.brighter_of(source.level_at_distance(dist));
             }
         }
         level
+    }
+
+    /// How far `coord` is from `source`, or `None` if the source is
+    /// carried by somebody who has left the table.
+    ///
+    /// A fixed source is a point and measures point-to-tile. A carried
+    /// one measures from its bearer's whole *body*, through the same
+    /// `footprint_chebyshev` every sense envelope in the engine uses —
+    /// because a Huge creature does not hold its torch in the corner of
+    /// its space, and measuring from the anchor tile would light the
+    /// north-east of a giant three tiles further than the south-west.
+    fn distance_from_light(&self, source: &LightSource, coord: Coordinate) -> Option<isize> {
+        match source.anchor {
+            LightAnchor::Fixed(origin) => Some(origin.chebyshev_to(coord)),
+            LightAnchor::Carried(bearer_id) => self.actors.get(&bearer_id).map(|bearer| {
+                footprint_chebyshev(
+                    bearer.location(),
+                    get_tiles_from_size(bearer.size()),
+                    coord,
+                    1,
+                )
+            }),
+        }
     }
 
     /// True if `coord` is in actual sunlight — the trigger for every
@@ -4018,8 +4041,21 @@ impl EncounterInstance {
         if base == LightLevel::Bright {
             return base;
         }
+        // Measured from the viewer's body rather than from its anchor
+        // tile, for the same reason a carried light is — and, more
+        // importantly, so that darkvision and the non-visual envelopes
+        // it sits beside (`nonvisual_sense_reaches`) answer the same
+        // geometry. A bat's 60 ft of blindsight and a goblin's 60 ft of
+        // darkvision reaching different distances would be a difference
+        // nothing in the rules asks for.
         let reach = viewer.darkvision_tiles();
-        if reach > 0 && viewer.location().chebyshev_to(coord) <= reach {
+        let dist = footprint_chebyshev(
+            viewer.location(),
+            get_tiles_from_size(viewer.size()),
+            coord,
+            1,
+        );
+        if reach > 0 && dist <= reach {
             base.upgraded()
         } else {
             base
@@ -4061,7 +4097,31 @@ impl EncounterInstance {
         if viewer.has_truesight() || nonvisual_sense_reaches(viewer, subject) {
             return false;
         }
-        self.perceived_light(viewer_id, subject.location()) == LightLevel::Dark
+        // Magical darkness first, and on its own terms: darkvision does
+        // not lift it and Devil's Sight is the only thing that does.
+        let where_they_stand = subject.location();
+        if self.magically_dark_at(where_they_stand) {
+            return !viewer.has_devils_sight();
+        }
+        if self.light_at(where_they_stand) != LightLevel::Dark {
+            return false;
+        }
+        // Body to body, exactly as `nonvisual_sense_reaches` measures
+        // the envelopes darkvision sits beside — not through
+        // `perceived_light`, which answers a *tile* query and therefore
+        // has only one body to measure from. A creature is seen if its
+        // space is within the radius, and for a dragon that is a very
+        // different question from whether its anchor tile is.
+        let reach = viewer.darkvision_tiles();
+        if reach == 0 {
+            return true;
+        }
+        footprint_chebyshev(
+            viewer.location(),
+            get_tiles_from_size(viewer.size()),
+            where_they_stand,
+            get_tiles_from_size(subject.size()),
+        ) > reach
     }
 
     /// Burn one round off every light source with a timer and sweep the

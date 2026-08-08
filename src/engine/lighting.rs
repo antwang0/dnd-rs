@@ -274,6 +274,13 @@ pub struct LightSource {
 impl LightSource {
     /// Where this source is right now, given the actor table, or `None`
     /// if it is carried by somebody who is no longer in it.
+    ///
+    /// The anchor *tile*. Callers measuring a distance from a carried
+    /// source want the bearer's whole body instead — see
+    /// `EncounterInstance::distance_from_light` — because a
+    /// Huge creature's torch is not held in the corner of its space.
+    /// This accessor is for the callers that want the identity of the
+    /// tile rather than a distance from it.
     pub fn origin_in(
         &self,
         actors: &std::collections::HashMap<usize, crate::actors::actor_template::ActorInstance>,
@@ -284,13 +291,15 @@ impl LightSource {
         }
     }
 
-    /// The light this source contributes to `coord`, given its current
-    /// `origin`. `Dark` — i.e. nothing — beyond the dim collar.
+    /// The light this source contributes at `dist` tiles from it.
+    /// `Dark` — i.e. nothing — beyond the dim collar.
     ///
-    /// Chebyshev, like every other radius in the engine. See the module
+    /// Takes a distance rather than measuring one, because *how* the
+    /// distance is measured depends on what the source is attached to
+    /// and only the encounter knows: a fixed sphere is a point, and a
+    /// carried torch is wherever its bearer's body is. See the module
     /// note on why light does not respect walls.
-    pub fn contribution(&self, origin: Coordinate, coord: Coordinate) -> LightLevel {
-        let dist = origin.chebyshev_to(coord);
+    pub fn level_at_distance(&self, dist: isize) -> LightLevel {
         if dist <= self.bright_tiles {
             LightLevel::Bright
         } else if dist <= self.bright_tiles + self.dim_tiles {
@@ -467,7 +476,6 @@ mod tests {
             rounds_remaining: None,
             spell_level: 0,
         };
-        let o = Coordinate::new(0, 0);
         for (dist, expected) in [
             (0, LightLevel::Bright),
             (2, LightLevel::Bright),
@@ -476,7 +484,7 @@ mod tests {
             (6, LightLevel::Dark),
         ] {
             assert_eq!(
-                src.contribution(o, Coordinate::new(dist, 0)),
+                src.level_at_distance(dist),
                 expected,
                 "at distance {}",
                 dist
