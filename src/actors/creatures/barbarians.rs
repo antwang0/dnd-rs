@@ -7,7 +7,7 @@ use crate::actions::class_features::{
     ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
+use crate::actions::monster_attacks::{GREATAXE, HANDAXE, RECKLESS_ATTACK, THROWN_HANDAXE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
@@ -49,6 +49,22 @@ fn subclass_barbarian_template(
 ) -> CreatureTemplate {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GREATAXE);
+    // The handaxe on the barbarian's belt, and the same handaxe in
+    // flight. RAW's barbarian is proficient with both and canonically
+    // carries a few; the engine's barbarian, until now, was the only
+    // player family on the roster with no way at all to hurt something
+    // it could not walk to — no bow, no cantrip, nothing thrown.
+    //
+    // Deliberately the worse option, and deliberately still there.
+    // Rage's damage bonus is melee-only, the greataxe's d12 dwarfs the
+    // handaxe's d6, and Reckless Attack buys advantage on Strength
+    // *melee* swings — so every incentive the chassis has points at
+    // closing to contact, which is what a barbarian should want. What
+    // the throw changes is the round where closing is not on offer:
+    // the flier overhead, the archer across the chasm, the caster
+    // behind a wall of fire. Those rounds used to be spent walking.
+    actions.push(&HANDAXE);
+    actions.push(&THROWN_HANDAXE);
     actions.push(&*RAGE);
     actions.push(&*RECKLESS_ATTACK);
     for &a in extra_actions {
@@ -120,6 +136,11 @@ fn subclass_barbarian_template(
 pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GREATAXE);
+    // The belt handaxe and the same handaxe in flight — see
+    // `barbarian_subclass` above for why a chassis whose every
+    // incentive points at contact carries a throw anyway.
+    actions.push(&HANDAXE);
+    actions.push(&THROWN_HANDAXE);
     actions.push(&*RAGE);
     actions.push(&*RECKLESS_ATTACK);
     // Path of the Berserker — Frenzy (subclass lv3 feature). Bonus

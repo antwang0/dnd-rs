@@ -906,9 +906,7 @@ impl SimpleWeapon {
     /// orthogonal to every shape above it: a summoned weapon could be
     /// melee, reach-melee, flat-damage or ranged, and pairing the gate
     /// with each of those would be four near-identical constructors to
-    /// keep in step. Written out field-by-field rather than with
-    /// functional-record-update syntax, which `const fn` does not
-    /// accept.
+    /// keep in step.
     ///
     /// Every field but the one being set is copied across verbatim.
     /// That is worth stating because it did not used to be true:
@@ -935,6 +933,65 @@ impl SimpleWeapon {
     pub const fn light(self) -> Self {
         Self {
             is_light: true,
+            ..self
+        }
+    }
+
+    /// Const builder that turns a melee weapon into its **thrown**
+    /// twin — `SimpleWeapon::melee(...).thrown("thrown dagger",
+    /// &["td"], 8, 24)`.
+    ///
+    /// 5e's thrown property: *"you can throw the weapon to make a
+    /// ranged attack. If the weapon is a melee weapon, you use the
+    /// same ability modifier for that attack roll and damage roll that
+    /// you would use for a melee attack with the weapon."* That last
+    /// sentence is why this is a builder off the melee weapon rather
+    /// than a separate `ranged()` call: the ability, the die and the
+    /// damage type are not chosen for the throw, they are *inherited*
+    /// from the swing, and a second declaration is a second place for
+    /// them to drift. A javelin whose thrown twin rolled DEX would be
+    /// a bug nobody would find, because both halves would look right
+    /// in isolation.
+    ///
+    /// What the throw does change: it is a shot rather than a swing
+    /// (`is_melee: false`), it needs to see where it is going
+    /// (`requires_los: true`), and it carries 5e's two ranges — beyond
+    /// `normal_range` the shot is at disadvantage, beyond `reach` it
+    /// cannot be made at all. Both in tile-gap units on the engine's
+    /// 2.5-ft grid, so RAW's 20/60 ft is `(8, 24)`.
+    ///
+    /// `is_light` is deliberately carried across rather than cleared.
+    /// A thrown dagger is still a light weapon — RAW's properties are
+    /// properties of the object, not of what you did with it — and
+    /// `is_light_melee_weapon` already ands the flag with `is_melee`,
+    /// so a throw opens no off-hand swing regardless.
+    ///
+    /// `min_effective_range` is cleared, and that one is not
+    /// bookkeeping: it is the lance's "disadvantage inside 5 feet",
+    /// which is a fact about a weapon braced under an arm at a gallop
+    /// and means nothing about the same weapon in flight. No thrown
+    /// weapon in RAW has a minimum range.
+    ///
+    /// Ammunition is not tracked, here or anywhere in the engine, so a
+    /// thrown weapon can be thrown every round without running out.
+    /// That is a real divergence and a deliberate one: RAW's answer is
+    /// that you walk over and pick it up, which is a move action in a
+    /// system with no inventory to put it back into.
+    pub const fn thrown(
+        self,
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        normal_range: isize,
+        long_range: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            reach: long_range,
+            is_melee: false,
+            requires_los: true,
+            normal_range: Some(normal_range),
+            min_effective_range: None,
             ..self
         }
     }
@@ -1983,13 +2040,71 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
 /// we use DEX which is the typical kobold / rogue stat. Cost 1 Action.
-pub static DAGGER: SimpleWeapon = SimpleWeapon::melee(
+/// The four weapons below each ship as a `_PROFILE` const and two
+/// statics — the swing and the throw — rather than as two independent
+/// declarations.
+///
+/// The const is what makes the throw *the same weapon*. RAW says a
+/// thrown melee weapon uses the ability, die and damage type of the
+/// swing, so those three facts have exactly one place to be written
+/// and the throw derives from it; a second literal would be a second
+/// place for them to drift, and a javelin whose throw rolled the wrong
+/// ability would look right in both halves read separately.
+///
+/// It is a `const` rather than a `static` because a static cannot be
+/// moved out of, and the builder consumes `self`. Consts are inlined
+/// at each use, so the two statics below are two distinct objects with
+/// two distinct addresses — which is what the action list wants, since
+/// it holds `&'static dyn Action` and the swing and the throw are
+/// different entries on it.
+const DAGGER_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     "dagger",
     &["dag"],
     AbilityScoreType::Dexterity,
     Dice::new(1, 4),
     DamageType::Piercing,
 ).light();
+
+pub static DAGGER: SimpleWeapon = DAGGER_PROFILE;
+
+/// The dagger in flight — RAW 20/60 ft, which is 8/24 tiles.
+///
+/// Inherits DEX from the swing, which is RAW twice over: the throw
+/// uses the melee ability, and the melee ability for a finesse weapon
+/// is the wielder's choice. The shortest throw on the roster, and the
+/// one carried by the builds least able to stand in melee.
+pub static THROWN_DAGGER: SimpleWeapon = DAGGER_PROFILE.thrown(
+    "thrown dagger",
+    &["td", "hurl dagger"],
+    THROWN_SHORT_NORMAL,
+    THROWN_SHORT_LONG,
+);
+
+/// Handaxe — STR-based 1d6 slashing, light, thrown. RAW's simple
+/// melee axe, and the Strength build's answer to the dagger: a
+/// martial who dual-wields axes throws one at the archer they cannot
+/// reach.
+///
+/// Same die and damage type as the scimitar and distinct from it on
+/// the two properties that matter — the scimitar is light but stays
+/// in the hand, and this leaves it.
+const HANDAXE_PROFILE: SimpleWeapon = SimpleWeapon::melee(
+    "handaxe",
+    &["ha", "axe"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+).light();
+
+pub static HANDAXE: SimpleWeapon = HANDAXE_PROFILE;
+
+/// The handaxe in flight — RAW 20/60 ft.
+pub static THROWN_HANDAXE: SimpleWeapon = HANDAXE_PROFILE.thrown(
+    "thrown handaxe",
+    &["tha", "hurl axe"],
+    THROWN_SHORT_NORMAL,
+    THROWN_SHORT_LONG,
+);
 
 /// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
 /// **reach 2** (10ft) — first polearm-style attack in the codebase.
@@ -2037,12 +2152,41 @@ pub static MACE: SimpleWeapon = SimpleWeapon::melee(
 /// since the engine doesn't surface per-action grip toggles and the
 /// thrown lane is already covered by `JAVELIN`. Shared static so Tribal
 /// Warrior and any future spear-wielding humanoid point at one source.
-pub static SPEAR: SimpleWeapon = SimpleWeapon::melee(
+const SPEAR_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     "spear",
     &["sp"],
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Piercing,
+);
+
+pub static SPEAR: SimpleWeapon = SPEAR_PROFILE;
+
+/// RAW's short throw — 20 ft normal, 60 ft long — in tile-gap units on
+/// the 2.5-ft grid. The range every thrown melee weapon in the PHB
+/// shares except the javelin, which is built to be thrown and reaches
+/// half again as far.
+///
+/// Named rather than repeated as a pair of literals at each throw,
+/// because the two numbers only mean anything together: `24` on its
+/// own is indistinguishable from a reach, and a throw whose normal
+/// range was accidentally given as its long range would be a weapon
+/// that never rolls at disadvantage and nothing would say so.
+pub const THROWN_SHORT_NORMAL: isize = 8;
+pub const THROWN_SHORT_LONG: isize = 24;
+
+/// The spear in flight — RAW 20/60 ft.
+///
+/// The one on the underwater ranged cohort that the roster could
+/// nearly reach already: `UNDERWATER_RANGED_WEAPONS` has named the
+/// spear since it was written, and the spear has been a melee-only
+/// weapon the whole time, so the row could never match. It matches
+/// now.
+pub static THROWN_SPEAR: SimpleWeapon = SPEAR_PROFILE.thrown(
+    "thrown spear",
+    &["tsp", "hurl spear"],
+    THROWN_SHORT_NORMAL,
+    THROWN_SHORT_LONG,
 );
 
 /// Shortsword — DEX-based 1d6 piercing finesse weapon. Standard Scout /
@@ -9934,25 +10078,13 @@ pub static BULLYWUG_BITE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Bullywug Spear — STR-based 1d6+STR piercing melee. The amphibian
-/// raider's signature weapon — short reach (1 tile) but the primary
-/// damage lane in the multi. Paired with the bite for the bullywug's
-/// "thrust + chomp" double-hit on a single Action.
-pub static BULLYWUG_SPEAR: SimpleWeapon = SimpleWeapon::melee(
-    "bullywug spear",
-    &["bs", "frog-spear"],
-    AbilityScoreType::Strength,
-    Dice::new(1, 6),
-    DamageType::Piercing,
-);
-
 /// Bullywug Multiattack — 1 spear + 1 bite per Action. RAW: the
 /// bullywug makes two attacks (one with its bite, one with its spear).
 /// We model the heterogeneous pair via `CompoundAttack` so each limb
 /// uses its own dice tier.
 pub static BULLYWUG_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "spear + bite",
-    parts: vec![(&BULLYWUG_SPEAR, 1), (&BULLYWUG_BITE, 1)],
+    parts: vec![(&SPEAR, 1), (&BULLYWUG_BITE, 1)],
 });
 
 // ─── Quasit ──────────────────────────────────────────────────────────

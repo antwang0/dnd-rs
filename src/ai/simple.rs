@@ -59,8 +59,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 2. Kite if we're a ranged attacker under melee threat.
-        if has_ranged_attack(encounter, actor_id)
+        // 2. Kite if we're a ranged attacker under melee threat — and
+        //    if the shot is actually worth the ground. See
+        //    `ranged_lane_beats_staying`: a barbarian with a handaxe on
+        //    its belt and a paladin with a javelin both answer yes to
+        //    "has a ranged attack", and both are giving up more by
+        //    backing out of contact than the throw could ever return.
+        if ranged_lane_beats_staying(encounter, actor_id)
             && under_melee_threat(encounter, actor_id)
             && let Some(aei) = try_step_away_from_threats(encounter, actor_id)
         {
@@ -86,7 +91,7 @@ impl Controller for SimpleAi {
         //    OA-suppression. We use it only when our HP is below 30% and
         //    we have a ranged option to capitalize on the disengaged
         //    movement after the action.
-        if has_ranged_attack(encounter, actor_id)
+        if ranged_lane_beats_staying(encounter, actor_id)
             && under_melee_threat(encounter, actor_id)
             && is_low_hp(encounter, actor_id, 0.3)
             && let Some(aei) = try_disengage(encounter, actor_id)
@@ -5720,6 +5725,106 @@ fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
     })
 }
 
+/// The best `expected_damage` this actor can get out of an available
+/// harmful single-target attack in each lane, as `(melee, ranged)`.
+///
+/// `None` in a slot means the lane is either empty or unannotated —
+/// the estimate is optional on `Action` and most bespoke attacks leave
+/// it off — and callers must treat that as "no opinion" rather than as
+/// zero. Availability is `validate` against a live enemy, the same
+/// clause `has_ranged_attack` uses, so a swing the actor cannot pay
+/// for does not argue for staying and a shot it cannot pay for does
+/// not argue for leaving.
+fn best_damage_per_lane(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    enemies: &[usize],
+) -> (Option<f32>, Option<f32>) {
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return (None, None);
+    };
+    let (mut melee, mut ranged) = (None::<f32>, None::<f32>);
+    for action in actor.actions.iter() {
+        if !action.is_harmful()
+            || !action.deals_damage()
+            || !matches!(action.targeting_schema(), TargetingSchema::SingleActor)
+        {
+            continue;
+        }
+        let Some(est) = action.expected_damage(encounter, actor_id) else {
+            continue;
+        };
+        if !enemies.iter().any(|&tid| {
+            ActionExecutionInfo::new(*action, actor_id, Some(vec![tid]), None, None)
+                .validate(encounter)
+        }) {
+            continue;
+        }
+        let slot = if action.is_melee_attack() {
+            &mut melee
+        } else {
+            &mut ranged
+        };
+        *slot = Some(slot.map_or(est, |best: f32| best.max(est)));
+    }
+    (melee, ranged)
+}
+
+/// True if backing out of contact is worth the step — that is, if the
+/// actor's ranged lane is not strictly worse than the melee lane it
+/// would be giving up.
+///
+/// This is the clause `has_ranged_attack` deliberately stops short of,
+/// and it stops short of it for a good reason: that predicate is a
+/// gate, and asking it to rank lanes would duplicate the picker. But
+/// there is a difference between "don't rank" and "don't notice you
+/// are trading a greataxe for a hatchet", and the roster grew creatures
+/// on the wrong side of it.
+///
+/// A barbarian carries a handaxe to throw; a paladin carries a javelin.
+/// Both are one line on a sheet whose every other line points at
+/// contact — Rage's damage bonus and Reckless Attack's advantage are
+/// melee-only, and Divine Smite rides a melee weapon hit, so an
+/// out-of-reach round costs the oath its whole damage budget rather
+/// than just its turn. Under the existence test both read as ranged
+/// attackers the moment the throw went on the sheet, and rung 2 walked
+/// them backwards away from the fight they were built to be in.
+///
+/// The comparison is deliberately permissive in both directions where
+/// it has no information. A lane with no estimate is "no opinion", not
+/// zero: `expected_damage` is optional and most bespoke attacks leave
+/// it off, so demanding a number would turn every unannotated melee
+/// attack into a licence to kite and every unannotated ranged one into
+/// a ban. Only a melee lane that *demonstrably* beats the ranged lane
+/// stops the retreat.
+///
+/// Ties go to leaving. A creature with equal options standing in
+/// something's reach is better off out of it, which is the whole
+/// premise of the rung.
+fn ranged_lane_beats_staying(encounter: &EncounterInstance, actor_id: usize) -> bool {
+    if !has_ranged_attack(encounter, actor_id) {
+        return false;
+    }
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let my_team = actor.team();
+    let enemies: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|id| {
+            encounter
+                .actors
+                .get(id)
+                .is_some_and(|a| a.team() != my_team && a.is_combat_active())
+        })
+        .collect();
+    match best_damage_per_lane(encounter, actor_id, &enemies) {
+        (Some(melee), Some(ranged)) => ranged >= melee,
+        _ => true,
+    }
+}
+
 /// True if any combat-active enemy has a melee attack whose reach covers
 /// our current footprint distance to them. "Melee" = reach ≤ MELEE_REACH.
 fn under_melee_threat(encounter: &EncounterInstance, actor_id: usize) -> bool {
@@ -6022,7 +6127,11 @@ fn try_teleport_escape(
     /// escape is the better answer anyway.
     const MAX_VALIDATIONS_PER_ACTION: usize = 8;
 
-    if !has_ranged_attack(encounter, actor_id) || !under_melee_threat(encounter, actor_id) {
+    // Same gate as the kite rung above, and for the same reason: a
+    // blink is a more expensive way of giving up contact than a step
+    // is, so a creature that should not be stepping away certainly
+    // should not be spending a slot to teleport away.
+    if !ranged_lane_beats_staying(encounter, actor_id) || !under_melee_threat(encounter, actor_id) {
         return None;
     }
     // Two conditions, either of which makes leaving worth an action:
@@ -8169,6 +8278,60 @@ mod tests {
         assert!(
             !has_ranged_attack(&e, monk),
             "a monk with no action economy left has no shot to back away for"
+        );
+    }
+
+    /// The kite rung backs an actor out of contact so it can shoot. It
+    /// should not do that when the shot is worse than the swing it is
+    /// walking away from.
+    ///
+    /// The existence test above answers "is there a shot"; this one
+    /// answers "is the shot worth the ground", and the roster grew
+    /// creatures that need the second question asked. A barbarian
+    /// carries a handaxe to throw. Under the existence test alone that
+    /// one line turned the engine's heaviest melee chassis into a
+    /// kiter — every incentive it has is melee-only (Rage's damage
+    /// bonus, Reckless Attack's advantage, a d12 against the throw's
+    /// d6) and rung 2 walked it backwards out of the fight anyway.
+    #[test]
+    fn a_melee_chassis_does_not_kite_for_the_hatchet_on_its_belt() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = empty_arena();
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // The throw is genuinely there and genuinely available — this
+        // is not the livelock case above, where the shot had simply
+        // been paid for already.
+        assert!(
+            has_ranged_attack(&e, barb),
+            "the thrown handaxe should read as a ranged attack"
+        );
+        assert!(
+            under_melee_threat(&e, barb),
+            "the ogre should be in contact for the rung to be live at all"
+        );
+        assert!(
+            !ranged_lane_beats_staying(&e, barb),
+            "a greataxe in reach beats a handaxe in flight — no reason to step back"
+        );
+
+        // And the gate still lets through the creature it was written
+        // for. A wizard's cantrip outdamages its dagger, so backing out
+        // of contact is exactly what a wizard should be doing.
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 10), 1, 1)
+            .unwrap();
+        assert!(
+            ranged_lane_beats_staying(&e, wiz),
+            "a wizard in an ogre's reach should still want out of it"
         );
     }
 

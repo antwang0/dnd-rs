@@ -53640,6 +53640,104 @@ fn the_two_weapon_style_pays_the_off_hand_and_only_the_off_hand() {
     );
 }
 
+/// 5e's **thrown** property: *"you can throw the weapon to make a
+/// ranged attack. If the weapon is a melee weapon, you use the same
+/// ability modifier for that attack roll and damage roll that you
+/// would use for a melee attack with the weapon."*
+///
+/// The second sentence is the one worth pinning, because it is the one
+/// a second hand-written literal would get wrong. Every throw on the
+/// roster derives from its swing through `SimpleWeapon::thrown`, so
+/// the ability, the die and the damage type are copied rather than
+/// re-chosen — and a javelin whose throw rolled Dexterity would look
+/// perfectly correct in both halves read separately.
+#[test]
+fn a_thrown_weapon_is_the_same_weapon_in_flight() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{
+        DAGGER, HANDAXE, SPEAR, THROWN_DAGGER, THROWN_HANDAXE, THROWN_SPEAR,
+    };
+
+    for (swing, throw) in [
+        (&DAGGER, &THROWN_DAGGER),
+        (&HANDAXE, &THROWN_HANDAXE),
+        (&SPEAR, &THROWN_SPEAR),
+    ] {
+        assert_eq!(
+            (swing.attack_ability, swing.damage_ability),
+            (throw.attack_ability, throw.damage_ability),
+            "{} should throw with the ability it swings with",
+            swing.display_name
+        );
+        assert_eq!(
+            (swing.damage_dice, swing.damage_type),
+            (throw.damage_dice, throw.damage_type),
+            "{} should throw for the damage it swings for",
+            swing.display_name
+        );
+
+        // And what the throw *does* change. A swing is a swing and a
+        // throw is a shot: it needs to see where it is going, it
+        // carries a normal range past which it rolls at disadvantage,
+        // and it is not a melee attack for any of the lanes that ask —
+        // opportunity attacks, riposte, the underwater melee clause,
+        // or the two-weapon opening.
+        assert!(swing.is_melee_attack() && !throw.is_melee_attack());
+        assert!(!swing.requires_los() && throw.requires_los());
+        assert!(swing.normal_range().is_none() && throw.normal_range().is_some());
+        assert!(
+            !throw.is_light_melee_weapon(),
+            "a weapon in flight opens no off-hand swing, light or not"
+        );
+    }
+}
+
+/// 5e Underwater Combat exempts "a weapon that is thrown like a
+/// javelin (including a spear, trident, or dart)" from the ranged
+/// disadvantage clause.
+///
+/// `UNDERWATER_RANGED_WEAPONS` has named the spear since it was
+/// written, and until the armoury had a thrown one the row could never
+/// match — the rule was there and nothing in the engine could invoke
+/// it. The sahuagin is the creature it was written for, and this is
+/// the check that its spear now reaches the exemption while the bow
+/// beside it does not.
+#[test]
+fn a_thrown_spear_carries_underwater_where_a_bow_does_not() {
+    use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
+
+    let shot = |name: &str| {
+        UnderwaterVerdict::for_attack(AttackInWater {
+            immersed: true,
+            waived: false,
+            is_weapon_attack: true,
+            is_melee: false,
+            swims: false,
+            beyond_normal_range: false,
+            weapon_name: name,
+        })
+    };
+    assert_eq!(shot("thrown spear"), UnderwaterVerdict::Unaffected);
+    assert_eq!(shot("longbow"), UnderwaterVerdict::Disadvantage);
+
+    // The exemption is from the disadvantage clause only. RAW applies
+    // the automatic miss past normal range to every ranged weapon
+    // attack without qualification, and a spear loses its momentum to
+    // the water exactly as an arrow does.
+    assert_eq!(
+        UnderwaterVerdict::for_attack(AttackInWater {
+            immersed: true,
+            waived: false,
+            is_weapon_attack: true,
+            is_melee: false,
+            swims: false,
+            beyond_normal_range: true,
+            weapon_name: "thrown spear",
+        }),
+        UnderwaterVerdict::AutoMiss
+    );
+}
+
 /// The `light` property is a property of *weapons*, and the roster
 /// agrees with the PHB about which ones have it.
 ///

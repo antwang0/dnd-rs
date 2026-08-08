@@ -1,6 +1,8 @@
 use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{SAHUAGIN_BITE, SAHUAGIN_CLAWS, SAHUAGIN_MULTI};
+use crate::actions::monster_attacks::{
+    SAHUAGIN_BITE, SAHUAGIN_CLAWS, SAHUAGIN_MULTI, SPEAR, THROWN_SPEAR,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -17,6 +19,21 @@ pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&SAHUAGIN_BITE);
     actions.push(&SAHUAGIN_CLAWS);
     actions.push(&*SAHUAGIN_MULTI);
+    // RAW's stat block gives the sahuagin a spear at "reach 5 ft. or
+    // range 20/60 ft." — a single line that is two attacks, and the
+    // half of it the template used to be missing entirely. The
+    // multiattack still opens with tooth and claw; the spear is what a
+    // raider does about a target on the far bank.
+    //
+    // The throw is the live case for 5e's underwater ranged exemption.
+    // `UNDERWATER_RANGED_WEAPONS` has named the spear since it was
+    // written, and until now no creature in the engine could make a
+    // ranged attack with one — so the row could never match, and the
+    // rule it encodes had nothing to apply itself to. A sahuagin is
+    // exactly the creature it was written for: it swims, it fights in
+    // water, and its spear carries there where a bow does not.
+    actions.push(&SPEAR);
+    actions.push(&THROWN_SPEAR);
     CreatureTemplate {
         name: "Sahuagin",
         // 'S' — uppercase since lowercase 's' is Stirge; 'S' was free in

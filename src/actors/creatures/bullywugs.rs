@@ -1,6 +1,6 @@
 use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{BULLYWUG_BITE, BULLYWUG_MULTI, BULLYWUG_SPEAR};
+use crate::actions::monster_attacks::{BULLYWUG_BITE, BULLYWUG_MULTI, SPEAR, THROWN_SPEAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -20,7 +20,21 @@ use std::sync::LazyLock;
 /// no-water-terrain model.
 pub static BULLYWUG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&BULLYWUG_SPEAR);
+    // The shared `SPEAR`, not a bespoke one. `BULLYWUG_SPEAR` used to
+    // sit in the armoury as a `SimpleWeapon::melee(STR, 1d6,
+    // Piercing)` — which is `SPEAR` with a different display name and
+    // nothing else, so the bullywug carried a private copy of a weapon
+    // the armoury already had and the underwater melee cohort, which
+    // matches on the word "spear", exempted one of them and taxed the
+    // other.
+    //
+    // And the throw, which RAW's stat block has always had: "Spear.
+    // Melee or Ranged Weapon Attack: +3 to hit, reach 5 ft. or range
+    // 20/60 ft." A bullywug is an amphibian that fights at the water's
+    // edge, so it is on both sides of the underwater rules at once —
+    // the spear keeps its edge in the water and carries through it.
+    actions.push(&SPEAR);
+    actions.push(&THROWN_SPEAR);
     actions.push(&BULLYWUG_BITE);
     actions.push(&*BULLYWUG_MULTI);
     CreatureTemplate {

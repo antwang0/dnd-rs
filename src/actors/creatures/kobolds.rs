@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{DAGGER, SHORTBOW};
+use crate::actions::monster_attacks::{DAGGER, SHORTBOW, THROWN_DAGGER};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -12,6 +12,14 @@ use std::sync::LazyLock;
 pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DAGGER);
+    // RAW's kobold stat block reads "Dagger. Melee or Ranged Weapon
+    // Attack: +4 to hit, reach 5 ft. or range 20/60 ft." — one line
+    // that is two attacks, and the second half is the one a kobold
+    // actually wants. The shortbow beside it is a bonus action, so a
+    // kobold that opens by throwing its dagger and then looses an
+    // arrow spends its whole turn without ever coming into reach,
+    // which is the creature playing to its 5 average hit points.
+    actions.push(&THROWN_DAGGER);
     actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Kobold",
