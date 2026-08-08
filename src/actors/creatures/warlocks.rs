@@ -190,11 +190,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // ranged kit (the rider is melee-only, but the resistance + flight +
     // immunity envelope hardens the warlock against incoming damage).
     actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
-    // lv2 **Darkness**: a warlock signature (Devil's Sight invocation
-    // historically lets warlocks see through their own darkness;
-    // engine-side we just install the concentration-bound symmetric-
-    // blind zone). Goes on the warlock list as part of their Pact of
-    // the Fiend / Pact of the Chain SRD baseline.
+    // lv2 **Darkness**: a warlock signature, and no longer a symmetric
+    // blind. The Devil's Sight invocation in this template's `features`
+    // set is what RAW pairs it with, and the pairing is the whole
+    // combo: the sphere is heavy obscurement to everybody else and
+    // clear air to the warlock standing in it. Goes on the warlock list
+    // as part of their Pact of the Fiend / Pact of the Chain SRD
+    // baseline.
     actions.push(&*crate::actions::spells::DARKNESS);
     // lv4 **Shadow of Moil** (XGtE evocation, concentration). Self-only
     // shadow wrap: 2d8 necrotic retaliation on every melee hit AND
@@ -250,16 +252,23 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     smaller targets only.
         //   - Eldritch Mind: advantage on Constitution saves to maintain
         //     concentration (read at the damage chokepoint).
+        //   - Devil's Sight: sees normally in magical darkness, which
+        //     is what turns the Darkness on this list from a symmetric
+        //     blind into the warlock's own cover — the caster shoots
+        //     out of a sphere nothing inside can see out of. Inert
+        //     until the warlock actually casts it, so it costs the kit
+        //     nothing on a lit board.
         // RAW a level-5 warlock picks 3 invocations; the kit pre-picks
-        // these three since EB is the signature cantrip and
-        // concentration-bound spells (Hex / Hunger of Hadar) form the
-        // back half of the warlock's lockdown plan. Permanent passive
+        // these four since EB is the signature cantrip, Darkness is on
+        // the list, and concentration-bound spells (Hex / Hunger of
+        // Hadar) form the back half of the warlock's lockdown plan. Permanent passive
         // features — never consumed; the relevant cast / save sites
         // read them via `feature_available`.
         features: HashSet::from([
             crate::actions::class_features::AGONIZING_BLAST_TAG,
             crate::actions::class_features::REPELLING_BLAST_TAG,
             crate::actions::class_features::ELDRITCH_MIND_TAG,
+            crate::actions::class_features::DEVILS_SIGHT_TAG,
         ]),
         ..CreatureTemplate::defaults()
     }

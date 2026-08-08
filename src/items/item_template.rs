@@ -189,6 +189,21 @@ pub static BRACERS_OF_DEFENSE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// A torch. 5e adventuring gear: bright light in a 20-foot radius, dim
+/// light for another 20, for an hour.
+///
+/// The only light source in the game that costs nothing but a bonus
+/// action and a slot in the pack, which is what makes it the one that
+/// matters: every caster in the bestiary can make light with a cantrip,
+/// and no fighter can. On the loot pool so a party that walks into an
+/// unlit encounter without a caster is not simply blind.
+pub static TORCH: Item = Item {
+    name: "Torch",
+    glyph: 't',
+    on_use: Some(&crate::actions::item_actions::LIGHT_TORCH),
+    ..Item::DEFAULTS
+};
+
 pub static POTION_OF_HEALING: Item = Item {
     name: "Potion of Healing",
     glyph: 'p',
@@ -2617,6 +2632,13 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
+    // Three copies, the same weighting the basic healing potion gets.
+    // A torch is worth nothing on a lit board and is the difference
+    // between playing and not playing on a dark one, so it wants to be
+    // common rather than rare.
+    &TORCH,
+    &TORCH,
+    &TORCH,
     &POTION_OF_GREATER_HEALING,
     &ANTITOXIN,
     &POTION_OF_SPEED,

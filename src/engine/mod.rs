@@ -6,6 +6,7 @@ pub mod dice;
 pub mod encounter;
 pub mod errors;
 pub mod lair_actions;
+pub mod lighting;
 pub mod mounts;
 pub mod prompt;
 pub mod saves;

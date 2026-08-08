@@ -119,8 +119,16 @@ impl App {
         // base so future scaling stays anchored to the original difficulty.
         let mut scaled_params = self.actor_params.clone();
         scaled_params.cr_target = self.scaled_cr_target();
+        // The lights carry over. The ambient light belongs to the
+        // *game* the player started, not to one encounter of it, so a
+        // `--dark` run stays dark across the whole dungeon rather than
+        // walking into daylight the moment the party takes a rest.
+        // Read off the encounter that is ending, which is the only
+        // place it has been recorded since `main` set it.
+        let ambient = self.encounter.ambient_light();
         match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, None, rested) {
-            Ok(next) => {
+            Ok(mut next) => {
+                next.set_ambient_light(ambient);
                 self.encounter = next;
                 self.encounter_number += 1;
                 self.input_str.clear();

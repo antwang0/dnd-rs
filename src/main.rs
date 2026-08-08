@@ -14,24 +14,32 @@ use crate::ai::SimpleAi;
 use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::lighting::AmbientLight;
 use crate::engine::terrain_gen::TerrainGenParams;
 
 use crossterm::{execute, terminal};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 
-/// Command-line configuration: which class the human plays and which
-/// seed the encounter is generated from. Both optional, both
-/// positional, and order-independent — the first argument that parses
-/// as a number is the seed and everything else is the class name.
+/// Command-line configuration: which class the human plays, which seed
+/// the encounter is generated from, and what the lights are doing. All
+/// optional, all positional, and order-independent — the first argument
+/// that parses as a number is the seed, a `--flag` naming an ambient
+/// light sets the lighting, and everything else is the class name.
 ///
-/// Order-independence is worth the few lines it costs because the two
+/// Order-independence is worth the few lines it costs because the
 /// arguments have no natural order to remember. `dnd-rs 42 four
 /// elements monk` and `dnd-rs four elements monk 42` do the same thing,
 /// and neither requires the player to look up which slot is which.
 struct Cli {
     seed: Option<u64>,
     pc_template: &'static CreatureTemplate,
+    /// What the sky is doing — see `crate::engine::lighting`. Defaults
+    /// to the lit board the game has always been played on; `dark`
+    /// turns the lights out and makes darkvision, torches and the Light
+    /// cantrip matter, and `daylight` puts the fight under an open sun
+    /// where the kobolds and the drow flinch.
+    ambient: AmbientLight,
 }
 
 /// What `Cli::parse` decided the arguments meant.
@@ -58,6 +66,7 @@ impl Cli {
     /// than a refusal, because the player finds out several turns in.
     fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, String> {
         let mut seed = None;
+        let mut ambient = AmbientLight::default();
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -66,6 +75,26 @@ impl Cli {
             // is what happened before, on stderr, behind exit code 2.
             if matches!(arg.as_str(), "-h" | "--help" | "help") {
                 return Ok(Invocation::Help(Self::help_message()));
+            }
+            // Checked before the class-name collection for the same
+            // reason `--help` is: a lighting request is not a class
+            // name, and letting it fall through would answer it with
+            // "unknown class".
+            //
+            // The `--` is *required*, unlike the seed and the class
+            // name, and that is not an inconsistency — it is what keeps
+            // the three from colliding. The class list already contains
+            // a Sun Soul Monk and a Gloom Stalker Ranger, so a parser
+            // that accepted bare `sun` or `gloom` as a light level
+            // would quietly eat the first word of a class the player
+            // asked for and then refuse the rest of it. A prefix that
+            // no class name can start with is the cheapest way to keep
+            // the namespaces apart.
+            if let Some(flagless) = arg.strip_prefix("--")
+                && let Some(a) = AmbientLight::parse(flagless)
+            {
+                ambient = a;
+                continue;
             }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
@@ -78,21 +107,44 @@ impl Cli {
             let wanted = name_parts.join(" ");
             Self::find_template(&wanted).ok_or_else(|| Self::unknown_class_message(&wanted))?
         };
-        Ok(Invocation::Play(Self { seed, pc_template }))
+        Ok(Invocation::Play(Self {
+            seed,
+            pc_template,
+            ambient,
+        }))
     }
 
     /// Usage plus the full class listing. Shares
     /// `class_listing` with the unknown-class error so the two can't
     /// disagree about what is playable.
     fn help_message() -> String {
-        let mut msg = String::from("usage: dnd-rs [seed] [class name]\n\n");
-        msg.push_str("Both arguments are optional and order-independent: the first\n");
-        msg.push_str("argument that parses as a number is the seed, everything else\n");
-        msg.push_str("is the class name. With no seed, one is drawn and printed in\n");
-        msg.push_str("the initiative panel so the encounter can be replayed.\n\n");
+        let mut msg = String::from("usage: dnd-rs [seed] [class name] [--light-level]\n\n");
+        msg.push_str("Every argument is optional and order-independent: the first\n");
+        msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
+        msg.push_str("the light level, and everything else is the class name. With\n");
+        msg.push_str("no seed, one is drawn and printed in the initiative panel so\n");
+        msg.push_str("the encounter can be replayed.\n\n");
+        msg.push_str(&Self::lighting_listing());
+        msg.push('\n');
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
         msg
+    }
+
+    /// The ambient-light options, read off `AmbientLight::NAMES` rather
+    /// than written out here so the help text cannot advertise a
+    /// spelling the parser refuses — the same single-source discipline
+    /// `class_listing` keeps for the class names.
+    fn lighting_listing() -> String {
+        let flags: Vec<String> = AmbientLight::NAMES
+            .iter()
+            .map(|n| format!("--{}", n))
+            .collect();
+        format!(
+            "Light levels ({} is the default):\n  {}\n",
+            AmbientLight::default().label(),
+            flags.join(", ")
+        )
     }
 
     /// Every playable template, one line per class family. The shared
@@ -140,7 +192,7 @@ fn main() -> io::Result<()> {
             // listing survives on the terminal instead of being wiped
             // by the TUI teardown.
             eprintln!("{}", msg);
-            eprintln!("usage: dnd-rs [seed] [class name]");
+            eprintln!("usage: dnd-rs [seed] [class name] [--light-level]");
             std::process::exit(2);
         }
     };
@@ -172,8 +224,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
         start_team: 0,
     };
 
-    let encounter = EncounterInstance::from_params(&terrain_params, &actor_params, cli.seed)
+    let mut encounter = EncounterInstance::from_params(&terrain_params, &actor_params, cli.seed)
         .expect("failed to create encounter");
+    encounter.set_ambient_light(cli.ambient);
 
     let n_teams = actor_params.n_teams;
     let mut app = App::new(encounter, terrain_params, actor_params);
@@ -195,7 +248,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Invocation};
+    use super::{AmbientLight, Cli, Invocation};
 
     /// Parse and unwrap to a playable configuration. Every test below
     /// but the help ones expects `Play`, so the unwrap is the assertion.
@@ -292,6 +345,57 @@ mod tests {
             Cli::parse(["7".to_string(), "--help".to_string(), "Champion".to_string()]),
             Ok(Invocation::Help(_))
         ));
+    }
+
+    /// The light-level flags are recognised, from either side of the
+    /// other arguments, and the default stands when none is given.
+    #[test]
+    fn a_light_level_flag_sets_the_ambient_and_leaves_the_rest_alone() {
+        let cli = parse(&[]).expect("no args is always valid");
+        assert_eq!(cli.ambient, AmbientLight::default());
+        for args in [
+            &["--dark", "7", "Champion"][..],
+            &["7", "--dark", "Champion"][..],
+            &["7", "Champion", "--dark"][..],
+        ] {
+            let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
+            assert_eq!(cli.ambient, AmbientLight::Darkness, "{:?}", args);
+            assert_eq!(cli.seed, Some(7), "{:?}", args);
+            assert_eq!(cli.pc_template.name, "Champion", "{:?}", args);
+        }
+        assert_eq!(
+            parse(&["--daylight"]).expect("a bare flag").ambient,
+            AmbientLight::Daylight
+        );
+    }
+
+    /// The flag requires its `--`, and this is the test that says why:
+    /// the class list contains a **Sun** Soul Monk and a **Gloom**
+    /// Stalker Ranger, and a parser that took bare light-level words
+    /// would eat the first word of each and then refuse the rest.
+    ///
+    /// Pinned as a pair — the class still resolves, and the ambient is
+    /// untouched — because either half failing on its own is the bug.
+    #[test]
+    fn a_class_whose_name_starts_with_a_light_word_still_resolves() {
+        for (args, name) in [
+            (&["Sun", "Soul", "Monk"][..], "Sun Soul Monk"),
+            (&["Gloom", "Stalker", "Ranger"][..], "Gloom Stalker Ranger"),
+            (&["Light", "Cleric"][..], "Light Cleric"),
+        ] {
+            let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
+            assert_eq!(cli.pc_template.name, name);
+            assert_eq!(cli.ambient, AmbientLight::default(), "{:?}", args);
+        }
+    }
+
+    /// An unrecognized `--flag` is still refused as a class name rather
+    /// than silently ignored — the same bargain the unknown-class error
+    /// makes, and the reason a typo'd `--darkk` does not quietly start
+    /// a lit game.
+    #[test]
+    fn an_unrecognized_flag_is_refused_rather_than_ignored() {
+        assert!(parse(&["--darkk"]).is_err());
     }
 
     /// Every template in the registry is reachable by typing its own

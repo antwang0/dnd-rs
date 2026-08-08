@@ -13,6 +13,7 @@ use crate::{
         action_overrides::ActionOverride,
         conjured_terrain::{ConjuredTerrain, block_tiles, wall_tiles},
         dice::Dice,
+        lighting::{LightAnchor, LightSource, TORCH_BRIGHT_TILES, TORCH_DIM_TILES},
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
         side_effects::{
@@ -10171,15 +10172,47 @@ impl Action for InsectPlague {
 
 pub static INSECT_PLAGUE: LazyLock<InsectPlague> = LazyLock::new(|| InsectPlague {});
 
-/// Daylight — level-3 evocation. Anchors a 60-ft sphere of bright sunlight
-/// to a tile within 120 ft. Every ally inside the radius gets the Daylit
-/// condition, which imposes disadvantage on incoming attacks from
-/// undead / fiend-flavored enemies (proxied by Necrotic / Poison
-/// immunity, like the Warded clause). RAW the spell also dispels magical
-/// darkness in the area; we don't model darkness terrain, so the
-/// dispel-darkness clause is a no-op today. No concentration, but lasts
-/// only ~10 rounds before the timer ticks the condition off each ally.
+/// Daylight — level-3 evocation. Anchors a 60-ft sphere of bright light
+/// to a tile within 120 ft. Three clauses, and until the lighting layer
+/// existed only the first of them did anything:
+///
+///   - Every ally inside the radius gets the `Daylit` condition, which
+///     imposes disadvantage on incoming attacks from undead /
+///     fiend-flavored enemies (proxied by Necrotic / Poison immunity,
+///     like the Warded clause).
+///   - The sphere **sheds bright light**, on the light layer, for the
+///     spell's duration. A party fighting in an unlit dungeon can
+///     simply turn the lights on, which is what the spell is for and
+///     what the engine previously had no way to represent.
+///   - RAW's "if any of this spell's area overlaps with an area of
+///     darkness created by a spell of 3rd level or lower, the spell
+///     that created the darkness is dispelled" — a documented no-op in
+///     this docstring for as long as there was no darkness to dispel,
+///     and now the direct counter to an enemy warlock's Darkness.
+///
+/// What it deliberately is **not** is sunlight. RAW's own text calls
+/// the light "sunlight" only in the flavour sense, and a vampire is not
+/// destroyed by a 3rd-level spell — so the source it installs answers
+/// `false` to `is_sunlight` and no Sunlight Sensitivity clause fires
+/// inside it. See `crate::engine::lighting::AmbientLight`.
+///
+/// No concentration, but lasts only ~10 rounds before the timer ticks
+/// the condition off each ally and the light with it.
 pub struct Daylight {}
+
+impl Daylight {
+    /// The sphere, in tiles. Held here rather than repeated at the
+    /// three places that need it — the targeting schema, the ally
+    /// sweep, and the light source — because a radius that disagrees
+    /// with itself lights a different area than it buffs.
+    const RADIUS: isize = 6;
+    /// RAW's duration is an hour; ten rounds is the engine's standing
+    /// stand-in for "longer than the fight", shared by the condition
+    /// timer and the light source so the two lapse together.
+    const ROUNDS: u32 = 10;
+    /// "…darkness created by a spell of 3rd level or lower."
+    const DISPELS_UP_TO_LEVEL: u32 = 3;
+}
 
 impl Action for Daylight {
     fn school(&self) -> Option<SpellSchool> {
@@ -10193,7 +10226,9 @@ impl Action for Daylight {
     }
     fn targeting_schema(&self) -> TargetingSchema {
         // Sphere of radius 6 (≈ 30 ft); anchored to a tile within range.
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -10229,14 +10264,36 @@ impl Action for Daylight {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
+        // Both map-layer clauses land in the builder rather than as
+        // queued side effects, for the reason Darkness's mirror-image
+        // clause does: they are one sentence with the sphere itself,
+        // and a reordering that put the light up after the darkness it
+        // is supposed to have dispelled would leave the tile dark.
+        let lifted =
+            encounter.dispel_magical_darkness_in(point, Self::RADIUS, Self::DISPELS_UP_TO_LEVEL);
+        if lifted > 0 {
+            encounter.log(format!(
+                "  the daylight burns away {} magical darkness.",
+                lifted
+            ));
+        }
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "daylight",
+            anchor: LightAnchor::Fixed(point),
+            bright_tiles: Self::RADIUS,
+            dim_tiles: Self::RADIUS,
+            rounds_remaining: Some(Self::ROUNDS),
+            spell_level: 3,
+        });
         encounter
-            .ally_burst_targets(caster_id, point, 6)
+            .ally_burst_targets(caster_id, point, Self::RADIUS)
             .into_iter()
             .map(|id| {
                 Box::new(ApplyCondition {
                     actor_id: id,
                     condition: Condition::Daylit,
-                    timer: ConditionTimer::Rounds(10),
+                    timer: ConditionTimer::Rounds(Self::ROUNDS),
                 }) as Box<dyn ApplicableSideEffect>
             })
             .collect()
@@ -19045,6 +19102,124 @@ impl Action for Guidance {
 }
 
 pub static GUIDANCE: LazyLock<Guidance> = LazyLock::new(|| Guidance {});
+
+/// Light — evocation cantrip (bard / cleric / sorcerer / wizard /
+/// artificer), action, touch. "You touch one object… Until the spell
+/// ends, the object sheds bright light in a 20-foot radius and dim
+/// light for an additional 20 feet."
+///
+/// The most-cast cantrip in 5e and the last one the engine had no way
+/// to express, because until the lighting layer existed there was
+/// nothing for it to change. On a lit board it still does nothing —
+/// which is correct, and is why the AI is told to leave it alone there
+/// by `custom_validate_input` rather than by a special case in the
+/// picker.
+///
+/// Modeled as a light source carried by the touched creature rather
+/// than by an object in their pack, because the engine has no object
+/// layer and the distinction has no consequence: the coin or the shield
+/// the caster actually touched goes exactly where its owner goes.
+///
+/// Three RAW clauses are dropped:
+///
+///   - **The colour choice.** No surface.
+///   - **The hostile-target save.** "If you cast the spell on an object
+///     held by a hostile creature, that creature must succeed on a
+///     Dexterity saving throw to avoid the spell." A genuinely
+///     interesting use — lighting up the rogue who is hiding in the
+///     dark — but it makes a `is_harmful: false` cantrip harmful, and
+///     the picker, the AI's target ranking and the Charmed hostility
+///     gate all read that flag. Left out rather than half-wired.
+///   - **Dispelled by re-casting.** Replaced with a refusal:
+///     `custom_validate_input` declines to re-light somebody who is
+///     already carrying a light, which is the same outcome for one
+///     fewer action.
+///
+/// The one clause that is *not* dropped is the interaction that makes
+/// the cantrip worth having on the list at all: a Darkness cast over it
+/// snuffs it, because 2nd level beats a cantrip and
+/// `dispel_light_in` is told exactly that.
+pub struct Light {}
+
+impl Light {
+    /// RAW's hour is longer than any fight, so the source burns for the
+    /// duration rather than carrying a timer that would be a lie about
+    /// when it ends. See `LightSource::rounds_remaining`.
+    const BURNS_FOR: Option<u32> = None;
+}
+
+impl Action for Light {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "light"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lt", "torchlight"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        // Two refusals, and both are about not wasting the action.
+        // Re-lighting somebody who is already lit is RAW's
+        // "the previous casting is dispelled" arriving as a no-op; and
+        // a board that is already bright everywhere has nothing for the
+        // cantrip to do, which is the common case and the one an AI
+        // would otherwise burn its action on every single turn.
+        !encounter.actor_carries_light(target_id)
+            && encounter.ambient_light().level() != crate::engine::lighting::LightLevel::Bright
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "light",
+            anchor: LightAnchor::Carried(target_id),
+            bright_tiles: TORCH_BRIGHT_TILES,
+            dim_tiles: TORCH_DIM_TILES,
+            rounds_remaining: Self::BURNS_FOR,
+            // A cantrip, and therefore the first thing a Darkness cast
+            // puts out — `dispel_light_in` compares against this.
+            spell_level: 0,
+        });
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!("  {} begins to glow.", name));
+        Vec::new()
+    }
+}
+
+pub static LIGHT: LazyLock<Light> = LazyLock::new(|| Light {});
 
 /// Dissonant Whispers — level-1 enchantment (bard). The caster whispers
 /// a discordant melody at a single creature within 60 ft (24 tiles): the
@@ -28338,12 +28513,29 @@ pub static RAISE_DEAD: LazyLock<RaiseDead> = LazyLock::new(|| RaiseDead {});
 /// can't see through this darkness, and nonmagical light can't
 /// illuminate it."
 ///
-/// Heavy obscurement, on the zone layer — the same clause Fog Cloud
-/// carries, which is exactly right: RAW they differ only in flavour and
-/// in the sentence about darkvision, and the engine's obscurement gate
-/// already declines to let darkvision help. Blindsight and truesight
-/// still get through, which is also RAW and is what makes the spell a
-/// Devil's-Sight warlock's signature rather than a coin flip.
+/// Heavy obscurement *and* magical darkness, on the zone layer —
+/// `ZoneEffect::MAGICAL_DARKNESS`, which is the pairing of both flags
+/// and is the reason it is not simply Fog Cloud's `OBSCURING`. The two
+/// clauses are separate rules and RAW states both:
+///
+///   - **Obscuring** blinds everyone in, out of, and through the
+///     sphere, symmetrically, and darkvision does not help — "a
+///     creature with darkvision can't see through this darkness".
+///     Blindsight and truesight still get through, which is also RAW.
+///   - **Darkening** drives the lighting layer to `Dark`, which is
+///     "nonmagical light can't illuminate it". A torch carried into the
+///     sphere goes out, and a drow standing in one is out of the sun
+///     for as long as it holds.
+///
+/// The one thing that sees through it is **Devil's Sight**, and that is
+/// what makes the spell a warlock's signature rather than a coin flip:
+/// the invocation's holder shoots out of a sphere that nothing inside
+/// can see out of.
+///
+/// On the way in, RAW's "if any of this spell's area overlaps with an
+/// area of light created by a spell of 2nd level or lower, the spell
+/// that created the light is dispelled" fires against the light layer —
+/// a Light cantrip inside the burst goes out, and so does a torch.
 ///
 /// It replaces a `Darkened` condition stamped on whoever stood in the
 /// burst at cast time — a shroud that followed its victims out of the
@@ -28417,7 +28609,7 @@ impl Action for Darkness {
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -28426,6 +28618,26 @@ impl Action for Darkness {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
+        // RAW: "if any of this spell's area overlaps with an area of
+        // light created by a spell of 2nd level or lower, the spell
+        // that created the light is dispelled." Applied here, in the
+        // builder, rather than as a queued side effect, because the
+        // zone install below is what the dispel is a clause *of* — the
+        // two are one sentence in the book and separating them would
+        // let a reordering put the darkness up while the light it is
+        // supposed to have snuffed still burns.
+        let snuffed = encounter.dispel_light_in(
+            point,
+            Self::RADIUS,
+            crate::engine::zones::ZoneEffect::DARKNESS_SPELL_LEVEL,
+        );
+        if snuffed > 0 {
+            encounter.log(format!(
+                "  the darkness snuffs {} light{}.",
+                snuffed,
+                if snuffed == 1 { "" } else { "s" }
+            ));
+        }
         vec![
             Box::new(InstallZone {
                 zone: Zone {
@@ -28434,7 +28646,7 @@ impl Action for Darkness {
                     owner_id: caster_id,
                     origin: point,
                     radius: Self::RADIUS,
-                    effect: ZoneEffect::OBSCURING,
+                    effect: ZoneEffect::MAGICAL_DARKNESS,
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,

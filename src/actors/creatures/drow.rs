@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -39,6 +40,13 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // anti-enchantment in the SRD).
         has_fey_ancestry: true,
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        // 5e Drow **Sunlight Sensitivity**: disadvantage on attack
+        // rolls in sunlight (the Perception half has no surface here).
+        // The drow's answer to it is on their own spell list in RAW —
+        // and the engine now has the spell that provides it, since a
+        // Darkness sphere drives its tiles to `LightLevel::Dark` and
+        // `is_sunlit` reports false inside one.
+        sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         ..CreatureTemplate::defaults()
     }
 });

@@ -9656,6 +9656,31 @@ pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
 /// template's `features` set to install it.
 pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 
+/// **Devil's Sight** — the warlock Eldritch Invocation, and the trait
+/// of the same name that every devil in the bestiary carries. "You can
+/// see normally in darkness, both magical and nonmagical, to a distance
+/// of 120 feet."
+///
+/// The magical half is the load-bearing one, and it is the only counter
+/// 5e offers to the Darkness spell's "a creature with darkvision can't
+/// see through this darkness". Read by
+/// `ActorInstance::has_devils_sight`, which
+/// `EncounterInstance::perceived_light` consults before it declares a
+/// darkened tile unviewable. The nonmagical half needs nothing extra:
+/// every holder also has darkvision, and the lighting layer's
+/// one-rung upgrade already covers ordinary dark.
+///
+/// This is the invocation the engine had been substituting for. Before
+/// the lighting layer existed the warlock's Darkness cast blinded its
+/// own caster along with everyone else, and the devils that RAW gives
+/// Devil's Sight got, in the Lemure template's words, "generous
+/// Darkvision 120 since the engine doesn't yet distinguish magical vs
+/// mundane darkness". Both approximations can now say what they meant.
+///
+/// Permanent passive — never consumed. Add the tag to a template's
+/// `features` set to install it.
+pub const DEVILS_SIGHT_TAG: &str = "warlock.devils_sight";
+
 /// 5e Warlock — Otherworldly Patron **The Fiend**, level-1 feature
 /// **Dark One's Blessing**. Passive: whenever the warlock reduces a
 /// hostile creature to 0 HP, they gain temporary hit points equal to

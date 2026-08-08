@@ -281,16 +281,26 @@ pub static LONG_DEATH_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 ///
 /// **The slot table is Shadow Arts' ki, and nothing else.** RAW's
 /// Shadow Arts spends 2 ki per cast on Darkness, Darkvision, Pass
-/// without Trace or Silence; both surviving options are level-2 spells,
-/// so `[0, 2]` — zero level-1 slots, two level-2 — reads exactly as
-/// "two Shadow Arts casts, and no other magic." Darkness and Darkvision
-/// are dropped because the engine has no light level for either to act
-/// on, the same reason the Diviner's Third Eye and the Transmuter's
-/// stone drop their own darkvision options; Minor Illusion has no
-/// combat surface. The one deviation worth naming is the rest cadence:
-/// ki refreshes on a short rest and spell slots refresh on a long one,
-/// so a shadow monk gets fewer Shadow Arts casts across a multi-fight
-/// day than RAW allows.
+/// without Trace or Silence; all three surviving options are level-2
+/// spells, so `[0, 2]` — zero level-1 slots, two level-2 — reads
+/// exactly as "two Shadow Arts casts, and no other magic." Darkness is
+/// on the list now that the lighting layer gives it something to act
+/// on; it was dropped for years alongside Darkvision for exactly that
+/// reason, and Darkvision stays dropped because the monk's own eyes
+/// are not a thing the engine has a way to change mid-fight. Minor
+/// Illusion has no combat surface. The one deviation worth naming is
+/// the rest cadence: ki refreshes on a short rest and spell slots
+/// refresh on a long one, so a shadow monk gets fewer Shadow Arts casts
+/// across a multi-fight day than RAW allows.
+///
+/// Darkness in *this* kit is not the warlock's. The warlock pairs it
+/// with Devil's Sight and shoots out of it; the monk has no such
+/// invocation, so the sphere blinds the monk too. What the monk has
+/// instead is Shadow Step, and the pair is the actual combo: drop a
+/// sphere on the enemy line, blink to its far edge, and swing at
+/// creatures who cannot see the attacker while the attacker cannot see
+/// them either — which cancels to a normal roll for the monk and
+/// disadvantage for everyone shooting back.
 ///
 /// Of the two spells, Silence is the load-bearing one and it is a
 /// genuinely different tool than anything else the monk carries: a
@@ -323,6 +333,7 @@ pub static SHADOW_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SHADOW_STEP);
     actions.push(&*SILENCE);
     actions.push(&*PASS_WITHOUT_TRACE);
+    actions.push(&*crate::actions::spells::DARKNESS);
     let mut features = MONK_TEMPLATE.features.clone();
     features.insert(SHADOW_ARTS_TAG);
     features.insert(SHADOW_STEP_TAG);
@@ -331,7 +342,8 @@ pub static SHADOW_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'W',
         // Shadow Arts' ki budget, expressed in the only casting
         // currency the engine has: no level-1 slots, two level-2s —
-        // exactly two casts of Silence or Pass without Trace.
+        // exactly two casts of Silence, Pass without Trace or
+        // Darkness.
         spell_slots_by_level: vec![0, 2],
         actions,
         features,

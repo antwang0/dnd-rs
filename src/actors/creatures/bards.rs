@@ -111,6 +111,14 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
     actions.push(&*VICIOUS_MOCKERY);
+    // Light — the evocation cantrip every one of these classes has on
+    // its list, and the party's answer to an unlit board: touch an ally
+    // (or yourself) and they carry 20 ft of bright light and 20 ft of
+    // dim light with them for the rest of the fight. Declines to cast
+    // on a board that is already bright, and declines to re-light
+    // somebody who is already lit, so it costs nothing on the ambient
+    // default and is there when the lights are out.
+    actions.push(&*crate::actions::spells::LIGHT);
     actions.push(&*BARDIC_INSPIRATION);
     actions.push(&*CURE_WOUNDS);
     actions.push(&HEALING_WORD);

@@ -249,6 +249,7 @@ use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
+use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
 use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
@@ -1837,6 +1838,20 @@ pub struct EncounterInstance {
     /// of sight when no combination of `ZoneEffect` fields can.
     conjured_terrain: Vec<ConjuredTerrain>,
     conjured_terrain_id_next: usize,
+    /// The light the board has before anybody lights anything — see
+    /// `crate::engine::lighting`. `BrightLight` by default, which is
+    /// the fully-lit board every encounter behaved as before the
+    /// lighting layer existed.
+    ambient_light: AmbientLight,
+    /// Everything currently shedding light: lit torches, Light
+    /// cantrips, Daylight spheres.
+    ///
+    /// A `Vec` for the same reason `zones` is one — there are never
+    /// many, and every question the layer is asked is "which of these
+    /// reaches this tile", which a short linear scan answers as fast as
+    /// an index would.
+    light_sources: Vec<LightSource>,
+    light_source_id_next: usize,
 }
 
 /// One frame of the in-flight spell-cast stack — the resolved identity
@@ -3346,11 +3361,32 @@ impl EncounterInstance {
         // obscurement is a property of the ground and the two creatures'
         // positions, and it stops applying the moment either of them
         // steps clear.
-        if self.obscurement_blinds(attacker_id, target_id) {
+        //
+        // The dark rides the same two clauses through
+        // `sight_denied_between`, and composes with the fog exactly as
+        // it should: an archer in a lit room shooting into an unlit one
+        // takes the disadvantage and hands out no advantage, because
+        // the darkness is on the target's side of the line only.
+        if self.sight_denied_between(attacker_id, target_id) {
             mode = mode.combine(RollMode::Disadvantage);
         }
-        if self.obscurement_blinds(target_id, attacker_id) {
+        if self.sight_denied_between(target_id, attacker_id) {
             mode = mode.combine(RollMode::Advantage);
+        }
+
+        // 5e Sunlight Sensitivity / Weakness / Hypersensitivity: "while
+        // in sunlight, the creature has disadvantage on attack rolls."
+        // Attacker-side only — RAW taxes the creature that is standing
+        // in the sun, not the one being shot at from it — and inert
+        // unless the encounter is actually under an open sky, which is
+        // what `is_sunlit` is careful about.
+        if let Some(attacker) = self.actors.get(&attacker_id)
+            && attacker
+                .sunlight_frailty()
+                .is_some_and(|f| f.disadvantages_attacks())
+            && self.is_sunlit(attacker.location())
+        {
+            mode = mode.combine(RollMode::Disadvantage);
         }
 
         // 5e **Mounted Combatant**: "You have advantage on melee attack
@@ -3717,7 +3753,340 @@ impl EncounterInstance {
         if !self.actor_has_line_of_sight(viewer_id, subject_id) {
             return false;
         }
-        !self.obscurement_blinds(viewer_id, subject_id)
+        !self.sight_denied_between(viewer_id, subject_id)
+    }
+
+    /// True if the *environment* — fog or the dark — stops `viewer_id`
+    /// seeing `subject_id`, with neither's own conditions considered.
+    ///
+    /// The two clauses are genuinely different rules and are kept as
+    /// separate predicates (`obscurement_blinds` walks the whole line
+    /// and ignores darkvision; `darkness_blinds` reads one tile and
+    /// respects it), but every caller wants both, and there are three:
+    /// `viewer_can_see`, and the two polarities of the attack-mode
+    /// sweep. Folding the `||` into one named helper is what stops a
+    /// fourth caller picking up one of the two and silently missing the
+    /// other — which is exactly how the darkness half would have gone
+    /// in if the fog half had not already been there to copy.
+    pub fn sight_denied_between(&self, viewer_id: usize, subject_id: usize) -> bool {
+        self.obscurement_blinds(viewer_id, subject_id)
+            || self.darkness_blinds(viewer_id, subject_id)
+    }
+
+    /// The ambient light this encounter was set up with.
+    pub fn ambient_light(&self) -> AmbientLight {
+        self.ambient_light
+    }
+
+    /// Set the ambient light. Called once at setup — by the CLI, by a
+    /// scenario builder, by a test — rather than mid-fight; nothing in
+    /// 5e changes the sky, and the spells that change the *local* light
+    /// go through `add_light_source` and the darkening zones instead.
+    pub fn set_ambient_light(&mut self, ambient: AmbientLight) {
+        self.ambient_light = ambient;
+    }
+
+    /// Every light source currently burning.
+    pub fn light_sources(&self) -> &[LightSource] {
+        &self.light_sources
+    }
+
+    /// Light something up, and hand back the id that takes it away
+    /// again.
+    ///
+    /// The id is assigned here rather than by the caller for the same
+    /// reason zone ids are: a caller that picked its own would have to
+    /// know what is already burning.
+    pub fn add_light_source(&mut self, mut source: LightSource) -> usize {
+        let id = self.light_source_id_next;
+        self.light_source_id_next += 1;
+        source.id = id;
+        self.light_sources.push(source);
+        id
+    }
+
+    /// Put out one source by id. Silent no-op if it has already gone
+    /// out, which is the same shape `remove_zone` uses and for the same
+    /// reason: the two ways a light ends (a timer, a dispel) can race.
+    pub fn remove_light_source(&mut self, id: usize) {
+        self.light_sources.retain(|s| s.id != id);
+    }
+
+    /// Un-anchor everything `actor_id` was carrying, leaving it burning
+    /// where they fell.
+    ///
+    /// A torch does not go out because the hand holding it did, and the
+    /// engine already has a policy for this exact question one line
+    /// away: `remove_actor` and `despawn_actor` both drop the dead
+    /// actor's carried *items* on their tile rather than voiding them.
+    /// Light is treated the same way, which is both RAW and the more
+    /// interesting board — a corpse lighting the corridor it fell in.
+    ///
+    /// Must be called while the actor is still in the table, since that
+    /// is where the tile comes from. A source whose bearer is already
+    /// gone has no last known position to pin it to and is snuffed
+    /// instead, which is the honest answer rather than a guess.
+    pub fn drop_light_sources_carried_by(&mut self, actor_id: usize) {
+        let dropped_at = self.actors.get(&actor_id).map(|a| a.location());
+        self.light_sources.retain_mut(|source| {
+            if source.anchor != LightAnchor::Carried(actor_id) {
+                return true;
+            }
+            match dropped_at {
+                Some(loc) => {
+                    source.anchor = LightAnchor::Fixed(loc);
+                    true
+                }
+                None => false,
+            }
+        });
+    }
+
+    /// True if `actor_id` is already carrying a light of their own.
+    ///
+    /// The gate the Light cantrip and the torch both need: RAW's "if
+    /// you cast this spell again, the previous casting is dispelled"
+    /// makes a second cast on an already-lit bearer a wasted action,
+    /// and an AI that re-runs its ladder every turn will take a wasted
+    /// action every turn unless something says no. The same shape as
+    /// the `Aided` marker's stacking gate, and it exists for the same
+    /// observed reason.
+    pub fn actor_carries_light(&self, actor_id: usize) -> bool {
+        self.light_sources
+            .iter()
+            .any(|s| s.anchor == LightAnchor::Carried(actor_id))
+    }
+
+    /// True if a spell-created darkness covers this tile.
+    ///
+    /// The gate on two separate rules — nonmagical light cannot lift it
+    /// (`light_at`), and darkvision cannot see through it
+    /// (`perceived_light`) — so it is one named predicate rather than a
+    /// zone scan open-coded at both.
+    pub fn magically_dark_at(&self, coord: Coordinate) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.effect.darkens.is_some() && z.covers(coord))
+    }
+
+    /// How brightly lit `coord` is, for everybody.
+    ///
+    /// Magical darkness first and unconditionally: RAW's "nonmagical
+    /// light can't illuminate it" means the sources below never get a
+    /// vote inside one, and neither does the sun.
+    ///
+    /// Otherwise the brightest of the ambient level and every source
+    /// that reaches — `max`, not a sum, because two torches in a room
+    /// do not make it brighter than one.
+    pub fn light_at(&self, coord: Coordinate) -> LightLevel {
+        if self.magically_dark_at(coord) {
+            return LightLevel::Dark;
+        }
+        let mut level = self.ambient_light.level();
+        for source in &self.light_sources {
+            if level == LightLevel::Bright {
+                break;
+            }
+            if let Some(origin) = source.origin_in(&self.actors) {
+                level = level.brighter_of(source.contribution(origin, coord));
+            }
+        }
+        level
+    }
+
+    /// True if `coord` is in actual sunlight — the trigger for every
+    /// Sunlight Sensitivity / Weakness / Hypersensitivity clause.
+    ///
+    /// Only the sky qualifies. No light *source* sets this, not even
+    /// the Daylight spell: RAW is explicit that the spell does not
+    /// count, and a vampire that could be destroyed by a 3rd-level
+    /// spell would be a different monster.
+    ///
+    /// Magical darkness lifts it, which is the interaction that makes
+    /// the Darkness spell a drow's answer to being caught in the open.
+    pub fn is_sunlit(&self, coord: Coordinate) -> bool {
+        self.ambient_light.is_sunlight() && !self.magically_dark_at(coord)
+    }
+
+    /// True if `actor_id` is standing in sunlight. `false` for an
+    /// unknown id, so callers stay free of `is_some_and` chains.
+    pub fn actor_in_sunlight(&self, actor_id: usize) -> bool {
+        self.actors
+            .get(&actor_id)
+            .is_some_and(|a| self.is_sunlit(a.location()))
+    }
+
+    /// How brightly lit `coord` is *as far as `viewer_id` is
+    /// concerned* — the objective answer, then darkvision.
+    ///
+    /// 5e darkvision: "you can see in dim light within the radius as if
+    /// it were bright light, and in darkness as if it were dim light."
+    /// One rung, gated on the radius, and explicitly *not* applicable
+    /// to magical darkness — the Darkness spell's second sentence is
+    /// "a creature with darkvision can't see through this darkness",
+    /// and it is what makes the spell worth a 2nd-level slot in a
+    /// bestiary where nearly everything has darkvision.
+    ///
+    /// Devil's Sight is the counter RAW provides, and it is checked
+    /// against the magical case only: the invocation's whole text is
+    /// "you can see normally in darkness, both magical and nonmagical",
+    /// and the nonmagical half is already covered by the upgrade below
+    /// for anyone who has any darkvision at all.
+    pub fn perceived_light(&self, viewer_id: usize, coord: Coordinate) -> LightLevel {
+        let Some(viewer) = self.actors.get(&viewer_id) else {
+            return self.light_at(coord);
+        };
+        if self.magically_dark_at(coord) {
+            return if viewer.has_devils_sight() {
+                LightLevel::Bright
+            } else {
+                LightLevel::Dark
+            };
+        }
+        let base = self.light_at(coord);
+        if base == LightLevel::Bright {
+            return base;
+        }
+        let reach = viewer.darkvision_tiles();
+        if reach > 0 && viewer.location().chebyshev_to(coord) <= reach {
+            base.upgraded()
+        } else {
+            base
+        }
+    }
+
+    /// True if the dark is what stops `viewer_id` seeing
+    /// `subject_id` — the lighting layer's half of the sight gate,
+    /// sitting beside `obscurement_blinds`.
+    ///
+    /// **Asymmetric, unlike obscurement, and that is the whole
+    /// difference between the two.** Only the *subject's* tile is
+    /// asked about. A creature standing in an unlit corridor sees the
+    /// torchlit room ahead of it perfectly well and is itself unseen by
+    /// anyone in that room, which is 5e's unseen-attacker rule arriving
+    /// exactly where it should: the one in the dark gets advantage, the
+    /// one in the light gets disadvantage, and neither cancels the
+    /// other. A fog bank, by contrast, blinds both ends of the line at
+    /// once, and `obscurement_blinds` walks the whole line to say so.
+    ///
+    /// The senses that get around it are the same three that get around
+    /// fog — Truesight, the non-visual envelope (Blindsight,
+    /// Tremorsense, Blindsense, Blind Fighting), and here also
+    /// darkvision, which is folded in by `perceived_light` rather than
+    /// checked here.
+    pub fn darkness_blinds(&self, viewer_id: usize, subject_id: usize) -> bool {
+        // The overwhelmingly common case is a lit board with nothing
+        // darkening it, and every lookup below is wasted work there.
+        if self.ambient_light.level() != LightLevel::Dark
+            && self.zones.iter().all(|z| z.effect.darkens.is_none())
+        {
+            return false;
+        }
+        let (Some(viewer), Some(subject)) =
+            (self.actors.get(&viewer_id), self.actors.get(&subject_id))
+        else {
+            return false;
+        };
+        if viewer.has_truesight() || nonvisual_sense_reaches(viewer, subject) {
+            return false;
+        }
+        self.perceived_light(viewer_id, subject.location()) == LightLevel::Dark
+    }
+
+    /// Burn one round off every light source with a timer and sweep the
+    /// ones that ran out. Called from `round_end` beside `tick_zones`.
+    fn tick_light_sources(&mut self) {
+        let mut guttered: Vec<&'static str> = Vec::new();
+        self.light_sources.retain_mut(|source| {
+            let Some(left) = source.rounds_remaining else {
+                return true;
+            };
+            let left = left.saturating_sub(1);
+            source.rounds_remaining = Some(left);
+            if left == 0 {
+                guttered.push(source.name);
+                false
+            } else {
+                true
+            }
+        });
+        for name in guttered {
+            self.log(format!("The {} goes out.", name));
+        }
+    }
+
+    /// Snuff every light source of level `max_level` or lower whose
+    /// origin lies inside the given area — the Darkness spell's "if any
+    /// of this spell's area overlaps with an area of light created by a
+    /// spell of 2nd level or lower, the spell that created the light is
+    /// dispelled."
+    ///
+    /// Returns how many went out so the caller can log it.
+    ///
+    /// Nonmagical flame (`spell_level == 0`) is deliberately included:
+    /// a torch is "light of 2nd level or lower" in every sense that
+    /// matters, and RAW's stronger clause — "nonmagical light can't
+    /// illuminate it" — already stops it working inside the sphere. Put
+    /// out rather than merely suppressed is the simpler state and the
+    /// same outcome while the darkness stands; the difference only
+    /// shows once the darkness lapses, and a torch dropped into a
+    /// sphere of magical darkness going out is the better of the two
+    /// answers to offer there.
+    pub fn dispel_light_in(
+        &mut self,
+        origin: Coordinate,
+        radius: isize,
+        max_level: u32,
+    ) -> usize {
+        let doomed: Vec<usize> = self
+            .light_sources
+            .iter()
+            .filter(|s| s.spell_level <= max_level)
+            .filter(|s| {
+                s.origin_in(&self.actors)
+                    .is_some_and(|o| o.chebyshev_to(origin) <= radius)
+            })
+            .map(|s| s.id)
+            .collect();
+        let count = doomed.len();
+        for id in doomed {
+            self.remove_light_source(id);
+        }
+        count
+    }
+
+    /// Tear down every magical darkness of level `max_level` or lower
+    /// overlapping the given area — the Daylight spell's "if any of
+    /// this spell's area overlaps with an area of darkness created by a
+    /// spell of 3rd level or lower, the spell that created the darkness
+    /// is dispelled", which was a documented no-op until the lighting
+    /// layer gave it something to act on.
+    ///
+    /// Returns how many were dispelled. The caster of each loses the
+    /// concentration that was holding it up, through the same
+    /// `pending_concentration_review` queue an expired zone uses — a
+    /// dispelled Darkness must not leave its caster gripping nothing.
+    pub fn dispel_magical_darkness_in(
+        &mut self,
+        origin: Coordinate,
+        radius: isize,
+        max_level: u32,
+    ) -> usize {
+        let doomed: Vec<(usize, usize, bool)> = self
+            .zones
+            .iter()
+            .filter(|z| z.effect.darkens.is_some_and(|level| level <= max_level))
+            .filter(|z| z.origin.chebyshev_to(origin) <= radius + z.radius)
+            .map(|z| (z.id, z.owner_id, z.concentration))
+            .collect();
+        let count = doomed.len();
+        for (id, owner_id, concentration) in doomed {
+            self.remove_zone(id);
+            if concentration {
+                self.pending_concentration_review.push(owner_id);
+            }
+        }
+        count
     }
 
     /// True if heavy obscurement stands between the two and the viewer
@@ -3889,6 +4258,21 @@ impl EncounterInstance {
         // 1, three rungs before this penalty is earned.
         if actor.exhaustion_level()
             >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        // 5e Sunlight Weakness / Hypersensitivity: "disadvantage on
+        // attack rolls, ability checks, and saving throws" while in
+        // sunlight. Off the blanket condition cohort for the same
+        // reason exhaustion is — that table is keyed by condition, and
+        // this is keyed by a template trait plus where the creature is
+        // standing. The Sensitivity tier is deliberately excluded here:
+        // a kobold in the sun swings badly and saves normally, and
+        // `disadvantages_saves` is where that line is drawn once.
+        if actor
+            .sunlight_frailty()
+            .is_some_and(|f| f.disadvantages_saves())
+            && self.is_sunlit(actor.location())
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
@@ -8164,6 +8548,9 @@ impl EncounterInstance {
             zone_contacts_this_turn: std::collections::HashSet::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
+            ambient_light: AmbientLight::default(),
+            light_sources: Vec::new(),
+            light_source_id_next: 0,
         }
     }
 
@@ -9522,6 +9909,12 @@ impl EncounterInstance {
         // and neither depends on the other; see `apply_protective_spirit`
         // for why the heal lands here rather than at the turn's end.
         self.apply_protective_spirit(actor_id);
+        // 5e Sunlight Hypersensitivity: "the vampire takes 20 radiant
+        // damage when it starts its turn in sunlight". Beside the other
+        // two start-of-turn passives for the same reason they are
+        // beside each other — all three read the actor's state at the
+        // top of the turn and none depends on the others.
+        self.apply_sunlight_hypersensitivity(actor_id);
         // 5e controlled mount: "it moves as you direct it". The rider
         // walks on the horse's legs, so the turn's movement budget is
         // the horse's speed rather than their own. Runs after
@@ -9678,6 +10071,49 @@ impl EncounterInstance {
             "  protective spirit: {} knits back 1d6({}){:+} = {} HP.",
             name, rolled, half_level, healed
         ));
+    }
+
+    /// 5e **Sunlight Hypersensitivity** (vampire, vampire spawn): "the
+    /// vampire takes 20 radiant damage when it starts its turn in
+    /// sunlight."
+    ///
+    /// The top tier of `SunlightFrailty`, and the only one of the three
+    /// that does anything on its own schedule — the other two are
+    /// modifiers read at a roll. Routed through `DealDamage` rather than
+    /// a bare HP subtraction so the vampire's own resistances,
+    /// concentration checks and death handling all fire exactly as they
+    /// would for a swing: 20 radiant is enough to matter, and a rule
+    /// that skipped the pipeline would be a rule that skipped the
+    /// concentration save it should break.
+    ///
+    /// Inert on any board that is not under an open sky, which is every
+    /// board unless somebody asked for daylight. That is the correct
+    /// shape for it: a vampire in its crypt is simply a vampire.
+    fn apply_sunlight_hypersensitivity(&mut self, actor_id: usize) {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let Some((frailty, burning)) = self.actors.get(&actor_id).and_then(|a| {
+            let frailty = a.sunlight_frailty()?;
+            Some((frailty, a.is_combat_active() && self.is_sunlit(a.location())))
+        }) else {
+            return;
+        };
+        let amount = frailty.start_of_turn_radiant();
+        if !burning || amount == 0 {
+            return;
+        }
+        let name = self.actor_name(actor_id);
+        self.log(format!(
+            "  {}: {} sears in the open sun for {} radiant.",
+            frailty.label(),
+            name,
+            amount
+        ));
+        DealDamage {
+            actor_id,
+            amount,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(self);
     }
 
     /// Advance the initiative queue and fire `round_end` if the queue
@@ -12635,6 +13071,7 @@ impl EncounterInstance {
         // somebody's way.
         self.tick_zones();
         self.tick_conjured_terrain();
+        self.tick_light_sources();
         // Every timer has now ticked, so this is the first moment at
         // which "does this caster still have a spell up" has a stable
         // answer.
@@ -13282,6 +13719,10 @@ impl EncounterInstance {
         // takes their concentration — and so the areas it was holding
         // up — with them.
         self.release_map_layers_of(id);
+        // …but not their torch, which stays lit where they stood. Same
+        // policy as the carried items dropped at the bottom of this
+        // function.
+        self.drop_light_sources_carried_by(id);
         let footprint_handled = self.sever_ride_links(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
@@ -13327,6 +13768,10 @@ impl EncounterInstance {
         // and a dead wizard's web holding a doorway for the rest of the
         // fight is the kind of leak the map layer makes very visible.
         self.release_map_layers_of(id);
+        // The torch the corpse was holding keeps burning on the tile it
+        // fell on — see `drop_light_sources_carried_by`, and the
+        // carried-item drop further down that it mirrors.
+        self.drop_light_sources_carried_by(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };

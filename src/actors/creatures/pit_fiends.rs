@@ -72,6 +72,15 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         has_extra_attack: true,
+        // 5e **Devil's Sight** — "magical darkness doesn't impede this
+        // devil's darkvision." Carried by every devil in the bestiary,
+        // and the one thing in the game that sees through the Darkness
+        // spell. Before the lighting layer existed the trait was
+        // approximated as a generous darkvision radius, which was the
+        // closest the engine could get to it and got the crucial half
+        // exactly backwards: RAW darkvision is precisely what magical
+        // darkness defeats.
+        features: HashSet::from([crate::actions::class_features::DEVILS_SIGHT_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

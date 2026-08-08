@@ -75096,3 +75096,636 @@ fn a_two_anchor_spell_survives_on_whichever_anchor_is_left() {
         "the web is still on the floor even with nobody stuck in it"
     );
 }
+
+// ---------------------------------------------------------------------
+// Lighting and vision — `crate::engine::lighting`.
+//
+// The engine's historical behaviour was a fully-lit board on which
+// `SpecialSense::Darkvision(_)` was read by nothing. The first test
+// below is the one that guards that history: the default has to keep
+// behaving exactly as it did, because two and a half thousand tests
+// above assume it.
+// ---------------------------------------------------------------------
+
+use crate::engine::lighting::{
+    AmbientLight, LightAnchor, LightLevel, LightSource, SunlightFrailty, TORCH_BRIGHT_TILES,
+    TORCH_DIM_TILES,
+};
+
+/// A lit board with a Fighter (no darkvision) and a Zombie (darkvision
+/// 60 ft = 24 tiles) some distance apart, for the sight tests.
+///
+/// Returns `(encounter, fighter_id, zombie_id)`. Wide rather than
+/// square because the interesting distances are 24 and 25 tiles.
+fn lighting_pair(fighter_at: (isize, isize), zombie_at: (isize, isize)) -> (EncounterInstance, usize, usize) {
+    let mut e = ei_with_terrain(40, 8, &[]);
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(fighter_at.0, fighter_at.1),
+            0,
+            0,
+        )
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(zombie_at.0, zombie_at.1),
+            1,
+            0,
+        )
+        .unwrap();
+    (e, fighter, zombie)
+}
+
+/// The default board is lit, and nothing about the lighting layer is
+/// observable on it. This is the compatibility guarantee the whole
+/// feature was designed around: `AmbientLight::default()` reproduces
+/// the pre-lighting engine exactly, so no existing encounter, seed or
+/// assertion changes meaning.
+#[test]
+fn the_default_board_is_lit_and_the_lighting_layer_is_invisible_on_it() {
+    let (e, fighter, zombie) = lighting_pair((0, 2), (30, 2));
+    assert_eq!(e.ambient_light(), AmbientLight::BrightLight);
+    assert_eq!(e.light_at(Coordinate::new(30, 2)), LightLevel::Bright);
+    assert!(!e.darkness_blinds(fighter, zombie));
+    assert!(!e.darkness_blinds(zombie, fighter));
+    assert!(e.viewer_can_see(fighter, zombie));
+    assert_eq!(
+        e.compute_attack_mode(fighter, zombie, false),
+        RollMode::Normal
+    );
+    assert!(
+        !e.is_sunlit(Coordinate::new(0, 0)),
+        "a torchlit hall is bright and is not the sun"
+    );
+}
+
+/// Darkness out to the edge of the darkvision radius and blindness
+/// past it — the rule the two hundred stat blocks carrying
+/// `Darkvision(60)` were written for and never got.
+///
+/// 60 ft is 24 tiles on the 2.5-ft grid, so 24 is the last tile the
+/// zombie sees and 25 is the first it does not. The boundary is pinned
+/// on both sides because an off-by-one here is invisible in play and
+/// changes every dark encounter.
+#[test]
+fn darkvision_reaches_exactly_its_radius_and_no_further() {
+    for (distance, seen) in [(24, true), (25, false)] {
+        let (mut e, fighter, zombie) = lighting_pair((distance, 2), (0, 2));
+        e.set_ambient_light(AmbientLight::Darkness);
+        assert_eq!(
+            !e.darkness_blinds(zombie, fighter),
+            seen,
+            "a zombie's 24-tile darkvision at distance {}",
+            distance
+        );
+    }
+}
+
+/// The Fighter has no darkvision, so an unlit board blinds them at any
+/// distance — including one tile away.
+#[test]
+fn a_creature_without_darkvision_is_blind_in_the_dark_at_touch_range() {
+    let (mut e, fighter, zombie) = lighting_pair((0, 2), (2, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(e.darkness_blinds(fighter, zombie));
+    assert!(!e.viewer_can_see(fighter, zombie));
+}
+
+/// Darkness is asymmetric where fog is symmetric, and this is the test
+/// that says so.
+///
+/// A torch lights the zombie's end of the corridor and not the
+/// fighter's. The zombie — which cannot see into the dark either, being
+/// well outside its own 24-tile radius — is nonetheless *visible*,
+/// because it is standing in the light. So the fighter shooting out of
+/// the dark gets advantage (the target cannot see them) with no
+/// disadvantage of their own, which is 5e's unseen-attacker rule
+/// arriving without a special case.
+#[test]
+fn shooting_out_of_the_dark_into_the_light_is_advantage_one_way_only() {
+    let (mut e, fighter, zombie) = lighting_pair((0, 2), (39, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "brazier",
+        anchor: LightAnchor::Fixed(Coordinate::new(39, 2)),
+        bright_tiles: 3,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    assert!(
+        !e.darkness_blinds(fighter, zombie),
+        "the zombie is standing in torchlight"
+    );
+    assert!(
+        e.darkness_blinds(zombie, fighter),
+        "the fighter is 39 tiles away in the dark, well past darkvision"
+    );
+    assert_eq!(
+        e.compute_attack_mode(fighter, zombie, false),
+        RollMode::Advantage
+    );
+    assert_eq!(
+        e.compute_attack_mode(zombie, fighter, false),
+        RollMode::Disadvantage
+    );
+}
+
+/// Two creatures who cannot see each other cancel to a normal roll —
+/// RAW's own note on the unseen-attacker rule, arriving here as a
+/// consequence of the two clauses rather than as a rule of its own.
+#[test]
+fn mutual_blindness_in_the_dark_cancels_to_a_normal_roll() {
+    let (mut e, fighter, zombie) = lighting_pair((0, 2), (39, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(e.darkness_blinds(fighter, zombie));
+    assert!(e.darkness_blinds(zombie, fighter));
+    assert_eq!(
+        e.compute_attack_mode(fighter, zombie, false),
+        RollMode::Normal
+    );
+}
+
+/// A light source has a bright core and a dim collar, and the collar is
+/// *additional* to the core rather than a total. Reading the two fields
+/// the other way halves every light source in the game.
+#[test]
+fn a_light_source_lights_a_bright_core_and_a_dim_collar_on_the_board() {
+    let mut e = ei_with_terrain(40, 8, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(Coordinate::new(0, 0)),
+        bright_tiles: TORCH_BRIGHT_TILES,
+        dim_tiles: TORCH_DIM_TILES,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    assert_eq!(e.light_at(Coordinate::new(8, 0)), LightLevel::Bright);
+    assert_eq!(e.light_at(Coordinate::new(9, 0)), LightLevel::Dim);
+    assert_eq!(e.light_at(Coordinate::new(16, 0)), LightLevel::Dim);
+    assert_eq!(e.light_at(Coordinate::new(17, 0)), LightLevel::Dark);
+}
+
+/// A carried light goes where its bearer goes. Recomputed from the
+/// actor table on every query rather than written back on every step,
+/// which is what stops the two from ever disagreeing.
+#[test]
+fn a_carried_light_travels_with_its_bearer() {
+    let (mut e, fighter, _zombie) = lighting_pair((0, 2), (39, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Carried(fighter),
+        bright_tiles: 2,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    assert_eq!(e.light_at(Coordinate::new(1, 2)), LightLevel::Bright);
+    assert_eq!(e.light_at(Coordinate::new(20, 2)), LightLevel::Dark);
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .set_location(Coordinate::new(20, 2));
+    assert_eq!(e.light_at(Coordinate::new(1, 2)), LightLevel::Dark);
+    assert_eq!(e.light_at(Coordinate::new(20, 2)), LightLevel::Bright);
+}
+
+/// A dropped torch keeps burning where its bearer fell — the same
+/// policy `remove_actor` already applies to the dead actor's carried
+/// items, applied to the light they were carrying.
+#[test]
+fn a_dead_bearers_torch_keeps_burning_on_the_tile_they_fell_on() {
+    let (mut e, fighter, _zombie) = lighting_pair((10, 2), (39, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Carried(fighter),
+        bright_tiles: 2,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    e.drop_light_sources_carried_by(fighter);
+    e.actors.remove(&fighter);
+    assert_eq!(
+        e.light_at(Coordinate::new(10, 2)),
+        LightLevel::Bright,
+        "the torch is still on the floor"
+    );
+    assert_eq!(
+        e.light_sources()[0].anchor,
+        LightAnchor::Fixed(Coordinate::new(10, 2))
+    );
+}
+
+/// Magical darkness beats darkvision — RAW's "a creature with
+/// darkvision can't see through this darkness", which is the entire
+/// reason the Darkness spell is worth a 2nd-level slot in a bestiary
+/// where nearly everything can see in the dark.
+///
+/// Also pins the half that separates a darkening zone from a merely
+/// obscuring one: the tile reads `Dark`, so a torch inside it does
+/// nothing and a creature in it is out of the sun.
+#[test]
+fn magical_darkness_beats_darkvision_and_beats_a_torch() {
+    let (mut e, _fighter, zombie) = lighting_pair((0, 2), (10, 2));
+    let sphere = Coordinate::new(10, 2);
+    e.install_zone(Zone {
+        id: 0,
+        name: "darkness",
+        owner_id: 0,
+        origin: sphere,
+        radius: 4,
+        effect: ZoneEffect::MAGICAL_DARKNESS,
+        rounds_remaining: 10,
+        concentration: false,
+        motion: ZoneMotion::Fixed,
+    });
+    // Bright ambient, and a torch right on top of it, and it is still
+    // dark: "nonmagical light can't illuminate it."
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(sphere),
+        bright_tiles: 8,
+        dim_tiles: 8,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    assert_eq!(e.light_at(sphere), LightLevel::Dark);
+    assert_eq!(
+        e.perceived_light(zombie, sphere),
+        LightLevel::Dark,
+        "darkvision does not upgrade magical darkness"
+    );
+}
+
+/// Devil's Sight is the one thing that sees through it. The warlock
+/// standing in their own sphere is the RAW combo the invocation exists
+/// for, and it is what makes the spell worth casting on your own
+/// front line.
+#[test]
+fn devils_sight_sees_through_magical_darkness() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    let devil = e
+        .instantiate_creature(
+            &crate::actors::creatures::lemures::LEMURE_TEMPLATE,
+            Coordinate::new(0, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    e.install_zone(Zone {
+        id: 0,
+        name: "darkness",
+        owner_id: 0,
+        origin: Coordinate::new(10, 2),
+        radius: 4,
+        effect: ZoneEffect::MAGICAL_DARKNESS,
+        rounds_remaining: 10,
+        concentration: false,
+        motion: ZoneMotion::Fixed,
+    });
+    assert!(
+        e.actors[&devil].has_devils_sight(),
+        "every devil in the bestiary carries the trait"
+    );
+    assert_eq!(
+        e.perceived_light(devil, Coordinate::new(10, 2)),
+        LightLevel::Bright
+    );
+    assert_eq!(
+        e.perceived_light(zombie, Coordinate::new(10, 2)),
+        LightLevel::Dark
+    );
+    // The zone still obscures, though, and obscurement is the clause
+    // Devil's Sight does not answer — the zone gate is what stops the
+    // devil seeing *through* the cloud, and it is symmetric.
+    assert!(e.obscurement_blinds(devil, zombie));
+}
+
+/// Darkness snuffs the lights it is cast over — "if any of this spell's
+/// area overlaps with an area of light created by a spell of 2nd level
+/// or lower, the spell that created the light is dispelled" — and
+/// leaves a 3rd-level Daylight sphere alone.
+#[test]
+fn darkness_snuffs_cheap_light_and_spares_daylight() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    let point = Coordinate::new(10, 2);
+    for (name, level) in [("light", 0u32), ("torch", 0), ("daylight", 3)] {
+        e.add_light_source(LightSource {
+            id: 0,
+            name,
+            anchor: LightAnchor::Fixed(point),
+            bright_tiles: 2,
+            dim_tiles: 0,
+            rounds_remaining: None,
+            spell_level: level,
+        });
+    }
+    let snuffed = e.dispel_light_in(point, 4, ZoneEffect::DARKNESS_SPELL_LEVEL);
+    assert_eq!(snuffed, 2);
+    let survivors: Vec<&str> = e.light_sources().iter().map(|s| s.name).collect();
+    assert_eq!(survivors, vec!["daylight"]);
+}
+
+/// Daylight burns away the magical darkness it overlaps, and the
+/// warlock holding it loses the concentration it was holding up. The
+/// second half is what stops a dispelled sphere leaving its caster
+/// gripping nothing for the rest of the fight.
+///
+/// This clause was a documented no-op in Daylight's own docstring for
+/// as long as the engine had no darkness to dispel.
+#[test]
+fn daylight_dispels_magical_darkness_and_frees_its_caster() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    let warlock = e
+        .instantiate_creature(
+            &crate::actors::creatures::warlocks::WARLOCK_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&warlock)
+        .unwrap()
+        .start_concentration(
+            crate::actors::actor_template::ConcentrationData::new("Darkness"),
+        );
+    e.install_zone(Zone {
+        id: 0,
+        name: "darkness",
+        owner_id: warlock,
+        origin: Coordinate::new(10, 2),
+        radius: 4,
+        effect: ZoneEffect::MAGICAL_DARKNESS,
+        rounds_remaining: 10,
+        concentration: true,
+        motion: ZoneMotion::Fixed,
+    });
+    assert_eq!(e.light_at(Coordinate::new(10, 2)), LightLevel::Dark);
+    let lifted = e.dispel_magical_darkness_in(Coordinate::new(10, 2), 6, 3);
+    assert_eq!(lifted, 1);
+    assert_eq!(e.light_at(Coordinate::new(10, 2)), LightLevel::Bright);
+    e.round_end();
+    assert!(
+        !e.actors[&warlock].is_concentrating(),
+        "a dispelled sphere must not leave its caster holding nothing"
+    );
+}
+
+/// A light source with a timer gutters out at round end; one without a
+/// timer burns for the whole fight.
+#[test]
+fn a_timed_light_gutters_out_and_an_untimed_one_does_not() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "daylight",
+        anchor: LightAnchor::Fixed(Coordinate::new(5, 2)),
+        bright_tiles: 2,
+        dim_tiles: 0,
+        rounds_remaining: Some(2),
+        spell_level: 3,
+    });
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(Coordinate::new(5, 2)),
+        bright_tiles: 2,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+    });
+    e.round_end();
+    assert_eq!(e.light_sources().len(), 2);
+    e.round_end();
+    let survivors: Vec<&str> = e.light_sources().iter().map(|s| s.name).collect();
+    assert_eq!(survivors, vec!["torch"]);
+}
+
+/// Blindsight is not sight, so the dark does nothing to it — and
+/// unlike darkvision it has no upgrade to apply, it simply answers the
+/// question a different way. The bat is the case: 60 ft of blindsight
+/// and no eyes worth the name.
+#[test]
+fn blindsight_ignores_the_dark_entirely() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    let bat = e
+        .instantiate_creature(
+            &crate::actors::creatures::bats::BAT_TEMPLATE,
+            Coordinate::new(0, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(4, 2),
+            1,
+            0,
+        )
+        .unwrap();
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(!e.darkness_blinds(bat, fighter));
+    assert!(
+        e.darkness_blinds(fighter, bat),
+        "and the fighter still cannot see the bat"
+    );
+}
+
+/// Sunlight Sensitivity costs the kobold its attack rolls in the open
+/// and nothing at all indoors — and a torchlit hall counts as indoors,
+/// which is the whole reason the ambient enum separates "bright" from
+/// "sunlight".
+#[test]
+fn sunlight_sensitivity_bites_only_under_an_open_sky() {
+    for (ambient, expected) in [
+        (AmbientLight::BrightLight, RollMode::Normal),
+        (AmbientLight::Daylight, RollMode::Disadvantage),
+    ] {
+        let mut e = ei_with_terrain(20, 8, &[]);
+        e.set_ambient_light(ambient);
+        let kobold = e
+            .instantiate_creature(
+                &crate::actors::creatures::kobolds::KOBOLD_TEMPLATE,
+                Coordinate::new(0, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_attack_mode(kobold, target, false),
+            expected,
+            "kobold under {:?}",
+            ambient
+        );
+    }
+}
+
+/// A drow caught in the open answers its own Sunlight Sensitivity the
+/// way RAW expects it to: with a sphere of Darkness. The tile is no
+/// longer sunlit, so the penalty lifts.
+#[test]
+fn a_darkness_sphere_lifts_the_sunlight_penalty_inside_it() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    e.set_ambient_light(AmbientLight::Daylight);
+    let drow = e
+        .instantiate_creature(
+            &crate::actors::creatures::drow::DROW_TEMPLATE,
+            Coordinate::new(4, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.compute_attack_mode(drow, target, false),
+        RollMode::Disadvantage
+    );
+    e.install_zone(Zone {
+        id: 0,
+        name: "darkness",
+        owner_id: drow,
+        origin: Coordinate::new(4, 2),
+        radius: 4,
+        effect: ZoneEffect::MAGICAL_DARKNESS,
+        rounds_remaining: 10,
+        concentration: false,
+        motion: ZoneMotion::Fixed,
+    });
+    assert!(!e.is_sunlit(Coordinate::new(4, 2)));
+    // The drow is out of the sun, and now blind — the sphere obscures
+    // symmetrically and the drow has no Devil's Sight. Disadvantage for
+    // not seeing, advantage for not being seen, and they cancel.
+    assert_eq!(
+        e.compute_attack_mode(drow, target, false),
+        RollMode::Normal,
+        "the sun's penalty is gone; what is left is the sphere's own \
+         two clauses cancelling"
+    );
+}
+
+/// The three frailty tiers differ on saves, and only on saves — the
+/// kobold's Sensitivity taxes attacks alone, the shadow's Weakness
+/// reaches the saving throws too.
+#[test]
+fn only_the_weakness_tiers_reach_saving_throws() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    e.set_ambient_light(AmbientLight::Daylight);
+    let kobold = e
+        .instantiate_creature(
+            &crate::actors::creatures::kobolds::KOBOLD_TEMPLATE,
+            Coordinate::new(0, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let shadow = e
+        .instantiate_creature(
+            &crate::actors::creatures::shadows::SHADOW_TEMPLATE,
+            Coordinate::new(6, 2),
+            1,
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        e.actors[&kobold].sunlight_frailty(),
+        Some(SunlightFrailty::Sensitivity)
+    );
+    assert_eq!(
+        e.actors[&shadow].sunlight_frailty(),
+        Some(SunlightFrailty::Weakness)
+    );
+    assert_eq!(
+        e.compute_save_mode(kobold, AbilityScoreType::Wisdom),
+        RollMode::Normal
+    );
+    assert_eq!(
+        e.compute_save_mode(shadow, AbilityScoreType::Wisdom),
+        RollMode::Disadvantage
+    );
+}
+
+/// Sunlight Hypersensitivity burns the vampire at the top of its turn,
+/// and does not burn it in the crypt. Routed through the damage
+/// pipeline, so the vampire's radiant vulnerability doubles it — which
+/// is exactly the trait's reputation.
+#[test]
+fn a_vampire_burns_at_the_top_of_its_turn_in_the_sun_and_not_indoors() {
+    for (ambient, should_burn) in [
+        (AmbientLight::BrightLight, false),
+        (AmbientLight::Daylight, true),
+    ] {
+        let mut e = ei_with_terrain(20, 8, &[]);
+        e.set_ambient_light(ambient);
+        let vampire = e
+            .instantiate_creature(
+                &crate::actors::creatures::vampires::VAMPIRE_TEMPLATE,
+                Coordinate::new(4, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let before = e.actors[&vampire].hitpoints();
+        e.start_turn_for(vampire);
+        let after = e.actors[&vampire].hitpoints();
+        assert_eq!(
+            after < before,
+            should_burn,
+            "vampire under {:?}: {} -> {}",
+            ambient,
+            before,
+            after
+        );
+    }
+}
+
+/// The Light cantrip refuses the two casts that would be wasted — on a
+/// board that is already bright, and on somebody already carrying a
+/// light — and accepts the one that would not.
+#[test]
+fn the_light_cantrip_declines_the_casts_that_would_do_nothing() {
+    let mut e = ei_with_terrain(20, 8, &[]);
+    let cleric = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(4, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let light = &*crate::actions::spells::LIGHT;
+    let targets = vec![cleric];
+    assert!(
+        !light.custom_validate_input(&e, cleric, Some(&targets), None, None),
+        "nothing to light on a bright board"
+    );
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(light.custom_validate_input(&e, cleric, Some(&targets), None, None));
+    light.side_effects(&mut e, cleric, Some(&targets), None, None);
+    assert!(e.actor_carries_light(cleric));
+    assert_eq!(e.light_at(Coordinate::new(4, 2)), LightLevel::Bright);
+    assert!(
+        !light.custom_validate_input(&e, cleric, Some(&targets), None, None),
+        "and it will not re-light somebody who is already lit"
+    );
+}

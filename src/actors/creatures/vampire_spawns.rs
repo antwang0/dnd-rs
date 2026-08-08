@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::VAMPIRIC_BITE;
 use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::engine::lighting::SunlightFrailty;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -41,6 +42,10 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        // 5e Vampire Spawn **Sunlight Hypersensitivity**: the same
+        // 20-radiant-per-turn clause the Vampire Lord carries, and on
+        // the same radiant vulnerability. See `vampires.rs`.
+        sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
         ..CreatureTemplate::defaults()
     }
 });

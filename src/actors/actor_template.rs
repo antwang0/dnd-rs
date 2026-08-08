@@ -7,6 +7,7 @@ use crate::engine::types::{
     AbilityScoreType, Coordinate, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
     SpecialSense,
 };
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::util::{TILE_FEET, modifier_from_score};
 use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
@@ -2762,6 +2763,17 @@ pub struct CreatureTemplate {
     /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
     /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
     pub has_pack_tactics: bool,
+    /// 5e **Sunlight Sensitivity** / **Sunlight Weakness** / **Sunlight
+    /// Hypersensitivity** — the kobold-and-drow, shadow, and vampire
+    /// tiers of "this creature does not belong outdoors". `None` for
+    /// almost everything; see `SunlightFrailty` for what each tier
+    /// costs and why they are one field rather than three flags.
+    ///
+    /// Inert unless the encounter's ambient light is
+    /// `AmbientLight::Daylight`. A torchlit hall is bright and is not
+    /// sunlight, which is exactly the distinction the ambient enum
+    /// exists to carry.
+    pub sunlight_frailty: Option<SunlightFrailty>,
     /// 5e **Swarm** (Swarm of Bats, Swarm of Rats, Swarm of Insects,
     /// Swarm of Poisonous Snakes, Swarm of Quippers): this "creature" is
     /// a cloud of Tiny ones sharing one HP pool and one initiative slot.
@@ -3663,6 +3675,7 @@ impl CreatureTemplate {
             has_displacement: false,
             has_danger_sense: false,
             has_pack_tactics: false,
+            sunlight_frailty: None,
             is_swarm: false,
             has_magic_resistance: false,
             recharge_abilities: Vec::new(),
@@ -4244,6 +4257,7 @@ pub struct ActorInstance {
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
+    sunlight_frailty: Option<SunlightFrailty>,
     is_swarm: bool,
     has_magic_resistance: bool,
     /// Recharge tracking: maps action name → (min_roll, is_available).
@@ -4539,6 +4553,7 @@ impl ActorInstance {
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
+            sunlight_frailty: ct.sunlight_frailty,
             is_swarm: ct.is_swarm,
             has_magic_resistance: ct.has_magic_resistance,
             recharge_abilities: ct
@@ -6816,6 +6831,59 @@ impl ActorInstance {
             SpecialSense::Blindsight(feet) => Some(*feet),
             _ => None,
         })
+    }
+
+    /// The widest **darkvision** envelope this creature has, in tiles.
+    ///
+    /// 5e: "you can see in dim light within the radius as if it were
+    /// bright light, and in darkness as if it were dim light. You can't
+    /// discern colour in darkness, only shades of grey."
+    ///
+    /// The colour clause has no surface here. The rest is read by
+    /// `EncounterInstance::perceived_light`, which is the one place the
+    /// upgrade happens and therefore the one place that has to know the
+    /// radius.
+    ///
+    /// This accessor is the reason the lighting layer exists at all.
+    /// `SpecialSense::Darkvision(_)` was declared on some two hundred
+    /// templates — every goblin, every dwarf, every devil — and read by
+    /// nothing, so the sense that separates a kobold from a commoner in
+    /// an unlit corridor was decoration. It is the same gap
+    /// `blindsight_tiles` closed for blindsight, and it went unnoticed
+    /// for the opposite reason: blindsight was unread because the
+    /// engine had no invisibility to counter, and darkvision was unread
+    /// because the engine had no darkness to see through.
+    pub fn darkvision_tiles(&self) -> isize {
+        self.sense_tiles(|s| match s {
+            SpecialSense::Darkvision(feet) => Some(*feet),
+            _ => None,
+        })
+    }
+
+    /// True if this creature sees normally in *magical* darkness — the
+    /// 5e warlock invocation **Devil's Sight**, and the trait of the
+    /// same name that every devil in the bestiary carries.
+    ///
+    /// The one counter RAW provides to the Darkness spell's "a creature
+    /// with darkvision can't see through this darkness", and the reason
+    /// the spell is a warlock signature rather than a coin flip: a
+    /// warlock with the invocation drops a sphere on the melee and
+    /// keeps shooting out of it while nothing inside can see them.
+    ///
+    /// Carried as a passive-feature tag rather than a `SpecialSense`
+    /// because it has no radius that matters here — the invocation's
+    /// 120 ft exceeds anything the engine's boards can put between two
+    /// creatures — and because the warlock's other invocations already
+    /// live in the same pool.
+    pub fn has_devils_sight(&self) -> bool {
+        self.has_passive_feature(crate::actions::class_features::DEVILS_SIGHT_TAG)
+    }
+
+    /// How badly this creature reacts to sunlight, if at all — see
+    /// `crate::engine::lighting::SunlightFrailty`. `None` for the
+    /// overwhelming majority of the bestiary.
+    pub fn sunlight_frailty(&self) -> Option<SunlightFrailty> {
+        self.sunlight_frailty
     }
 
     /// The widest **tremorsense** envelope this creature has, in tiles.

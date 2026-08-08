@@ -95,6 +95,15 @@ pub static BEARDED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // Magic Resistance: advantage on saves vs spells. Standard
         // mid-tier fiend trait.
         has_magic_resistance: true,
+        // 5e **Devil's Sight** — "magical darkness doesn't impede this
+        // devil's darkvision." Carried by every devil in the bestiary,
+        // and the one thing in the game that sees through the Darkness
+        // spell. Before the lighting layer existed the trait was
+        // approximated as a generous darkvision radius, which was the
+        // closest the engine could get to it and got the crucial half
+        // exactly backwards: RAW darkvision is precisely what magical
+        // darkness defeats.
+        features: HashSet::from([crate::actions::class_features::DEVILS_SIGHT_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

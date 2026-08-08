@@ -29,11 +29,14 @@
 //!
 //! ## What a zone can do
 //!
-//! Five clauses, each independently optional, which between them cover
+//! Six clauses, each independently optional, which between them cover
 //! every stationary-area spell the engine has reason to model:
 //!
 //!   - **`obscures`** — heavy obscurement. Blocks sight into, out of,
 //!     and through the area (read by `EncounterInstance::viewer_can_see`).
+//!   - **`darkens`** — magical darkness. Drives the tile to
+//!     `LightLevel::Dark` on the lighting layer, which nonmagical light
+//!     cannot lift and darkvision cannot see through.
 //!   - **`difficult`** — the movement surcharge, composed with the
 //!     terrain layer's own by `max` rather than by multiplication, so a
 //!     web over rubble costs 2× and not 4×.
@@ -350,6 +353,33 @@ pub struct ZoneEffect {
     /// at a point and a spell aimed at a creature are answered by the
     /// same sentence.
     pub suppresses_magic: bool,
+    /// 5e **magical darkness** — the Darkness spell's "a creature with
+    /// darkvision can't see through this darkness, and nonmagical light
+    /// can't illuminate it."
+    ///
+    /// The fifth axis, and the only one that reaches the lighting layer
+    /// (`crate::engine::lighting`): a darkening zone drives every tile
+    /// it covers to `LightLevel::Dark` no matter what the sky is doing
+    /// or who is holding a torch.
+    ///
+    /// Separate from `obscures` rather than folded into it because the
+    /// two clauses are independently true. Fog Cloud obscures and does
+    /// not darken — it is opaque, not unlit, so a torch still works in
+    /// it and a drow standing in one is still in sunlight for the
+    /// purposes of its own frailty. Nothing in 5e darkens without
+    /// obscuring, but the pairing belongs to `MAGICAL_DARKNESS` (which
+    /// sets both) rather than to the field, so a future spell that
+    /// merely snuffs the lights can say so.
+    ///
+    /// `Some(level)` carries the spell level the darkness was created
+    /// at, because the level is the *only* thing anything reads off it
+    /// beyond the yes/no: 5e states the light-versus-darkness contest
+    /// twice, from both ends, and both sentences are a level
+    /// comparison. Darkness dispels "light created by a spell of 2nd
+    /// level or lower"; Daylight dispels "darkness created by a spell
+    /// of 3rd level or lower". A bare bool could implement the first
+    /// and not the second.
+    pub darkens: Option<u32>,
 }
 
 impl ZoneEffect {
@@ -360,7 +390,34 @@ impl ZoneEffect {
         contact: None,
         per_step_damage: None,
         suppresses_magic: false,
+        darkens: None,
     };
+
+    /// The Darkness spell: heavily obscured *and* unlit.
+    ///
+    /// Both flags, because RAW says both things and they are not the
+    /// same thing. `obscures` is what blinds everyone symmetrically and
+    /// is what darkvision cannot help with ("a creature with darkvision
+    /// can't see through this darkness"). `darkens` is what stops a
+    /// torch working inside it ("nonmagical light can't illuminate
+    /// it"), and what lifts a drow's sunlight penalty while it stands
+    /// in one.
+    ///
+    /// Distinct from `OBSCURING`, which is the fog cohort: a fog cloud
+    /// is opaque and perfectly well lit.
+    pub const MAGICAL_DARKNESS: Self = Self {
+        obscures: true,
+        difficult: false,
+        contact: None,
+        per_step_damage: None,
+        suppresses_magic: false,
+        darkens: Some(Self::DARKNESS_SPELL_LEVEL),
+    };
+
+    /// The level the Darkness spell is cast at, and therefore the level
+    /// `MAGICAL_DARKNESS` records. Named because two unrelated rules
+    /// compare against it and neither should carry a bare `2`.
+    pub const DARKNESS_SPELL_LEVEL: u32 = 2;
 
     /// A zone whose only clause is the bad ground (Entangle, whose
     /// grab is a one-time save at cast time rather than a standing
@@ -371,6 +428,7 @@ impl ZoneEffect {
         contact: None,
         per_step_damage: None,
         suppresses_magic: false,
+        darkens: None,
     };
 
     /// A zone whose only clause is that magic does not work inside it
@@ -382,6 +440,7 @@ impl ZoneEffect {
         contact: None,
         per_step_damage: None,
         suppresses_magic: true,
+        darkens: None,
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
@@ -393,6 +452,7 @@ impl ZoneEffect {
             contact: Some(contact),
             per_step_damage: None,
             suppresses_magic: false,
+            darkens: None,
         }
     }
 
@@ -405,6 +465,7 @@ impl ZoneEffect {
             contact: None,
             per_step_damage: Some((dice, damage_type)),
             suppresses_magic: false,
+            darkens: None,
         }
     }
 
@@ -418,6 +479,7 @@ impl ZoneEffect {
             contact: Some(contact),
             per_step_damage: None,
             suppresses_magic: false,
+            darkens: None,
         }
     }
 
@@ -430,6 +492,7 @@ impl ZoneEffect {
             contact: Some(contact),
             per_step_damage: None,
             suppresses_magic: false,
+            darkens: None,
         }
     }
 

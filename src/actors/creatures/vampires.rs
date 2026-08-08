@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{VAMPIRE_CHARMING_GAZE, VAMPIRE_MULTIATTACK};
 use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::engine::lighting::SunlightFrailty;
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -64,6 +65,15 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         has_extra_attack: true,
+        // 5e Vampire **Sunlight Hypersensitivity**: "the vampire takes
+        // 20 radiant damage when it starts its turn in sunlight. While
+        // in sunlight, it has disadvantage on attack rolls and ability
+        // checks." The 20 radiant lands at the top of the turn through
+        // `apply_sunlight_hypersensitivity`, and it lands on a creature
+        // that is already vulnerable to radiant — 40 a round, which is
+        // exactly the point of the trait and the reason a vampire fight
+        // happens at night.
+        sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
         ..CreatureTemplate::defaults()
     }
 });

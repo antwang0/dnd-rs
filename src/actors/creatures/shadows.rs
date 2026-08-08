@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LifeDrain;
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::lighting::SunlightFrailty;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
 use std::collections::{HashMap, HashSet};
@@ -52,6 +53,12 @@ pub static SHADOW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Restrained,
         ]),
         skills: HashSet::from([Skill::Stealth]),
+        // 5e Shadow **Sunlight Weakness**: "while in sunlight, the
+        // shadow has disadvantage on attack rolls, ability checks, and
+        // saving throws." One clause more than the kobold's
+        // Sensitivity, and it is the clause that matters — a shadow
+        // caught in the open fails the saves it would otherwise make.
+        sunlight_frailty: Some(SunlightFrailty::Weakness),
         ..CreatureTemplate::defaults()
     }
 });

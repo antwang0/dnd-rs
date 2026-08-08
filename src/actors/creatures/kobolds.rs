@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DAGGER, SHORTBOW, THROWN_DAGGER};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -39,6 +40,14 @@ pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Humanoid,
         actions,
         has_pack_tactics: true,
+        // 5e Kobold **Sunlight Sensitivity**: "while in sunlight, the
+        // kobold has disadvantage on attack rolls, as well as on Wisdom
+        // (Perception) checks that rely on sight." The attack half is
+        // modeled; the engine rolls no Perception checks. Inert unless
+        // the encounter is actually under an open sky — a kobold in its
+        // warren swings normally, which is the whole reason kobolds
+        // live in warrens.
+        sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         ..CreatureTemplate::defaults()
     }
 });

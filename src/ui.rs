@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::actions::action_template::Action;
 use crate::engine::encounter::{EncounterInstance, StackState};
+use crate::engine::lighting::LightLevel;
 use crate::engine::side_effects::Resource;
 use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
@@ -134,10 +135,35 @@ pub fn render_map(
         _ => None,
     };
 
+    // Whether the map needs a lighting pass at all. On the lit-board
+    // default nothing below can change any tile's shade, and the check
+    // is cheaper than asking `light_at` once per tile for the answer
+    // "bright" forty times a row.
+    let lit_board = encounter.ambient_light().level() == LightLevel::Bright
+        && encounter.light_sources().is_empty();
+
     for y in (0..encounter.height).rev() {
         let mut row: Vec<Span> = Vec::new();
         for x in 0..encounter.width {
             let coord = Coordinate::new(x as isize, y as isize);
+            // The light this tile sits in, from the active actor's own
+            // eyes — darkvision included, which is the whole point. A
+            // goblin player sees sixty feet of grey corridor where a
+            // human player sees the reach of their torch and nothing
+            // else, and the map is the only place that difference can
+            // be shown.
+            //
+            // Falls back to the objective light when nobody is being
+            // prompted (an AI turn resolving, the encounter over), so
+            // the map never goes blank between frames.
+            let light = if lit_board {
+                LightLevel::Bright
+            } else {
+                match active_actor_id {
+                    Some(viewer) => encounter.perceived_light(viewer, coord),
+                    None => encounter.light_at(coord),
+                }
+            };
             if let Some(occupant_id) = encounter.actor_id_at(coord)
                 && let Some(occupant) = encounter.actors.get(&occupant_id)
             {
@@ -249,6 +275,29 @@ pub fn render_map(
                     Some(c) => Span::styled(glyph.to_string(), Style::default().fg(c)),
                     None => Span::from(glyph.to_string()),
                 });
+            }
+            // The lighting pass, applied to whatever was drawn above —
+            // terrain, zone, loot or creature alike — rather than to
+            // each branch, so a new kind of tile cannot be added
+            // without it.
+            //
+            // Two rungs and not three. `Dim` is greyed, which says "you
+            // can see this and not well"; `Dark` is blanked to a space,
+            // which says the only honest thing a map can say about a
+            // tile its viewer cannot see. Blanking rather than dimming
+            // matters: a dimmed monster glyph is still a monster the
+            // player has been told about, and the whole tactical
+            // content of fighting in the dark is not knowing.
+            if let Some(span) = row.last_mut() {
+                match light {
+                    LightLevel::Bright => {}
+                    LightLevel::Dim => {
+                        span.style = span.style.add_modifier(Modifier::DIM);
+                    }
+                    LightLevel::Dark => {
+                        *span = Span::from(" ");
+                    }
+                }
             }
         }
         text.push(Line::from(row));
@@ -467,10 +516,22 @@ pub fn render_sideinfo(
     // player wants *after* the fight rather than during it — to replay a
     // good encounter, or to hand over with a bug report. Every encounter
     // has one now, including the ones started without a seed argument.
+    // The ambient light rides in the title beside the seed, and only
+    // when it isn't the lit-board default. A player fighting in the
+    // dark needs to know that is *why* everything is missing; a player
+    // on an ordinary board does not need a line telling them the lights
+    // are on.
+    let ambient = encounter.ambient_light();
+    let lighting = if ambient == crate::engine::lighting::AmbientLight::default() {
+        String::new()
+    } else {
+        format!(" — {}", ambient.label())
+    };
     let init_title = format!(
-        "Initiative — Round {} — seed {}",
+        "Initiative — Round {} — seed {}{}",
         encounter.round(),
-        encounter.seed()
+        encounter.seed(),
+        lighting
     );
     frame.render_widget(
         Paragraph::new(initiative_lines)
@@ -881,6 +942,83 @@ mod tests {
         assert!(
             panel.contains("riding") && panel.contains("ridden by"),
             "the panel names the pairing from both ends:\n{}",
+            panel
+        );
+    }
+
+    /// An unlit tile is drawn as nothing at all, and the goblin
+    /// standing on it disappears with it.
+    ///
+    /// Blanking rather than dimming is the decision worth pinning. A
+    /// dimmed monster glyph is still a monster the player has been
+    /// told about, and the entire tactical content of fighting in the
+    /// dark is not knowing where anything is — so a map that greys the
+    /// creature out has given the game away while looking like it
+    /// hasn't.
+    #[test]
+    fn a_creature_standing_in_the_dark_is_not_drawn_on_the_map() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0)]);
+        let goblin_glyph = GOBLIN_TEMPLATE.glyph;
+        assert!(
+            rendered_map(&e).contains(goblin_glyph),
+            "the goblin is on a lit board to start with"
+        );
+        e.set_ambient_light(crate::engine::lighting::AmbientLight::Darkness);
+        assert!(
+            !rendered_map(&e).contains(goblin_glyph),
+            "and vanishes when the lights go out"
+        );
+    }
+
+    /// A light source carves a visible island out of the dark — the
+    /// other half of the test above, and the one that says the map is
+    /// reading the light layer rather than simply blanking on a dark
+    /// ambient.
+    #[test]
+    fn a_torch_carves_a_visible_island_out_of_the_dark() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0)]);
+        let goblin = *e.actors.keys().next().expect("a goblin");
+        let at = e.actors[&goblin].location();
+        e.set_ambient_light(AmbientLight::Darkness);
+        e.add_light_source(LightSource {
+            id: 0,
+            name: "torch",
+            anchor: LightAnchor::Fixed(at),
+            bright_tiles: 3,
+            dim_tiles: 0,
+            rounds_remaining: None,
+            spell_level: 0,
+        });
+        assert!(
+            rendered_map(&e).contains(GOBLIN_TEMPLATE.glyph),
+            "the torch is standing on the goblin"
+        );
+    }
+
+    /// The lighting shows up in the panel title when it is worth
+    /// mentioning, and stays out of it when it is not. A player
+    /// fighting blind needs to be told why; a player on an ordinary
+    /// board does not need a line saying the lights are on.
+    #[test]
+    fn the_panel_names_the_lighting_only_when_it_is_not_the_default() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::lighting::AmbientLight;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0)]);
+        assert!(
+            !rendered_panel(&e).contains("darkness"),
+            "a lit board says nothing about lighting"
+        );
+        e.set_ambient_light(AmbientLight::Darkness);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("darkness"),
+            "an unlit board says so on the panel:\n{}",
             panel
         );
     }

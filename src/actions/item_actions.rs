@@ -5272,3 +5272,114 @@ pub static READ_PROTECTION_FROM_POISON_SCROLL: SingleTargetBuffItem = SingleTarg
     bonus_action: false,
     reject_when_active: true,
 };
+
+const TORCH_NAME: &str = "Torch";
+
+/// **Light a torch** — the non-caster's answer to an unlit board.
+///
+/// 5e's torch is a 5-piece of adventuring gear that "burns for 1 hour,
+/// providing bright light in a 20-foot radius and dim light for an
+/// additional 20 feet", and until the lighting layer existed there was
+/// nothing in the engine for it to provide. It is deliberately the one
+/// light source that costs no spell slot and no cantrip known: a
+/// fighter, a barbarian and a rogue between them have no way to make
+/// light, and a dark encounter that only casters can see in would be a
+/// worse encounter rather than a harder one.
+///
+/// Its own struct rather than a `SelfConditionItem` row because what it
+/// installs is not a condition. Light is a property of tiles, held on
+/// the light layer, and the actor merely carries the anchor — the same
+/// distinction that keeps `zones` off the condition map.
+///
+/// Consumed on use, like every other one-shot in the pack. RAW's hour
+/// outlasts any fight, so the source it lights carries no timer; see
+/// `LightSource::rounds_remaining`.
+pub struct LightTorch {}
+
+impl Action for LightTorch {
+    fn name(&self) -> &str {
+        "light torch"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["torch", "lt torch", "kindle"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        e: &EncounterInstance,
+        c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A bonus action for everybody rather than an Action. RAW's
+        // "interact with one object for free" is the rule a torch is
+        // actually lit under at a table, and the engine has no free
+        // interaction to spend; a bonus action is the cheapest price it
+        // can express, and charging a whole Action for the ability to
+        // see would make the item not worth carrying.
+        item_use_cost(e, c, true)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same two refusals the Light cantrip makes, and for the same
+        // reasons: don't light a second torch, and don't light one at
+        // noon. The third is the one every consumable makes — you have
+        // to still be holding it.
+        caster_holds(encounter, caster_id, TORCH_NAME)
+            && !encounter.actor_carries_light(caster_id)
+            && encounter.ambient_light().level() != crate::engine::lighting::LightLevel::Bright
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::lighting::{
+            LightAnchor, LightSource, TORCH_BRIGHT_TILES, TORCH_DIM_TILES,
+        };
+        if !consume_caster_item(encounter, caster_id, TORCH_NAME) {
+            return Vec::new();
+        }
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "torch",
+            anchor: LightAnchor::Carried(caster_id),
+            bright_tiles: TORCH_BRIGHT_TILES,
+            dim_tiles: TORCH_DIM_TILES,
+            rounds_remaining: None,
+            // Nonmagical flame, and therefore the first thing a
+            // Darkness sphere puts out.
+            spell_level: 0,
+        });
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!("{} lights a torch.", name));
+        Vec::new()
+    }
+}
+
+pub static LIGHT_TORCH: LightTorch = LightTorch {};

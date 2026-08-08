@@ -117,6 +117,14 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // inspired ally. Slots cleanly into the druid's bonus-cantrip lane
     // next to Shillelagh.
     actions.push(&*crate::actions::spells::GUIDANCE);
+    // Light — the evocation cantrip every one of these classes has on
+    // its list, and the party's answer to an unlit board: touch an ally
+    // (or yourself) and they carry 20 ft of bright light and 20 ft of
+    // dim light with them for the rest of the fight. Declines to cast
+    // on a board that is already bright, and declines to re-light
+    // somebody who is already lit, so it costs nothing on the ambient
+    // default and is there when the lights are out.
+    actions.push(&*crate::actions::spells::LIGHT);
     // Ice Knife — lv1 conjuration (druid / sorcerer / wizard). Ranged
     // spell attack 1d10 piercing + DEX-save 2d6 cold burst at the
     // target's tile (fires hit OR miss). Gives the druid a non-

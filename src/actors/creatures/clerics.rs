@@ -153,6 +153,14 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // previously empty for clerics. Custom-validate gates against
     // re-priming an already-inspired ally.
     actions.push(&*crate::actions::spells::GUIDANCE);
+    // Light — the evocation cantrip every one of these classes has on
+    // its list, and the party's answer to an unlit board: touch an ally
+    // (or yourself) and they carry 20 ft of bright light and 20 ft of
+    // dim light with them for the rest of the fight. Declines to cast
+    // on a board that is already bright, and declines to re-light
+    // somebody who is already lit, so it costs nothing on the ambient
+    // default and is there when the lights are out.
+    actions.push(&*crate::actions::spells::LIGHT);
     // Warding Bond — lv2 abjuration. Touch-range damage-share bond:
     // bonded ally gains +1 AC, +1 saves, resistance to all damage; the
     // caster takes the same (post-resistance) damage every time the
