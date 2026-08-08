@@ -163,6 +163,17 @@ impl RollModeTally {
         }
     }
 
+    /// True if anything at all has imposed disadvantage.
+    ///
+    /// Read by the one caller that has to decide whether a *further*
+    /// disadvantage source is worth paying for: a protector's reaction
+    /// spent on a swing that is already rolling badly buys nothing, and
+    /// the tally is the only thing that can answer "already" without
+    /// enumerating the reasons.
+    pub fn has_disadvantage(self) -> bool {
+        self.disadvantage
+    }
+
     /// The rule, applied once: both is neither.
     pub fn resolve(self) -> RollMode {
         match (self.advantage, self.disadvantage) {

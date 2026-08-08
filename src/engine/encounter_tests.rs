@@ -54112,31 +54112,56 @@ fn protection_style_imposes_disadvantage_when_ally_adjacent() {
         None,
         "protection scan skips protectors without a reaction"
     );
-    // Restore the reaction, then blind the attacker — Protection
-    // shouldn't burn the reaction if the attacker is already at
-    // disadvantage from being Blinded.
+    // Restore the reaction. The "don't burn a reaction on a swing that
+    // is already taxed" rule is not in the eligibility scan — it lives
+    // at `apply_reactive_attack_taxes`, which is the only caller that
+    // holds the swing's whole `RollModeTally` and can therefore see
+    // every disadvantage source rather than the one the scan used to
+    // hard-code.
     e.actors
         .get_mut(&protector)
         .unwrap()
         .give_resource(crate::engine::side_effects::Resource::Reaction);
-    e.actors
-        .get_mut(&attacker)
-        .unwrap()
-        .add_condition(Condition::Blinded, ConditionTimer::Rounds(2));
-    assert_eq!(
-        e.first_eligible_protector(attacker, target),
-        None,
-        "blinded attackers skip the protection reaction tax"
-    );
-    // Clear the attacker's Blinded — protector is eligible again.
-    e.actors
-        .get_mut(&attacker)
-        .unwrap()
-        .remove_condition(Condition::Blinded);
+    for already in [Condition::Blinded, Condition::Poisoned] {
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(already, ConditionTimer::Rounds(2));
+        let mut tally = e.attack_mode_tally(attacker, target, true);
+        assert!(
+            tally.has_disadvantage(),
+            "{:?} should be a disadvantage source",
+            already
+        );
+        e.apply_reactive_attack_taxes(attacker, target, &mut tally);
+        assert!(
+            e.actors[&protector].has_reaction(),
+            "{:?}: the protector's reaction buys nothing here and must \
+             not be spent",
+            already
+        );
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .remove_condition(already);
+    }
+    // Poisoned is the half the old gate could not see: it hard-coded
+    // `Blinded` and nothing else, so a protector spent its reaction to
+    // impose a second helping of disadvantage on a poisoned attacker.
+    //
+    // With nothing taxing the attacker, the scan is eligible again and
+    // the tax actually fires.
     assert_eq!(
         e.first_eligible_protector(attacker, target),
         Some(protector),
-        "protection re-eligible after attacker sight restored"
+        "protection eligible against an untaxed attacker"
+    );
+    let mut tally = e.attack_mode_tally(attacker, target, true);
+    e.apply_reactive_attack_taxes(attacker, target, &mut tally);
+    assert!(tally.has_disadvantage());
+    assert!(
+        !e.actors[&protector].has_reaction(),
+        "and here the reaction is what paid for it"
     );
     // Verify end-to-end: computing the attack mode via resolve
     // sees the disadvantage. We use a direct compute_attack_with_help
@@ -76025,5 +76050,93 @@ fn elusive_denies_the_advantage_a_help_grant_would_have_smuggled_past_it() {
         e.peek_attack_mode(attacker, rogue, true),
         RollMode::Normal,
         "the capstone caps the grant too"
+    );
+}
+
+/// The whole attack roll is one tally, from the condition sweep to the
+/// last clause before the die.
+///
+/// Three sources, and they live on opposite sides of a function
+/// boundary: the attacker is Hidden (advantage) and Poisoned
+/// (disadvantage), both read by `attack_mode_tally`, and the throw is
+/// past the dagger's normal range (disadvantage), which
+/// `engine::attack::resolve_attack` only learns about afterwards. RAW:
+/// one of each kind, so neither.
+///
+/// The old chain resolved the sweep first — Hidden against Poisoned
+/// cancelled to `Normal` — and then folded the range clause onto that
+/// `Normal`, producing `Disadvantage`. The cancellation had thrown away
+/// the fact that an advantage was ever in play, which is exactly the
+/// information a resolved `RollMode` cannot carry and a tally can.
+///
+/// Read off the log rather than off a helper, because the claim is
+/// about the mode the die was *rolled under*, and `resolve_attack` is
+/// the only thing that knows it.
+#[test]
+fn an_attack_roll_counts_every_clause_before_it_picks_a_mode() {
+    use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(30, 10, &[]);
+    let thrower = e
+        .instantiate_creature(&KOBOLD_TEMPLATE, Coordinate::new(0, 4), 0, 0)
+        .unwrap();
+    // 12 tiles: past the thrown dagger's 8-tile normal range, inside
+    // its 24-tile maximum.
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+        .unwrap();
+    for c in [Condition::Hidden, Condition::Poisoned] {
+        e.actors
+            .get_mut(&thrower)
+            .unwrap()
+            .add_condition(c, ConditionTimer::Permanent);
+        assert!(e.actors[&thrower].has_condition(c), "{:?} must stick", c);
+    }
+
+    let dagger = e.actors[&thrower]
+        .find_action("thrown dagger")
+        .expect("a kobold throws its dagger");
+    let before = e.messages().len();
+    dagger.execute(&mut e, thrower, Some(&vec![target]), None, None);
+    let log = e.messages()[before..].join("\n");
+    assert!(
+        log.contains("thrown dagger"),
+        "the throw should have happened:\n{}",
+        log
+    );
+    assert!(
+        !log.contains("(dis)"),
+        "one advantage against two disadvantages is neither:\n{}",
+        log
+    );
+    assert!(
+        !log.contains("(adv)"),
+        "…and it is not advantage either:\n{}",
+        log
+    );
+    // The control: drop the poison and the same throw is one advantage
+    // against one disadvantage, which is still neither — so the
+    // assertion above is not passing merely because nothing was taxed.
+    // Take the range away too and the advantage comes through.
+    let mut close = ei_with_terrain(30, 10, &[]);
+    let thrower = close
+        .instantiate_creature(&KOBOLD_TEMPLATE, Coordinate::new(0, 4), 0, 0)
+        .unwrap();
+    let target = close
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    close
+        .actors
+        .get_mut(&thrower)
+        .unwrap()
+        .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+    let before = close.messages().len();
+    dagger.execute(&mut close, thrower, Some(&vec![target]), None, None);
+    let log = close.messages()[before..].join("\n");
+    assert!(
+        log.contains("(adv)"),
+        "an unseen thrower inside normal range rolls with advantage:\n{}",
+        log
     );
 }

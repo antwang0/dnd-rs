@@ -1660,8 +1660,8 @@ pub fn resolve_attack_outcome_with_rider(
     // Commander's Strike (on the ordered ally), and the Arcane
     // Trickster's Versatile Trickster. The `Help` action was unaffected
     // only because it installs the condition too.
-    let mut mode =
-        encounter.attack_mode_with_riders(p.caster_id, p.target_id, p.is_melee);
+    let mut tally =
+        encounter.attack_mode_tally_with_riders(p.caster_id, p.target_id, p.is_melee);
     // Defender-side reactive taxes on the attack roll — Fighting Style:
     // Protection (an adjacent ally spends their reaction) and the
     // `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` per-rest cohort (Warding
@@ -1672,7 +1672,7 @@ pub fn resolve_attack_outcome_with_rider(
     // rider consumption below, so a taxed swing STILL burns the
     // attacker's Help / Hidden / Inspired priming — RAW: those primes
     // are consumed on the roll, regardless of disadvantage.
-    mode = encounter.apply_reactive_attack_taxes(p.caster_id, p.target_id, mode);
+    encounter.apply_reactive_attack_taxes(p.caster_id, p.target_id, &mut tally);
     // 5e long-range disadvantage: ranged weapon attacks beyond normal
     // range but within max range impose disadvantage. The `long_range`
     // threshold (in tiles) is set by the weapon definition — melee
@@ -1682,7 +1682,7 @@ pub fn resolve_attack_outcome_with_rider(
         && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
         && dist > nr
     {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+        tally.add(crate::engine::dice::RollMode::Disadvantage);
     }
     // …and its mirror at the other end of the reach. 5e's lance: "you
     // have disadvantage when you use a lance to attack a target within
@@ -1693,7 +1693,7 @@ pub fn resolve_attack_outcome_with_rider(
         && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
         && dist < mr
     {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+        tally.add(crate::engine::dice::RollMode::Disadvantage);
     }
     // 5e Underwater Combat (PHB p.198). Both clauses at once, because
     // both are questions about the same swing and the answer to one
@@ -1722,7 +1722,7 @@ pub fn resolve_attack_outcome_with_rider(
         beyond_normal_range,
     );
     if underwater == UnderwaterVerdict::Disadvantage {
-        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+        tally.add(crate::engine::dice::RollMode::Disadvantage);
     }
     // Caster-side flat bonuses. `attack_bonus_buff` is the install-side
     // ledger (Bless's AdjustAttackBuff(+2), etc.). `condition_attack_bonus`
@@ -1786,7 +1786,19 @@ pub fn resolve_attack_outcome_with_rider(
     // disadvantage source (cover-blind, long range, the lance's close
     // quarters, the defender's reactive taxes) has had its say: both
     // features answer the net result, not the first cause.
-    mode = encounter.steady_the_d20(p.caster_id, mode);
+    //
+    // This is also where the tally the four clauses above have been
+    // filling finally becomes a mode. Resolving here rather than at
+    // each clause is what makes RAW's "no matter how many circumstances
+    // of each kind you have" hold across the whole roll: a swing that
+    // picked up advantage from Hidden and then eats a Warding Flare, a
+    // long shot and the underwater clause is `Normal`, not three
+    // helpings of disadvantage. `resolve_attack_mode_against` also
+    // applies the Rogue's Elusive cap, which has to be the last word
+    // and could not be while the sweep resolved before these clauses
+    // were counted.
+    let mode = encounter.resolve_attack_mode_against(p.target_id, tally);
+    let mode = encounter.steady_the_d20(p.caster_id, mode);
     // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
     // helper folds the reroll into the same seedable RNG so determinism
     // by seed holds — and falls back to the raw roll for actors without

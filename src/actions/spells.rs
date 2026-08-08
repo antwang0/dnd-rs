@@ -162,17 +162,23 @@ pub fn spell_attack_roll(
     // attack_mode_with_riders so a one-shot Help grant on the caster is
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
-    let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee);
+    let mut tally =
+        encounter.attack_mode_tally_with_riders(caster_id, target_id, is_melee);
     // Defender-side reactive taxes on the attack roll — Fighting Style:
     // Protection and the per-rest `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`
     // cohort (Light Cleric Warding Flare, Great Old One Warlock Entropic
     // Ward). Shared with the weapon path in `engine::attack` through one
     // engine chokepoint, since RAW's triggers ("when a creature you can
     // see attacks a target other than you" / "when a creature attacks
-    // you") say nothing about weapons. Layered here, after
-    // `attack_mode_with_riders`, so advantage the spell picked up from
-    // Help / Bless / Hidden still combines cleanly via `RollMode::combine`.
-    let mode = encounter.apply_reactive_attack_taxes(caster_id, target_id, mode);
+    // you") say nothing about weapons.
+    //
+    // Layered into the same tally the sweep filled rather than onto its
+    // resolved answer, so a spell that picked up advantage from Help /
+    // Hidden and then eats a Warding Flare comes out `Normal` — RAW's
+    // "no matter how many circumstances of each kind" — instead of at
+    // whatever the last clause happened to say.
+    encounter.apply_reactive_attack_taxes(caster_id, target_id, &mut tally);
+    let mode = encounter.resolve_attack_mode_against(target_id, tally);
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls

@@ -3231,6 +3231,32 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
+        let tally = self.attack_mode_tally_with_riders(attacker_id, target_id, is_melee);
+        self.resolve_attack_mode_against(target_id, tally)
+    }
+
+    /// The mutating sweep behind `attack_mode_with_riders`, stopping one
+    /// step short: it returns the tally rather than the resolved mode.
+    ///
+    /// `engine::attack::resolve_attack` is why. Four more disadvantage
+    /// sources land after this point — the defender's reactive taxes, a
+    /// shot past normal range, a lance used up close, and the
+    /// underwater clause — and folding each onto an already-resolved
+    /// mode is the information loss `RollModeTally` exists to stop: a
+    /// swing that came out `Normal` because it held one of each is
+    /// indistinguishable from one that held nothing, and the next
+    /// disadvantage turns the first into `Disadvantage` when RAW says
+    /// it stays `Normal`.
+    ///
+    /// Everything this does *besides* the sweep — the Fancy Footwork
+    /// mark, the Help grant consumption — happens exactly once here,
+    /// which is why the two wrappers cannot simply both call it.
+    pub fn attack_mode_tally_with_riders(
+        &mut self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> RollModeTally {
         let mut tally = self.attack_mode_tally(attacker_id, target_id, is_melee);
         // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
         // mirror of the mark placed at the top of
@@ -3262,17 +3288,10 @@ impl EncounterInstance {
             .map(|a| a.consume_help_for(target_id))
             .unwrap_or(false);
         tally.add_if(help_active, RollMode::Advantage);
-        // Bless gives a flat +2 (handled at roll time via condition_attack_bonus);
-        // we don't promote it to Advantage. Keep this method focused on
-        // mode (advantage / disadvantage) only.
-        //
-        // Resolved here rather than by `compute_attack_mode` so the Help
-        // grant is one more source in the same tally as everything the
-        // sweep found — a swing that already held one of each stays
-        // Normal, which is RAW's "no matter how many circumstances of
-        // each kind you have", and the Rogue's Elusive cap gets to see
-        // the grant instead of being applied before it.
-        self.resolve_attack_mode_against(target_id, tally)
+        // Bless gives a flat +2 (handled at roll time via
+        // condition_attack_bonus); we don't promote it to Advantage.
+        // Keep this lane focused on mode (advantage / disadvantage) only.
+        tally
     }
 
     /// Read-only twin of `attack_mode_with_riders`: the mode an attack
@@ -3712,7 +3731,11 @@ impl EncounterInstance {
     /// / Unconscious inherit Incapacitated, so a stun-locked rogue
     /// loses the perk — the swings go back to Advantage through the
     /// target-side condition sweep, and Elusive stops suppressing.
-    fn resolve_attack_mode_against(&self, target_id: usize, tally: RollModeTally) -> RollMode {
+    pub fn resolve_attack_mode_against(
+        &self,
+        target_id: usize,
+        tally: RollModeTally,
+    ) -> RollMode {
         let mode = tally.resolve();
         let elusive = self.actors.get(&target_id).is_some_and(|t| {
             t.has_elusive()
@@ -7650,18 +7673,19 @@ impl EncounterInstance {
         attacker_id: usize,
         target_id: usize,
     ) -> Option<usize> {
-        // Blinded attackers already eat their own disadvantage; layering
-        // Protection on top would burn the protector's reaction for no
-        // net advantage gain (disadvantage.combine(disadvantage) is
-        // still disadvantage). Short-circuit here so the protector's
-        // reaction is saved for a swing that isn't already taxed. This
-        // early-out is Protection-specific — Interception reduces damage
-        // AFTER the swing lands and doesn't care whether the roll was
-        // taxed, so the shared scan below doesn't fold this in.
-        let attacker = self.actors.get(&attacker_id)?;
-        if attacker.has_condition(Condition::Blinded) {
-            return None;
-        }
+        // The "don't burn a reaction on a swing that is already taxed"
+        // rule used to live here, as a `Blinded`-attacker
+        // short-circuit — the one disadvantage source this function
+        // could see. It now lives in `apply_reactive_attack_taxes`,
+        // which holds the whole tally and can therefore see every
+        // other one too. Deliberately not duplicated: two places
+        // spelling the same rule at different strengths is how the
+        // narrow version survived as long as it did.
+        //
+        // Interception is the sibling that correctly has no such gate —
+        // it reduces damage after the swing lands and does not care
+        // whether the roll was taxed — which is why the shared scan
+        // below never folded this in.
         self.first_reactive_ally_within(
             attacker_id,
             target_id,
@@ -12315,12 +12339,28 @@ impl EncounterInstance {
         &mut self,
         attacker_id: usize,
         target_id: usize,
-        mode: crate::engine::dice::RollMode,
-    ) -> crate::engine::dice::RollMode {
+        tally: &mut RollModeTally,
+    ) {
         use crate::engine::dice::RollMode;
-        let mut mode = mode;
+        // Nothing on this lane can improve on a swing that is already
+        // rolling at disadvantage — a second disadvantage source is the
+        // same disadvantage — so the reaction is saved for a swing where
+        // spending it changes the die.
+        //
+        // The gate used to be two narrower ones: a `Blinded`-attacker
+        // short-circuit inside `first_eligible_protector`, and a
+        // `mode != Disadvantage` test that guarded the second source but
+        // not Protection itself. Both were reaching for this, and both
+        // could only see one reason at a time; the tally can see all of
+        // them, so a protector no longer spends a reaction on an
+        // attacker who is Poisoned, Frightened, Restrained, shooting
+        // into the dark, or swinging from a saddle they are falling out
+        // of.
+        if tally.has_disadvantage() {
+            return;
+        }
         if let Some(protector_id) = self.first_eligible_protector(attacker_id, target_id) {
-            mode = mode.combine(RollMode::Disadvantage);
+            tally.add(RollMode::Disadvantage);
             if let Some(protector) = self.actors.get_mut(&protector_id) {
                 protector.consume_resource(crate::engine::side_effects::Resource::Reaction);
             }
@@ -12328,13 +12368,11 @@ impl EncounterInstance {
                 "  protection: attack against target imposed disadvantage (protector's reaction spent)"
                     .to_string(),
             );
+            return;
         }
-        if mode != RollMode::Disadvantage
-            && self.apply_reactive_attack_disadvantage(target_id, attacker_id)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        if self.apply_reactive_attack_disadvantage(target_id, attacker_id) {
+            tally.add(RollMode::Disadvantage);
         }
-        mode
     }
 
     /// Common gate + spend + log body for a single
