@@ -69485,21 +69485,39 @@ fn every_action_written_is_an_action_something_can_reach() {
     const EXEMPT: &[(&str, &str)] = &[];
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let action_modules = [
-        "actions/spells.rs",
-        "actions/class_features.rs",
-        "actions/class_attacks.rs",
-        "actions/metamagic.rs",
-        "actions/item_actions.rs",
-        "actions/monster_attacks.rs",
-        "actions/two_weapon.rs",
-    ];
+
+    // Every `.rs` file in `src/actions/` except the module list
+    // itself, read off the directory rather than written down here.
+    //
+    // It used to be a hardcoded array of six paths, and the array
+    // rotted the first time somebody added a seventh action file:
+    // `actions/two_weapon.rs` arrived carrying its own blind spot, so
+    // the sweep whose entire job is finding unreachable actions could
+    // not see the newest place to write one. It found a dead static
+    // the moment the path was added by hand — which is the argument
+    // for not adding paths by hand.
+    //
+    // `mod.rs` is skipped because it declares no actions, only
+    // modules; including it would be harmless but would make the
+    // scan's floor assertion mean slightly less.
+    let mut action_modules: Vec<String> = std::fs::read_dir(root.join("actions"))
+        .expect("src/actions/ should be readable")
+        .map(|e| e.expect("a readable dir entry").file_name())
+        .map(|f| format!("actions/{}", f.to_string_lossy()))
+        .filter(|rel| rel.ends_with(".rs") && rel != "actions/mod.rs")
+        .collect();
+    action_modules.sort();
+    assert!(
+        action_modules.len() >= 6,
+        "only {} action modules found — the directory scan has stopped working",
+        action_modules.len()
+    );
 
     // Collect every `pub static NAME` declared in the action
     // modules, and the file it came from.
-    let mut declared: HashMap<String, &str> = HashMap::new();
+    let mut declared: HashMap<String, String> = HashMap::new();
     let mut own_text = String::new();
-    for rel in action_modules {
+    for rel in &action_modules {
         let text = std::fs::read_to_string(root.join(rel))
             .unwrap_or_else(|e| panic!("reading {}: {}", rel, e));
         for line in text.lines() {
@@ -69521,7 +69539,7 @@ fn every_action_written_is_an_action_something_can_reach() {
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             {
-                declared.insert(name.to_string(), rel);
+                declared.insert(name.to_string(), rel.clone());
             }
         }
         own_text.push_str(&text);
@@ -69552,7 +69570,7 @@ fn every_action_written_is_an_action_something_can_reach() {
             }
             let rel = path.strip_prefix(&root).expect("under src/");
             let rel = rel.to_string_lossy().replace('\\', "/");
-            if action_modules.contains(&rel.as_str()) {
+            if action_modules.contains(&rel) {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("a readable source file");
@@ -69581,7 +69599,7 @@ fn every_action_written_is_an_action_something_can_reach() {
         if own_code.matches(name.as_str()).count() > 1 {
             continue;
         }
-        unreachable.push((name.as_str(), rel));
+        unreachable.push((name.as_str(), rel.as_str()));
     }
     unreachable.sort_unstable();
     assert!(
