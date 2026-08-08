@@ -866,6 +866,7 @@ pub static WEAPON_PLUS_THREE: Item = Item {
         damage_bonus: 3,
         ..ItemBonuses::ZERO
     },
+    grants_magical_attacks: true,
     ..Item::DEFAULTS
 };
 
@@ -3272,3 +3273,53 @@ pub static LOOT_POOL: &[&Item] = &[
     &SCROLL_OF_TRUE_SEEING,
     &SCROLL_OF_PROTECTION_FROM_POISON,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exactly the `+N Weapon` tier makes its holder's swings magical,
+    /// and every rung of that tier does.
+    ///
+    /// Both directions, for the reason every one-line flag on a struct
+    /// literal needs both: the `+3` tier arrived after the `+1` and
+    /// `+2` and shipped without the flag, so the best weapon in the
+    /// game was the only one a wraith still halved. Nothing said so —
+    /// it simply did less than the `+1` sitting one loot tier below it.
+    #[test]
+    fn exactly_the_plus_n_weapons_carry_the_magic() {
+        let expected = [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE];
+        for item in expected {
+            assert!(
+                item.grants_magical_attacks,
+                "{} is a magic weapon and does not say so",
+                item.name
+            );
+        }
+        for item in LOOT_POOL {
+            if !item.grants_magical_attacks {
+                continue;
+            }
+            assert!(
+                expected.iter().any(|e| e.name == item.name),
+                "{} grants magical attacks and is not one of the +N weapons",
+                item.name
+            );
+        }
+    }
+
+    /// The whole tier is findable. A magic-weapon axis nobody can arm
+    /// themselves for is a rule that only ever takes things away —
+    /// every monster that resists mundane steel and no way for the
+    /// party to answer it.
+    #[test]
+    fn every_magic_weapon_tier_is_in_the_loot_pool() {
+        for item in [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE] {
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == item.name),
+                "{} cannot be found by anybody",
+                item.name
+            );
+        }
+    }
+}

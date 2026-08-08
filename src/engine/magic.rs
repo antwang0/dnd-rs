@@ -77,11 +77,11 @@ const MAGICAL_ATTACK_SOURCES: &[MagicalAttackSource] = &[
         applies: |a| a.has_passive_feature(KI_EMPOWERED_STRIKES_TAG),
     },
     MagicalAttackSource {
-        label: "magic weapon",
+        label: "a magic weapon",
         applies: |a| a.wields_enchanted_weapon(),
     },
     MagicalAttackSource {
-        label: "magic weapon",
+        label: "the magic weapon spell",
         applies: |a| a.has_condition(Condition::WeaponEnchanted),
     },
     MagicalAttackSource {
@@ -156,10 +156,10 @@ pub fn attack_is_magical(
 /// that quietly acquires it stops being answerable by a wraith's own
 /// claws, and nothing about that shows up as a crash — only as a fight
 /// that plays slightly wrong.
-/// Holds the templates themselves rather than their names, so a stat
-/// block that is not (yet) rollable by the encounter generator is still
-/// covered — six of the fourteen are boss chassis that no pool reaches
-/// today.
+/// Holds the templates themselves rather than their names, so the list
+/// stays honest about who carries the trait even if a stat block later
+/// drops out of the encounter pool — the roster is what the trait
+/// belongs to, not the generator.
 #[cfg(test)]
 fn templates_with_magical_weapon_attacks() -> Vec<&'static crate::actors::actor_template::CreatureTemplate>
 {
@@ -258,7 +258,7 @@ mod tests {
             .get_mut(&id)
             .unwrap()
             .pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
-        assert_eq!(magical_attack_source(&e, id, false), Some("magic weapon"));
+        assert_eq!(magical_attack_source(&e, id, false), Some("a magic weapon"));
     }
 
     /// Shillelagh magics the club it is cast on, and dropping the
