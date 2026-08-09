@@ -91,15 +91,42 @@ pub struct AttackParams<'a> {
 /// hit-this-turn mark, the reactive damage clamps, Hunter's Mark, Hex,
 /// and every smite prime. Every one of those is a rule the action's
 /// author never decided to skip.
+/// What the swing turned out to be, handed to an `ActionOnHitRider` so
+/// its clause can read the hit it is riding.
+///
+/// A struct rather than three more positional parameters because the
+/// third one is `damage`, and `apply(encounter, p, mode, is_crit,
+/// damage, effects)` is a call nobody can read at the site. All three
+/// answer the same question — what happened on this swing — and every
+/// rider that exists reads at least one of them.
+#[derive(Debug, Clone, Copy)]
+pub struct HitContext {
+    /// The roll mode the d20 was actually rolled at, after every source
+    /// on both sides has been counted and cancelled.
+    pub mode: RollMode,
+    /// Whether the swing crit.
+    pub is_crit: bool,
+    /// What the swing is about to deal the target, with every earlier
+    /// rider folded in and before the target's own source-qualified
+    /// resistances scale it.
+    ///
+    /// Exists for the clauses RAW words as *"hit a creature **and deal
+    /// damage to it**"* — 5e's Vex and Slow weapon masteries say
+    /// exactly that, and a rider that fired on the hit alone would pay
+    /// out against a creature immune to everything the weapon does.
+    /// Note the asymmetry with the rest of the mastery table, which is
+    /// RAW's and not an oversight: Sap, Topple and Push are worded on
+    /// the hit and fire whether or not the blow got through.
+    pub damage: u32,
+}
+
 pub trait ActionOnHitRider {
     /// Called on a landed swing, after the shared pipeline's own riders.
-    /// `mode` is the roll mode the d20 was actually rolled at.
     fn apply(
         &self,
         encounter: &mut EncounterInstance,
         p: &AttackParams,
-        mode: RollMode,
-        is_crit: bool,
+        hit: HitContext,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32;
 
@@ -137,8 +164,7 @@ impl ActionOnHitRider for NoRider {
         &self,
         _encounter: &mut EncounterInstance,
         _p: &AttackParams,
-        _mode: RollMode,
-        _is_crit: bool,
+        _hit: HitContext,
         _effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
         0
@@ -168,12 +194,17 @@ impl<S: ActionOnHitRider> ActionOnHitRider for AttackRiderPair<'_, S> {
         &self,
         encounter: &mut EncounterInstance,
         p: &AttackParams,
-        mode: RollMode,
-        is_crit: bool,
+        hit: HitContext,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
-        let a = self.first.apply(encounter, p, mode, is_crit, effects);
-        let b = self.second.apply(encounter, p, mode, is_crit, effects);
+        let a = self.first.apply(encounter, p, hit, effects);
+        // The second rider sees what the first added, so a clause
+        // gated on "and deal damage to it" reads the whole swing
+        // rather than the part of it that had landed by the time its
+        // neighbour ran.
+        let mut hit = hit;
+        hit.damage = hit.damage.saturating_add(a);
+        let b = self.second.apply(encounter, p, hit, effects);
         a.saturating_add(b)
     }
 
@@ -2435,7 +2466,16 @@ pub fn resolve_attack_outcome_with_rider(
     // swing. Its damage folds into the returned figure so callers that
     // chain off `damage_dealt` (a half-damage self-heal, a max-HP drain)
     // see the whole hit.
-    damage = damage.saturating_add(rider.apply(encounter, &p, mode, is_crit, &mut effects));
+    damage = damage.saturating_add(rider.apply(
+        encounter,
+        &p,
+        HitContext {
+            mode,
+            is_crit,
+            damage,
+        },
+        &mut effects,
+    ));
     // 5e "resistance to bludgeoning, piercing, and slashing damage from
     // nonmagical attacks" — the target's source-qualified rows, applied
     // to everything this swing is about to deal them. Runs after every

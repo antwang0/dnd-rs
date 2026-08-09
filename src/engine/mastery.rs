@@ -35,7 +35,12 @@
 //!     typed as the weapon, on any miss — including a natural 1, since
 //!     RAW's trigger is "misses a creature" and a fumble is a miss.
 //!   - **Cleave**, **Push**, **Sap**, **Slow**, **Topple** and **Vex**
-//!     fire on a hit, in `MasteryRider::apply`.
+//!     fire on a hit, in `MasteryRider::apply`. Two of those six —
+//!     Slow and Vex — are worded on the blow *landing* rather than
+//!     merely connecting ("hit a creature **and deal damage to it**"),
+//!     so they read `HitContext::damage` and pay out nothing against a
+//!     creature immune to everything the weapon does. The asymmetry is
+//!     RAW's.
 //!
 //! **Nick** is the exception, and it is not an on-hit clause at all: it
 //! changes what the off-hand swing *costs*, so it is read by
@@ -51,8 +56,9 @@
 
 use crate::actions::action_template::MELEE_REACH;
 use crate::conditions::{Condition, ConditionTimer};
-use crate::engine::attack::{ActionOnHitRider, AttackParams, AttackRiderPair, resolve_attack};
-use crate::engine::dice::RollMode;
+use crate::engine::attack::{
+    ActionOnHitRider, AttackParams, AttackRiderPair, HitContext, resolve_attack,
+};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
     ApplicableSideEffect, DealDamage, PushActor, install_condition_with_link,
@@ -268,13 +274,18 @@ impl ActionOnHitRider for MasteryRider {
         &self,
         encounter: &mut EncounterInstance,
         p: &AttackParams,
-        _mode: RollMode,
-        _is_crit: bool,
+        hit: HitContext,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
         let Some(mastery) = effective_mastery(encounter, p.caster_id, self.mastery) else {
             return 0;
         };
+        // RAW words two of the eight on the blow *landing* rather than
+        // merely connecting — "hit a creature **and deal damage to it**"
+        // — and the other four on the hit alone. The asymmetry is the
+        // book's, and it is the difference between vexing a creature
+        // your weapon cannot hurt and not.
+        let dealt_damage = deals_damage(encounter, p, hit);
         match mastery {
             WeaponMastery::Cleave => cleave(encounter, p, self.reach, effects),
             WeaponMastery::Push => {
@@ -286,7 +297,9 @@ impl ActionOnHitRider for MasteryRider {
                 0
             }
             WeaponMastery::Slow => {
-                slow(encounter, p, effects);
+                if dealt_damage {
+                    slow(encounter, p, effects);
+                }
                 0
             }
             WeaponMastery::Topple => {
@@ -294,7 +307,9 @@ impl ActionOnHitRider for MasteryRider {
                 0
             }
             WeaponMastery::Vex => {
-                vex(encounter, p, effects);
+                if dealt_damage {
+                    vex(encounter, p, effects);
+                }
                 0
             }
             // Fires at the cost lane, not on a hit — see the module
@@ -316,6 +331,24 @@ impl ActionOnHitRider for MasteryRider {
         }
         graze(encounter, p, self.ability, effects)
     }
+}
+
+/// Whether this swing actually *hurt* the target — RAW's *"and deal
+/// damage to it"*, which Slow and Vex are gated on and the other six
+/// properties are not.
+///
+/// Asks the target rather than reading the figure off the swing,
+/// because the two disagree in exactly the case the clause is about:
+/// `HitContext::damage` is what the attacker rolled, and a creature
+/// immune to the weapon's damage type takes none of it. The immunity
+/// is applied at `DealDamage::apply`, well after this rider runs, so a
+/// bare `hit.damage > 0` would vex a construct that a piercing blade
+/// cannot scratch.
+fn deals_damage(encounter: &EncounterInstance, p: &AttackParams, hit: HitContext) -> bool {
+    encounter
+        .actors
+        .get(&p.target_id)
+        .is_some_and(|t| t.effective_damage(hit.damage, p.damage_type) > 0)
 }
 
 /// **Graze** — a miss still costs the target the wielder's ability

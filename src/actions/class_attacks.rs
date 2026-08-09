@@ -249,10 +249,10 @@ impl crate::engine::attack::ActionOnHitRider for SneakAttack {
         &self,
         encounter: &mut EncounterInstance,
         p: &crate::engine::attack::AttackParams,
-        mode: crate::engine::dice::RollMode,
-        is_crit: bool,
+        hit: crate::engine::attack::HitContext,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
+        let (mode, is_crit) = (hit.mode, hit.is_crit);
         if !sneak_attack_eligible(encounter, p.caster_id, p.target_id, mode) {
             return 0;
         }
@@ -1091,8 +1091,7 @@ impl crate::engine::attack::ActionOnHitRider for BloodiedBite {
         &self,
         encounter: &mut EncounterInstance,
         p: &crate::engine::attack::AttackParams,
-        _mode: crate::engine::dice::RollMode,
-        _is_crit: bool,
+        _hit: crate::engine::attack::HitContext,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
         use crate::actions::class_features::FORM_OF_THE_BEAST_BITE_TAG;

@@ -77152,3 +77152,57 @@ fn martial_subclasses_inherit_their_chassis_training() {
         assert!(t.has_weapon_mastery, "{} lost its chassis training", t.name);
     }
 }
+
+/// RAW gates Slow and Vex on the blow *landing* — "hit a creature and
+/// deal damage to it" — and the other six properties on the hit alone.
+///
+/// The black pudding is the creature that separates the two readings: it
+/// is immune to slashing, so a scimitar connects and does nothing. A
+/// property gated on the hit would still vex it; one gated on the
+/// attacker's damage *roll* would too, because the immunity is applied
+/// at `DealDamage::apply`, long after the rider has run.
+#[test]
+fn vex_asks_whether_the_blow_actually_hurt_and_sap_does_not() {
+    use crate::actions::monster_attacks::{LONGSWORD, SHORTSWORD};
+    use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let pudding = e
+        .instantiate_creature(&BLACK_PUDDING_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.actors[&pudding].effective_damage(10, crate::engine::types::DamageType::Slashing),
+        0,
+        "the fixture has to be a creature the blade cannot hurt"
+    );
+
+    // A shortsword is Vex and pierces, which the pudding is *not*
+    // immune to — so the property lands, and the loop proves the
+    // fixture is otherwise capable of vexing.
+    assert!(
+        swing_until(&mut e, &SHORTSWORD, fighter, pudding, 200, |l| l
+            .contains("vex:")),
+        "a piercing blade still hurts a pudding"
+    );
+    e.actors
+        .get_mut(&pudding)
+        .unwrap()
+        .remove_condition(Condition::Vexed);
+
+    // A longsword is Sap and slashes. The pudding shrugs off every
+    // point of it — and is sapped anyway, because RAW's Sap is worded
+    // on the hit.
+    assert!(
+        swing_until(&mut e, &LONGSWORD, fighter, pudding, 200, |l| l
+            .contains("sap:")),
+        "Sap fires on the hit, not on the damage"
+    );
+    assert!(
+        !e.actors[&pudding].has_condition(Condition::Vexed),
+        "nothing vexed a creature the slashing blade could not hurt"
+    );
+}
