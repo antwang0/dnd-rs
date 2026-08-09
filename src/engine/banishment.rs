@@ -18,11 +18,11 @@
 //! doesn't have"*. Maze made it four.
 //!
 //! The gap was not cosmetic. An inert body left on the grid is still a
-//! body: it soaks a Fireball, it blocks a corridor, it breaks a line of
-//! sight, a paladin's aura still covers it, and an ally can still stand
-//! behind it. Banishing the ogre in the doorway made the doorway *more*
-//! blocked, not less, which inverts the entire tactical point of the
-//! spell.
+//! body: it soaks a Fireball, it blocks a corridor, it hands
+//! three-quarters cover to whoever is shooting from behind it, and a
+//! paladin's aura still reaches it. Banishing the ogre in the doorway
+//! made the doorway *more* blocked, not less, which inverts the entire
+//! tactical point of the spell.
 //!
 //! # The model
 //!
@@ -32,16 +32,27 @@
 //! [`ActorInstance::off_board`] is the flag, and while it is set the
 //! actor owns no tiles in `actor_map`.
 //!
-//! That single fact does most of the work, because the grid is what the
-//! engine reads for "is anything there": pathfinding, line of sight,
-//! occupancy and the melee reach check all consult the map rather than
-//! the actor table. The rest rides one predicate,
-//! [`ActorInstance::is_combat_active`], which the off-board flag also
-//! clears — and which is the question every AoE hit list, AI target
-//! walk, opportunity-attack dispatcher and aura sweep in the codebase
-//! already asks. A creature on a demiplane is not in the fight in
-//! precisely the way a creature bleeding out on the floor is not, and
-//! two hundred call sites already knew how to say that.
+//! Three mechanisms carry the consequences of that, and it is worth
+//! being exact about which carries what.
+//!
+//!   - **The grid**, for everything that asks "is anything standing
+//!     here". The pathfinder walks around bodies it finds on the map,
+//!     the cover ladder counts them, and the renderer draws them. A
+//!     creature with no footprint is absent from all three for free.
+//!   - **[`ActorInstance::is_combat_active`]**, which the off-board
+//!     flag also clears, for everything that asks "is this creature in
+//!     the fight". That is the AoE hit list, every AI target walk, the
+//!     opportunity-attack dispatcher, the aura sweeps and the
+//!     initiative skip — two hundred call sites that already knew how
+//!     to say it, because a creature on a demiplane is out of the fight
+//!     in precisely the way a creature bleeding out on the floor is.
+//!   - **An explicit clause in `Action::validate_input`**, for
+//!     targeting something *by name*. That one could not ride either of
+//!     the other two: reach is measured off `location`, which an
+//!     off-board actor still has, and the targeting lane deliberately
+//!     does not ask `is_combat_active` because a dying creature is not
+//!     combat-active either and is still very much lying there to be
+//!     finished off.
 //!
 //! `location` is deliberately **not** cleared. It is the space the
 //! creature left, and RAW sends it back there.

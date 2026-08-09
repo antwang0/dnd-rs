@@ -7511,6 +7511,19 @@ fn best_burst_placement(
 /// into a blanket "not while concentrating" gate would have made the
 /// cheapest control spell in the game the only one a caster can't
 /// combine with anything.
+///
+/// **Two of the entries spare their caster's own side**, and that is a
+/// known conservatism rather than a rule. Wall of Sand and Crown of
+/// Thorns resolve through `enemy_burst_targets`, so an ally standing in
+/// the blast is simply not in it — but the rung's placement gate counts
+/// bodies without asking, and will refuse a point that catches a
+/// teammate. The gate can only make an entry fire *less* often than it
+/// should, never wrongly, so it is left alone here: teaching it
+/// otherwise means a declared "this burst spares allies" property on
+/// `Action`, and sixty-four burst helpers would have to agree about
+/// which of them have it. Both spells are still strictly better off on
+/// this rung than on the AoE picker below it, which applies the same
+/// gate and then loses to Fireball's radius anyway.
 const AREA_CONTROL_SPELLS: &[&str] = &[
     "web",
     "hypnotic pattern",
@@ -7518,6 +7531,28 @@ const AREA_CONTROL_SPELLS: &[&str] = &[
     "entangle",
     "sleet storm",
     "grease",
+    // The three the sweep above was written to find, all of them on
+    // playable chassis and none of them ever cast off this rung.
+    //
+    // Stinking Cloud is the plainest case: a zone that takes a
+    // creature's whole action for as long as it stands in the gas,
+    // which is the membership test stated word for word. The docstring
+    // above cites it by name as the spell the original probe saw cast
+    // *once* in forty encounters — through the AoE picker, on
+    // coverage, against a Fireball it does not out-cover.
+    "stinking cloud",
+    // Wall of Sand's own docstring places it "between Web and Black
+    // Tentacles on the wizard's restraint ladder". Both of those are
+    // already rows here; it is the same STR-save-or-Restrained burst
+    // under concentration, one slot cheaper than one and one dearer
+    // than the other, and it was the only rung of that ladder the AI
+    // could not climb.
+    "wall of sand",
+    // Crown of Thorns is Black Tentacles at level 2 — a concentration
+    // burst that deals a die and Restrains what fails the save — which
+    // is also the answer to whether the damage rider disqualifies it:
+    // Black Tentacles has one and is a row.
+    "crown of thorns",
 ];
 
 /// Which half of the summon lane a rung is asking for.
@@ -13650,6 +13685,66 @@ mod tests {
         assert!(zone.rounds_remaining > 0);
     }
 
+    /// Every row on the registry is a row some chassis can actually
+    /// reach for, and the three most recently added are the reason this
+    /// exists.
+    ///
+    /// A name on `AREA_CONTROL_SPELLS` is only half a rung: the other
+    /// half is a template that carries the spell and a picker that will
+    /// choose it over everything else the same caster owns. Stinking
+    /// Cloud, Wall of Sand and Crown of Thorns each spent their whole
+    /// lives with the first half and not the second — on the wizard and
+    /// druid chassis, passing the registry's stated membership test word
+    /// for word, and reachable only through the AoE picker one rung
+    /// down, which scores on coverage and loses to Fireball's radius.
+    ///
+    /// Checked by stripping the caster down to one control spell at a
+    /// time, because the rung returns a single pick and the entries
+    /// compete: a wizard holding both Web and Wall of Sand proves only
+    /// that one of them is reachable.
+    #[test]
+    fn every_control_row_is_reachable_on_a_chassis_that_carries_it() {
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE;
+        use crate::actors::creatures::wizards::{
+            EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE,
+        };
+
+        // (the row, a chassis that carries it) — one case per entry the
+        // sweep added, each on the template it actually ships on.
+        let cases: [(&str, &'static CreatureTemplate); 3] = [
+            ("stinking cloud", &WIZARD_TEMPLATE),
+            ("wall of sand", &EVOCATION_WIZARD_TEMPLATE),
+            ("crown of thorns", &DREAMS_DRUID_TEMPLATE),
+        ];
+        for (row, template) in cases {
+            assert!(
+                template.actions.iter().any(|a| a.name() == row),
+                "{} does not carry {row}, so this case proves nothing",
+                template.name
+            );
+            // The chassis with every *other* control spell taken off
+            // the sheet. Leaked because `instantiate_creature` wants a
+            // `&'static` template, which is exactly what a real one is;
+            // one allocation per case in one test is the cheapest way
+            // to ask the question without a mutator that only tests
+            // would ever call.
+            let stripped: &'static CreatureTemplate = Box::leak(Box::new(CreatureTemplate {
+                actions: template
+                    .actions
+                    .iter()
+                    .copied()
+                    .filter(|a| a.name() == row || !AREA_CONTROL_SPELLS.contains(&a.name()))
+                    .collect(),
+                ..template.clone()
+            }));
+            let (e, caster) = clustered_hostiles(stripped, 3);
+            let aei = try_area_control(&e, caster)
+                .unwrap_or_else(|| panic!("{row} unreachable on {}", template.name));
+            assert_eq!(aei.action().name(), row);
+        }
+    }
+
     /// The ordering that makes the rung reachable at all. Both
     /// `try_area_control` and `try_foresight` want the caster's one
     /// concentration, and Foresight fires on turn one and holds for the
@@ -15494,6 +15589,9 @@ mod tests {
             ("entangle", true),
             ("sleet storm", true),
             ("grease", false),
+            ("stinking cloud", true),
+            ("wall of sand", true),
+            ("crown of thorns", true),
         ];
 
         let mut checked: HashSet<&str> = HashSet::new();
