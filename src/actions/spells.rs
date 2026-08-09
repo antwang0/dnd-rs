@@ -7914,10 +7914,20 @@ pub static PHANTASMAL_KILLER: LazyLock<PhantasmalKiller> =
     LazyLock::new(|| PhantasmalKiller {});
 
 /// Banishment — level-4 abjuration, concentration. Target makes a CHA
-/// save. On fail, banished to a harmless demiplane for the duration —
-/// we model as Incapacitated (cannot take actions or reactions) for
-/// the duration since the engine doesn't yet model off-board status.
-/// Concentration tracks the lock so dropping it ends the banishment.
+/// save. On fail it is *sent away*: `Condition::Banished` takes it off
+/// the encounter map entirely for the duration, and it reappears in the
+/// space it left when the spell ends. See `crate::engine::banishment`
+/// for the lane; the spell itself does nothing but install the
+/// condition and hold it, because the sweep is what owns the board.
+///
+/// The condition used to be `Incapacitated`, which left the target
+/// standing exactly where it was — still soaking area damage, still
+/// blocking the corridor it was banished out of, still breaking line of
+/// sight for its allies. This is the spell it was always supposed to
+/// be.
+///
+/// Concentration tracks the lock, so dropping it ends the banishment
+/// and the next sweep brings the target back.
 pub struct Banishment {}
 
 impl Action for Banishment {
@@ -7987,14 +7997,14 @@ impl Action for Banishment {
         vec![
             Box::new(ApplyCondition {
                 actor_id: target_id,
-                condition: Condition::Incapacitated,
+                condition: Condition::Banished,
                 timer: ConditionTimer::Rounds(10),
             }),
             Box::new(StartConcentration {
                 caster_id,
                 data: ConcentrationData::with_conditions(
                     "Banishment",
-                    vec![(target_id, Condition::Incapacitated)],
+                    vec![(target_id, Condition::Banished)],
                 ),
             }),
         ]
@@ -12412,11 +12422,11 @@ pub static STAGGERING_SMITE: SmiteSpell = SmiteSpell {
 
 /// Banishing Smite — 5th-level paladin abjuration, bonus action,
 /// concentration. Primes the next melee hit with +5d10 force damage;
-/// if the hit reduces the target to 50 HP or fewer the target is
-/// banished (we collapse the demi-plane mechanic to a 10-round inert
-/// envelope via `Condition::Mazed` — same end-state, distinct log
-/// line). The HP threshold gate is evaluated at the on-hit rider site
-/// via the `hp_threshold: Some(50)` field on the rider's follow-up.
+/// if the hit reduces the target to 50 HP or fewer the target is sent
+/// off the board for ten rounds via `Condition::Banished` (see
+/// `crate::engine::banishment`). The HP threshold gate is evaluated at
+/// the on-hit rider site via the `hp_threshold: Some(50)` field on the
+/// rider's follow-up.
 pub static BANISHING_SMITE: SmiteSpell = SmiteSpell {
     display_name: "banishing smite",
     aliases: &["banishing", "smite-banish"],

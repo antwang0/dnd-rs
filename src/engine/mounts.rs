@@ -61,6 +61,12 @@ pub enum UnseatCause {
     /// falling horse takes its rider down with it); we keep it separate
     /// so the log says what actually happened.
     MountDropped,
+    /// The mount has been taken off the board entirely — banished,
+    /// mazed, sent to a demiplane. RAW covers it under the
+    /// forced-movement clause, and we keep it separate for the same
+    /// reason `MountDropped` is separate: the log should say what
+    /// happened, and this is the other cause a rider cannot ride out.
+    MountBanished,
 }
 
 impl UnseatCause {
@@ -69,7 +75,22 @@ impl UnseatCause {
             UnseatCause::MountProne => "goes down underneath",
             UnseatCause::MountForcedMove => "is dragged out from under",
             UnseatCause::MountDropped => "falls beneath",
+            UnseatCause::MountBanished => "vanishes from under",
         }
+    }
+
+    /// True when the rider comes off however the die lands, and the
+    /// save decides only whether they land on their feet.
+    ///
+    /// The two causes that qualify are the two where there is no longer
+    /// a mount to stay on: one has dropped out of the fight and one is
+    /// on another plane. Every other cause leaves a horse standing, and
+    /// a passed save keeps the rider in the saddle on it.
+    fn always_unseats(self) -> bool {
+        matches!(
+            self,
+            UnseatCause::MountDropped | UnseatCause::MountBanished
+        )
     }
 }
 
@@ -376,10 +397,11 @@ impl EncounterInstance {
     /// throw." A *passed* save keeps the rider in the saddle entirely —
     /// which is why this returns without touching the link on a pass.
     ///
-    /// `MountDropped` is the exception, and the only asymmetry here: a
-    /// horse that has fallen out of the fight cannot be stayed on, so
-    /// the rider comes off whichever way the die lands and the save
-    /// decides only whether they land on their feet.
+    /// The `always_unseats` causes are the exception, and the only
+    /// asymmetry here: a horse that has fallen out of the fight — or
+    /// that is no longer on this plane — cannot be stayed on, so the
+    /// rider comes off whichever way the die lands and the save decides
+    /// only whether they land on their feet.
     pub(crate) fn unseat(&mut self, mount_id: usize, cause: UnseatCause) {
         let Some(rider_id) = self.actors.get(&mount_id).and_then(|a| a.ridden_by()) else {
             return;
@@ -394,7 +416,7 @@ impl EncounterInstance {
         ));
         let stayed = self.roll_save(rider_id, AbilityScoreType::Dexterity, STAY_IN_SADDLE_DC)
             == SaveOutcome::Pass;
-        if stayed && cause != UnseatCause::MountDropped {
+        if stayed && !cause.always_unseats() {
             self.log(format!("  {} keeps their seat.", rider_name));
             return;
         }

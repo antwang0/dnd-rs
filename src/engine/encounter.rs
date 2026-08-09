@@ -5928,6 +5928,36 @@ impl EncounterInstance {
         matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type.is_passable())
     }
 
+    /// True if a `size` footprint anchored at `origin` would sit
+    /// entirely on spawnable ground — in bounds, passable, and nobody
+    /// else's tiles.
+    ///
+    /// The footprint-shaped `is_spawnable`, and the ownerless twin of
+    /// `footprint_fits`: that one asks whether a *particular actor* can
+    /// stand somewhere and forgives the tiles that actor already
+    /// occupies, which is the right question for a move and the wrong
+    /// one for a body arriving from nowhere. Shared by the summoner's
+    /// ring walk and the banishment return, which each used to spell the
+    /// double loop out.
+    pub(crate) fn footprint_is_clear(&self, origin: Coordinate, size: Size) -> bool {
+        let w = get_tiles_from_size(size) as isize;
+        (0..w).all(|ox| {
+            (0..w).all(|oy| self.is_spawnable(Coordinate::new(origin.x + ox, origin.y + oy)))
+        })
+    }
+
+    /// The tiles around `center`, closest ring first, out to `radius`
+    /// Chebyshev steps — `center` itself excluded. Method-shaped wrapper
+    /// over the free `rings_outward` walk so sibling modules can reach
+    /// it.
+    pub(crate) fn rings_outward_from(
+        &self,
+        center: Coordinate,
+        radius: isize,
+    ) -> impl Iterator<Item = Coordinate> {
+        rings_outward(center, radius)
+    }
+
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
         if !self.in_bounds(coord) {
             return false;
@@ -10527,6 +10557,12 @@ impl EncounterInstance {
                 }
             }
         }
+        // Same expiry again, one axis over, and first of the three
+        // because it is the sweep that decides whether there is a body
+        // on the board for the other two to measure: an actor whose
+        // banishment lapsed has to be standing somewhere before anyone
+        // asks how big it is or how far it has to fall.
+        self.reconcile_board_presence();
         // `reset_for_new_round` above expires the UntilStartOfNextTurn
         // conditions, which can include a growth effect — so the actor
         // shrinks back before they spend a single tile of the movement
@@ -13669,6 +13705,12 @@ impl EncounterInstance {
             }
         }
         self.cleanup_dead_actors();
+        // Round-end timers just expired, and one of the things they
+        // expire is a banishment. Ahead of the other two sweeps for the
+        // same reason as at the turn-start chokepoint: they measure
+        // bodies, and this is the one that decides which bodies there
+        // are.
+        self.reconcile_board_presence();
         // Round-end timers just expired; anything that was holding a
         // creature at a larger size has now let go of it.
         self.reconcile_footprints();
@@ -13988,7 +14030,7 @@ impl EncounterInstance {
             })
         };
         let usable = |anchor: &Coordinate| {
-            tiles(*anchor).all(|t| self.is_spawnable(t))
+            self.footprint_is_clear(*anchor, size)
                 && (accept_hazard || !tiles(*anchor).any(|t| self.tile_is_hazardous(t)))
         };
         for ring in 1..=radius {
@@ -14138,10 +14180,20 @@ impl EncounterInstance {
 
     /// Distinct team ids with at least one combat-active actor (excludes
     /// dying / stable / dead). Drives end-of-combat detection.
+    /// Every team with something left to fight for.
+    ///
+    /// The one place in the engine that deliberately counts a creature
+    /// `is_combat_active` says is out of the fight. A banished creature
+    /// is not on the board and every targeting, AoE and AI question
+    /// should treat it as absent — but it is alive, unharmed, and
+    /// coming back on a timer, so its team has emphatically not lost.
+    /// Without this clause a party could win an encounter by banishing
+    /// the last enemy, and the enemy would reappear in an arena the app
+    /// had already declared cleared.
     pub fn living_teams(&self) -> std::collections::HashSet<usize> {
         self.actors
             .values()
-            .filter(|a| a.is_combat_active())
+            .filter(|a| a.is_combat_active() || a.is_off_board())
             .map(|a| a.team())
             .collect()
     }
@@ -14160,6 +14212,18 @@ impl EncounterInstance {
     /// permanently disconnected pockets — otherwise the AI loops
     /// skipping forever.
     pub fn is_stalemate(&self) -> bool {
+        // A board with somebody off it is a board that is about to
+        // change, and the whole premise of this check is that the
+        // arrangement is permanent. The party that has just banished the
+        // last enemy can reach nothing, which is a stalemate by every
+        // test below and by none of the ones that matter — the enemy
+        // returns to the space it left in a handful of rounds. Bailing
+        // early rather than counting banished creatures as combatants,
+        // because `can_engage` would then be asked to path to a body
+        // that owns no tiles.
+        if self.actors.values().any(|a| a.is_off_board()) {
+            return false;
+        }
         let combatants: Vec<(usize, usize)> = self
             .actors
             .iter()
@@ -14328,6 +14392,30 @@ impl EncounterInstance {
     /// Carried items are intentionally dropped on the despawn tile so a
     /// minion that picked something up mid-fight doesn't void the loot
     /// silently — matches the `remove_actor` policy for the same reason.
+    /// Cut `id`'s remaining claims on the grid ahead of a removal, and
+    /// report whether its tiles are already somebody else's problem.
+    ///
+    /// Two creatures leave the board without tiles of their own to
+    /// clear, and a removal path that blindly stamps `None` over their
+    /// remembered footprint erases whatever is standing there now:
+    ///
+    ///   - a **rider**, whose tiles belong to the mount it is sitting
+    ///     on — `sever_ride_links` owns that repair and says so by
+    ///     returning true;
+    ///   - a creature that is **off the board**, which gave its
+    ///     footprint up when it was banished and may well have had it
+    ///     walked into since.
+    ///
+    /// Shared by both removal paths — `despawn_actor` and
+    /// `remove_actor` — which used to spell the first case out
+    /// identically and would each have had to learn the second.
+    fn release_grid_claim(&mut self, id: usize) -> bool {
+        // Ordered so the sever always runs: it is a repair, not a
+        // query, and `||` would skip it for an off-board rider.
+        let severed = self.sever_ride_links(id);
+        severed || self.actors.get(&id).is_some_and(|a| a.is_off_board())
+    }
+
     pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {
         // Same reason as `remove_actor`: an actor leaving the board
         // takes their concentration — and so the areas it was holding
@@ -14337,7 +14425,7 @@ impl EncounterInstance {
         // policy as the carried items dropped at the bottom of this
         // function.
         self.drop_light_sources_carried_by(id);
-        let footprint_handled = self.sever_ride_links(id);
+        let footprint_handled = self.release_grid_claim(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -14375,7 +14463,7 @@ impl EncounterInstance {
         // would leave a link nothing can resolve. The rider's DC 10 save
         // has already happened at 0 HP (`trigger_creature_dropped`); this
         // is what stands up a rider who had nowhere to fall then.
-        let footprint_handled = self.sever_ride_links(id);
+        let footprint_handled = self.release_grid_claim(id);
         // A concentration-held area outlives nothing. Swept here rather
         // than in `drop_concentration`, because death does not route
         // through it — the actor is lifted straight out of the table —
@@ -14789,6 +14877,11 @@ impl EncounterInstance {
                 StackElementEntry::SideEffect(s) => {
                     s.apply(self);
                     self.cleanup_dead_actors();
+                    // Per-effect and ahead of the other two: one action
+                    // can banish a creature and a second can Dispel the
+                    // spell holding it there, and each has to land
+                    // before the following effect measures the board.
+                    self.reconcile_board_presence();
                     // Per-effect rather than once after the drain: a
                     // single action can grow someone and then move them,
                     // and the move has to measure the footprint the

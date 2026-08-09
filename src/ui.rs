@@ -469,6 +469,21 @@ pub fn render_sideinfo(
                     Style::default().fg(Color::LightMagenta),
                 ));
             }
+            // A banished creature, said on the row for the same reason
+            // the mounted pair below is: its slot passes straight
+            // through, and it is not on the map to be looked for. The
+            // countdown is the whole reason its row is still here —
+            // the party's remaining rounds before an enemy comes back,
+            // or before their own ally does.
+            if actor.is_off_board() {
+                spans.push(Span::styled(
+                    match actor.off_board_rounds_left() {
+                        Some(n) => format!(" banished ({}r)", n),
+                        None => " banished".to_string(),
+                    },
+                    Style::default().fg(Color::LightMagenta),
+                ));
+            }
             // The two halves of a mounted pair, said on the row rather
             // than left to the map. A ridden mount's slot passes
             // straight through — it acts on its rider's turn — so

@@ -1222,6 +1222,25 @@ pub trait Action {
         if let Some(targets) = target_ids
             && let Some(&target_id) = targets.first()
         {
+            // 5e Banishment: the target is on another plane. Checked
+            // across *every* declared target for the same reason the
+            // Charmed clause below is — the reach and LOS clauses are
+            // deliberately first-target-only, and "you cannot reach
+            // somewhere you are not" binds on each name in the list
+            // independently.
+            //
+            // This is the one off-board gate that cannot ride
+            // `is_combat_active`. A dying creature is not combat-active
+            // either and is still very much lying there to be finished
+            // off, so the targeting lane has never asked that question
+            // and must not start; what it needs is the narrower one.
+            // See `crate::engine::banishment`.
+            if targets
+                .iter()
+                .any(|tid| encounter.actors.get(tid).is_some_and(|t| t.is_off_board()))
+            {
+                return false;
+            }
             if let Some(reach) = self.reach_tiles() {
                 let Some(dist) = encounter.footprint_distance(caster_id, target_id) else {
                     return false;

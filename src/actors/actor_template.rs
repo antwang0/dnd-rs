@@ -4151,6 +4151,23 @@ pub struct ActorInstance {
     /// the way down) and by the `LandSafely` side effect (which zeroes
     /// it for a controlled descent).
     altitude_ft: u32,
+    /// Whether this actor's body is currently **lifted off the encounter
+    /// map** — banished to a demiplane, mazed, or anything else that
+    /// joins `Condition::removes_from_board`.
+    ///
+    /// The *physical* half of the off-board lane, and the reason it is a
+    /// field rather than a question asked of the conditions: the grid is
+    /// the other half, and the two have to be changed together. The
+    /// condition says where the creature ought to be;
+    /// `EncounterInstance::reconcile_board_presence` is what actually
+    /// takes the footprint off the map and puts it back, and this flag
+    /// is how the sweep knows which of those it still owes. Exactly the
+    /// `size` / `desired_size` and `altitude_ft` / `supported_altitude_ft`
+    /// split the other two reconcile sweeps use, for the same reason.
+    ///
+    /// `location` is deliberately left alone while it is set — that is
+    /// the space the creature left, and RAW returns it there.
+    off_board: bool,
     /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) — the
     /// ward's current hit points. A separate pool from `temp_hp`: it is
     /// drained *first* (RAW "the ward takes the damage instead of you",
@@ -4694,6 +4711,8 @@ impl ActorInstance {
             // Every creature spawns standing on the floor: nothing in
             // the engine starts an encounter already airborne.
             altitude_ft: 0,
+            // …and on this plane. Nothing starts an encounter banished.
+            off_board: false,
             arcane_ward: 0,
             arcane_ward_formed: false,
             arcane_ward_base: ct.arcane_ward_base,
@@ -8856,8 +8875,78 @@ impl ActorInstance {
         }
     }
 
+    /// True if this actor is upright, conscious, **and standing on this
+    /// board** — the engine's single answer to "is there something here
+    /// to fight?".
+    ///
+    /// The off-board clause is the highest-leverage line in the
+    /// banishment lane and is deliberately folded in here rather than
+    /// bolted onto the two hundred call sites that ask this question.
+    /// Every one of them — the AoE hit list, the AI's target walks, the
+    /// opportunity-attack dispatcher, the aura sweeps, the initiative
+    /// skip — means "is this creature in the fight", and a creature on a
+    /// demiplane is not, in exactly the same way a creature bleeding out
+    /// on the floor is not.
+    ///
+    /// The two callers that mean something narrower ask something
+    /// narrower: `EncounterInstance::living_teams` counts a banished
+    /// creature as a live claim on the encounter (it is coming back, so
+    /// its team has not lost), and `is_stalemate` refuses to call a
+    /// fight stuck while anyone is off the board. Both are documented at
+    /// their own sites.
     pub fn is_combat_active(&self) -> bool {
-        matches!(self.hp_state, HpState::Active) && self.hitpoints > 0
+        matches!(self.hp_state, HpState::Active) && self.hitpoints > 0 && !self.off_board
+    }
+
+    /// True if this actor's body is currently off the encounter map.
+    pub fn is_off_board(&self) -> bool {
+        self.off_board
+    }
+
+    /// Where this actor's *current state* says its body belongs — the
+    /// target `reconcile_board_presence` moves `off_board` toward.
+    ///
+    /// True while any condition on the `Condition::removes_from_board`
+    /// cohort is held. Deliberately derived from the conditions rather
+    /// than written by the spells that install them: a banishment can
+    /// end four ways in this engine — a lapsed timer, a broken
+    /// concentration save, a Dispel Magic, a second concentration spell
+    /// replacing it — and none of those four should have to know that
+    /// the actor map exists.
+    pub fn belongs_off_board(&self) -> bool {
+        self.conditions.keys().any(|c| c.removes_from_board())
+    }
+
+    /// Rounds left before the thing holding this actor off the board
+    /// lets go, or `None` when nothing does or the hold has no clock.
+    ///
+    /// The longest of the off-board conditions' timers, because they all
+    /// have to lapse before the body comes back — a creature both
+    /// Banished and Mazed returns when the second one ends. Which is
+    /// also why a single clockless hold answers `None` for the whole
+    /// question rather than being skipped over: a `Permanent`
+    /// banishment alongside a five-round one is not a five-round
+    /// banishment, and the panel should say nothing rather than count
+    /// down to a return that isn't coming.
+    pub fn off_board_rounds_left(&self) -> Option<u32> {
+        self.conditions
+            .iter()
+            .filter(|(c, _)| c.removes_from_board())
+            .map(|(_, t)| match t {
+                ConditionTimer::Rounds(n) => Some(*n),
+                _ => None,
+            })
+            .try_fold(0, |acc, n| n.map(|n| acc.max(n)))
+            .filter(|&n| n > 0)
+    }
+
+    /// Move the actor's body on or off the board.
+    ///
+    /// Not public: the flag and the grid have to move together, and
+    /// `EncounterInstance::reconcile_board_presence` is the only thing
+    /// that owns both.
+    pub(crate) fn set_off_board(&mut self, off: bool) {
+        self.off_board = off;
     }
 
     pub fn death_save_record(&self) -> (u32, u32) {

@@ -3460,12 +3460,15 @@ pub const PROTECTIVE_FIELD_TAG: &str = "fighter.protective_field";
 /// there's no ally-flavor reason to spare celestials here — the Arcana
 /// Cleric abjures outsiders, not evil ones.
 ///
-/// RAW's second clause — a target whose CR is at or below a
-/// level-scaling threshold is banished to its home plane instead of
-/// merely frightened — is not modeled. Banishment needs an off-board
-/// actor lane the engine doesn't have, and it's also the clause that
-/// would make this strictly better than Turn Undead rather than
-/// sideways from it.
+/// RAW's second clause — a target whose CR is at or below a threshold
+/// is banished to its home plane instead of merely frightened — ships as
+/// the burst's `escalation` rung, gated on
+/// `ARCANE_ABJURATION_BANISH_TAG`. It needed an off-board actor lane the
+/// engine did not have; `crate::engine::banishment` is that lane. The
+/// rung is deliberately the same shape and the same CR ceiling as Turn
+/// Undead's Destroy Undead, which keeps this sideways from Turn Undead
+/// rather than strictly better than it: the two clear the same weight of
+/// enemy off the board, and this one only borrows it for a minute.
 /// 5e Cleric **Nature Domain** subclass — **Dampen Elements** (level 6).
 /// Reactive damage clamp: when the cleric or a creature within 30 ft of
 /// them takes acid, cold, fire, lightning or thunder damage, the cleric
@@ -5999,19 +6002,31 @@ pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
 ///   `install_condition_with_link`, so a condition carrying a back-link
 ///   (Charmed's back-link) gets it without this resolver knowing which
 ///   conditions do.
-/// - `label` — log prefix ("turn undead" / "turn the faithless").
-#[allow(clippy::too_many_arguments)]
+/// - `label` — log prefix ("turn undead" / "turn the faithless"), taken
+///   from the burst's own display name.
+///
+/// Takes the whole `TurnBurst` rather than its fields one at a time.
+/// The parameter list had reached eight and a
+/// `#[allow(clippy::too_many_arguments)]` before the escalation rung
+/// wanted a ninth, and every caller was already a `&TurnBurst`
+/// spreading itself out at the call site: `TurnBurst::side_effects` is
+/// the only one, and it passed seven of its own fields in order.
 fn resolve_turn_burst(
     encounter: &mut EncounterInstance,
     caster_id: usize,
-    feature_tag: &'static str,
-    spellcasting_ability: AbilityScoreType,
-    is_affected: fn(crate::engine::types::CreatureType) -> bool,
-    installed: Condition,
-    timer: ConditionTimer,
-    label: &'static str,
+    config: &TurnBurst,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    let TurnBurst {
+        tag: feature_tag,
+        dc_ability: spellcasting_ability,
+        type_filter: is_affected,
+        installed,
+        timer,
+        name: label,
+        escalation,
+        ..
+    } = *config;
 
     let Some(dc) = spend_feature_and_get_dc(
         encounter,
@@ -6027,19 +6042,18 @@ fn resolve_turn_burst(
     let caster_loc = caster.location();
     let caster_team = caster.team();
     let caster_size = get_tiles_from_size(caster.size());
-    // Destroy Undead (Cleric lv5 passive) gate — checked once up front
-    // so the per-target branch below is a cheap flag read rather than a
-    // fresh `has_passive_feature` lookup per candidate. The destroy
-    // branch only fires for undead targets at or below the CR ceiling
-    // AND requires the caster to hold the passive tag; the "target
-    // undead" half of the gate is checked inside the loop against the
-    // per-target creature type so a mixed-cohort Turn (a hypothetical
-    // future "Turn any Faithless" that swept both fey AND undead)
-    // would still route the undead half through destroy and the fey
-    // half through Frighten. Safe against `resolve_turn_burst` callers
-    // whose cohort doesn't include undead (e.g. Turn the Faithless
-    // targets fey / fiend only) — the per-target check short-circuits.
-    let destroy_undead = caster.has_passive_feature(DESTROY_UNDEAD_TAG);
+    // Escalation gate — resolved once up front so the per-target branch
+    // below is a cheap `Option` read rather than a fresh
+    // `has_passive_feature` lookup per candidate. `None` here means
+    // either the burst has no escalation rung at all or this caster has
+    // not unlocked the one it has, and every failed save takes the
+    // standard install.
+    //
+    // The per-target half of the gate — creature type and CR — stays
+    // inside the loop, which is what lets a mixed-cohort burst route
+    // some of its victims through the escalation and the rest through
+    // the standard install.
+    let escalation = escalation.filter(|e| caster.has_passive_feature(e.tag));
     encounter.log(format!(
         "  {}: every affected creature within 30ft saves (DC {}).",
         label, dc
@@ -6074,32 +6088,42 @@ fn resolve_turn_burst(
         if save.passed() {
             continue;
         }
-        // Destroy Undead branch: if the caster carries the passive tag
-        // AND the failed-save target is Undead AND its CR is at or
-        // below `DESTROY_UNDEAD_CR_CEILING`, deal HP-matching radiant
-        // damage to kill outright instead of installing Frightened.
-        // Falls back to the standard Frighten install on any gate miss
-        // (non-undead target, above-ceiling CR, cleric without the
-        // passive tag) — the two branches are mutually exclusive per
-        // target, matching RAW's "instead of turned" clause.
-        if destroy_undead
-            && let Some(target) = encounter.actors.get(&id)
-            && target.creature_type().is_undead()
-            && target.cr() <= DESTROY_UNDEAD_CR_CEILING
+        // Escalation branch: a weak enough creature of the right type
+        // doesn't merely fail — it is destroyed (Destroy Undead) or
+        // sent away (Arcane Abjuration). Mutually exclusive with the
+        // standard install per target, matching RAW's "instead of"
+        // phrasing on both features, and falling through on any gate
+        // miss (wrong type, above-ceiling CR, caster without the tag).
+        if let Some(rung) = escalation
+            && let Some((cr, hp)) = encounter
+                .actors
+                .get(&id)
+                .filter(|t| (rung.type_filter)(t.creature_type()))
+                .map(|t| (t.cr(), t.hitpoints()))
+                .filter(|(cr, _)| *cr <= rung.cr_ceiling)
         {
-            let killing_damage = target.hitpoints();
             encounter.log(format!(
-                "  {}: destroys undead ({} radiant, CR {} ≤ {}).",
-                label,
-                killing_damage,
-                target.cr(),
-                DESTROY_UNDEAD_CR_CEILING
+                "  {}: {} (CR {} ≤ {}).",
+                label, rung.log_verb, cr, rung.cr_ceiling
             ));
-            effects.push(Box::new(crate::engine::side_effects::DealDamage {
-                actor_id: id,
-                amount: killing_damage,
-                damage_type: DamageType::Radiant,
-            }));
+            match rung.effect {
+                // Damage equal to the target's *current* HP rather than
+                // its maximum: enough to finish it against any
+                // resistance profile, without overshooting into the
+                // massive-damage instant-kill lane.
+                TurnEscalationEffect::Destroy { damage_type } => {
+                    effects.push(Box::new(crate::engine::side_effects::DealDamage {
+                        actor_id: id,
+                        amount: hp,
+                        damage_type,
+                    }));
+                }
+                TurnEscalationEffect::Install { condition, timer } => {
+                    effects.extend(crate::engine::side_effects::install_condition_with_link(
+                        condition, id, caster_id, timer,
+                    ));
+                }
+            }
             continue;
         }
         // `install_condition_with_link` covers the back-link half for
@@ -6199,6 +6223,67 @@ pub struct TurnBurst {
     /// Champion Challenge installs `Rooted`, and a hold that severe has
     /// to be measured in a round rather than in a minute.
     pub timer: ConditionTimer,
+    /// The rung a weak enough victim falls through instead of the
+    /// standard install, or `None` for a burst that has no such rung.
+    ///
+    /// Two features in 5e say "instead of merely being turned, a
+    /// creature this weak is *removed*", and they say it in the same
+    /// shape: a passive unlocked a few levels after the Channel
+    /// Divinity itself, a creature-type gate, and a CR ceiling. The
+    /// cleric's **Destroy Undead** burns the target to nothing; the
+    /// Arcana Domain's **Arcane Abjuration** sends it home. Destroy
+    /// Undead used to be spelled out inline in `resolve_turn_burst`,
+    /// which is why the second one was never written.
+    pub escalation: Option<TurnEscalation>,
+}
+
+/// The "instead of turned" rung on a `TurnBurst` — see
+/// `TurnBurst::escalation`.
+#[derive(Clone, Copy)]
+pub struct TurnEscalation {
+    /// Passive feature the caster must hold for the rung to exist.
+    /// Distinct from the burst's own `tag`, which is the per-rest
+    /// charge: this one is an always-on unlock, and a caster who has
+    /// spent their Channel Divinity can't reach the rung because they
+    /// can't reach the burst.
+    pub tag: &'static str,
+    /// Creature types the rung applies to, on top of the burst's own
+    /// filter. Not redundant with it: a burst may sweep a wider cohort
+    /// than the rung removes — the baseline cleric's Turn Undead
+    /// happens to agree, but the Arcana Cleric's four extraplanar types
+    /// and a hypothetical mixed-cohort Turn would not.
+    pub type_filter: fn(crate::engine::types::CreatureType) -> bool,
+    /// Highest CR the rung reaches. A single number rather than the
+    /// per-level ramp RAW gives both features, for the same reason
+    /// `DESTROY_UNDEAD_CR_CEILING` was one before it moved here: the
+    /// engine's class templates sit at a fixed playable band rather
+    /// than tracking a level.
+    pub cr_ceiling: f32,
+    /// What the rung does to a victim that clears both gates.
+    pub effect: TurnEscalationEffect,
+    /// Log fragment, in the third person and without the CR clause —
+    /// "destroys undead", "banishes to its home plane". The resolver
+    /// supplies the prefix and the CR arithmetic around it.
+    pub log_verb: &'static str,
+}
+
+/// What a `TurnEscalation` does to a creature that clears its gates.
+#[derive(Clone, Copy)]
+pub enum TurnEscalationEffect {
+    /// Deal damage equal to the target's remaining hit points — the
+    /// cleric's Destroy Undead. `damage_type` so the kill still reads
+    /// through the target's resistance profile rather than bypassing
+    /// it.
+    Destroy { damage_type: DamageType },
+    /// Install a condition in place of the burst's usual one — the
+    /// Arcana Cleric's Arcane Abjuration, which banishes rather than
+    /// frightens. Routed through `install_condition_with_link` exactly
+    /// as the standard install is, so a condition carrying a back-link
+    /// still gets one.
+    Install {
+        condition: Condition,
+        timer: ConditionTimer,
+    },
 }
 
 impl Action for TurnBurst {
@@ -6235,16 +6320,7 @@ impl Action for TurnBurst {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        resolve_turn_burst(
-            encounter,
-            caster_id,
-            self.tag,
-            self.dc_ability,
-            self.type_filter,
-            self.installed,
-            self.timer,
-            self.name,
-        )
+        resolve_turn_burst(encounter, caster_id, self)
     }
 }
 
@@ -6263,6 +6339,19 @@ pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // 5e Cleric **Destroy Undead** (level 5): a failed save from a weak
+    // enough undead destroys it outright instead of turning it. Data
+    // here rather than a branch inside the resolver, which is what let
+    // Arcane Abjuration's sibling clause be written at all.
+    escalation: Some(TurnEscalation {
+        tag: DESTROY_UNDEAD_TAG,
+        type_filter: |ct| ct.is_undead(),
+        cr_ceiling: DESTROY_UNDEAD_CR_CEILING,
+        effect: TurnEscalationEffect::Destroy {
+            damage_type: DamageType::Radiant,
+        },
+        log_verb: "destroys undead",
+    }),
 });
 
 /// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
@@ -6291,6 +6380,9 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Arcane Abjuration — Arcana Domain Cleric Channel Divinity (lv2,
@@ -6302,10 +6394,13 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
 /// the complement of Turn Undead rather than an overlap: between an
 /// Arcana Cleric and any other cleric, a party covers every extraplanar
 /// creature type in the engine. That complementarity is the domain's
-/// argument for existing — RAW's Arcane Abjuration also banishes a
-/// low-CR target outright at lv5, which is the half that would make it
-/// strictly better than Turn Undead and is not modeled (banishment needs
-/// an off-board actor lane the engine doesn't have).
+/// argument for existing, and it now runs all the way down: RAW's lv5
+/// clause banishes a low-CR outsider to its home plane instead of
+/// merely frightening it, and that ships as the `escalation` rung
+/// below, mirroring Turn Undead's Destroy Undead at the same CR
+/// ceiling. So a party fielding both clerics can clear every
+/// extraplanar creature type in the engine off the board with one
+/// Channel Divinity press each.
 ///
 /// Wider than Turn the Faithless's fey / fiend narrowing because there's
 /// no ally-flavor reason to spare celestials here: the Arcana Cleric
@@ -6328,6 +6423,47 @@ pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // 5e Arcana Domain **Arcane Abjuration**, second clause (level 5):
+    // "if the creature's challenge rating is at or below a certain
+    // threshold, it is instead banished for 1 minute (as in the
+    // banishment spell, no concentration required)".
+    //
+    // The clause the feature shipped without, and its own docstring
+    // named the reason: it needed an off-board actor lane the engine
+    // did not have. It has one now — see `crate::engine::banishment`.
+    //
+    // The ceiling is pegged to Destroy Undead's rather than to RAW's
+    // own ramp, which starts at CR ½ and reaches 1 at level 11 where
+    // the cleric's reaches 1 at level 8. The engine has one number per
+    // rung rather than a per-level table, and the two rungs are the
+    // same rung — "your Channel Divinity removes a weak enemy from the
+    // fight outright" — so a shared ceiling is the reading that keeps
+    // the two domains comparable. Banishment is strictly the gentler
+    // of the two outcomes: it is a minute, not a death.
+    escalation: Some(TurnEscalation {
+        tag: ARCANE_ABJURATION_BANISH_TAG,
+        // The same four types the burst itself sweeps: everything this
+        // feature touches is an outsider with a home plane to be sent
+        // back to, which is exactly what makes the clause coherent.
+        type_filter: |ct| {
+            use crate::engine::types::CreatureType;
+            matches!(
+                ct,
+                CreatureType::Celestial
+                    | CreatureType::Elemental
+                    | CreatureType::Fey
+                    | CreatureType::Fiend
+            )
+        },
+        cr_ceiling: DESTROY_UNDEAD_CR_CEILING,
+        effect: TurnEscalationEffect::Install {
+            condition: Condition::Banished,
+            // 1 minute, RAW, and no concentration to break — the
+            // feature says so explicitly.
+            timer: ConditionTimer::Rounds(10),
+        },
+        log_verb: "banishes to its home plane",
+    }),
 });
 
 /// Charm Animals and Plants — Nature Domain Cleric Channel Divinity
@@ -6362,6 +6498,9 @@ pub static CHARM_ANIMALS_AND_PLANTS: LazyLock<TurnBurst> = LazyLock::new(|| Turn
     installed: Condition::Charmed,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Dreadful Aspect — Oathbreaker Paladin Channel Divinity (lv3), action.
@@ -6382,6 +6521,9 @@ pub static DREADFUL_ASPECT: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
@@ -8553,6 +8695,9 @@ pub static ENTHRALLING_PERFORMANCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnB
     installed: Condition::Charmed,
     // 1 minute — see the duration note above.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Temporary hit points one **Mantle of Inspiration** hands each
@@ -12242,6 +12387,26 @@ pub const DESTROY_UNDEAD_TAG: &str = "cleric.destroy_undead";
 /// gate a one-line check inside `resolve_turn_burst`.
 pub const DESTROY_UNDEAD_CR_CEILING: f32 = 1.0;
 
+/// 5e Arcana Domain Cleric **Arcane Abjuration**, second clause (level
+/// 5): a celestial, elemental, fey or fiend weak enough to clear the CR
+/// ceiling is *banished* by a failed save instead of merely frightened.
+///
+/// Always-on passive, exactly like `DESTROY_UNDEAD_TAG` and paired with
+/// `ARCANE_ABJURATION_TAG` the same way: that one is the per-rest charge
+/// that gates whether the Channel Divinity can be pressed at all, and
+/// this one gates what a failed save against it costs. Both must be
+/// present, so an Arcana Cleric who has spent their Channel Divinity
+/// banishes nothing.
+///
+/// It is the sibling half of Destroy Undead across the whole cleric
+/// roster: between an Arcana Cleric and any other cleric, a party can
+/// remove every extraplanar creature type in the engine from a fight
+/// with one Channel Divinity press each. That complementarity is the
+/// domain's argument for existing, and until the engine grew an
+/// off-board actor lane it was an argument for a feature that only did
+/// half of what it said.
+pub const ARCANE_ABJURATION_BANISH_TAG: &str = "cleric.arcane_abjuration_banish";
+
 /// 5e Zealot Barbarian **Zealous Presence** (subclass level 10).
 /// Once-per-long-rest bonus action: up to 10 allies within 60ft
 /// (24 tiles on the 2.5ft grid) gain the Blessed condition (RAW: "each
@@ -15800,6 +15965,9 @@ pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Tag for the Bladesinging Wizard's **Bladesong** (subclass level 2).
@@ -16469,6 +16637,9 @@ pub static ORDERS_DEMAND: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     installed: Condition::Charmed,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Class-feature tag for the Order Domain Cleric's **Divine Strike
@@ -16849,6 +17020,9 @@ pub static ASPECT_OF_THE_WYRM: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
     installed: Condition::Frightened,
     // 1 minute, RAW.
     timer: ConditionTimer::Rounds(10),
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Passive tag for the Oath of the Crown Paladin's **Divine Allegiance**
@@ -16982,6 +17156,9 @@ pub static CHAMPION_CHALLENGE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
     // One round, not the minute every other row takes — see the field's
     // doc and the tag's for why a hold trades duration for severity.
     timer: ConditionTimer::UntilStartOfNextTurn,
+    // No "instead of turned" rung: RAW gives this one no
+    // remove-the-weak clause.
+    escalation: None,
 });
 
 /// Per-rest charge for the Oath of the Crown Paladin's Channel Divinity

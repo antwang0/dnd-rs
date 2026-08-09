@@ -16086,12 +16086,395 @@ fn banishment_incapacitates_on_failed_save() {
         for ef in effects {
             ef.apply(&mut e);
         }
-        if e.actors[&target].has_condition(Condition::Incapacitated) {
-            assert!(e.actors[&caster].is_concentrating());
-            return;
+        if !e.actors[&target].has_condition(Condition::Banished) {
+            continue;
+        }
+        assert!(e.actors[&caster].is_concentrating());
+        // The condition alone is only half the spell. Until the sweep
+        // runs the zombie is still standing on its tile — installing
+        // the condition is what the spell does, and taking the body off
+        // the grid is what the engine does about it.
+        let tile = e.actors[&target].location();
+        assert_eq!(e.actor_id_at(tile), Some(target));
+        e.reconcile_board_presence();
+        assert!(e.actors[&target].is_off_board());
+        assert_eq!(
+            e.actor_id_at(tile), None,
+            "a banished creature releases the space it was standing in"
+        );
+        assert!(
+            !e.actors[&target].is_combat_active(),
+            "and stops being something the fight can reach"
+        );
+        return;
+    }
+    panic!("expected banishment to land Banished across 40 seeds");
+}
+
+/// A banished creature comes back where it left, and comes back on the
+/// same clock that took it away — the round-end sweep, with nothing in
+/// the spell or the condition knowing the actor map exists.
+#[test]
+fn a_banished_creature_returns_to_the_space_it_left() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tile = Coordinate::new(4, 2);
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, tile, 1, 0)
+        .unwrap();
+    // Somebody has to be left on the board, or the encounter is over
+    // before the timer runs out.
+    e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&zombie)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(2));
+    e.reconcile_board_presence();
+    assert!(e.actors[&zombie].is_off_board());
+    assert_eq!(e.actor_id_at(tile), None);
+
+    // Two round-ends: the first ticks the timer to 1, the second
+    // expires it, and the sweep that runs alongside puts the body back.
+    for _ in 0..2 {
+        e.round_end();
+    }
+    assert!(!e.actors[&zombie].has_condition(Condition::Banished));
+    assert!(!e.actors[&zombie].is_off_board());
+    assert_eq!(
+        e.actor_id_at(tile),
+        Some(zombie),
+        "the zombie reappears in the space it left"
+    );
+    assert!(e.actors[&zombie].is_combat_active());
+}
+
+/// The "or in the nearest unoccupied space" half of RAW's sentence: a
+/// creature that walked into the vacated tile does not get overwritten,
+/// and the returning body is put down beside it instead.
+#[test]
+fn a_returning_creature_steps_aside_when_its_space_was_taken() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tile = Coordinate::new(6, 6);
+    let banished = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(1));
+    e.reconcile_board_presence();
+    assert_eq!(e.actor_id_at(tile), None);
+
+    // Somebody takes the empty space while its owner is away.
+    let squatter = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 0, 1)
+        .unwrap();
+    assert_eq!(e.actor_id_at(tile), Some(squatter));
+
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .remove_condition(Condition::Banished);
+    e.reconcile_board_presence();
+
+    assert!(!e.actors[&banished].is_off_board());
+    assert_eq!(
+        e.actor_id_at(tile),
+        Some(squatter),
+        "the creature standing there keeps its tile"
+    );
+    let landed = e.actors[&banished].location();
+    assert_ne!(landed, tile);
+    assert_eq!(e.actor_id_at(landed), Some(banished));
+    assert!(
+        crate::engine::util::footprint_chebyshev(landed, 1, tile, 1) <= 4,
+        "and the returner lands near where it left, not across the arena"
+    );
+}
+
+/// The sweep is a reconcile, so running it twice must be the same as
+/// running it once — every chokepoint calls it unconditionally and
+/// most calls have nothing to do.
+#[test]
+fn the_sweep_is_idempotent() {
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tile = Coordinate::new(5, 5);
+    let id = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+
+    e.reconcile_board_presence();
+    assert!(!e.actors[&id].is_off_board());
+    assert_eq!(e.actor_id_at(tile), Some(id));
+
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    for _ in 0..3 {
+        e.reconcile_board_presence();
+        assert!(e.actors[&id].is_off_board());
+        assert_eq!(e.actor_id_at(tile), None);
+    }
+
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .remove_condition(Condition::Banished);
+    for _ in 0..3 {
+        e.reconcile_board_presence();
+        assert!(!e.actors[&id].is_off_board());
+        assert_eq!(e.actor_id_at(tile), Some(id));
+    }
+}
+
+/// The whole lane end to end, with nobody's hand on the wheel: an
+/// AI-driven caster reaches for Banishment off its own lockdown rung,
+/// the target comes off the board, and the board notices.
+///
+/// Every other test here stages the banishment by hand — install the
+/// condition, call the sweep. That is the right way to pin the rules
+/// and the wrong way to answer the question that decides whether any of
+/// it mattered: does a fight nobody is steering ever put a creature on
+/// a demiplane? Nothing in the loop below knows the off-board lane
+/// exists; a spell resolves, a save fails, and the sweep inside
+/// `process_stack` takes the body away.
+///
+/// A **lich** holds the wand, and the choice is not arbitrary. The
+/// lockdown cohort is a preference order, and on most casters
+/// Banishment is outranked by something cheaper that the same chassis
+/// also carries: a wizard has Tasha's Hideous Laughter two rungs above
+/// it and a warlock has Hold Person one rung above, so neither would
+/// ever reach for it while both are up and both hold concentration. The
+/// lich's list starts at Banishment. It is the chassis on which this
+/// rung is the AI's actual first choice, which is the only chassis that
+/// can answer the question.
+///
+/// Asserted on the log line and on the grid rather than on any actor's
+/// flag, because the flag is what the sweep writes and the grid is what
+/// the rest of the engine reads. A creature whose footprint outlived
+/// its banishment would pass a flag check and still block the corridor.
+#[test]
+fn a_fight_nobody_is_steering_still_sends_somebody_away() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::liches::LICH_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+    use crate::conditions::Condition;
+
+    let ai = SimpleAi {};
+    let mut seeds_that_banished = 0;
+    for seed in 0..16u64 {
+        let mut e = ei_with_terrain_seeded(24, 18, &[], seed);
+        e.instantiate_creature(&LICH_TEMPLATE, Coordinate::new(4, 6), 1, 0)
+            .unwrap();
+        // Two fighters rather than one: the lockdown rung picks the
+        // highest-HP hostile it can reach, and something has to be left
+        // fighting afterwards or the encounter ends before the
+        // banishment can be observed on the board.
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 6), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let _ = e.initialize();
+        for _ in 0..400 {
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(id) = e.current_turn_actor_id() else {
+                break;
+            };
+            match ai.decide(&e, id) {
+                ControllerDecision::Act(aei) => e.push_action(aei),
+                ControllerDecision::AwaitInput => break,
+            }
+        }
+        if !e
+            .messages()
+            .iter()
+            .any(|m| m.contains("vanishes from the field"))
+        {
+            continue;
+        }
+        seeds_that_banished += 1;
+        // Whoever is off the board owns no tiles anywhere on it — the
+        // invariant the whole lane rests on, checked against the map
+        // rather than against the actor.
+        for (id, a) in &e.actors {
+            if !a.is_off_board() {
+                continue;
+            }
+            assert!(a.has_condition(Condition::Banished));
+            assert!(
+                !(0..e.width as isize).any(|x| (0..e.height as isize)
+                    .any(|y| e.actor_id_at(Coordinate::new(x, y)) == Some(*id))),
+                "a banished creature is still stamped somewhere on the grid"
+            );
         }
     }
-    panic!("expected banishment to land Incapacitated across 40 seeds");
+    assert!(
+        seeds_that_banished > 0,
+        "sixteen AI-driven fights with Banishment top of the lich's lockdown list and nobody ever left"
+    );
+}
+
+/// The whole reason the lane exists rather than an inert condition: a
+/// banished creature is not a body the fight can reach. A Fireball
+/// centred on the tile it was standing on catches nothing, and an
+/// attack declared at it does not validate.
+///
+/// Both halves matter separately, and they are gated by two different
+/// mechanisms — the burst by `is_combat_active`, the swing by the
+/// explicit off-board clause in `Action::validate_input`. Only the
+/// second could ride the narrow gate: a *dying* creature is also not
+/// combat-active and is still very much lying there to be finished off,
+/// so the targeting lane cannot ask that question.
+#[test]
+fn nothing_reaches_a_banished_creature() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let tile = Coordinate::new(8, 8);
+    let banished = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+    // A second goblin on the same tile-adjacent ground, as the control:
+    // the blast has to actually be landing somewhere.
+    let bystander = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 8), 1, 1)
+        .unwrap();
+
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+
+    assert!(
+        !e.actors_in_burst(tile, 6).contains(&banished),
+        "the blast rolls over the space it used to occupy"
+    );
+    assert!(e.actors_in_burst(tile, 6).contains(&bystander));
+
+    let hp_before = e.actors[&banished].hitpoints();
+    for ef in FIREBALL.side_effects(&mut e, wizard, None, Some(&vec![tile]), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&banished].hitpoints(),
+        hp_before,
+        "and takes none of it"
+    );
+    assert!(e.actors[&bystander].hitpoints() < e.actors[&bystander].max_hitpoints());
+
+    // And nothing can be declared at it by name either. Fire Bolt
+    // rather than a swing: the whole point is that this fails for a
+    // reason other than reach, so the control has to be an action whose
+    // reach comfortably covers both goblins.
+    let bolt = e.actors[&wizard].find_action("fire bolt").unwrap();
+    assert!(
+        ActionExecutionInfo::new(bolt, wizard, Some(vec![bystander]), None, None)
+            .validate(&e),
+        "the control target is in range and in sight"
+    );
+    assert!(
+        !ActionExecutionInfo::new(bolt, wizard, Some(vec![banished]), None, None)
+            .validate(&e),
+        "a target on another plane is not a legal target"
+    );
+}
+
+/// A creature that leaves the board while banished must not take
+/// somebody else's tiles with it. Both removal paths stamp `None` over
+/// the departing actor's remembered footprint, and for a banished one
+/// that footprint may well have been walked into — the guard lives in
+/// `release_grid_claim`.
+#[test]
+fn removing_a_banished_actor_does_not_erase_the_tile_it_left() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tile = Coordinate::new(7, 7);
+    let banished = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+
+    let squatter = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 0, 1)
+        .unwrap();
+    assert_eq!(e.actor_id_at(tile), Some(squatter));
+
+    // The concentration holding the banishment up is dropped by a
+    // caster who is themselves removed — the minion-unbind path.
+    e.despawn_actor(banished, "is dispelled");
+
+    assert!(!e.actors.contains_key(&banished));
+    assert_eq!(
+        e.actor_id_at(tile),
+        Some(squatter),
+        "the creature standing there keeps its tile"
+    );
+}
+
+/// The fight is not over while somebody is on a demiplane. Banishing
+/// the last enemy standing would otherwise read as a cleared encounter,
+/// and the enemy would reappear in an arena the app had already
+/// congratulated the party for.
+#[test]
+fn banishing_the_last_enemy_does_not_end_the_encounter() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+        .unwrap();
+    assert!(!e.is_complete());
+
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(3));
+    e.reconcile_board_presence();
+
+    assert!(e.actors[&goblin].is_off_board());
+    assert!(
+        !e.actors[&goblin].is_combat_active(),
+        "the goblin is out of reach of everything"
+    );
+    assert!(
+        e.living_teams().contains(&1),
+        "…but its team has not lost"
+    );
+    assert!(!e.is_stalemate(), "and the fight is not stuck, it is waiting");
+    assert!(!e.is_complete());
 }
 
 #[test]
@@ -31676,7 +32059,7 @@ fn banishing_smite_banishes_below_threshold_only() {
         }
         if e.actors
             .get(&goblin)
-            .is_some_and(|a| a.has_condition(Condition::Mazed))
+            .is_some_and(|a| a.has_condition(Condition::Banished))
         {
             goblin_banished = true;
             break;
@@ -31713,7 +32096,7 @@ fn banishing_smite_banishes_below_threshold_only() {
     assert!(
         !e.actors
             .get(&golem)
-            .is_some_and(|a| a.has_condition(Condition::Mazed)),
+            .is_some_and(|a| a.has_condition(Condition::Banished)),
         "Stone Golem stays above the 50-HP threshold — banish should be blocked"
     );
 }
@@ -56432,15 +56815,95 @@ fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
             "the burst must spend a Channel Divinity press"
         );
         assert!(
-            !e.actors[&goblin].has_condition(Condition::Frightened),
+            !e.actors[&goblin].has_condition(Condition::Frightened)
+                && !e.actors[&goblin].has_condition(Condition::Banished),
             "a humanoid is outside the celestial/elemental/fey/fiend filter"
         );
-        if e.actors[&imp].has_condition(Condition::Frightened) {
+        // The imp is CR 1, which is exactly the escalation ceiling, so
+        // the Arcana Cleric's level-5 clause fires and it is sent home
+        // rather than merely scared. Either outcome proves the burst
+        // reached the fiend; which one it is, is the next test's
+        // question.
+        if e.actors[&imp].has_condition(Condition::Frightened)
+            || e.actors[&imp].has_condition(Condition::Banished)
+        {
             saw_frighten = true;
             break;
         }
     }
     assert!(saw_frighten, "arcane abjuration never landed on the fiend");
+}
+
+/// The level-5 half of Arcane Abjuration: a weak enough outsider that
+/// fails the save is banished to its home plane rather than frightened,
+/// and a heavier one on the same board is only frightened.
+///
+/// The clause three docstrings said the engine could not have, and the
+/// pairing is the point — the CR ceiling is what separates the two
+/// outcomes, not the creature type, which both of these share.
+#[test]
+fn arcane_abjuration_banishes_a_weak_fiend_and_only_frightens_a_strong_one() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{
+        ARCANE_ABJURATION, ARCANE_ABJURATION_BANISH_TAG,
+    };
+    use crate::actors::creatures::clerics::ARCANA_CLERIC_TEMPLATE;
+    use crate::actors::creatures::hell_hounds::HELL_HOUND_TEMPLATE;
+    use crate::actors::creatures::imps::IMP_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::dice::FastRandRoller;
+
+    assert!(
+        ARCANA_CLERIC_TEMPLATE
+            .features
+            .contains(ARCANE_ABJURATION_BANISH_TAG),
+        "the domain has to carry the level-5 unlock for the rung to exist"
+    );
+
+    let mut saw_split = false;
+    for seed in 0..60 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = FastRandRoller::with_seed(seed);
+        let cleric = e
+            .instantiate_creature(&ARCANA_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // CR 1 — at the ceiling, so it goes.
+        let imp = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // CR 3 — past the ceiling, so it stays and is merely
+        // frightened. A hell hound rather than one of the heavier
+        // demons because most of those are immune to Frightened
+        // outright, which would prove nothing about the ceiling.
+        let heavy = e
+            .instantiate_creature(&HELL_HOUND_TEMPLATE, Coordinate::new(5, 5), 1, 1)
+            .unwrap();
+        for eff in ARCANE_ABJURATION.side_effects(&mut e, cleric, None, None, None) {
+            eff.apply(&mut e);
+        }
+        if !e.actors[&imp].has_condition(Condition::Banished)
+            || !e.actors[&heavy].has_condition(Condition::Frightened)
+        {
+            continue;
+        }
+        assert!(
+            !e.actors[&imp].has_condition(Condition::Frightened),
+            "the two outcomes are alternatives, not a stack"
+        );
+        assert!(
+            !e.actors[&heavy].has_condition(Condition::Banished),
+            "a CR-3 fiend is past the ceiling"
+        );
+        e.reconcile_board_presence();
+        assert!(e.actors[&imp].is_off_board());
+        assert!(!e.actors[&heavy].is_off_board());
+        saw_split = true;
+        break;
+    }
+    assert!(
+        saw_split,
+        "no seed produced both a failed imp save and a failed hell hound save"
+    );
 }
 
 #[test]
@@ -71574,6 +72037,68 @@ fn a_rider_leaves_the_grid_and_the_mount_keeps_the_tiles() {
     // pair's footprint distance is zero, which is what every reach
     // check reads.
     assert_eq!(e.footprint_distance(rider, mount), Some(0));
+}
+
+/// Banishing a horse out from under its knight, which is the one place
+/// the off-board sweep and the mounted-pair lane have to agree about
+/// whose tiles are whose.
+///
+/// The pair share one footprint — the mount's — so a sweep that
+/// released "the banished actor's" tiles by coordinate would erase the
+/// rider that the unseat had just stood up on them. Both directions are
+/// checked here because they fail differently: a banished *mount* has
+/// tiles to give up and a rider standing on them, and a banished
+/// *rider* has no tiles at all and must not take the horse's.
+#[test]
+fn banishing_half_of_a_mounted_pair_leaves_the_other_half_standing() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    // The mount goes. RAW's DC 10 decides how the rider lands, not
+    // whether they come off — there is no staying seated on a horse
+    // that is on another plane.
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    let saddle = e.actors[&mount].location();
+    e.actors
+        .get_mut(&mount)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+
+    assert!(e.actors[&mount].is_off_board());
+    assert_eq!(e.actors[&mount].ridden_by(), None);
+    assert_eq!(e.actors[&rider].mounted_on(), None);
+    assert!(!e.actors[&rider].is_off_board(), "the rider stays behind");
+    let landed = e.actors[&rider].location();
+    assert_eq!(
+        e.actor_id_at(landed),
+        Some(rider),
+        "and is on the board under their own name"
+    );
+    assert!(
+        crate::engine::util::footprint_chebyshev(landed, 1, saddle, 2) <= 1,
+        "beside the space the horse was standing in"
+    );
+
+    // The rider goes. Their tiles were never theirs — they are the
+    // horse's, and the horse is still standing on them.
+    let (mut e, rider, mount) = mounted_pair();
+    assert!(e.mount(rider, mount).is_ok());
+    let saddle = e.actors[&mount].location();
+    e.actors
+        .get_mut(&rider)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+
+    assert!(e.actors[&rider].is_off_board());
+    assert!(!e.actors[&mount].is_off_board());
+    assert_eq!(e.actors[&mount].ridden_by(), None);
+    assert_eq!(
+        e.actor_id_at(saddle),
+        Some(mount),
+        "the horse keeps every tile it was standing on"
+    );
 }
 
 #[test]

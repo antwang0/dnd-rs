@@ -552,12 +552,21 @@ pub enum Condition {
     /// Concentration-bound on the caster.
     Dancing,
     /// Mazed (5e Maze, level-8 conjuration, concentration). The target is
-    /// banished to a demiplane: they're effectively removed from the
-    /// encounter map for the spell's duration. Mechanically we treat the
-    /// Maze condition as a full incapacitation envelope — zero movement
-    /// (joins `zeros_movement`), all action economy blocked
-    /// (`blocks_action_economy`), and reactions blocked. We don't
-    /// physically delete the actor; the engine just makes them inert.
+    /// banished to a labyrinthine demiplane and is removed from the
+    /// encounter map for the spell's duration — literally: `Mazed` joins
+    /// `Banished` on `removes_from_board`, so the body comes off the
+    /// grid and reappears in the space it left when the spell ends. See
+    /// `crate::engine::banishment`.
+    ///
+    /// It spent a long time meaning the opposite. The condition carried
+    /// the incapacitation envelope (`zeros_movement`,
+    /// `blocks_action_economy`, and the reaction lane that rides with
+    /// it) and a docstring conceding "we don't physically delete the
+    /// actor; the engine just makes them inert" — which left an
+    /// eighth-level slot buying a target that still soaked area damage,
+    /// still blocked a corridor, and still broke line of sight for its
+    /// own side.
+    ///
     /// RAW gives the target an INT check at the end of each of their turns
     /// to escape; we leave the duration-bound install for simplicity.
     /// Concentration-bound on the caster.
@@ -780,9 +789,9 @@ pub enum Condition {
     StaggeringSmiting,
     /// Banishing Smite primed (5e level-5 paladin abjuration, bonus
     /// action). +5d10 force rider on the primed hit; if the rider reduces
-    /// the target to HP <= 50, the target is also Banished (we collapse
-    /// the demi-plane mechanic to a 10-round inert envelope via the
-    /// existing `Mazed` condition — same end-state, distinct log line).
+    /// the target to HP <= 50 the target is `Banished` for ten rounds —
+    /// off the board, not merely stunned on it; see
+    /// `crate::engine::banishment`.
     /// One-shot — the rider table strips this flag the moment it lands.
     BanishingSmiting,
     /// Thunderous Smite primed (5e level-1 paladin evocation, bonus
@@ -2302,6 +2311,27 @@ pub enum Condition {
     /// Rogue's Assassinate exists to add, and the only thing on the
     /// board that reads this flag beyond the three cohorts above.
     Surprised,
+    /// 5e **Banishment** — *"the target is transported to a harmless
+    /// demiplane … while there, the target is incapacitated."*
+    ///
+    /// The one condition in this file whose effect is not something the
+    /// holder suffers but somewhere the holder **is not**. Everything
+    /// the incapacitation clause asks for rides cohorts that already
+    /// existed — `blocks_action_economy` (which carries the reaction
+    /// lane with it) and `zeros_movement` — and none of those is the
+    /// point. The point
+    /// is `removes_from_board`, which is what makes the demiplane a
+    /// place rather than a flavour line: a banished creature has no
+    /// footprint on the grid, cannot be seen, reached, blasted or
+    /// walked around, and comes back where it left when the spell ends.
+    /// See `crate::engine::banishment` for the model and for the two
+    /// sweeps that keep it honest.
+    ///
+    /// Installed by Banishment, Banishing Smite and the Arcana Cleric's
+    /// Arcane Abjuration, all three of which spent the engine's whole
+    /// history collapsed to an on-board `Incapacitated` because there
+    /// was nowhere else to put the target.
+    Banished,
 }
 
 impl Condition {
@@ -2521,7 +2551,35 @@ impl Condition {
             Condition::Hobbled => "hobbled",
             Condition::Vexed => "vexed",
             Condition::Surprised => "surprised",
+            Condition::Banished => "banished",
         }
+    }
+
+    /// True if this condition takes its holder **off the board** — not
+    /// merely pins them to it.
+    ///
+    /// The cohort behind `crate::engine::banishment`'s sweep. A
+    /// creature holding any of these is somewhere the encounter map
+    /// does not reach: it owns no tiles, blocks nothing, sees nothing,
+    /// and nothing can see, reach or blast it. That is a much stronger
+    /// claim than the incapacitation every member also carries, and it
+    /// is deliberately a small list.
+    ///
+    ///   - **Banished** (Banishment, Banishing Smite, Arcane
+    ///     Abjuration) — RAW's "harmless demiplane".
+    ///   - **Mazed** (Maze) — RAW's "labyrinthine demiplane". Same
+    ///     sentence, same lane; the condition predates the lane and
+    ///     spent its whole life as an inert incapacitation with a
+    ///     docstring apologising for it.
+    ///
+    /// Deliberately **not** on the list: `Sphered` (Otiluke's Resilient
+    /// Sphere) and `Caged` (Forcecage). Both seal their holder away
+    /// from the fight, and both leave a body standing in the room — the
+    /// sphere rolls, the cage occupies a doorway, and a creature can
+    /// walk around either. Off-board is about the grid, not about
+    /// whether anyone can get at you.
+    pub fn removes_from_board(&self) -> bool {
+        matches!(self, Condition::Banished | Condition::Mazed)
     }
 
     /// True if this condition completely blocks Action / BonusAction /
@@ -2545,6 +2603,10 @@ impl Condition {
                 // the three of them the condition needs no code of its
                 // own.
                 | Condition::Surprised
+                // 5e Banishment: "while there, the target is
+                // incapacitated". The clause is the small half of the
+                // condition — see `removes_from_board` for the rest.
+                | Condition::Banished
         )
     }
 
@@ -2860,6 +2922,13 @@ impl Condition {
                 // 5e Surprised: "you can't move ... on your first turn
                 // of the combat".
                 | Condition::Surprised
+                // A creature on another plane has no feet on this one.
+                // Belt-and-braces beside `removes_from_board`, which
+                // has already taken the footprint away: nothing can
+                // path a body that is not on the grid, but the movement
+                // budget is asked for by things that never touch the
+                // pathfinder (a stand-up, a mount, a dismount).
+                | Condition::Banished
         )
     }
 

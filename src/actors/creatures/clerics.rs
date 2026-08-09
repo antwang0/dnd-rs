@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    ARCANE_ABJURATION, ARCANE_ABJURATION_TAG, CHARM_ANIMALS_AND_PLANTS,
+    ARCANE_ABJURATION, ARCANE_ABJURATION_BANISH_TAG, ARCANE_ABJURATION_TAG,
+    CHARM_ANIMALS_AND_PLANTS,
     CHARM_ANIMALS_AND_PLANTS_TAG, CIRCLE_OF_MORTALITY_TAG, DAMPEN_ELEMENTS_TAG,
     DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_POISON,
     DIVINE_STRIKE_POISON_TAG, INVOKE_DUPLICITY, INVOKE_DUPLICITY_TAG,
@@ -905,6 +906,13 @@ pub static ARCANA_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     let (mut actions, mut features) = cleric_chassis_without_divine_strike();
     actions.push(&*ARCANE_ABJURATION);
     features.insert(ARCANE_ABJURATION_TAG);
+    // The level-5 half of Arcane Abjuration: a weak enough outsider that
+    // fails the save is banished rather than frightened. Sibling to the
+    // `DESTROY_UNDEAD_TAG` this template already inherits from the
+    // chassis, and shipped alongside it for the same reason — the
+    // template sits in a playable band rather than at a strict RAW
+    // level, and the two rungs are the same rung.
+    features.insert(ARCANE_ABJURATION_BANISH_TAG);
     features.insert(POTENT_SPELLCASTING_TAG);
     CreatureTemplate {
         name: "Arcana Cleric",

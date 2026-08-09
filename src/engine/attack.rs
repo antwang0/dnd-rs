@@ -4512,12 +4512,14 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
         },
         // 5e Banishing Smite — 5th-level paladin abjuration, bonus
         // action prime. +5d10 force on the primed hit; if the target
-        // ends the swing at 50 HP or fewer they are banished. We model
-        // the banishment via the existing `Mazed` envelope (zero
-        // movement + blocked action economy + blocked reactions) for
-        // 10 rounds — distinct log line, identical end-state. The HP
-        // threshold gate is evaluated at the smite-follow-up site (see
-        // `apply_smite_follow_up`'s threshold extension below).
+        // ends the swing at 50 HP or fewer it is banished — genuinely,
+        // via `Condition::Banished` and the off-board lane in
+        // `crate::engine::banishment`, which lifts the body off the
+        // grid for the ten rounds RAW's minute buys. It used to borrow
+        // the `Mazed` envelope and stand the target quietly where it
+        // was. The HP threshold gate is evaluated at the smite-follow-up
+        // site (see `apply_smite_follow_up`'s threshold extension
+        // below).
         OnHitRider {
             condition: Condition::BanishingSmiting,
             dice: Dice::new(5, 10),
@@ -4530,7 +4532,7 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
                 effect: FollowUpEffect::Condition {
-                    condition: Condition::Mazed,
+                    condition: Condition::Banished,
                     timer: ConditionTimer::Rounds(10),
                 },
                 label: "banishing smite banish",
@@ -4958,13 +4960,13 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 dc_ability: AbilityScoreType::Intelligence,
                 effect: FollowUpEffect::Condition {
                     // RAW banishes the target to a harmless demiplane
-                    // until the end of the archer's next turn.
-                    // Incapacitated is the engine's word for "present on
-                    // the board and able to do nothing with it" — the
-                    // creature keeps its space, which is the one thing
-                    // the demiplane reading loses, and loses every
-                    // action, which is the whole point of the shot.
-                    condition: Condition::Incapacitated,
+                    // until the end of the archer's next turn, and this
+                    // row now says so. It shipped as `Incapacitated`
+                    // with a comment arguing that keeping the creature's
+                    // space was a fair price for the demiplane; the
+                    // off-board lane means there is no longer a price to
+                    // pay. See `crate::engine::banishment`.
+                    condition: Condition::Banished,
                     timer: ConditionTimer::Rounds(1),
                 },
                 label: "banishing arrow banish",

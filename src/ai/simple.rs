@@ -1822,7 +1822,7 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "sleep gaze", condition: Condition::Asleep },
     LockdownPick { name: "tasha's hideous laughter", condition: Condition::Incapacitated },
     LockdownPick { name: "hold person", condition: Condition::Stunned },
-    LockdownPick { name: "banishment", condition: Condition::Incapacitated },
+    LockdownPick { name: "banishment", condition: Condition::Banished },
     LockdownPick { name: "hold monster", condition: Condition::Stunned },
     LockdownPick { name: "otto's irresistible dance", condition: Condition::Dancing },
     LockdownPick { name: "flesh to stone", condition: Condition::Petrified },
