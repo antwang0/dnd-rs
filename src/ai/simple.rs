@@ -1843,6 +1843,20 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "tasha's hideous laughter", condition: Some(Condition::Incapacitated) },
     LockdownPick { name: "hold person", condition: Some(Condition::Stunned) },
     LockdownPick { name: "banishment", condition: Some(Condition::Banished) },
+    // Otiluke's Resilient Sphere, and it is a level-4 tier-1 lock beside
+    // Banishment for the same reason Banishment is one: `Sphered` joins
+    // `blocks_action_economy`, so the target takes no action, no bonus
+    // action and no reaction for ten rounds. It ships on four chassis —
+    // the artificer, and the wizard, cleric and sorcerer subclasses that
+    // pick it up — and on a scroll, and no rung could reach it.
+    //
+    // Below Banishment rather than beside it because the sphere leaves a
+    // body on the board. RAW's sphere is also a shield, and this engine
+    // does not model that half, so the difference here is only the tile
+    // the target keeps standing on — but that tile is a corridor it is
+    // still blocking and cover it is still granting, which is exactly
+    // the argument the off-board lane was built on.
+    LockdownPick { name: "resilient sphere", condition: Some(Condition::Sphered) },
     LockdownPick { name: "hold monster", condition: Some(Condition::Stunned) },
     LockdownPick { name: "otto's irresistible dance", condition: Some(Condition::Dancing) },
     LockdownPick { name: "flesh to stone", condition: Some(Condition::Petrified) },
@@ -13685,6 +13699,64 @@ mod tests {
         assert!(zone.rounds_remaining > 0);
     }
 
+    /// Otiluke's Resilient Sphere is a tier-1 lock and had no rung.
+    ///
+    /// `Sphered` joins `blocks_action_economy`, so a sphered creature
+    /// takes no action, no bonus action and no reaction for ten rounds —
+    /// which is the lockdown cohort's membership test exactly. It ships
+    /// on four chassis (the artificer, and the wizard, cleric and
+    /// sorcerer subclasses that pick it up) and on a scroll, and until
+    /// it became a row nothing in the engine had ever cast it: a
+    /// single-target save-or-suck deals no damage and buffs nobody, so
+    /// the damage lane, the self-buff cohort and the area-control
+    /// registry each filtered it out for a different reason.
+    ///
+    /// Checked on the artificer, which carries it on the base chassis
+    /// rather than behind a subclass — and with the rows *above* it
+    /// stripped, because the cohort returns one pick and Banishment
+    /// outranks it on any sheet that holds both.
+    #[test]
+    fn the_resilient_sphere_is_reachable_on_a_chassis_that_carries_it() {
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+
+        assert!(
+            ARTIFICER_TEMPLATE
+                .actions
+                .iter()
+                .any(|a| a.name() == "resilient sphere"),
+            "the artificer has to carry the spell for this case to prove anything"
+        );
+        let higher: Vec<&str> = LOCKDOWNS
+            .iter()
+            .take_while(|r| r.name != "resilient sphere")
+            .map(|r| r.name)
+            .collect();
+        let stripped: &'static CreatureTemplate = Box::leak(Box::new(CreatureTemplate {
+            actions: ARTIFICER_TEMPLATE
+                .actions
+                .iter()
+                .copied()
+                .filter(|a| !higher.contains(&a.name()))
+                .collect(),
+            ..ARTIFICER_TEMPLATE.clone()
+        }));
+        let (e, caster) = clustered_hostiles(stripped, 3);
+        let aei = try_lockdown(&e, caster).expect("the sphere should be reachable");
+        assert_eq!(aei.action().name(), "resilient sphere");
+        // And it aims at the toughest thing on the board, which is what
+        // the whole cohort is for.
+        let target = aei.target_ids().expect("single actor")[0];
+        let toughest = e
+            .actors
+            .iter()
+            .filter(|(_, a)| a.team() != e.actors[&caster].team())
+            .map(|(_, a)| a.hitpoints())
+            .max()
+            .unwrap();
+        assert_eq!(e.actors[&target].hitpoints(), toughest);
+    }
+
     /// Every row on the registry is a row some chassis can actually
     /// reach for, and the three most recently added are the reason this
     /// exists.
@@ -15482,9 +15554,16 @@ mod tests {
         use crate::actors::creatures::pc_template_families;
         use std::collections::HashSet;
 
+        // Every template the AI can find itself steering, which is both
+        // sides of a fight and not just the party's. Widened when the
+        // `LockdownPick` cohorts joined the sweep below and immediately
+        // flagged two rows — Sleep Gaze and Plane Shift, a vampire's
+        // stare and a lich's touch — that no PC will ever carry and
+        // that the AI reaches for every time it drives one.
         let known: HashSet<&str> = pc_template_families()
             .into_iter()
             .flat_map(|(_family, templates)| templates)
+            .chain(crate::engine::encounter::EncounterInstance::template_pool())
             .flat_map(|t| t.actions.iter().map(|a| a.name()))
             .collect();
 
@@ -15515,6 +15594,20 @@ mod tests {
             for name in entries {
                 if !known.contains(name) && !waiting_on_a_template.contains(name) {
                     orphans.push(format!("{}: {:?}", list_name, name));
+                }
+            }
+        }
+        // The two `LockdownPick` cohorts, swept the same way. They were
+        // outside this check for as long as it has existed, purely
+        // because they are a different type from the `&[&str]` lists
+        // above — which is not a reason, and it left the longest
+        // name-keyed table in the AI unguarded. Between them they are
+        // twenty-five rows of string literal, every one of which is a
+        // rung that silently never fires if it is a character off.
+        for (list_name, entries) in [("LOCKDOWNS", LOCKDOWNS), ("ATTRITION", ATTRITION)] {
+            for row in entries {
+                if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
+                    orphans.push(format!("{}: {:?}", list_name, row.name));
                 }
             }
         }
