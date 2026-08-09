@@ -58,6 +58,7 @@ use crate::engine::side_effects::{
     ApplicableSideEffect, DealDamage, PushActor, install_condition_with_link,
 };
 use crate::engine::types::{AbilityScoreType, Size};
+use crate::engine::util::tiles_from_feet;
 
 /// Once-per-turn ledger tag for the Cleave follow-up swing.
 pub const CLEAVE_TAG: &str = "weapon mastery: cleave";
@@ -66,9 +67,8 @@ pub const NICK_TAG: &str = "weapon mastery: nick";
 /// Once-per-turn ledger tag for the Slow speed cut.
 pub const SLOW_TAG: &str = "weapon mastery: slow";
 
-/// How far Push shoves its target, in tiles. RAW is 10 feet; the grid is
-/// `crate::engine::util::TILE_FEET` (2.5 ft) to a tile.
-const PUSH_TILES: u32 = 4;
+/// How far Push shoves its target. RAW is 10 feet.
+const PUSH_TILES: u32 = tiles_from_feet(10);
 
 /// The eight 5e weapon mastery properties.
 ///

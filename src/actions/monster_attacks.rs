@@ -16,6 +16,7 @@ use crate::{
         mastery::{MasteryRider, WeaponMastery},
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
+        util::tiles_from_feet,
     },
 };
 
@@ -410,52 +411,6 @@ pub fn simple_weapon_attack_ranged(
     normal_range: Option<isize>,
     min_effective_range: Option<isize>,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    simple_weapon_attack_with_mastery(
-        encounter,
-        caster_id,
-        target_ids,
-        action_name,
-        attack_ability,
-        damage_ability,
-        damage_dice,
-        damage_type,
-        is_melee,
-        normal_range,
-        min_effective_range,
-        None,
-        MELEE_REACH,
-    )
-}
-
-/// `simple_weapon_attack_ranged` with the weapon's 5e mastery property
-/// carried onto the swing — see `engine::mastery`.
-///
-/// Split out rather than folded into the eleven-argument function above
-/// because the bestiary's forty-odd call sites have no mastery to pass
-/// and would all have grown a `None`. `reach` is the wielder's own
-/// reach in tile-gap units, needed only by Cleave, whose second target
-/// must be "within your reach" — a glaive's envelope is wider than a
-/// greataxe's and the rider cannot see the weapon it came from.
-///
-/// The property is still inert for a wielder without the class feature;
-/// the gate lives inside the rider. Passing `Some(..)` here is a
-/// statement about the *weapon*, which is where RAW puts it.
-#[allow(clippy::too_many_arguments)]
-pub fn simple_weapon_attack_with_mastery(
-    encounter: &mut EncounterInstance,
-    caster_id: usize,
-    target_ids: Option<&Vec<usize>>,
-    action_name: &str,
-    attack_ability: AbilityScoreType,
-    damage_ability: Option<AbilityScoreType>,
-    damage_dice: Dice,
-    damage_type: DamageType,
-    is_melee: bool,
-    normal_range: Option<isize>,
-    min_effective_range: Option<isize>,
-    mastery: Option<WeaponMastery>,
-    reach: isize,
-) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(target_id) = first_target_id(target_ids) else {
         return Vec::new();
     };
@@ -466,7 +421,7 @@ pub fn simple_weapon_attack_with_mastery(
     let damage_mod = damage_ability
         .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
-    crate::engine::attack::resolve_attack_with_rider(
+    resolve_attack(
         encounter,
         AttackParams {
             caster_id,
@@ -481,7 +436,58 @@ pub fn simple_weapon_attack_with_mastery(
             min_range: min_effective_range,
             is_spell: false,
         },
-        &MasteryRider::with_reach(mastery, attack_ability, reach),
+    )
+}
+
+/// Resolve one swing of `weapon`, mastery property and all.
+///
+/// The `SimpleWeapon` chassis's own entry point, and the reason it takes
+/// the weapon rather than thirteen of its fields: `simple_weapon_attack_ranged`
+/// below already carries eleven parameters for the bespoke monster
+/// swings that have no struct to hand over, and a mastery-aware sibling
+/// spelled the same way would have carried thirteen — two of which
+/// (`mastery`, `reach`) exist only for the chassis that has them
+/// sitting in a field.
+///
+/// The mastery property is still inert for a wielder without the class
+/// feature; that gate lives inside `MasteryRider`, so this function
+/// hands the tag over unconditionally and the rider decides.
+fn simple_weapon_swing(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    weapon: &SimpleWeapon,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(target_id) = first_target_id(target_ids) else {
+        return Vec::new();
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let attack_bonus = caster.spell_attack_modifier(weapon.attack_ability);
+    let damage_bonus = weapon
+        .damage_ability
+        .map(|a| caster.ability_modifier(a))
+        .unwrap_or(0);
+    crate::engine::attack::resolve_attack_with_rider(
+        encounter,
+        AttackParams {
+            caster_id,
+            target_id,
+            action_name: weapon.display_name,
+            attack_bonus,
+            damage_dice: weapon.damage_dice,
+            damage_bonus,
+            damage_type: weapon.damage_type,
+            is_melee: weapon.is_melee,
+            long_range: weapon.normal_range,
+            min_range: weapon.min_effective_range,
+            is_spell: false,
+        },
+        // The reach the rider needs is Cleave's "within your reach",
+        // which is the weapon's own — a glaive carries further into the
+        // second creature than a greataxe does.
+        &MasteryRider::with_reach(weapon.mastery, weapon.attack_ability, weapon.reach),
     )
 }
 
@@ -1200,21 +1206,7 @@ impl Action for SimpleWeapon {
         // only fires on Action-cost swings: bonus-action bow shots and
         // reaction strikes don't get the second hit per RAW.
         let swing = |e: &mut EncounterInstance| {
-            simple_weapon_attack_with_mastery(
-                e,
-                caster_id,
-                target_ids,
-                self.name(),
-                self.attack_ability,
-                self.damage_ability,
-                self.damage_dice,
-                self.damage_type,
-                self.is_melee,
-                self.normal_range,
-                self.min_effective_range,
-                self.mastery,
-                self.reach,
-            )
+            simple_weapon_swing(e, caster_id, target_ids, self)
         };
         let mut effects = swing(encounter);
         // Extra Attack chain — only on Action-cost swings (bonus-action
@@ -14079,9 +14071,8 @@ impl Action for MaridWaterJet {
             return Vec::new();
         };
         const DC: i32 = 17;
-        // 20 ft push = 8 tiles on the 2.5ft grid (matching the RAW
-        // marid's "pushed up to 20 ft away" rider).
-        const PUSH_TILES: u32 = 8;
+        // The RAW marid's "pushed up to 20 ft away" rider.
+        const PUSH_TILES: u32 = tiles_from_feet(20);
         encounter.log("  water jet: a hydrant of pressurized water lances out");
         let damage = encounter.roll(&Dice::new(6, 6));
         let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, DC);

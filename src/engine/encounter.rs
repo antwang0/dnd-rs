@@ -2392,11 +2392,11 @@ impl EncounterInstance {
     /// to build the `ConsumeResource` — and a ledger stamped before
     /// those two calls would answer them differently: the swing would
     /// be waved through as free and then billed a bonus action.
-    fn mark_offhand_swing(&mut self, aei: &ActionExecutionInfo) {
-        if !aei.action().is_offhand_swing() {
-            return;
-        }
-        if let Some(caster) = self.actors.get_mut(&aei.caster_id()) {
+    ///
+    /// Whether the swing was real is the caller's question, asked
+    /// before `execute` ran; see the call site.
+    fn mark_offhand_swing(&mut self, swinger: usize) {
+        if let Some(caster) = self.actors.get_mut(&swinger) {
             caster.mark_once_per_turn_used(crate::engine::mastery::NICK_TAG);
         }
     }
@@ -14359,8 +14359,19 @@ impl EncounterInstance {
                 StackElementEntry::Action(a) => {
                     self.log_action_use(&a);
                     self.mark_two_weapon_opening(&a);
+                    // Asked *before* the swing, because it is a
+                    // question about the swing happening at all —
+                    // `execute` re-validates and quietly does nothing
+                    // if the world moved between enqueue and now, and a
+                    // ledger stamped afterwards regardless would spend
+                    // the wielder's once-a-turn Nick discount on a
+                    // swing that never landed a blow or even rolled.
+                    let offhand_swing =
+                        a.action().is_offhand_swing() && a.validate(self);
                     let mut side_effects = a.execute(self);
-                    self.mark_offhand_swing(&a);
+                    if offhand_swing {
+                        self.mark_offhand_swing(a.caster_id());
+                    }
                     for sen in side_effects.drain(..) {
                         self.enqueue_event(StackElementEntry::SideEffect(sen));
                     }

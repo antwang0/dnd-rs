@@ -936,7 +936,7 @@ const DEFAULT_MOUNT_TOLL_FEET: f32 = 15.0;
 
 /// 5e Shove (special melee attack): contested Athletics check — attacker's
 /// d20 + STR mod vs target's d20 + max(STR mod, DEX mod). On success the
-/// target is knocked prone AND pushed 1 tile (5 ft) away from the attacker.
+/// target is knocked prone AND pushed 5 ft away from the attacker.
 /// Target must be no more than one size category larger. Costs an Action.
 pub struct Shove {}
 
@@ -1021,7 +1021,7 @@ impl Action for Shove {
             Box::new(crate::engine::side_effects::PushActor {
                 actor_id: target_id,
                 from: caster_loc,
-                max_tiles: 1,
+                max_tiles: crate::engine::util::tiles_from_feet(5),
             }),
         ]
     }

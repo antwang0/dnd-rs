@@ -22,6 +22,7 @@ use crate::{
         },
         terrain::TerrainType,
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
+        util::tiles_from_feet,
         zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion},
     },
 };
@@ -3013,8 +3014,8 @@ impl Action for Thunderwave {
         ]);
         let center = caster.location();
         const RADIUS: isize = 2;
-        // 10 ft = 4 tiles on this 2.5ft grid. RAW Thunderwave push.
-        const PUSH_TILES: u32 = 4;
+        // RAW Thunderwave push.
+        const PUSH_TILES: u32 = tiles_from_feet(10);
         // Friend-or-foe burst — Thunderwave's cube doesn't discriminate.
         // The save-for-half helper handles the per-target CON save +
         // shared roll log; we layer the push rider on top of the
@@ -20282,8 +20283,7 @@ impl Action for GustOfWind {
             (caster_loc.y + point.y) / 2,
         );
         const RADIUS: isize = 3;
-        // 15 ft = 6 tiles on the 2.5ft grid.
-        const PUSH_TILES: u32 = 6;
+        const PUSH_TILES: u32 = tiles_from_feet(15);
         encounter.log(format!(
             "  gust of wind: line toward {} (DC {})",
             point, dc
@@ -21270,14 +21270,14 @@ impl Action for Telekinetic {
             encounter.log("  telekinetic: target resists the pull".to_string());
             return Vec::new();
         }
-        // Pull 1 tile (5 ft) toward the caster. The PullActor helper
+        // RAW's 5 ft pull toward the caster. The PullActor helper
         // honors wall / occupancy blocking — a pinned target just
         // doesn't move and we log the no-op via the standard forced-move
         // log line (or absence thereof).
         vec![Box::new(PullActor {
             actor_id: target_id,
             toward: caster_loc,
-            max_tiles: 1,
+            max_tiles: tiles_from_feet(5),
         })]
     }
 }
@@ -26167,7 +26167,7 @@ impl Action for Maelstrom {
         // 5e RAW: failed-save targets are dragged 10 ft toward the
         // center of the vortex. PullActor stops cleanly on walls /
         // occupied tiles — a target already pinned doesn't budge.
-        const PULL_TILES: u32 = 4;
+        const PULL_TILES: u32 = tiles_from_feet(10);
         for (tid, passed) in saves {
             if !passed {
                 effects.push(Box::new(PullActor {
@@ -26274,7 +26274,7 @@ impl Action for DustDevil {
         // 5e RAW push: 10 ft away from the dust devil's tile on a failed
         // save. PushActor halts cleanly on walls / occupied tiles so a
         // target pinned to the wall takes the damage but doesn't budge.
-        const PUSH_TILES: u32 = 4;
+        const PUSH_TILES: u32 = tiles_from_feet(10);
         for (tid, passed) in saves {
             if !passed {
                 effects.push(Box::new(PushActor {

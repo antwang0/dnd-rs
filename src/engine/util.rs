@@ -13,6 +13,24 @@ use crate::engine::types::{Coordinate, Size};
 /// through this number, and it was a bare `2.5` at each of those sites.
 pub const TILE_FEET: f32 = 2.5;
 
+/// A distance written in feet, as a count of tiles — the conversion
+/// every forced move in the engine has to make, in one place.
+///
+/// It was made by hand at a dozen sites, each with its own comment
+/// restating the grid ("10 ft = 4 tiles on the 2.5ft grid"), and at
+/// three of them the arithmetic was simply wrong: Shove, the Telekinetic
+/// feat's cantrip and Telekinesis each said "1 tile (5 ft)" and moved
+/// their target 2.5 feet. A conversion that is spelled out in prose at
+/// every call site is a conversion nothing checks.
+///
+/// Integer arithmetic rather than a float divide so the result is usable
+/// in a `const` and exact on the multiples of five that every rule in
+/// the book is written in: `feet / 2.5` is `feet * 2 / 5`, rounded up so
+/// an odd distance buys the tile it partly covers rather than losing it.
+pub const fn tiles_from_feet(feet: u32) -> u32 {
+    (feet * 2).div_ceil(5)
+}
+
 pub fn get_tiles_from_size(size: Size) -> usize {
     match size {
         Size::Tiny => 1,
@@ -196,6 +214,36 @@ pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The conversion is exact on the multiples of five every rule in
+    /// the book is written in, and rounds an odd distance up rather than
+    /// losing the tile it partly covers.
+    ///
+    /// The 5-foot row is the one that was wrong at three call sites, and
+    /// it is the one an off-by-a-half-tile error is invisible at: a
+    /// shove that moves the target one tile *looks* like it worked.
+    #[test]
+    fn a_distance_in_feet_is_the_same_count_of_tiles_everywhere() {
+        assert_eq!(tiles_from_feet(5), 2);
+        assert_eq!(tiles_from_feet(10), 4);
+        assert_eq!(tiles_from_feet(15), 6);
+        assert_eq!(tiles_from_feet(20), 8);
+        assert_eq!(tiles_from_feet(30), 12);
+        assert_eq!(tiles_from_feet(60), 24);
+        // Nothing rounds down to nothing: a distance short of a whole
+        // tile still moves the target off the square they stand on.
+        assert_eq!(tiles_from_feet(1), 1);
+        assert_eq!(tiles_from_feet(0), 0);
+        // …and it agrees with the float the rest of the engine measures
+        // movement with.
+        for feet in [5u32, 10, 15, 20, 25, 30, 60, 120] {
+            assert_eq!(
+                tiles_from_feet(feet),
+                (feet as f32 / TILE_FEET) as u32,
+                "{feet} ft"
+            );
+        }
+    }
 
     #[test]
     fn parse_coord_absolute() {
