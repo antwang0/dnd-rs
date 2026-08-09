@@ -1992,7 +1992,7 @@ pub fn resolve_attack_outcome_with_rider(
     // is a critical hit" wording).
     let is_crit = nat_crit
         || (hit
-            && encounter.target_grants_melee_auto_crit(p.caster_id, p.target_id, p.is_melee));
+            && encounter.target_grants_auto_crit(p.caster_id, p.target_id, p.is_melee));
     let outcome = if is_nat_one {
         "miss (nat 1)"
     } else if underwater == UnderwaterVerdict::AutoMiss {

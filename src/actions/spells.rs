@@ -261,7 +261,7 @@ pub fn spell_attack_roll(
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
     let is_crit = nat_crit
-        || (hit && encounter.target_grants_melee_auto_crit(caster_id, target_id, is_melee));
+        || (hit && encounter.target_grants_auto_crit(caster_id, target_id, is_melee));
     let outcome = if is_nat_one {
         "miss (nat 1)"
     } else if is_crit {

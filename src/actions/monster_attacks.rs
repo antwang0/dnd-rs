@@ -3484,14 +3484,21 @@ pub static GHAST_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
     parts: vec![(&GHAST_BITE, 1), (&GHAST_CLAWS, 1)],
 });
 
-/// Bugbear morningstar — 1d8+2 piercing, with a Surprise-Attack rider
-/// that deals an extra 2d6 damage on the first hit of the encounter
-/// per RAW. We simplify: extra damage applies on round 1 only (when
-/// the encounter is still "fresh"), and only on the first time the
-/// bugbear attacks. Tracking a per-actor "has surprise-attacked yet"
-/// flag without polluting state: we just gate on `encounter.round()
-/// == 1` and skip the second-strike concern (the AI rarely lines up
-/// a clean second swing in the first round anyway).
+/// Bugbear morningstar — 2d8+STR piercing, carrying RAW's **Surprise
+/// Attack** rider: *"if the bugbear surprises a creature and hits it
+/// with an attack during the first round of combat, the target takes
+/// an extra 7 (2d6) damage."*
+///
+/// The rider used to fire on any hit in round one, because the engine
+/// had no Surprised condition to ask about and the round number was
+/// the closest thing to one. It has one now
+/// (`EncounterInstance::resolve_opening_surprise`), and the flag is a
+/// strictly better gate than the round number in both directions: it
+/// stops paying out against a party that walked in with its eyes open,
+/// and it names the creature the clause is about rather than the
+/// moment. The round-one half needs no separate check — the condition
+/// expires at the end of round one, so a surprised target *is* a
+/// round-one target.
 pub struct BugbearMorningstar {}
 
 impl Action for BugbearMorningstar {
@@ -3533,12 +3540,16 @@ impl Action for BugbearMorningstar {
         if effects.is_empty() {
             return effects;
         }
-        if encounter.round() != 1 {
-            return effects;
-        }
         let Some(target_id) = target_id else {
             return effects;
         };
+        let surprised = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.has_condition(Condition::Surprised));
+        if !surprised {
+            return effects;
+        }
         // Surprise-attack rider: +2d6 on the opening salvo.
         let surprise = encounter.roll(&Dice::new(2, 6));
         encounter.log(format!(

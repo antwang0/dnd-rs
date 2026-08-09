@@ -7460,7 +7460,7 @@ fn drow_fey_ancestry_blocks_charm_and_sleep() {
 
 /// 5e Paralyzed clause: "any attack that hits the creature is a
 /// critical hit if the attacker is within 5 feet of the creature."
-/// `target_grants_melee_auto_crit` is the central gate the attack-
+/// `target_grants_auto_crit` is the central gate the attack-
 /// resolution sites read.
 #[test]
 fn paralyzed_grants_melee_auto_crit_gate() {
@@ -7474,15 +7474,15 @@ fn paralyzed_grants_melee_auto_crit_gate() {
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
         .unwrap();
     // Baseline: no paralysis, no auto-crit gate.
-    assert!(!e.target_grants_melee_auto_crit(a, t, true));
+    assert!(!e.target_grants_auto_crit(a, t, true));
     // Apply Paralyzed: melee gate flips on, ranged stays off.
     e.actors
         .get_mut(&t)
         .unwrap()
         .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
-    assert!(e.target_grants_melee_auto_crit(a, t, true));
+    assert!(e.target_grants_auto_crit(a, t, true));
     assert!(
-        !e.target_grants_melee_auto_crit(a, t, false),
+        !e.target_grants_auto_crit(a, t, false),
         "ranged attacks do not auto-crit on a paralyzed target — only the in-melee clause fires"
     );
     // Unconscious also flips the gate.
@@ -7491,10 +7491,10 @@ fn paralyzed_grants_melee_auto_crit_gate() {
         .get_mut(&t)
         .unwrap()
         .add_condition(Condition::Unconscious, ConditionTimer::Permanent);
-    assert!(e.target_grants_melee_auto_crit(a, t, true));
+    assert!(e.target_grants_auto_crit(a, t, true));
     // Self-target is excluded — a paralyzed creature can't melee
     // auto-crit itself if some action somehow rolls a self-attack.
-    assert!(!e.target_grants_melee_auto_crit(t, t, true));
+    assert!(!e.target_grants_auto_crit(t, t, true));
     // Stunned alone is NOT in the RAW auto-crit clause.
     let other = e
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 2, 0)
@@ -7504,7 +7504,7 @@ fn paralyzed_grants_melee_auto_crit_gate() {
         .unwrap()
         .add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
     assert!(
-        !e.target_grants_melee_auto_crit(a, other, true),
+        !e.target_grants_auto_crit(a, other, true),
         "Stunned is not in the auto-crit cohort per 5e RAW"
     );
 }
@@ -77204,5 +77204,240 @@ fn vex_asks_whether_the_blow_actually_hurt_and_sap_does_not() {
     assert!(
         !e.actors[&pudding].has_condition(Condition::Vexed),
         "nothing vexed a creature the slashing blade could not hurt"
+    );
+}
+
+
+// ---------------------------------------------------------------
+// 5e surprise — `EncounterInstance::resolve_opening_surprise`.
+// ---------------------------------------------------------------
+
+/// The board the game is played on by default hands out no surprise at
+/// all, and that is the compatibility guarantee the whole rule was
+/// designed around: in a bright room everybody can see everybody, so
+/// nobody "fails to notice a threat" and no encounter, seed or
+/// assertion changes meaning.
+#[test]
+fn nobody_is_surprised_in_a_lit_room() {
+    let (mut e, fighter, zombie) = lighting_pair((5, 2), (8, 2));
+    e.resolve_opening_surprise_for_test();
+    for id in [fighter, zombie] {
+        assert!(
+            !e.actors[&id].has_condition(Condition::Surprised),
+            "a lit board surprises nobody"
+        );
+    }
+}
+
+/// The fiction the rule is written about: a torchless party walks into a
+/// dark room and the thing that lives there sees them coming.
+///
+/// The zombie has darkvision and the fighter does not, so the sight is
+/// one-way — which is exactly the asymmetry surprise is made of. The
+/// fighter notices no threat and is surprised; the zombie, who started
+/// it, is not.
+#[test]
+fn the_creature_who_cannot_see_the_ambush_is_surprised_by_it() {
+    let (mut e, fighter, zombie) = lighting_pair((5, 2), (8, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(!e.viewer_can_see(fighter, zombie), "the fixture needs one-way sight");
+    assert!(e.viewer_can_see(zombie, fighter));
+
+    e.resolve_opening_surprise_for_test();
+    assert!(e.actors[&fighter].has_condition(Condition::Surprised));
+    assert!(
+        !e.actors[&zombie].has_condition(Condition::Surprised),
+        "the ambusher is not surprised by its own ambush"
+    );
+}
+
+/// Mutual blindness is not an ambush. Two groups who cannot see each
+/// other are not in a fight yet, and freezing both of them for a round
+/// would be the engine inventing a combat neither side started.
+#[test]
+fn two_creatures_blind_to_each_other_surprise_nobody() {
+    let (mut e, fighter, zombie) = lighting_pair((5, 2), (8, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    // Blind the zombie too, so neither end of the line can see.
+    e.actors
+        .get_mut(&zombie)
+        .unwrap()
+        .add_condition(Condition::Blinded, ConditionTimer::Rounds(10));
+    assert!(!e.viewer_can_see(zombie, fighter));
+
+    e.resolve_opening_surprise_for_test();
+    for id in [fighter, zombie] {
+        assert!(
+            !e.actors[&id].has_condition(Condition::Surprised),
+            "nobody started this fight"
+        );
+    }
+}
+
+/// What being surprised actually costs, and for exactly how long. RAW:
+/// "you can't move or take an action on your first turn of the combat,
+/// and you can't take a reaction until that turn ends."
+#[test]
+fn surprise_costs_the_first_turn_and_only_the_first_turn() {
+    use crate::engine::side_effects::Resource;
+
+    let (mut e, fighter, zombie) = lighting_pair((5, 2), (8, 2));
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.resolve_opening_surprise_for_test();
+    assert!(e.actors[&fighter].has_condition(Condition::Surprised));
+
+    // Turn one: no action, no bonus action, no reaction, no ground.
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    let f = &e.actors[&fighter];
+    assert!(!f.can_consume_resource(Resource::Action));
+    assert!(!f.can_consume_resource(Resource::BonusAction));
+    assert!(!f.can_consume_resource(Resource::Reaction));
+    assert_eq!(f.remaining_movement(), 0.0);
+
+    // The one-round timer expires at the *end* of the round, which is
+    // what makes it cost the first turn rather than nothing at all —
+    // an `UntilStartOfNextTurn` install would have been cleared at the
+    // top of the very turn it is supposed to take away.
+    let expired = e.actors.get_mut(&fighter).unwrap().tick_condition_timers();
+    assert!(expired.contains(&Condition::Surprised));
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    let f = &e.actors[&fighter];
+    assert!(f.can_consume_resource(Resource::Action));
+    assert!(f.remaining_movement() > 0.0);
+    let _ = zombie;
+}
+
+/// 5e Rogue Assassin **Assassinate**, second half: "any hit you score
+/// against a surprised creature is a critical hit."
+///
+/// "Any hit" is the part worth pinning. The rest of the auto-crit
+/// cohort — Paralyzed, Unconscious — carries RAW's "if the attacker is
+/// within 5 feet" clause and is gated on melee; this one has no range
+/// clause at all, so an assassin's bolt crits from across the room.
+#[test]
+fn an_assassin_crits_a_surprised_target_at_any_range() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ASSASSIN_ROGUE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let assassin = e
+        .instantiate_creature(&ASSASSIN_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ordinary = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 2), 1, 0)
+        .unwrap();
+
+    // Nothing yet: an unsurprised target is an ordinary target.
+    assert!(!e.target_grants_auto_crit(assassin, victim, false));
+
+    e.actors
+        .get_mut(&victim)
+        .unwrap()
+        .add_condition(Condition::Surprised, ConditionTimer::Rounds(1));
+    assert!(
+        e.target_grants_auto_crit(assassin, victim, false),
+        "the bolt crits from across the room"
+    );
+    assert!(
+        !e.target_grants_auto_crit(ordinary, victim, true),
+        "surprise is not a general auto-crit — it is the assassin's"
+    );
+}
+
+/// The bugbear's Surprise Attack now asks the question RAW asks. It used
+/// to fire on any hit in round one, because there was no Surprised
+/// condition to read and the round number was the closest thing to one.
+#[test]
+fn the_bugbear_surprise_rider_asks_about_surprise_and_not_the_clock() {
+    use crate::actions::monster_attacks::BUGBEAR_MORNINGSTAR;
+    use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let saw_rider = |surprised: bool| -> bool {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let bugbear = e
+            .instantiate_creature(&BUGBEAR_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        assert_eq!(e.round(), 1, "the old gate would pass here either way");
+        for _ in 0..200 {
+            let max = e.actors[&fighter].max_hitpoints();
+            e.actors.get_mut(&fighter).unwrap().heal(max);
+            e.actors.get_mut(&bugbear).unwrap().reset_for_new_round();
+            {
+                let f = e.actors.get_mut(&fighter).unwrap();
+                f.remove_condition(Condition::Surprised);
+                if surprised {
+                    f.add_condition(Condition::Surprised, ConditionTimer::Rounds(1));
+                }
+            }
+            let before = e.messages().len();
+            let tv = vec![fighter];
+            for eff in BUGBEAR_MORNINGSTAR.side_effects(&mut e, bugbear, Some(&tv), None, None) {
+                eff.apply(&mut e);
+            }
+            if e.messages()[before..]
+                .iter()
+                .any(|l| l.contains("surprise attack:"))
+            {
+                return true;
+            }
+        }
+        false
+    };
+    assert!(saw_rider(true), "a surprised target takes the extra 2d6");
+    assert!(
+        !saw_rider(false),
+        "a party that walked in with its eyes open does not"
+    );
+}
+
+/// RAW **Wakeful**: one of the ettin's two heads is always awake. Now
+/// that surprise is a condition, the trait is a condition immunity and
+/// needs no code — but "needs no code" is exactly the kind of claim
+/// that stops being true silently, so it gets a test.
+///
+/// Blinding is the cleanest way to make a creature notice nothing: it
+/// is one of the clauses `viewer_can_see` already reads, and unlike the
+/// dark it does not also blind the creature on the other end, so the
+/// "somebody started this fight" guard stays satisfied. The zombie is
+/// the control — same blindness, same board, no second head.
+#[test]
+fn nothing_gets_the_drop_on_a_two_headed_giant() {
+    use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ettin = e
+        .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 9), 1, 1)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 7), 0, 0)
+        .unwrap();
+    for id in [ettin, zombie] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(10));
+        assert!(!e.viewer_can_see(id, fighter));
+    }
+    assert!(e.viewer_can_see(fighter, ettin), "somebody is starting this fight");
+
+    e.resolve_opening_surprise_for_test();
+    assert!(
+        e.actors[&zombie].has_condition(Condition::Surprised),
+        "the control should have been caught unawares"
+    );
+    assert!(
+        !e.actors[&ettin].has_condition(Condition::Surprised),
+        "one head is always awake"
     );
 }

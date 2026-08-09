@@ -127,9 +127,11 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// The "alpha-strike" rogue: opens combat with a guaranteed-advantage
 /// shortsword swing (the once-per-turn Sneak Attack rider keys off
 /// advantage as one of its triggers, so the alpha hit lands the +Nd6
-/// without needing a flanking ally). RAW also lets a hit against a
-/// surprised target be a critical, but we don't model the Surprised
-/// state — the advantage half (the load-bearing piece) survives intact.
+/// without needing a flanking ally). RAW's other half — "any hit you
+/// score against a surprised creature is a critical hit" — lands too,
+/// through `EncounterInstance::target_grants_auto_crit`, and unlike the
+/// rest of that cohort it carries no five-foot clause: the assassin's
+/// bolt crits an unaware sentry from across the room.
 ///
 /// Distinct from `ROGUE_TEMPLATE` (Thief-equivalent baseline) so an
 /// Assassin-vs-Thief or Assassin-vs-baseline encounter renders

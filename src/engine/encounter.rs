@@ -1749,6 +1749,19 @@ pub struct EncounterInstance {
     /// still has one.
     seed: u64,
     initialized: bool,
+    /// One-shot latch for 5e's opening surprise check — see
+    /// `resolve_opening_surprise`.
+    ///
+    /// The check does not run at `initialize`, and the reason is the
+    /// order the program actually assembles an encounter in:
+    /// `from_params` initializes, and *then* `main` sets the ambient
+    /// light off the command line. A surprise decided at initialize
+    /// would therefore be decided on a bright board in every game,
+    /// including the ones started with `--dark`, which are the only
+    /// ones it can fire in. It runs on the first `process_stack`
+    /// instead, when whatever else the caller meant to configure is
+    /// configured and before anyone has taken a turn.
+    surprise_resolved: bool,
     pub width: usize,
     pub height: usize,
     /// 1-indexed encounter round counter. Bumped each time the initiative
@@ -4550,35 +4563,67 @@ impl EncounterInstance {
         tally
     }
 
-    /// 5e Paralyzed / Unconscious / Petrified clause: "any attack that
-    /// hits the creature is a critical hit if the attacker is within 5
-    /// feet of the creature." Returns true when a successful hit against
-    /// `target_id` from `attacker_id` should be promoted to a critical.
-    /// We share the gate across weapon swings (`resolve_attack_outcome`)
-    /// and spell attacks (`spell_attack_outcome`) so a touch-spell hit on
-    /// a paralyzed target crits too — RAW just says "any attack."
+    /// Every clause in the game that promotes an ordinary hit against
+    /// `target_id` into a critical one. Shared across weapon swings
+    /// (`resolve_attack_outcome`) and spell attacks
+    /// (`spell_attack_outcome`), because RAW words all of them as "any
+    /// attack" or "any hit" and none of them as "any weapon attack".
     ///
-    /// `is_melee` gates the "within 5 feet" condition by attack reach
-    /// rather than literal distance: melee swings already imply reach,
-    /// and any explicit-distance check would have to know the spell's
-    /// effective range (range varies per spell). The melee-only filter is
-    /// the load-bearing simplification that keeps callers from threading
-    /// distance everywhere.
-    pub fn target_grants_melee_auto_crit(
+    /// Two cohorts, and they differ on `is_melee`:
+    ///
+    ///   - **Paralyzed / Unconscious / Asleep** — "any attack that hits
+    ///     the creature is a critical hit *if the attacker is within 5
+    ///     feet*". `is_melee` gates the range clause by attack reach
+    ///     rather than literal distance: a melee swing already implies
+    ///     reach, and an explicit-distance check would have to know
+    ///     each spell's effective range. That is the load-bearing
+    ///     simplification which keeps callers from threading distance
+    ///     everywhere.
+    ///   - **Assassinate against a Surprised target** — RAW attaches no
+    ///     range clause at all, so this one is not gated: an assassin's
+    ///     crossbow bolt into an unaware sentry crits exactly as their
+    ///     dagger does.
+    ///
+    /// The name lost its `melee_` for the second cohort's sake. It was
+    /// accurate while every row on the list carried the five-foot
+    /// clause; a caller reading `target_grants_melee_auto_crit(.., false)`
+    /// and concluding the answer must be `false` would now be wrong.
+    pub fn target_grants_auto_crit(
         &self,
         attacker_id: usize,
         target_id: usize,
         is_melee: bool,
     ) -> bool {
-        if !is_melee {
-            return false;
-        }
         if attacker_id == target_id {
             return false;
         }
         let Some(target) = self.actors.get(&target_id) else {
             return false;
         };
+        // 5e Rogue Assassin **Assassinate**, second half: "any hit you
+        // score against a surprised creature is a critical hit." Read
+        // before the melee gate below, and not folded into it, because
+        // RAW's clause says *any* hit — the assassin's crossbow bolt
+        // counts and so does their Booming Blade. The rest of the
+        // cohort is melee-only because the conditions on it are: RAW
+        // grants the auto-crit on a Paralyzed or Unconscious target
+        // only "if the attacker is within 5 feet".
+        //
+        // The first half of Assassinate — advantage against anything
+        // that hasn't taken a turn yet — lives in `attack_mode_tally`,
+        // and the two halves are deliberately separate: a creature can
+        // be surprised without being first in the order, and can be
+        // last in the order without ever having been surprised.
+        if target.has_condition(Condition::Surprised)
+            && self.actors.get(&attacker_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::ASSASSINATE_TAG)
+            })
+        {
+            return true;
+        }
+        if !is_melee {
+            return false;
+        }
         // Stunned isn't on the RAW auto-crit list — only Paralyzed and
         // Unconscious carry the "any hit is a crit in melee" clause.
         // Petrified inherits Incapacitated but not the auto-crit rider
@@ -8760,6 +8805,7 @@ impl EncounterInstance {
             seed,
             redirect_depth: 0,
             initialized: false,
+            surprise_resolved: false,
             width: terrain_params.width,
             height: terrain_params.height,
             round: 1,
@@ -14220,6 +14266,94 @@ impl EncounterInstance {
         Ok(())
     }
 
+    /// 5e **surprise**, decided once as the encounter opens.
+    ///
+    /// RAW: *"any character or monster that doesn't notice a threat is
+    /// surprised at the start of the encounter."* The engine can answer
+    /// "doesn't notice" exactly, because it already answers "can see" —
+    /// `viewer_can_see` folds in blindness, invisibility, the Hidden
+    /// condition, heavy obscurement and the lighting layer's darkness
+    /// with each creature's own darkvision. A creature that can see
+    /// none of the enemies on the board has noticed no threat.
+    ///
+    /// Two guards, and both are load-bearing:
+    ///
+    ///   - **Somebody has to have started it.** A creature is surprised
+    ///     only if at least one enemy can see *them*. Without this
+    ///     clause a party and a monster who are mutually blind — two
+    ///     groups in the dark, neither aware of the other — would both
+    ///     be surprised and both lose a round to a fight neither of
+    ///     them started.
+    ///   - **There has to be an enemy.** A lone creature on an empty
+    ///     board notices nothing because there is nothing to notice.
+    ///
+    /// On the lit board the game is played on by default this resolves
+    /// to nobody, every time, which is correct and is also why it is
+    /// safe to run unconditionally: everyone standing in a bright room
+    /// can see everyone else. It fires in the dark — a torchless party
+    /// walking into a room of darkvision — which is precisely the
+    /// fiction RAW's surprise rules are written about.
+    ///
+    /// Deliberately *not* a Stealth-versus-passive-Perception contest,
+    /// which is the other half of RAW's sentence. That contest is about
+    /// creatures who were hiding before the encounter began, and this
+    /// engine has no before: actors are placed and initiative is
+    /// rolled. Rolling one anyway would hand out a lost round on a die
+    /// nobody could see coming, in every fight, on a board where
+    /// everyone is standing in the open looking at each other.
+    /// Test-only door onto `resolve_opening_surprise`. The real trigger
+    /// is inside `initialize`, which a fixture-built encounter has
+    /// already run — and run on a board with no actors on it yet, which
+    /// is the same reason the door exists rather than a second
+    /// `initialize`.
+    #[cfg(test)]
+    pub fn resolve_opening_surprise_for_test(&mut self) {
+        self.surprise_resolved = true;
+        self.resolve_opening_surprise();
+    }
+
+    fn resolve_opening_surprise(&mut self) {
+        let ids = self.sorted_actor_ids();
+        let mut surprised: Vec<usize> = Vec::new();
+        for &id in &ids {
+            let Some(actor) = self.actors.get(&id) else {
+                continue;
+            };
+            if !actor.is_combat_active() {
+                continue;
+            }
+            let team = actor.team();
+            let enemies: Vec<usize> = ids
+                .iter()
+                .copied()
+                .filter(|other| {
+                    self.actors
+                        .get(other)
+                        .is_some_and(|a| a.team() != team && a.is_combat_active())
+                })
+                .collect();
+            if enemies.is_empty() {
+                continue;
+            }
+            let notices_something = enemies.iter().any(|&e| self.viewer_can_see(id, e));
+            let is_noticed = enemies.iter().any(|&e| self.viewer_can_see(e, id));
+            if !notices_something && is_noticed {
+                surprised.push(id);
+            }
+        }
+        for id in surprised {
+            let Some(actor) = self.actors.get_mut(&id) else {
+                continue;
+            };
+            let name = actor.name().to_string();
+            actor.add_condition(
+                Condition::Surprised,
+                crate::conditions::ConditionTimer::Rounds(1),
+            );
+            self.log(format!("{} is caught unawares.", name));
+        }
+    }
+
     /// 5e Arcane Archer Fighter **Ever-Ready Shot** (subclass level 15):
     /// "when you roll initiative and have no uses of Arcane Shot
     /// remaining, you regain one use of it."
@@ -14335,6 +14469,14 @@ impl EncounterInstance {
         // Bail if we are already waiting on a player prompt.
         if self.peek_prompt().is_some() {
             return;
+        }
+
+        // 5e surprise, decided once, before the first turn opens — see
+        // `resolve_opening_surprise` and the `surprise_resolved` field
+        // for why it is here and not in `initialize`.
+        if !self.surprise_resolved {
+            self.surprise_resolved = true;
+            self.resolve_opening_surprise();
         }
 
         // Open the current slot's turn before anything resolves. This is

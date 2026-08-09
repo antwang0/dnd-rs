@@ -7,12 +7,13 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Doppelganger — CR 3 monstrosity. High AC (14) and 52 average HP
-/// with a vanilla slam multiattack. The signature shapeshifter and
-/// surprise-attack mechanics from MM aren't fully modeled (the engine
-/// lacks a surprise round), but the strong stat line and charm
-/// immunity keep doppelgangers feeling distinct from other CR-3
-/// fighters. Pair with mages for a "blend in / attack from behind"
-/// flavor encounter.
+/// with a vanilla slam multiattack. The signature shapeshifting is
+/// still unmodeled — the engine has no disguise layer for it to hide
+/// behind — but the surprise half of the MM's ambush package is now a
+/// rule the board can carry: `Surprised` is a condition, decided as
+/// the encounter opens by who can see whom, so a doppelganger waiting
+/// in an unlit room gets the round RAW gives it. Charm immunity and
+/// the strong stat line keep it distinct from other CR-3 fighters.
 pub static DOPPELGANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DOPPELGANGER_SLAM);

@@ -2254,6 +2254,30 @@ pub enum Condition {
     /// generous and is the shortest window the timer vocabulary can
     /// express for a condition held by somebody other than its owner.
     Vexed,
+    /// 5e **Surprised**: *"if you're surprised, you can't move or take
+    /// an action on your first turn of the combat, and you can't take a
+    /// reaction until that turn ends."*
+    ///
+    /// All three clauses ride cohorts that already existed —
+    /// `blocks_action_economy`, `zeros_movement`, `blocks_reactions` —
+    /// which is the whole implementation. What is new is *deciding who
+    /// is surprised*, and that lives at
+    /// `EncounterInstance::resolve_opening_surprise`, which runs once
+    /// when the encounter is initialized.
+    ///
+    /// Installed with a one-round timer rather than
+    /// `UntilStartOfNextTurn`, and the difference is the entire rule.
+    /// An `UntilStartOfNextTurn` condition is cleared at the top of its
+    /// holder's turn, so one installed before combat would be gone
+    /// before the turn it is supposed to cost them; a `Rounds(1)` timer
+    /// expires at the *end* of round one, which is exactly RAW's "your
+    /// first turn of the combat".
+    ///
+    /// Note that a surprised creature is *not* easier to hit. RAW gives
+    /// surprise no attack-roll consequence — that is what the Assassin
+    /// Rogue's Assassinate exists to add, and the only thing on the
+    /// board that reads this flag beyond the three cohorts above.
+    Surprised,
 }
 
 impl Condition {
@@ -2471,6 +2495,7 @@ impl Condition {
             Condition::Sapped => "sapped",
             Condition::Hobbled => "hobbled",
             Condition::Vexed => "vexed",
+            Condition::Surprised => "surprised",
         }
     }
 
@@ -2488,6 +2513,13 @@ impl Condition {
                 | Condition::Petrified
                 | Condition::Mazed
                 | Condition::Sphered
+                // 5e Surprised: "you can't move or take an action on
+                // your first turn of the combat". The action half is
+                // this cohort; the movement half is `zeros_movement`
+                // and the reaction half `blocks_reactions`, and between
+                // the three of them the condition needs no code of its
+                // own.
+                | Condition::Surprised
         )
     }
 
@@ -2799,6 +2831,9 @@ impl Condition {
                 | Condition::EarthenGrasped
                 | Condition::Rooted
                 | Condition::WaterSphered
+                // 5e Surprised: "you can't move ... on your first turn
+                // of the combat".
+                | Condition::Surprised
         )
     }
 
@@ -2967,6 +3002,9 @@ impl Condition {
                 | Condition::Confused
                 | Condition::Sphered
                 | Condition::Dominated
+                // 5e Surprised: "and you can't take a reaction until
+                // that turn ends".
+                | Condition::Surprised
         )
     }
 

@@ -15050,4 +15050,69 @@ mod tests {
             "an untrained wielder is ranked on dice"
         );
     }
+    /// 5e surprise, on a board the AI is driving.
+    ///
+    /// Two things are being pinned and only one of them is the rule. The
+    /// first is that a torchless creature walking into a dark room full
+    /// of darkvision is caught unawares at all — the check runs on the
+    /// first `process_stack`, not at `initialize`, because the ambient
+    /// light is set after the encounter is built and a surprise decided
+    /// any earlier would be decided on a bright board in every game.
+    ///
+    /// The second is that the AI *survives* it. A surprised creature has
+    /// no action, no bonus action, no reaction and no movement, which is
+    /// a state the picker had never been handed before: every rung it
+    /// tries is unaffordable. A driver that stalls there hangs the game,
+    /// so the loop asserts the turn moves on.
+    #[test]
+    fn the_ai_does_not_stall_on_a_creature_that_was_caught_unawares() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::lighting::AmbientLight;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        e.set_ambient_light(AmbientLight::Darkness);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+
+        let ai = SimpleAi;
+        let mut turns = 0usize;
+        let mut saw_surprise = false;
+        for _ in 0..2_000 {
+            e.process_stack();
+            saw_surprise |= e.actors[&fighter].has_condition(Condition::Surprised);
+            if e.is_complete() {
+                break;
+            }
+            let Some(prompt) = e.peek_prompt() else { break };
+            let actor_id = prompt.actor_id();
+            match ai.decide(&e, actor_id) {
+                ControllerDecision::AwaitInput => panic!("SimpleAi returned AwaitInput"),
+                ControllerDecision::Act(aei) => {
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+            }
+            turns += 1;
+            if e.round() > 3 {
+                break;
+            }
+        }
+        assert!(
+            saw_surprise,
+            "a torchless fighter in the dark should have been caught unawares"
+        );
+        assert!(turns > 0, "the driver never got a single turn out of the board");
+        assert!(
+            e.round() > 1,
+            "the encounter never left round one — the surprised actor stalled the queue"
+        );
+        let _ = zombie;
+    }
 }
