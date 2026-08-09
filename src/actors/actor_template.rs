@@ -4139,6 +4139,18 @@ pub struct ActorInstance {
     /// Doesn't stack: a new grant replaces existing temp HP only if
     /// larger. Cleared on long rest.
     temp_hp: u32,
+    /// Height above the floor, in feet — the multiplier on what this
+    /// actor owes the ground when whatever is holding it up lets go.
+    ///
+    /// Not a third coordinate. The map is 2D, nothing pathfinds through
+    /// the air, and no range check reads this; see `engine::falling` for
+    /// the whole of the model and for why it is one number rather than a
+    /// height per flight source. Written only by
+    /// `EncounterInstance::reconcile_altitudes` (which raises it to
+    /// `FLIGHT_ALTITUDE_FT` while flight is supported and spends it on
+    /// the way down) and by the `LandSafely` side effect (which zeroes
+    /// it for a controlled descent).
+    altitude_ft: u32,
     /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) — the
     /// ward's current hit points. A separate pool from `temp_hp`: it is
     /// drained *first* (RAW "the ward takes the damage instead of you",
@@ -4679,6 +4691,9 @@ impl ActorInstance {
             nonmagical_damage_modifiers: ct.nonmagical_damage_modifiers.clone(),
             silver_overcomes_physical_resistance: ct.silver_overcomes_physical_resistance,
             temp_hp: 0,
+            // Every creature spawns standing on the floor: nothing in
+            // the engine starts an encounter already airborne.
+            altitude_ft: 0,
             arcane_ward: 0,
             arcane_ward_formed: false,
             arcane_ward_base: ct.arcane_ward_base,
@@ -7206,6 +7221,46 @@ impl ActorInstance {
         MAGICAL_FLIGHT_CONDITIONS
             .iter()
             .any(|&c| self.has_condition(c))
+    }
+
+    /// How high off the floor this actor currently is, in feet, and so
+    /// how far it has to fall. 0 for everything standing on the ground,
+    /// which is almost everything almost always.
+    ///
+    /// See `engine::falling` for the model. Read by the fall sweep, by
+    /// the UI's actor panel, and by nothing else — this is not a
+    /// coordinate and no range check consults it.
+    pub fn altitude_ft(&self) -> u32 {
+        self.altitude_ft
+    }
+
+    /// The altitude this actor's *current state* holds it at — the
+    /// target `reconcile_altitudes` moves `altitude_ft` toward.
+    ///
+    /// `FLIGHT_ALTITUDE_FT` while any source on
+    /// `MAGICAL_FLIGHT_CONDITIONS` is held, 0 otherwise. Deliberately
+    /// the same `has_magical_flight` predicate the +60 ft speed row and
+    /// the difficult-terrain waiver read, so an actor getting the flying
+    /// speed bump is exactly an actor that is in the air and exactly an
+    /// actor that owes the ground something when the spell drops.
+    pub fn supported_altitude_ft(&self) -> u32 {
+        if self.has_magical_flight() {
+            crate::engine::falling::FLIGHT_ALTITUDE_FT
+        } else {
+            0
+        }
+    }
+
+    /// Set the actor's height above the floor without resolving a fall.
+    ///
+    /// The *controlled* half of the altitude lane, and the reason it is
+    /// separate from the sweep: a creature that is set down is not a
+    /// creature that drops. Called by the `LandSafely` side effect, which
+    /// pairs it with stripping the flight so `reconcile_altitudes` never
+    /// observes the inconsistent intermediate state (flight held at
+    /// altitude 0) and hoists the target straight back up.
+    pub fn set_altitude_ft(&mut self, ft: u32) {
+        self.altitude_ft = ft;
     }
 
     /// True while this actor is in contact with the ground — the

@@ -1421,6 +1421,59 @@ impl ApplicableSideEffect for RemoveCondition {
     }
 }
 
+/// Bring a flying actor down **under control** — strip every source of
+/// magical flight and set the actor on the floor, with no fall damage
+/// and no Prone.
+///
+/// The controlled counterpart to `EncounterInstance::reconcile_altitudes`,
+/// and the reason it exists as one side effect rather than as a handful
+/// of `RemoveCondition`s: the sweep runs after *every* applied side
+/// effect, so a spell that stripped `Flying` and then zeroed the altitude
+/// in two steps would be observed mid-strip — still holding one flight
+/// source at altitude 0 — and hoisted straight back up to
+/// `FLIGHT_ALTITUDE_FT`, only to fall for real when the next
+/// `RemoveCondition` landed. Doing both halves inside one `apply` means
+/// the sweep never sees the inconsistent state at all.
+///
+/// The current caller is **Earthbind**, whose RAW is a descent and not a
+/// drop: *"an airborne creature affected by this spell descends at 60
+/// feet per round until it reaches the ground"*. Any future "you are
+/// gently set down" effect — a dismissed Fly, a wind that dies — is one
+/// more caller and no new code.
+///
+/// Silent when the target was never airborne: `remove_condition` no-ops
+/// on a flag that was not held, matching Earthbind's own RAW "if the
+/// target isn't flying, nothing happens".
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct LandSafely {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for LandSafely {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let was_airborne = actor.altitude_ft() > 0 || actor.has_magical_flight();
+        // Driven off the shared cohort rather than a list written here,
+        // for the reason the cohort's own docstring gives: a fourth
+        // flight source must not be able to survive a landing.
+        let lifted: Vec<Condition> = crate::actors::actor_template::MAGICAL_FLIGHT_CONDITIONS
+            .iter()
+            .copied()
+            .filter(|&c| actor.remove_condition(c))
+            .collect();
+        actor.set_altitude_ft(0);
+        for condition in lifted {
+            announce_condition_lifted(ei, self.actor_id, &name, condition);
+        }
+        if was_airborne {
+            ei.log(format!("{} descends and lands on their feet.", name));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub struct SkipTurn {}
 

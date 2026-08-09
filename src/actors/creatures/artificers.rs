@@ -172,7 +172,14 @@ pub static ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (13): 4/3/3/1. The ranger and paladin carry the same shape at
         // a lower tier, which is what "half-caster" means here.
         spell_slots_by_level: vec![4, 3, 3, 1],
-        features: HashSet::from([FLASH_OF_GENIUS_TAG]),
+        features: HashSet::from([
+            FLASH_OF_GENIUS_TAG,
+            // 5e **Feather Fall** — on the artificer list RAW, and the
+            // second reaction on this chassis whose window belongs to
+            // somebody else's misfortune. See
+            // `EncounterInstance::try_feather_fall`.
+            crate::actions::class_features::FEATHER_FALL_TAG,
+        ]),
         skills: HashSet::from([Skill::Arcana, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }

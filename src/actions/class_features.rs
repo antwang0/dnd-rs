@@ -17161,6 +17161,31 @@ pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
 /// saves, not checks.
 pub const FLASH_OF_GENIUS_TAG: &str = "artificer.flash_of_genius";
 
+/// 5e **Feather Fall** (level-1 transmutation, reaction) — carried as a
+/// tag rather than as an entry on the holder's action list.
+///
+/// Every other spell in this engine is a castable `Action`, and this one
+/// is not, because its RAW trigger is *"when you or a creature within 60
+/// feet of you falls"* and a turn-ordered action list has no way to
+/// offer that. Pre-casting it is not the same spell: the whole effect is
+/// contingent on a fall that has not happened, and a caster who spent an
+/// action and a slot on the chance of one would simply be playing worse.
+/// So the tag says the caster *knows* the spell, and
+/// `EncounterInstance::try_feather_fall` is the trigger — the same shape
+/// `FLASH_OF_GENIUS_TAG` above uses for the other reaction whose window
+/// belongs to somebody else's roll.
+///
+/// Not a charged feature. It carries no `features_max` count worth
+/// spending because RAW prices it in a reaction and a 1st-level slot,
+/// and both of those are resources the engine already tracks and the
+/// hook already spends. A per-rest charge on top would be a third,
+/// invented cost.
+///
+/// Held by the four arcane / bard-list chassis that have Feather Fall on
+/// their spell list RAW: Wizard, Sorcerer, Bard and Artificer. A Cleric
+/// or Druid does not get to catch anybody.
+pub const FEATHER_FALL_TAG: &str = "spell.feather_fall";
+
 /// 5e Battle Smith Artificer level-9 feature **Arcane Jolt**, damage
 /// half. "When either you or your steel defender hits a target with an
 /// attack roll, you can channel magical energy through the strike to

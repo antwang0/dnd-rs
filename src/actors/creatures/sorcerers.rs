@@ -528,6 +528,10 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // that the partial refill rarely closes the gap to the long-rest
         // cap.
         features: HashSet::from([
+            // 5e **Feather Fall** — on the sorcerer list RAW, carried as
+            // a tag because its trigger is a fall rather than a turn.
+            // See `EncounterInstance::try_feather_fall`.
+            crate::actions::class_features::FEATHER_FALL_TAG,
             crate::actions::class_features::TIDES_OF_CHAOS_TAG,
             crate::actions::class_features::SORCEROUS_RESTORATION_TAG,
             // 5e Wild Magic Sorcerer **Wild Magic Surge** — passive: every

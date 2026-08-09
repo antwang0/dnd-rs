@@ -706,7 +706,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]),
-        features: HashSet::from([ARCANE_RECOVERY_TAG]),
+        features: HashSet::from([
+            ARCANE_RECOVERY_TAG,
+            // 5e **Feather Fall** — a wizard-list level-1 reaction spell
+            // that is a tag rather than an action because its RAW
+            // trigger is somebody else falling. See `FEATHER_FALL_TAG`
+            // and `EncounterInstance::try_feather_fall`; the cost is a
+            // reaction and a 1st-level slot, both spent at the hook.
+            crate::actions::class_features::FEATHER_FALL_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

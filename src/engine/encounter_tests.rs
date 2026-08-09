@@ -77441,3 +77441,366 @@ fn nothing_gets_the_drop_on_a_two_headed_giant() {
         "one head is always awake"
     );
 }
+
+/// A creature that gains magical flight leaves the floor, and the
+/// altitude sweep is what puts it there — not the spell, not the item,
+/// not the condition install.
+///
+/// The three flight sources are checked together because they are the
+/// membership of `MAGICAL_FLIGHT_CONDITIONS` and the whole point of that
+/// cohort is that no lane may disagree about what counts as flying. A
+/// fourth source added to the cohort and not to this sweep would be a
+/// creature with a +60 ft speed bonus, a difficult-terrain waiver, and
+/// no height to fall from.
+#[test]
+fn every_way_of_leaving_the_ground_leaves_it_the_same_distance() {
+    use crate::actors::actor_template::MAGICAL_FLIGHT_CONDITIONS;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::falling::FLIGHT_ALTITUDE_FT;
+
+    for &source in MAGICAL_FLIGHT_CONDITIONS {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let flier = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&flier].altitude_ft(),
+            0,
+            "a fresh spawn stands on the floor"
+        );
+        e.actors
+            .get_mut(&flier)
+            .unwrap()
+            .add_condition(source, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        assert_eq!(
+            e.actors[&flier].altitude_ft(),
+            FLIGHT_ALTITUDE_FT,
+            "{} should put its holder in the air",
+            source.name()
+        );
+    }
+}
+
+/// The whole feature in one board: the wizard's Fly ends, and the
+/// wizard hits the ground for it.
+///
+/// Before the altitude sweep existed, every one of the four ways a Fly
+/// can end resolved as the flier standing quietly back on the floor with
+/// full hit points. The Dispel is the shortest of the four to stage; the
+/// assertions are about the landing, not about the dispel.
+#[test]
+fn a_dispelled_fly_costs_the_wizard_the_way_down() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
+    use crate::engine::side_effects::RemoveCondition;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let flier = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&flier)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    let hp_aloft = e.actors[&flier].hitpoints();
+    assert_eq!(e.actors[&flier].altitude_ft(), FLIGHT_ALTITUDE_FT);
+
+    RemoveCondition {
+        actor_id: flier,
+        condition: Condition::Flying,
+    }
+    .apply(&mut e);
+    e.reconcile_altitudes();
+
+    let landed = &e.actors[&flier];
+    assert_eq!(landed.altitude_ft(), 0, "the flier is back on the floor");
+    let lost = hp_aloft - landed.hitpoints();
+    let pool = fall_damage_dice(FLIGHT_ALTITUDE_FT);
+    assert!(
+        (pool.count..=pool.max_roll()).contains(&lost),
+        "a {} ft drop should cost between {} and {} HP, not {}",
+        FLIGHT_ALTITUDE_FT,
+        pool.count,
+        pool.max_roll(),
+        lost
+    );
+    assert!(
+        landed.has_condition(Condition::Prone),
+        "SRD: the creature lands prone unless it avoids the damage"
+    );
+    // And nothing charges twice for one drop: a second sweep with the
+    // actor already on the floor is a no-op.
+    let hp_landed = landed.hitpoints();
+    e.reconcile_altitudes();
+    assert_eq!(
+        e.actors[&flier].hitpoints(),
+        hp_landed,
+        "the ground collects once"
+    );
+}
+
+/// A fall is real damage, not a subtraction — it drains temporary hit
+/// points before it reaches the creature's own, exactly as a sword does.
+///
+/// The assertion is small and the reason for it is not: `resolve_fall`
+/// could have taken the shortcut of decrementing `hitpoints` directly,
+/// and everything visible in the other tests here would still pass.
+/// Routing it through `DealDamage` is what makes a fall break
+/// concentration, fire a paladin's interposition, respect resistance,
+/// and drop a creature onto the dying track. Temp HP is the cheapest
+/// observable proof that the pipeline is the real one.
+#[test]
+fn the_ground_hits_like_anything_else_that_hits() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
+    use crate::engine::side_effects::RemoveCondition;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let flier = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Comfortably over the maximum a 30 ft drop can roll, so the whole
+    // fall lands in the temporary pool and none of it reaches HP.
+    let cushion = fall_damage_dice(FLIGHT_ALTITUDE_FT).max_roll();
+    let target = e.actors.get_mut(&flier).unwrap();
+    target.gain_temp_hp(cushion);
+    target.add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    let hp = e.actors[&flier].hitpoints();
+
+    RemoveCondition {
+        actor_id: flier,
+        condition: Condition::Flying,
+    }
+    .apply(&mut e);
+    e.reconcile_altitudes();
+
+    let landed = &e.actors[&flier];
+    assert_eq!(
+        landed.hitpoints(),
+        hp,
+        "the temporary pool should have taken the whole fall"
+    );
+    assert!(
+        landed.temp_hp() < cushion,
+        "and it should have been spent doing so"
+    );
+    assert!(
+        landed.has_condition(Condition::Prone),
+        "temp HP absorbing the blow is still taking damage from the fall"
+    );
+}
+
+/// Earthbind takes a creature out of the air and owes the ground
+/// nothing — RAW's "descends at 60 feet per round until it reaches the
+/// ground" is a landing, not a drop.
+///
+/// The interesting half is the one that is not visible in the
+/// assertions: `LandSafely` strips three flight sources and zeroes the
+/// altitude inside a single `apply`, so the sweep that runs after every
+/// side effect never catches the target holding flight at altitude zero
+/// and hoists them back up to fall for real.
+#[test]
+fn earthbind_sets_a_flier_down_rather_than_dropping_them() {
+    use crate::actions::spells::EARTHBIND;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // Sweep seeds: Earthbind is a STR save, and the landing only
+    // happens on a failure. One seed that fails is enough to prove the
+    // landing is free; the loop is how we find one without pinning a
+    // magic number.
+    let mut ever_grounded = false;
+    for seed in 0..12u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let flier = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&flier)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        let hp = e.actors[&flier].hitpoints();
+
+        e.push_action(ActionExecutionInfo::new(
+            &*EARTHBIND,
+            caster,
+            Some(vec![flier]),
+            None,
+            None,
+        ));
+        e.process_stack();
+
+        let target = &e.actors[&flier];
+        if target.has_condition(Condition::Flying) {
+            // Saved. Still airborne, still owes nothing.
+            assert_eq!(target.altitude_ft(), crate::engine::falling::FLIGHT_ALTITUDE_FT);
+            continue;
+        }
+        ever_grounded = true;
+        assert_eq!(target.altitude_ft(), 0, "earthbind puts them on the floor");
+        assert_eq!(
+            target.hitpoints(),
+            hp,
+            "a controlled descent costs no hit points"
+        );
+        assert!(
+            !target.has_condition(Condition::Prone),
+            "a creature that was set down is not a creature that fell"
+        );
+    }
+    assert!(
+        ever_grounded,
+        "no seed in the sweep landed the earthbind — the test proves nothing"
+    );
+}
+
+/// Feather Fall as the reaction it is: a wizard within 60 ft spends a
+/// reaction and a 1st-level slot to catch a falling ally, and the ally
+/// takes nothing and lands on their feet.
+#[test]
+fn a_wizard_who_is_looking_up_catches_the_falling_fighter() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::{RemoveCondition, Resource};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&wizard].has_passive_feature(crate::actions::class_features::FEATHER_FALL_TAG),
+        "the wizard list has feather fall on it"
+    );
+    let slots_before = e.actors[&wizard].spell_slot_manager.spell_slots(1).spell_slots;
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    let hp = e.actors[&fighter].hitpoints();
+
+    RemoveCondition {
+        actor_id: fighter,
+        condition: Condition::Flying,
+    }
+    .apply(&mut e);
+    e.reconcile_altitudes();
+
+    let caught = &e.actors[&fighter];
+    assert_eq!(caught.hitpoints(), hp, "feather fall takes the whole fall");
+    assert!(
+        !caught.has_condition(Condition::Prone),
+        "RAW: it can land on its feet"
+    );
+    assert!(
+        caught.has_condition(Condition::Feathered),
+        "the one-minute buff stays up for the next drop"
+    );
+    let saver = &e.actors[&wizard];
+    assert!(
+        !saver.can_consume_resource(Resource::Reaction),
+        "the rescue costs the wizard their reaction"
+    );
+    assert_eq!(
+        saver.spell_slot_manager.spell_slots(1).spell_slots,
+        slots_before - 1,
+        "and a 1st-level slot"
+    );
+}
+
+/// The other half of the reaction: nobody in range means nobody is
+/// caught. A fighter alone on the board eats the fall.
+///
+/// The control that keeps the test above honest — without it, a
+/// `try_feather_fall` that returned `true` unconditionally would pass
+/// every assertion there.
+#[test]
+fn a_fighter_falling_alone_has_nobody_to_catch_them() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::RemoveCondition;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 0)
+        .unwrap();
+    assert!(
+        !e.actors[&fighter].has_passive_feature(crate::actions::class_features::FEATHER_FALL_TAG),
+        "a fighter cannot catch themselves"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    let hp = e.actors[&fighter].hitpoints();
+    RemoveCondition {
+        actor_id: fighter,
+        condition: Condition::Flying,
+    }
+    .apply(&mut e);
+    e.reconcile_altitudes();
+
+    assert!(
+        e.actors[&fighter].hitpoints() < hp,
+        "an uncaught fall costs hit points"
+    );
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Feathered),
+        "nothing was cast"
+    );
+}
+
+/// A broken concentration save is the way a Fly actually ends in play,
+/// and it ends mid-stack: the damage that breaks the grip and the drop
+/// it causes have to resolve in the same `process_stack`, not a round
+/// later.
+#[test]
+fn the_wizard_who_loses_their_grip_loses_their_altitude_in_the_same_breath() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::falling::FLIGHT_ALTITUDE_FT;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let flier = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Stage the shape of a self-cast Fly: the caster concentrates, and
+    // the concentration data names the condition it installed, which is
+    // what `drop_concentration` rolls back.
+    let mut data = crate::actors::actor_template::ConcentrationData::new("fly");
+    data.conditions.push((flier, Condition::Flying));
+    e.actors.get_mut(&flier).unwrap().start_concentration(data);
+    e.actors
+        .get_mut(&flier)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Permanent);
+    e.reconcile_altitudes();
+    assert_eq!(e.actors[&flier].altitude_ft(), FLIGHT_ALTITUDE_FT);
+    let hp = e.actors[&flier].hitpoints();
+
+    e.drop_concentration(flier);
+    e.reconcile_altitudes();
+
+    assert!(
+        !e.actors[&flier].has_condition(Condition::Flying),
+        "the spell ended with the concentration"
+    );
+    assert_eq!(
+        e.actors[&flier].altitude_ft(),
+        0,
+        "and the wizard is on the floor"
+    );
+    assert!(
+        e.actors[&flier].hitpoints() < hp,
+        "the floor charged for the trip"
+    );
+}

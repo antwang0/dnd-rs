@@ -4821,6 +4821,12 @@ impl EncounterInstance {
     /// difference between "stand next to me" and "be in the room".
     pub const FLASH_OF_GENIUS_RADIUS: isize = 12;
 
+    /// RAW's 60 ft on Feather Fall, in tiles on the 2.5 ft grid — twice
+    /// the reach of Flash of Genius directly above, which is the
+    /// difference between a rescue that needs the artificer in the room
+    /// and one that only needs the wizard to be looking up.
+    pub const FEATHER_FALL_RADIUS: isize = 24;
+
     /// 5e Artificer **Flash of Genius** (lv7): "whenever you or another
     /// creature you can see within 30 feet of you makes an ability
     /// check or a saving throw, you can use your reaction to add your
@@ -6997,6 +7003,244 @@ impl EncounterInstance {
         self.write_footprint(Some(actor_id), origin, to);
         let verb = if growing { "swells" } else { "dwindles" };
         self.log(format!("{} {} to {}.", name, verb, to));
+    }
+
+    /// Hold every actor's height above the floor in step with what is
+    /// holding them up, and collect from anyone the ground is owed.
+    ///
+    /// The altitude twin of `reconcile_footprints`, wired at the same
+    /// three chokepoints and for the same reason: an actor's height is a
+    /// consequence of their state, so making it a sweep means every
+    /// present and future way of gaining or losing flight is already
+    /// handled and no individual effect has to remember to fix anything.
+    /// A wizard's Fly can end four ways in this engine — a failed
+    /// concentration save, a Dispel Magic, a lapsed timer, a second
+    /// concentration spell replacing it — and before this sweep all four
+    /// resolved as the wizard standing quietly back on the floor.
+    ///
+    /// Two directions, and they are not symmetric. Rising is free and
+    /// instantaneous (a creature that gains a flying speed is in the air;
+    /// there is nothing to resolve). Falling is a `resolve_fall` per
+    /// actor, which rolls damage and can drop them — so the pending list
+    /// is collected before anything is spent, exactly as
+    /// `reconcile_footprints` does, and for a sharper reason than borrow
+    /// juggling: a fall can kill, and killing inside a walk of
+    /// `self.actors` would resolve some actors against a board the
+    /// earlier deaths had already changed and others against a stale one,
+    /// depending on hash order.
+    ///
+    /// Ordered by actor id so a round in which two fliers drop together
+    /// is reproducible from the seed.
+    pub fn reconcile_altitudes(&mut self) {
+        let mut pending: Vec<(usize, u32)> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                // `checked_sub` and not a `>` guard with a plain
+                // subtraction: an actor who just *gained* flight is the
+                // common case here, and their `supported` exceeds their
+                // `current` by the whole cruising altitude. A
+                // `then_some` would evaluate the difference before the
+                // guard ever ran and underflow on every single one of
+                // them.
+                a.altitude_ft()
+                    .checked_sub(a.supported_altitude_ft())
+                    .filter(|&drop| drop > 0)
+                    .map(|drop| (*id, drop))
+            })
+            .collect();
+        pending.sort_unstable();
+        // The rising half is a plain field write with nothing to resolve,
+        // so it runs in the same borrow rather than through a pending
+        // list. Done after the fallers are collected — the two sets are
+        // disjoint by construction (an actor is either above or below
+        // where its state puts it), so the order is a matter of clarity
+        // rather than correctness.
+        for actor in self.actors.values_mut() {
+            let supported = actor.supported_altitude_ft();
+            if supported > actor.altitude_ft() {
+                actor.set_altitude_ft(supported);
+            }
+        }
+        for (actor_id, distance_ft) in pending {
+            self.resolve_fall(actor_id, distance_ft);
+        }
+    }
+
+    /// Drop one actor `distance_ft` feet and charge them for it — SRD's
+    /// "1d6 bludgeoning damage for every 10 feet it fell, to a maximum of
+    /// 20d6. The creature lands prone, unless it avoids taking damage
+    /// from the fall."
+    ///
+    /// Both halves of that second sentence are honoured, and the "unless"
+    /// is not a formality here: this engine has creatures immune to
+    /// bludgeoning, and one of them landing face-down would be a rule the
+    /// SRD explicitly does not have. The gate reads the damage the actor
+    /// would actually take (`effective_damage`) rather than the raw roll,
+    /// so immunity clears the Prone and mere resistance does not.
+    ///
+    /// The damage is a real `DealDamage` rather than a subtraction, which
+    /// is what makes a fall behave like everything else that hurts: temp
+    /// HP absorbs it, a concentration save fires, resistances apply,
+    /// and it can drop a creature to Dying. That is deliberate — a
+    /// Fly that ends because its caster lost concentration, dropping the
+    /// caster hard enough to break a *second* concentration, is exactly
+    /// the cascade RAW describes.
+    ///
+    /// Altitude is spent before the damage lands, so an actor killed by
+    /// the fall is on the floor when they die and nothing can charge them
+    /// for the same drop twice.
+    fn resolve_fall(&mut self, actor_id: usize, distance_ft: u32) {
+        use crate::conditions::ConditionTimer;
+        use crate::engine::falling::fall_damage_dice;
+        use crate::engine::side_effects::DealDamage;
+        let Some(actor) = self.actors.get_mut(&actor_id) else {
+            return;
+        };
+        let landed_at = actor.altitude_ft().saturating_sub(distance_ft);
+        actor.set_altitude_ft(landed_at);
+        let name = actor.name().to_string();
+        // RAW's trigger is "when you or a creature within 60 feet of you
+        // falls" — asked here, after the altitude is spent and before any
+        // damage is rolled, because that is the moment the fall exists.
+        let feathered = self.try_feather_fall(actor_id);
+        if feathered {
+            self.log(format!(
+                "{} falls {} ft and drifts down feather-light.",
+                name, distance_ft
+            ));
+            return;
+        }
+        let dice = fall_damage_dice(distance_ft);
+        if dice.count == 0 {
+            // Under ten feet: RAW buys no dice, so this is a step down
+            // rather than a fall. No damage and no Prone.
+            return;
+        }
+        let raw = self.roll(&dice);
+        let hurts = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.effective_damage(raw, DamageType::Bludgeoning) > 0);
+        self.log(format!(
+            "{} falls {} ft and hits the ground ({} {}).",
+            name, distance_ft, dice, raw
+        ));
+        DealDamage {
+            actor_id,
+            amount: raw,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(self);
+        // "Lands prone, *unless it avoids taking damage from the fall*."
+        // Checked against the pre-damage verdict rather than re-read
+        // afterwards: an actor the fall killed is no longer a legal
+        // target for a condition, and knocking a corpse over is not what
+        // the clause is about.
+        if hurts
+            && let Some(a) = self.actors.get_mut(&actor_id)
+            && a.add_condition(Condition::Prone, ConditionTimer::Permanent)
+        {
+            self.log(format!("{} is prone.", name));
+        }
+    }
+
+    /// 5e **Feather Fall** (level-1 transmutation, reaction) as the
+    /// reaction it actually is.
+    ///
+    /// RAW's trigger — *"when you or a creature within 60 feet of you
+    /// falls"* — has no analogue in a turn-ordered action list, and there
+    /// is no board state in which a player would sensibly pre-cast a
+    /// spell whose entire effect is contingent on a fall that has not
+    /// happened. So the spell lives here, on the same lane as
+    /// `try_flash_of_genius`: a scan of the board for an ally willing to
+    /// spend a reaction and a slot on somebody else's emergency.
+    ///
+    /// Cost is RAW and both halves are real. The reaction competes with
+    /// every other reaction the chassis carries, and the 1st-level slot
+    /// competes with a Shield the same caster may want two seconds later.
+    /// The saver must be able to *see* the faller (RAW's "a creature
+    /// within 60 feet of you" plus the spell's own targeting), which
+    /// matters for an invisible one — and, since the faller is a legal
+    /// self-target, a wizard with the tag can catch themselves.
+    ///
+    /// Returns true when the fall was caught. The `Feathered` condition
+    /// it installs carries RAW's one-minute duration, so a caster who
+    /// spends the reaction on the first drop of a fight covers a second
+    /// drop for free — which is the RAW reading, the spell does not end
+    /// on the first landing.
+    ///
+    /// Preference among eligible savers is lowest id, which is the same
+    /// tiebreak every other board scan uses: the alternative is hash
+    /// order, and a rescue that depends on hash order is not reproducible
+    /// from the seed.
+    fn try_feather_fall(&mut self, falling_id: usize) -> bool {
+        use crate::actions::class_features::FEATHER_FALL_TAG;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::Resource;
+        // Already drifting from an earlier catch this fight — RAW's
+        // one-minute duration covers this fall too, and nobody spends a
+        // second slot on it.
+        if self
+            .actors
+            .get(&falling_id)
+            .is_some_and(|a| a.has_condition(Condition::Feathered))
+        {
+            return true;
+        }
+        let Some(faller) = self.actors.get(&falling_id) else {
+            return false;
+        };
+        let (team, loc, size) = (
+            faller.team(),
+            faller.location(),
+            get_tiles_from_size(faller.size()),
+        );
+        let mut saver: Option<usize> = None;
+        for (id, caster) in self.actors.iter() {
+            if caster.team() != team
+                || !caster.is_combat_active()
+                || !caster.has_passive_feature(FEATHER_FALL_TAG)
+                || !caster.can_consume_resource(Resource::Reaction)
+                || !caster.can_consume_resource(Resource::SpellSlot(1))
+            {
+                continue;
+            }
+            if *id != falling_id && !self.viewer_can_see(*id, falling_id) {
+                continue;
+            }
+            if footprint_chebyshev(
+                caster.location(),
+                get_tiles_from_size(caster.size()),
+                loc,
+                size,
+            ) > Self::FEATHER_FALL_RADIUS
+            {
+                continue;
+            }
+            if saver.is_none_or(|best| *id < best) {
+                saver = Some(*id);
+            }
+        }
+        let saver_id = match saver {
+            Some(id) => id,
+            None => return false,
+        };
+        let Some(caster) = self.actors.get_mut(&saver_id) else {
+            return false;
+        };
+        caster.consume_resource(Resource::Reaction);
+        caster.consume_resource(Resource::SpellSlot(1));
+        let saver_name = caster.name().to_string();
+        if let Some(faller) = self.actors.get_mut(&falling_id) {
+            faller.add_condition(Condition::Feathered, ConditionTimer::Rounds(10));
+        }
+        let faller_name = self.actor_name(falling_id);
+        self.log(format!(
+            "[reaction] feather fall: {} slows {}'s descent.",
+            saver_name, faller_name
+        ));
+        true
     }
 
     /// True if a straight Bresenham line from `from` to `to` passes through
@@ -10275,6 +10519,11 @@ impl EncounterInstance {
         // shrinks back before they spend a single tile of the movement
         // they were just handed.
         self.reconcile_footprints();
+        // Same expiry, same reason, one axis over: an
+        // `UntilStartOfNextTurn` flight source that just lapsed drops
+        // its holder now rather than at the end of the round they no
+        // longer have a spell for.
+        self.reconcile_altitudes();
         // A new turn is a fresh "first time on a turn" for everybody, so
         // the ledger is cleared for the whole board rather than for the
         // actor whose turn is opening. RAW scopes the clause to *a
@@ -13422,6 +13671,12 @@ impl EncounterInstance {
         // which "does this caster still have a spell up" has a stable
         // answer.
         self.release_concentration_with_nothing_left();
+        // Dead last in the round, and it has to be: the sweep above is
+        // the one that ends a Fly whose anchor lapsed, and a caster
+        // released a line earlier is a flier who is still in the air on
+        // this line. Anything ordered before it would leave the drop to
+        // wait a full round.
+        self.reconcile_altitudes();
     }
 
     /// Release any concentration whose last anchor lapsed on a timer.
@@ -14529,6 +14784,12 @@ impl EncounterInstance {
                     // by a neighbour lands the instant that neighbour
                     // falls.
                     self.reconcile_footprints();
+                    // Per-effect for the same reason: one action can
+                    // break a wizard's concentration and a second can
+                    // Dispel what held the next flier up, and each drop
+                    // has to land before the following effect measures
+                    // the board.
+                    self.reconcile_altitudes();
                 }
             }
         }

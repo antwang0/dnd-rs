@@ -694,6 +694,28 @@ pub fn render_sideinfo(
             Style::default().fg(Color::LightCyan),
         )));
     }
+    // Height above the floor, and what it will cost to lose it. Only
+    // rendered for an actor actually in the air — 0 ft is every creature
+    // almost always, and a line saying so on every panel would be noise.
+    //
+    // The die count is the point of showing it at all: "Airborne: 30 ft"
+    // is trivia, "Airborne: 30 ft (3d6 on landing)" is the reason to
+    // think twice before letting the concentration go. Read straight off
+    // `fall_damage_dice` rather than divided out here, so the panel can
+    // never disagree with what `resolve_fall` will roll.
+    let altitude = curr_actor.altitude_ft();
+    if altitude > 0 {
+        let dice = crate::engine::falling::fall_damage_dice(altitude);
+        let cushioned = curr_actor.has_condition(crate::conditions::Condition::Feathered);
+        stats_lines.push(Line::from(Span::styled(
+            if cushioned {
+                format!("Airborne: {} ft (feather fall)", altitude)
+            } else {
+                format!("Airborne: {} ft ({} on landing)", altitude, dice)
+            },
+            Style::default().fg(Color::LightBlue),
+        )));
+    }
     // Concentration target — the spell name is enough; full effect tree
     // already lives in the log.
     if let Some(conc) = curr_actor.concentration() {
@@ -1073,6 +1095,57 @@ mod tests {
         assert!(
             panel.contains("darkness"),
             "an unlit board says so on the panel:\n{}",
+            panel
+        );
+    }
+
+    /// The panel says how high the current actor is and what the
+    /// landing will cost, and says nothing at all for everybody standing
+    /// on the floor.
+    ///
+    /// The die count is the half worth pinning. "Airborne: 30 ft" is
+    /// trivia; the number of d6 waiting at the bottom is the reason a
+    /// player would think twice about letting the concentration go, and
+    /// it is read straight off the same `fall_damage_dice` the fall
+    /// itself rolls so the panel can never promise a softer landing than
+    /// the engine delivers.
+    #[test]
+    fn the_panel_counts_the_dice_waiting_under_a_flier() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        // The stats pane only renders while somebody is being prompted,
+        // so the fixture needs two teams and a `process_stack` to open
+        // the first slot.
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel_tall(&e, 90).contains("Airborne"),
+            "a creature on the floor gets no altitude line"
+        );
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("Airborne: 30 ft") && panel.contains("3d6"),
+            "an airborne creature should be told what it owes:\n{}",
+            panel
+        );
+
+        // Caught: the line stops quoting dice and names the spell that
+        // means they will not be rolled.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Feathered, ConditionTimer::Rounds(10));
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("feather fall") && !panel.contains("3d6"),
+            "a feathered flier owes nothing:\n{}",
             panel
         );
     }

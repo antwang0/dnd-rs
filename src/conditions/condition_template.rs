@@ -483,6 +483,30 @@ pub enum Condition {
     /// drops the buff when concentration ends. Joins `is_dispellable_buff`
     /// so Dispel Magic / Counterspell can rip it.
     Flying,
+    /// Feathered (5e **Feather Fall**, level-1 transmutation, reaction).
+    /// RAW: *"the creature's rate of descent slows to 60 feet per round
+    /// until the spell ends. If the creature lands before the spell ends,
+    /// it takes no damage from the fall and can land on its feet."*
+    ///
+    /// Both halves of that last sentence are the whole of the condition:
+    /// `EncounterInstance::resolve_fall` pays no damage and applies no
+    /// `Prone` to a holder. "Lands on its feet" is why it is not enough
+    /// to zero the damage and let the Prone ride the usual "unless it
+    /// avoids taking damage" clause — RAW says it explicitly, and a
+    /// feathered wizard who ends the fall face-down would be a worse
+    /// outcome than the spell promises.
+    ///
+    /// Installed by `try_feather_fall`, which is a *reaction hook* rather
+    /// than an action anyone chooses: the spell's RAW trigger is "when
+    /// you or a creature within 60 feet of you falls", and there is no
+    /// point at which a player would sensibly pre-cast it. The one-minute
+    /// RAW duration is a 10-round timer, so a caster who spends the
+    /// reaction on the first drop covers a second one in the same fight.
+    ///
+    /// Joins `is_dispellable_buff`: a duration-bearing magical buff on a
+    /// willing holder is the whole membership test, and stripping it
+    /// mid-air is exactly the sort of thing Dispel Magic is for.
+    Feathered,
     /// Spider Climb (5e level-2 transmutation, concentration). The target
     /// gains a climbing speed equal to their walking speed — they can move
     /// up walls and ceilings without needing climbing checks. We don't
@@ -2374,6 +2398,7 @@ impl Condition {
             Condition::Confused => "confused",
             Condition::Entangled => "entangled",
             Condition::Flying => "flying",
+            Condition::Feathered => "feather-falling",
             Condition::SpiderClimbing => "spider-climbing",
             Condition::Dominated => "dominated",
             Condition::Feebled => "feebleminded",
@@ -2600,6 +2625,7 @@ impl Condition {
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Flying
+                | Condition::Feathered
                 | Condition::SpiderClimbing
                 | Condition::AgathysShielded
                 | Condition::BigbysHanded

@@ -227,6 +227,10 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         features: HashSet::from([
+            // 5e **Feather Fall** — on the bard list RAW, carried as a
+            // tag because its trigger is a fall rather than a turn. See
+            // `EncounterInstance::try_feather_fall`.
+            crate::actions::class_features::FEATHER_FALL_TAG,
             BARDIC_INSPIRATION_TAG,
             CUTTING_WORDS_TAG,
             // 5e Bard Font of Inspiration (level 5 passive): Bardic

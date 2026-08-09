@@ -5,6 +5,7 @@ pub mod conjured_terrain;
 pub mod dice;
 pub mod encounter;
 pub mod errors;
+pub mod falling;
 pub mod lair_actions;
 pub mod lighting;
 pub mod magic;
