@@ -16497,6 +16497,64 @@ fn removing_a_banished_actor_does_not_erase_the_tile_it_left() {
     );
 }
 
+/// A creature that reappears inside a Cloudkill is standing in the
+/// Cloudkill.
+///
+/// The zone layer's only other entry point is the pathfinder, so a body
+/// that arrives on a tile without walking there arrives unnoticed —
+/// which is exactly what a return is. The same call `unlink_ride`
+/// already makes for a rider set down beside its mount, and the reason
+/// the ordering inside `return_actor_to_board` matters: `touch_zones`
+/// bails on anything that is not combat-active, and an off-board
+/// creature is not.
+#[test]
+fn a_creature_returns_into_whatever_was_laid_over_its_space() {
+    use crate::actions::spells::CLOUDKILL;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let caster = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let tile = Coordinate::new(10, 10);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+
+    // Away first, so the cloud is laid over an empty square and the
+    // goblin is never in it to be charged on the way in.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(3));
+    e.reconcile_board_presence();
+    let hp = e.actors[&goblin].hitpoints();
+
+    for ef in CLOUDKILL.side_effects(&mut e, caster, None, Some(&vec![tile]), None) {
+        ef.apply(&mut e);
+    }
+    assert!(!e.zones().is_empty(), "the cloud should be on the board");
+    assert_eq!(
+        e.actors[&goblin].hitpoints(),
+        hp,
+        "a creature on a demiplane is not in a cloud on this one"
+    );
+
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .remove_condition(Condition::Banished);
+    e.reconcile_board_presence();
+
+    assert_eq!(e.actors[&goblin].location(), tile);
+    assert!(
+        e.actors[&goblin].hitpoints() < hp,
+        "…and is very much in it once it is back"
+    );
+}
+
 /// The fight is not over while somebody is on a demiplane. Banishing
 /// the last enemy standing would otherwise read as a cleared encounter,
 /// and the enemy would reappear in an arena the app had already

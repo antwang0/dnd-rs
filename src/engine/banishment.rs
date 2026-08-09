@@ -240,6 +240,18 @@ impl EncounterInstance {
         } else {
             self.log(format!("{} reappears at {}.", name, anchor));
         }
+        // A creature that comes back inside a Cloudkill is standing in
+        // the Cloudkill. Ordered after the flag is cleared and the
+        // location is written, both of which this reads: `touch_zones`
+        // bails on anything that is not combat-active, which an
+        // off-board creature is not, and it measures the tile the actor
+        // says it is on.
+        //
+        // The same call `unlink_ride` makes for a dismounted rider, and
+        // for the same reason — a body that arrives on a tile without
+        // walking there has still arrived on it, and the zone layer's
+        // only other entry point is the pathfinder.
+        self.touch_zones(actor_id);
     }
 
     /// The tile a returning body lands on: `origin` if a `size`

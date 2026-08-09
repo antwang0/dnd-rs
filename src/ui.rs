@@ -1387,6 +1387,44 @@ mod tests {
         );
     }
 
+    /// A banished creature is off the map and still in the queue, and
+    /// the panel is the only thing that can say so.
+    ///
+    /// The map draws off the actor grid, so a body on a demiplane
+    /// genuinely is not on it — which is the feature working, and also a
+    /// creature that has apparently ceased to exist while its initiative
+    /// slot keeps coming round and doing nothing. The same problem the
+    /// ridden-mount label below solves, and the countdown is the part a
+    /// player actually needs: how many rounds until the ogre is back.
+    #[test]
+    fn the_initiative_panel_counts_down_a_banished_creature() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let victim = *e.actors.keys().max().expect("two goblins");
+        let tile = e.actors[&victim].location();
+        assert!(!rendered_panel(&e).contains("banished"));
+        assert!(rendered_map(&e).contains(GOBLIN_TEMPLATE.glyph));
+
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Banished, ConditionTimer::Rounds(6));
+        e.reconcile_board_presence();
+
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("banished") && panel.contains("6r"),
+            "the panel should name the state and the rounds left:\n{}",
+            panel
+        );
+        assert_eq!(
+            e.actor_id_at(tile),
+            None,
+            "…precisely because there is nothing on the map to look at"
+        );
+    }
+
     /// A Thief's bonus slot is labelled, so the same name appearing
     /// twice in round 1 reads as the feature rather than as a rendering
     /// fault — and the label is gone once the extra turn retires.
