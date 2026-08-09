@@ -593,6 +593,42 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3e''. The signature per-hit marks — Hex and Hunter's Mark.
+        //       Bonus-action casts, so laying one still leaves the turn's
+        //       Action for the swing that collects on it. What the rung
+        //       really spends is the concentration, and that is what
+        //       fixes its place: directly above the ranged-smite lane it
+        //       competes with head-on, and below the melee smites, which
+        //       belong to a chassis that carries no mark.
+        //
+        //       The arithmetic is the argument. A smite prime and a mark
+        //       cost the same bonus action, the same concentration and
+        //       (for Ensnaring Strike, Zephyr Strike, Hail of Thorns) the
+        //       same 1st-level slot, and both pay 1d6-ish on the next
+        //       hit — but the prime stops there and the mark keeps
+        //       paying on every swing for ten rounds. A Ranger with
+        //       Extra Attack banks the prime's whole value back inside
+        //       two rounds and collects for the rest of the fight.
+        //
+        //       The row this demotes with a real claim is Lightning
+        //       Arrow: 4d8 on the next hit plus a splash, which the mark
+        //       needs about three rounds to match. It is also a
+        //       3rd-level slot against the mark's 1st, and the ordering
+        //       does not spend it — a ranger who marks first still has
+        //       the arrow in hand for the turn the mark is finally
+        //       broken, where a ranger who arrows first has spent the
+        //       concentration the mark wanted and will spend it again
+        //       next turn on another one-shot.
+        //
+        //       Placed here rather than down in the self-buff cohort
+        //       because that is where it was first, and a Ranger who
+        //       carries any smite spell at all never got past this rung
+        //       to reach it — which is every Ranger template on the
+        //       roster.
+        if let Some(aei) = try_concentration_mark(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3e'. Ranged smite spells (Lightning Arrow) — same chassis as
         //      the paladin smites but the prime fires on a ranged
         //      weapon hit. Gated on enemy-in-bow-range (24 tiles)
@@ -1785,6 +1821,138 @@ fn try_hold_person(
             };
             if pick {
                 best = Some((hp, priority, aei));
+            }
+        }
+    }
+    best.map(|(_, _, aei)| aei)
+}
+
+/// One row in the **concentration mark** cohort — a bonus-action spell
+/// whose whole effect is a rider on every later swing at one named
+/// creature.
+///
+/// The two rows are 5e's twin signature marks, and their AI decision is
+/// identical down to the slot level: bonus action plus a 1st-level slot,
+/// concentration, 90 ft, +1d6 per landed hit for as long as the caster
+/// keeps hold of it. A row is (spell name, condition it installs, how
+/// close the target has to be) for the same reason `SelfBuffPick` is —
+/// the judgement is entirely in the third field, and a third mark
+/// arriving should be one line rather than a fourth near-identical
+/// picker.
+struct ConcentrationMarkPick {
+    name: &'static str,
+    condition: Condition,
+    /// Fire only at a hostile inside this many tiles. Well under the
+    /// spells' own 36-tile range, deliberately: the mark pays nothing
+    /// until the caster starts landing hits, and a mark placed on
+    /// something ninety feet away burns the concentration slot for the
+    /// rounds it takes to close.
+    engage_gap: isize,
+}
+
+/// The signature per-hit marks, in preference order.
+///
+/// Neither had ever been cast. Both declare no damage, install nothing
+/// on the caster and target a single enemy, so the damage lane filtered
+/// them out (they deal none), the self-buff cohort filtered them out
+/// (they buff nobody), and the lockdown lane filtered them out (they
+/// disable nothing) — the same three-way miss that kept the summons
+/// unreachable before their rung existed. A Ranger who never casts
+/// Hunter's Mark and a Warlock who never casts Hex are each missing the
+/// one spell their class is built around.
+///
+/// Hex leads on the roster's arithmetic rather than on any rule: its
+/// rider is necrotic, the mark's is force, and rather more of the
+/// bestiary is vulnerable to the first than to the second. In practice
+/// no actor carries both, so the order exists to give a future one an
+/// answer instead of a coin flip.
+const CONCENTRATION_MARKS: &[ConcentrationMarkPick] = &[
+    ConcentrationMarkPick {
+        name: "hex",
+        condition: Condition::Hexed,
+        engage_gap: 12,
+    },
+    ConcentrationMarkPick {
+        name: "hunters mark",
+        condition: Condition::HuntersMarked,
+        engage_gap: 12,
+    },
+];
+
+/// Lay a per-hit mark on the enemy the caster is most likely to keep
+/// hitting.
+///
+/// Three gates, and each answers a different way the cast can be wasted:
+///
+///   - **Not already concentrating.** The mark is worth about three and
+///     a half damage a swing; everything else in the concentration lane
+///     above this rung decides fights. Ranked below all of them so the
+///     mark fires exactly when nothing better wants the slot, which is
+///     the same argument the slotted-summon rung makes just below.
+///   - **Nobody already carries the mark.** Re-marking is a wasted slot,
+///     and marking a second creature silently replaces the first.
+///   - **Target inside `engage_gap`.** See the field's docstring.
+///
+/// The pick is the **lowest-HP** enemy in band, which is the opposite of
+/// `try_hold_person`'s "toughest wins" and deliberately so. A lockdown
+/// is spent to stop the scariest thing on the board; a mark is spent to
+/// be collected on, one swing at a time, and it is only ever collected
+/// on the creature the caster actually attacks — which is the one the
+/// damage lane below is about to focus-fire. Marking the toughest target
+/// would put the rider on a creature the AI has already decided to walk
+/// past.
+///
+/// The cast costs a Bonus Action rather than an Action, so the turn that
+/// lays the mark still swings: the ladder is re-entered after the cast
+/// and falls through to the attack lane with the rider already up.
+fn try_concentration_mark(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let my_team = actor.team();
+    let mut best: Option<(usize, u32, ActionExecutionInfo)> = None;
+    for (priority, row) in CONCENTRATION_MARKS.iter().enumerate() {
+        let Some(action) = actor.find_action(row.name) else {
+            continue;
+        };
+        for target_id in encounter.sorted_actor_ids() {
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if target_id == actor_id
+                || target.team() == my_team
+                || !target.is_combat_active()
+                || target.has_condition(row.condition)
+            {
+                continue;
+            }
+            if footprint_chebyshev(
+                actor.location(),
+                get_tiles_from_size(actor.size()),
+                target.location(),
+                get_tiles_from_size(target.size()),
+            ) > row.engage_gap
+            {
+                continue;
+            }
+            let aei =
+                ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+            let hp = target.hitpoints();
+            let pick = match &best {
+                None => true,
+                Some((best_pri, best_hp, _)) => {
+                    priority < *best_pri || (priority == *best_pri && hp < *best_hp)
+                }
+            };
+            if pick {
+                best = Some((priority, hp, aei));
             }
         }
     }
@@ -8453,6 +8621,7 @@ use crate::engine::types::Coordinate;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::actor_gen::ActorGenParams;
@@ -10979,6 +11148,83 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// The two spells their classes are named after get cast, and the
+    /// rider they buy shows up on the swing.
+    ///
+    /// Driven through a real AI turn rather than by calling the picker,
+    /// because the picker was never the thing that was broken — the
+    /// rung's absence was. A test that only asked
+    /// `try_concentration_mark` would have passed on the day before this
+    /// existed, against a warlock who could not reach the spell from the
+    /// ladder at all.
+    #[test]
+    fn the_warlock_hexes_and_the_ranger_marks() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        for (template, condition, label) in [
+            (
+                &*crate::actors::creatures::warlocks::WARLOCK_TEMPLATE,
+                Condition::Hexed,
+                "hex",
+            ),
+            (
+                &*crate::actors::creatures::rangers::RANGER_TEMPLATE,
+                Condition::HuntersMarked,
+                "hunters mark",
+            ),
+        ] {
+            let mut e = empty_arena();
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(6, 4), 0, 0)
+                .unwrap();
+            // Inside the 12-tile engagement band the cohort gates on, so
+            // the test is about the rung and not about the approach.
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+                .unwrap();
+
+            // Let the ladder run: the rungs above this one (Mage Armor
+            // and the rest of the opening self-buffs) fire first, which
+            // is correct — the point is that the mark is reached at all,
+            // not that it is reached first.
+            let mut cast_the_mark = false;
+            for _ in 0..12 {
+                let ControllerDecision::Act(aei) = SimpleAi {}.decide(&e, caster) else {
+                    break;
+                };
+                cast_the_mark |= aei.action().name() == label;
+                e.push_action(aei);
+                e.process_stack();
+                if cast_the_mark {
+                    break;
+                }
+            }
+            assert!(cast_the_mark, "{label}: the ladder never reached the mark");
+            assert!(
+                e.actors[&ogre].has_condition(condition),
+                "{label}: the mark should be on the target"
+            );
+            assert!(
+                e.actors[&caster].is_concentrating(),
+                "{label}: and the caster holding it"
+            );
+            // The rider is the entire point of the spell, so pin that the
+            // engine will actually pay it rather than just that the flag
+            // is set.
+            assert!(
+                e.is_hex_target(caster, ogre) || e.is_hunters_mark_target(caster, ogre),
+                "{label}: the attack resolver has to recognise the mark"
+            );
+            // And the rung declines to re-mark what it already marked —
+            // a second cast would silently replace the first.
+            assert!(
+                try_concentration_mark(&e, caster).is_none(),
+                "{label}: no re-marking"
+            );
+        }
     }
 
     /// The dispel rung ranks the board, and a flier outranks everything
