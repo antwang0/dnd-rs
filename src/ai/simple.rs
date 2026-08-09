@@ -1407,36 +1407,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 5. Hold Person — lock down toughest enemy if we have it and
-        //    aren't already concentrating on something.
-        if let Some(aei) = try_hold_person(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 5a. Cause Fear — disabler against the toughest enemy who isn't
-        //     already Frightened. Concentration-gated, so we only fire
-        //     when nothing else holds the slot.
-        if let Some(aei) = try_cause_fear(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 5a'. Dominate Monster — level-8 concentration charm against the
-        //      highest-HP enemy. Works on any creature type (unlike Hold
-        //      Person). Concentration-gated; fire when we have the slot
-        //      and aren't already concentrating.
-        if let Some(aei) = try_dominate_monster(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 5a''. Geas — level-5 enchantment, concentration-FREE. Charms
-        //       the toughest enemy on a failed WIS save, locking them
-        //       out of attacking the caster via the engine's existing
-        //       `Charmed` back-link. Slots after Dominate Monster (lv8,
-        //       concentration, broader debuff) and before the AoE
-        //       picker — the lv5 slot can compete with Cone of Cold /
-        //       Hold Monster, so we want it to fire only when no
-        //       AoE / lockdown is queued.
-        if let Some(aei) = try_geas(encounter, actor_id) {
+        // 5. The lockdown lane — one rung, twenty-six spells, and the
+        //    toughest enemy on the board that any of them can legally
+        //    take out of the fight. See `LOCKDOWNS` for the tiering and
+        //    `try_lockdown` for why the four rungs that used to stand
+        //    here (Hold Person, Cause Fear, Dominate Monster, Geas) are
+        //    one, and why one of them could never fire at all.
+        if let Some(aei) = try_lockdown(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -1750,41 +1727,146 @@ fn try_dodge(
     try_self_action(encounter, actor_id, "dodge")
 }
 
-/// Cast Hold Person on the toughest in-range enemy if we have it and
-/// aren't already concentrating. "Toughest" = highest current HP among
-/// not-already-stunned enemies (no point double-locking).
-fn try_hold_person(
+/// One row in the **lockdown** cohort — a single-target hostile cast
+/// whose job is to take a creature out of the fight rather than to
+/// damage it.
+///
+/// A row is the spell's name plus the condition it installs, and the
+/// condition is there for exactly one purpose: skipping a target that is
+/// already carrying it, so the AI never spends a second slot re-locking
+/// something it has already locked.
+///
+/// **Whether the cast claims concentration is deliberately not a column
+/// here.** It is asked of the action, the same way the area-control
+/// registry asks it, because the spell already knows and a `bool` beside
+/// the name is a second copy of a fact that can drift. That single
+/// change is what opened this cohort to the whole non-concentration half
+/// of 5e's lockdown list: the picker used to bail on a concentrating
+/// caster before it looked at anything, so Command, Power Word Stun,
+/// Feeblemind, Contagion, Forcecage and Charm Monster could not have
+/// been rows even though nothing about them needs the slot.
+struct LockdownPick {
+    name: &'static str,
+    /// The condition the lock leaves on its victim — the "already
+    /// handled" marker, not a description of the spell.
+    condition: Condition,
+}
+
+/// The single-target lockdown lane, in preference order.
+///
+/// Five rows before this list was a list. Fifteen of the twenty entries
+/// below ship on templates that carry them today and had no rung that
+/// could reach them: Suggestion sits on ten chassis, Hold Monster on
+/// eight, Power Word Stun on six, and not one of them had ever been
+/// cast by an AI-driven caster. A single-target save-or-suck deals no
+/// damage and buffs nobody, so the damage lane, the self-buff cohort and
+/// the area-control registry each filtered it out for a different
+/// reason — the same three-way miss that kept the summons and the
+/// per-hit marks unreachable.
+///
+/// **What earns a row is taking a creature out of the fight**, which is
+/// the same membership test the area-control registry states for its own
+/// rung, and it is a real test rather than a description. Six spells the
+/// roster carries were tried here and removed for failing it — Command,
+/// Bestow Curse, Enemies Abound, Contagion, Eyebite and Power Word Pain.
+/// All six leave the target fighting (Command for exactly one round),
+/// and this rung sits above the whole damage lane: a row that only makes
+/// an enemy *worse* would still shut out every Fireball the caster owns,
+/// every turn, for as long as it had a 1st-level slot. They want a rung
+/// of their own somewhere below the bursts, and that is a different
+/// change from this one.
+///
+/// The two attrition rows at the bottom — Cause Fear and Ray of
+/// Enfeeblement — fail that test too, and are kept because they were
+/// already here. Demoting them would change the opening move of shipped
+/// templates to buy consistency in a comment.
+///
+/// **The order is the priority and it is load-bearing.** Three tiers, by
+/// how much of the target's turn the lock takes away, and inside each
+/// tier by slot cost ascending so a level-8 is never spent on what a
+/// level-2 would have done:
+///
+///   1. **Turn removal** — the target does not act. Sleep Gaze (a
+///      monster ability, free) leads because it costs no slot at all;
+///      then Tasha's Hideous Laughter at 1st and Hold Person at 2nd, up
+///      through Maze, Power Word Stun and Feeblemind at 8th. Otto's
+///      Irresistible Dance is placed above Flesh to Stone at the same
+///      slot level for the reason the old comment gave about Hold
+///      Person: Petrified hands the target broad damage resistance and
+///      slows the kill clock, where a dancing target simply loses its
+///      turn.
+///   2. **Redirection** — the target still acts, but not against us.
+///      The charm and domination family, cheapest first.
+///   3. **The two inherited rows.**
+///
+/// Polymorph is deliberately absent despite being the archetypal
+/// level-4 "remove a creature" spell, and the reason is this engine's
+/// implementation rather than the rule: `Polymorph` hands its target 30
+/// temporary hit points to represent the beast form's pool, applied
+/// "uniformly regardless of allegiance". Cast at an enemy here it would
+/// be a buff.
+const LOCKDOWNS: &[LockdownPick] = &[
+    // --- Tier 1: the target does not act. ---
+    LockdownPick { name: "sleep gaze", condition: Condition::Asleep },
+    LockdownPick { name: "tasha's hideous laughter", condition: Condition::Incapacitated },
+    LockdownPick { name: "hold person", condition: Condition::Stunned },
+    LockdownPick { name: "banishment", condition: Condition::Incapacitated },
+    LockdownPick { name: "hold monster", condition: Condition::Stunned },
+    LockdownPick { name: "otto's irresistible dance", condition: Condition::Dancing },
+    LockdownPick { name: "flesh to stone", condition: Condition::Petrified },
+    LockdownPick { name: "forcecage", condition: Condition::Caged },
+    LockdownPick { name: "maze", condition: Condition::Mazed },
+    LockdownPick { name: "power word stun", condition: Condition::Stunned },
+    LockdownPick { name: "feeblemind", condition: Condition::Feebled },
+    // --- Tier 2: the target acts, but not against us. ---
+    LockdownPick { name: "crown of madness", condition: Condition::Charmed },
+    LockdownPick { name: "suggestion", condition: Condition::Charmed },
+    LockdownPick { name: "charm monster", condition: Condition::Charmed },
+    LockdownPick { name: "dominate beast", condition: Condition::Dominated },
+    LockdownPick { name: "geas", condition: Condition::Charmed },
+    LockdownPick { name: "dominate person", condition: Condition::Dominated },
+    LockdownPick { name: "dominate monster", condition: Condition::Dominated },
+    // --- Tier 3: the two attrition rows this cohort already had. ---
+    LockdownPick { name: "cause fear", condition: Condition::Frightened },
+    LockdownPick { name: "ray of enfeeblement", condition: Condition::Poisoned },
+];
+
+/// Take the toughest enemy the caster can legally lock out of the fight.
+///
+/// One rung replacing four. `try_cause_fear`, `try_dominate_monster` and
+/// `try_geas` were each a private copy of the walk below with one name
+/// substituted, and the first of the three was worse than redundant:
+/// "cause fear" was already a row on this cohort, sitting above it in
+/// the ladder with the identical concentration gate and the identical
+/// highest-HP pick, so `try_cause_fear` could not return `Some` on any
+/// board where the rung above it had not already fired. It was dead in
+/// the strict sense — reachable code that no input could make matter.
+///
+/// **Selection**: the highest-HP legal target wins, and a tie between
+/// two locks on the same target breaks to the earlier row. Kept exactly
+/// as it was, because the two rules compose into the behaviour the
+/// cohort's ordering is written for — every row is offered the same set
+/// of enemies, so the toughest one is the same across rows, and the tie
+/// then picks the most-preferred lock that will actually land on it. A
+/// cheap lock that cannot legally touch the biggest threat (Hold Person
+/// against a Giant) drops out at `validate` and the next row answers for
+/// it.
+///
+/// **Concentration** is asked per row rather than once up front. A
+/// caster already holding a spell skips the concentrating rows and can
+/// still reach for Command or Power Word Stun, which is both RAW and
+/// the thing the old up-front bail made impossible.
+fn try_lockdown(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    // (action, condition the action installs) so we can avoid retargeting
-    // someone already locked. Order = preference: hard lockdown beats
-    // soft. New entries land in priority order.
-    //
-    // Hold Person leads despite Flesh to Stone's broader resistance
-    // envelope — Stunned lets allies chip damage through normally while
-    // Petrified grants the target wide damage resistance, slowing the
-    // kill clock. Flesh to Stone is the CON-save fallback for high-WIS
-    // brutes that shrug off Hold Person.
-    const SOFT_LOCKS: &[(&str, Condition)] = &[
-        ("hold person", Condition::Stunned),
-        ("flesh to stone", Condition::Petrified),
-        ("sleep gaze", Condition::Asleep),
-        ("cause fear", Condition::Frightened),
-        ("ray of enfeeblement", Condition::Poisoned),
-    ];
-    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = actor
-        .actions
+    let concentrating = actor.is_concentrating();
+    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = LOCKDOWNS
         .iter()
-        .filter_map(|a| {
-            SOFT_LOCKS
-                .iter()
-                .find(|(name, _)| a.name() == *name)
-                .map(|(_, cond)| (*a, *cond))
+        .filter_map(|row| {
+            let action = actor.find_action(row.name)?;
+            (!concentrating || !action.holds_concentration()).then_some((action, row.condition))
         })
         .collect();
     if candidates.is_empty() {
@@ -1792,9 +1874,6 @@ fn try_hold_person(
     }
     let my_team = actor.team();
 
-    // Search per (action, target) so we evaluate every soft-lock against
-    // every legal enemy. We pick toughest target and break ties by
-    // SOFT_LOCKS index (Hold Person beats Cause Fear when both validate).
     let mut best: Option<(u32, usize, ActionExecutionInfo)> = None;
     for target_id in encounter.sorted_actor_ids() {
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -1894,7 +1973,7 @@ const CONCENTRATION_MARKS: &[ConcentrationMarkPick] = &[
 ///   - **Target inside `engage_gap`.** See the field's docstring.
 ///
 /// The pick is the **lowest-HP** enemy in band, which is the opposite of
-/// `try_hold_person`'s "toughest wins" and deliberately so. A lockdown
+/// `try_lockdown`'s "toughest wins" and deliberately so. A lockdown
 /// is spent to stop the scariest thing on the board; a mark is spent to
 /// be collected on, one swing at a time, and it is only ever collected
 /// on the creature the caster actually attacks — which is the one the
@@ -1985,7 +2064,7 @@ fn try_concentration_mark(
 ///     3rd-level slot, but only once the two above have said no.
 ///
 /// Ties inside a tier break to the lowest actor id rather than to the
-/// toughest target, which is the opposite of `try_hold_person`'s rule
+/// toughest target, which is the opposite of `try_lockdown`'s rule
 /// one rung up and deliberately so: a lockdown is spent *on* the
 /// creature and wants the scariest one, while a dispel is spent on the
 /// *effect*, and this engine has no way to price one Haste above
@@ -2036,133 +2115,8 @@ fn try_dispel_magic(
     best.map(|(_, aei)| aei)
 }
 
-/// Cast Cause Fear on the toughest in-range enemy if we have it and
-/// aren't concentrating yet. Skips already-Frightened targets so the
-/// AI doesn't waste a slot reapplying the same debuff. Mirrors
-/// `try_hold_person`'s "highest current HP wins" target picker — the
-/// AI tries to disable the threat that would cost the most to chip
-/// down with damage.
-fn try_cause_fear(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    let cf = actor.find_action("cause fear")?;
-    let my_team = actor.team();
 
-    let ids = encounter.sorted_actor_ids();
 
-    let mut best: Option<(u32, ActionExecutionInfo)> = None;
-    for target_id in ids {
-        let Some(target) = encounter.actors.get(&target_id) else {
-            continue;
-        };
-        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
-            continue;
-        }
-        if target.has_condition(Condition::Frightened) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(cf, actor_id, Some(vec![target_id]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        let hp = target.hitpoints();
-        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
-            best = Some((hp, aei));
-        }
-    }
-    best.map(|(_, aei)| aei)
-}
-
-/// Cast Dominate Monster on the highest-HP in-range enemy if we have it
-/// and aren't already concentrating. Unlike Hold Person this works on any
-/// creature type, so we target the beefiest hostile to flip the toughest
-/// threat to our side. Concentration-gated; the action's own validation
-/// checks the level-8 slot availability.
-fn try_dominate_monster(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    let action = actor.find_action("dominate monster")?;
-    let my_team = actor.team();
-
-    let mut best: Option<(u32, ActionExecutionInfo)> = None;
-    for target_id in encounter.sorted_actor_ids() {
-        let Some(target) = encounter.actors.get(&target_id) else {
-            continue;
-        };
-        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
-            continue;
-        }
-        // Skip already-dominated targets.
-        if target.has_condition(Condition::Dominated) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        let hp = target.hitpoints();
-        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
-            best = Some((hp, aei));
-        }
-    }
-    best.map(|(_, aei)| aei)
-}
-
-/// Geas — level-5 enchantment. Drops a long-duration `Charmed` rider on
-/// the toughest enemy via the existing `Charmed` back-link, blocking them
-/// from making hostile actions against the caster. Concentration-FREE
-/// RAW (the timer carries the install instead), so this skips the
-/// `is_concentrating()` short-circuit that the Hold Person / Dominate
-/// Monster pickers gate on — Geas can stack on top of a separate
-/// concentration buff cleanly.
-///
-/// Highest-HP target picker (mirrors `try_dominate_monster`) — the
-/// long-duration Charmed mark wants to land on the threat with the most
-/// remaining swings to gain value, and the higher-HP target is the one
-/// most likely to use those swings on the caster otherwise. Skip
-/// targets that are already Charmed (the install would be a no-op /
-/// the engine collapses re-applies).
-fn try_geas(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("geas")?;
-    let my_team = actor.team();
-
-    let mut best: Option<(u32, ActionExecutionInfo)> = None;
-    for target_id in encounter.sorted_actor_ids() {
-        let Some(target) = encounter.actors.get(&target_id) else {
-            continue;
-        };
-        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
-            continue;
-        }
-        // Skip already-charmed targets — re-applying Charmed is a
-        // no-op, and the engine's charmed-by link gets overwritten
-        // (which could clobber an existing Hold Person / Dominate
-        // Monster anchor on a different caster).
-        if target.has_condition(Condition::Charmed) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        let hp = target.hitpoints();
-        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
-            best = Some((hp, aei));
-        }
-    }
-    best.map(|(_, aei)| aei)
-}
 
 /// Cast Bless if we have it, aren't already concentrating, and there's at
 /// least one combat-active ally (otherwise the buff is wasted on solo).
@@ -6408,13 +6362,20 @@ fn try_action_surge(
 /// adjacent creature makes a WIS save or is Charmed *and* Incapacitated
 /// until the end of the enchanter's next turn.
 ///
-/// Kept as its own picker rather than a row on `try_hold_person`'s
-/// `SOFT_LOCKS` registry, which is the natural-looking home for it:
-/// that picker opens by bailing when the actor is already
-/// concentrating, because every lock on its list is a concentration
-/// spell. Hypnotic Gaze is not, and folding it in would either give it
-/// a gate RAW doesn't impose or force the concentration bail to become
-/// per-row.
+/// Kept as its own picker rather than a row on the `LOCKDOWNS` cohort,
+/// which is the natural-looking home for it. The reason it used to give
+/// — that the cohort's picker bailed up front on a concentrating caster
+/// and folding a non-concentration gaze in would need that bail to
+/// become per-row — is gone: the bail *is* per-row now, and the whole
+/// non-concentration half of the lockdown list moved in behind it.
+///
+/// What still keeps it out is the gate rather than the cost. Every row
+/// on that cohort reaches as far as its spell does and leaves the range
+/// question to `validate`; Hypnotic Gaze is an adjacency effect, and a
+/// row that silently meant "but only at arm's length" would be a second
+/// rule hiding inside a table whose entries otherwise all mean the same
+/// thing. The ladder placement is the other half: the gaze fires above
+/// the whole slot-spending lane precisely because it spends no slot.
 ///
 /// Gated on an adjacent hostile that isn't already Incapacitated —
 /// there is no point spending the enchanter's action to disable
@@ -7429,7 +7390,7 @@ fn best_burst_placement(
 /// scorer, because the comparison isn't really about coverage: three
 /// hostiles Restrained by a Web are worth more than three hostiles
 /// taking 8d6 and continuing to act, and no enemy-count heuristic
-/// expresses that. This mirrors the way `try_hold_person` already sits
+/// expresses that. This mirrors the way `try_lockdown` already sits
 /// above plain attacks on the single-target lane.
 ///
 /// What bounds the rung is each entry's own
@@ -11148,6 +11109,64 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// The lockdown cohort reaches past the rows it inherited, and a
+    /// caster who is already concentrating can still reach the half of
+    /// the list that needs no concentration.
+    ///
+    /// Both halves matter and they fail differently. The first pins that
+    /// the new rows are live at all — a wizard facing a Giant cannot
+    /// Hold Person it, and before this cohort grew there was nothing
+    /// else on the rung to fall through to, so the wizard shrugged and
+    /// went to the damage lane. The second pins the change that made the
+    /// non-concentration rows possible: the picker used to bail on a
+    /// concentrating caster before it looked at a single row, so a
+    /// wizard holding a Web could not have cast Power Word Stun with
+    /// eight levels of spell slots in hand.
+    #[test]
+    fn the_lockdown_lane_reaches_its_new_rows_and_past_its_own_concentration() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 4), 1, 0)
+            .unwrap();
+        // The premise, asserted rather than assumed: the archmage's list
+        // does not contain a single one of the five rows this cohort had
+        // before it was a cohort, so anything the rung reaches for here
+        // is necessarily one of the new ones.
+        for inherited in ["hold person", "sleep gaze"] {
+            assert!(
+                e.actors[&wizard].find_action(inherited).is_none(),
+                "{inherited} would make this test prove nothing"
+            );
+        }
+        let pick = try_lockdown(&e, wizard).expect("a lock the wizard can actually reach");
+        assert_eq!(pick.target_ids(), Some(&[ogre][..]));
+
+        // Now hand the wizard a concentration and re-ask. What is left
+        // is the non-concentration half of the list — which the old
+        // up-front bail made unreachable entirely — and the earliest row
+        // on it that the archmage carries is Forcecage.
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("web"));
+        let pick = try_lockdown(&e, wizard)
+            .expect("a concentrating caster still has slotless-of-concentration locks");
+        assert!(
+            !pick.action().holds_concentration(),
+            "a concentrating caster must not be offered a second concentration spell, got {}",
+            pick.action().name()
+        );
+        assert_eq!(pick.action().name(), "forcecage");
     }
 
     /// The two spells their classes are named after get cast, and the
