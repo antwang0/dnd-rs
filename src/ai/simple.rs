@@ -1482,6 +1482,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5b'. Attrition — Command, Bestow Curse, Enemies Abound. The
+        //      control spells that leave the enemy fighting, promised a
+        //      rung of their own by `LOCKDOWNS` and given one here:
+        //      below every burst, because a blast that catches three
+        //      beats a penalty on one, and above single-target focus
+        //      fire, because a penalty on one beats one creature's
+        //      worth of weapon damage.
+        if let Some(aei) = try_attrition(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5c. Shove — knock an adjacent enemy prone when at least one
         //     ally is also adjacent (the prone condition gives them
         //     advantage on melee attacks). Only fires when the target
@@ -1755,10 +1766,10 @@ struct LockdownPick {
 /// The single-target lockdown lane, in preference order.
 ///
 /// Five rows before this list was a list. Fifteen of the twenty entries
-/// below ship on templates that carry them today and had no rung that
-/// could reach them: Suggestion sits on ten chassis, Hold Monster on
-/// eight, Power Word Stun on six, and not one of them had ever been
-/// cast by an AI-driven caster. A single-target save-or-suck deals no
+/// below ship on chassis that carry them today and had no rung that
+/// could reach them: Hold Monster and Suggestion on four chassis
+/// families each, Power Word Stun and Banishment on three, and not one
+/// of them had ever been cast by an AI-driven caster. A single-target save-or-suck deals no
 /// damage and buffs nobody, so the damage lane, the self-buff cohort and
 /// the area-control registry each filtered it out for a different
 /// reason — the same three-way miss that kept the summons and the
@@ -1772,9 +1783,10 @@ struct LockdownPick {
 /// All six leave the target fighting (Command for exactly one round),
 /// and this rung sits above the whole damage lane: a row that only makes
 /// an enemy *worse* would still shut out every Fireball the caster owns,
-/// every turn, for as long as it had a 1st-level slot. They want a rung
-/// of their own somewhere below the bursts, and that is a different
-/// change from this one.
+/// every turn, for as long as it had a 1st-level slot. Three of them
+/// live on `ATTRITION` instead, which is the same row shape read at a
+/// rung below the bursts; the other three are too expensive for that
+/// rung's slot cap and remain unreachable.
 ///
 /// The two attrition rows at the bottom — Cause Fear and Ray of
 /// Enfeeblement — fail that test too, and are kept because they were
@@ -1860,9 +1872,22 @@ fn try_lockdown(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
+    pick_from_cohort(encounter, actor_id, LOCKDOWNS)
+}
+
+/// The walk both control cohorts share: offer every row the caster can
+/// currently cast to every legal enemy, and keep the best pair.
+///
+/// Split out when the second cohort arrived rather than copied, because
+/// a copy is what the four rungs this replaced already were.
+fn pick_from_cohort(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    cohort: &[LockdownPick],
+) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     let concentrating = actor.is_concentrating();
-    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = LOCKDOWNS
+    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = cohort
         .iter()
         .filter_map(|row| {
             let action = actor.find_action(row.name)?;
@@ -1904,6 +1929,57 @@ fn try_lockdown(
         }
     }
     best.map(|(_, _, aei)| aei)
+}
+
+/// The **attrition** cohort — single-target casts that leave the enemy
+/// fighting and merely make them worse at it.
+///
+/// Sibling to `LOCKDOWNS` and split from it on the one question that
+/// decides where a control spell belongs in the ladder: does the target
+/// still get to act? A Hold Person takes a creature out of the fight and
+/// is worth an Action ahead of any burst; a Bestow Curse leaves it
+/// swinging with a penalty and is not. The two lived on one list briefly
+/// and it went exactly as that difference predicts — the rung sits above
+/// the damage lane, so a 1st-level Command shut out every Fireball the
+/// caster owned, every turn, for as long as it had a 1st-level slot.
+///
+/// **Rows are capped at 3rd level.** Attrition is worth a cheap slot and
+/// not a precious one, and this rung has no way to price "the target is
+/// Poisoned" against what the same slot buys on the single-target damage
+/// lane below it. That cap is what keeps Contagion (5th), Eyebite (6th)
+/// and Power Word Pain (7th) off the list: each of the three would have
+/// to beat Disintegrate or Chain Lightning out of the caster's hand to
+/// earn the slot, and none of them does.
+///
+/// Row shape and the concentration question are `LockdownPick`'s, which
+/// is the point of sharing the struct — the two cohorts differ in what
+/// they contain and in where they are read, not in how a row works.
+const ATTRITION: &[LockdownPick] = &[
+    // Level 1, no concentration: one enemy turn, for the cheapest slot
+    // in the game. The engine models RAW's "Halt" / "Grovel" as a single
+    // round of Stunned.
+    LockdownPick { name: "command", condition: Condition::Stunned },
+    // Level 3, concentration: a lasting penalty on everything the target
+    // rolls, and the widest-carried row here — five chassis families.
+    LockdownPick { name: "bestow curse", condition: Condition::Baned },
+    // Level 3, concentration: Confused, which in this engine costs the
+    // holder its reactions as well as its aim.
+    LockdownPick { name: "enemies abound", condition: Condition::Confused },
+];
+
+/// Make the toughest enemy worse at fighting, once the bursts have
+/// declined.
+///
+/// Shares `pick_from_cohort` with `try_lockdown`; what differs is the
+/// list and the rung. Placed below every burst lane and above
+/// single-target focus fire, which is the seam the split was made for:
+/// a debuff is worth more than one creature's worth of weapon damage
+/// and less than a blast that catches three.
+fn try_attrition(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    pick_from_cohort(encounter, actor_id, ATTRITION)
 }
 
 /// One row in the **concentration mark** cohort — a bonus-action spell
@@ -11109,6 +11185,56 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// The attrition rung sits in the seam it was cut for: a burst wins
+    /// over it, and it wins over a swing.
+    ///
+    /// Both halves are the point. Attrition above focus fire is why the
+    /// rung exists at all — a Command that costs an enemy its whole turn
+    /// beats one creature's worth of weapon damage. Attrition below the
+    /// bursts is why it is not on the lockdown cohort, where it spent
+    /// one afternoon shutting out every Fireball on the roster.
+    #[test]
+    fn attrition_loses_to_a_blast_and_beats_a_bowshot() {
+        use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        // One lone enemy, far enough out that no burst catches two: the
+        // rung's own lane.
+        let mut solo = empty_arena();
+        let fanatic = solo
+            .instantiate_creature(&CULT_FANATIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        solo.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+        assert!(
+            solo.actors[&fanatic].find_action("command").is_some(),
+            "the premise: the fanatic knows the cheapest row on the cohort"
+        );
+        let pick = try_attrition(&solo, fanatic).expect("one enemy is enough to debuff");
+        assert_eq!(pick.action().name(), "command");
+
+        // The AI's own answer on that board, which is the half a picker
+        // test cannot reach: the rung has to actually be *in* the ladder
+        // and above focus fire. The concentration is pre-spent so the
+        // whole control lane above declines, and one distant enemy means
+        // no burst rung can claim two — which leaves exactly the seam
+        // this rung was cut into.
+        solo.actors
+            .get_mut(&fanatic)
+            .unwrap()
+            .start_concentration(crate::actors::actor_template::ConcentrationData::new("web"));
+        let ai = SimpleAi {};
+        match ai.decide(&solo, fanatic) {
+            ControllerDecision::Act(aei) => assert_eq!(
+                aei.action().name(),
+                "command",
+                "the ladder should reach the attrition rung ahead of a swing"
+            ),
+            ControllerDecision::AwaitInput => panic!("the fanatic should have something to do"),
+        }
     }
 
     /// The lockdown cohort reaches past the rows it inherited, and a
