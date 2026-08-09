@@ -4508,7 +4508,7 @@ const ARCANE_SHOT_ORDER: &[(&str, AbilityScoreType, Condition)] = &[
     (
         "banishing arrow",
         AbilityScoreType::Charisma,
-        Condition::Incapacitated,
+        Condition::Banished,
     ),
     (
         "grasping arrow",
@@ -13699,6 +13699,46 @@ mod tests {
         assert!(zone.rounds_remaining > 0);
     }
 
+    /// Every Arcane Shot row names the condition its arrow actually
+    /// installs, and the two tables are checked against each other
+    /// rather than trusted to agree.
+    ///
+    /// `ARCANE_SHOT_ORDER`'s third column is not a description. The
+    /// picker reads it as the "already landed" gate — it filters out any
+    /// shot whose condition the target is already under — so a row that
+    /// names the wrong condition makes the archer re-nock a shot that
+    /// has already done its work, and nothing anywhere fails.
+    ///
+    /// It drifted the first time the moment the Banishing Arrow rider
+    /// stopped installing `Incapacitated` and started installing
+    /// `Banished`: two tables in two modules, one of them the engine's
+    /// answer and the other the AI's belief about it, with nothing in
+    /// between. This is what is in between.
+    #[test]
+    fn every_arcane_shot_row_names_the_condition_its_arrow_lands() {
+        use crate::engine::attack::{FollowUpEffect, ON_HIT_RIDERS};
+
+        for (name, _, believed) in ARCANE_SHOT_ORDER {
+            let rider = ON_HIT_RIDERS
+                .iter()
+                .find(|r| r.label == *name)
+                .unwrap_or_else(|| panic!("{name} names no on-hit rider"));
+            let follow_up = rider
+                .follow_up
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} lands nothing, so the gate is a fiction"));
+            match follow_up.effect {
+                FollowUpEffect::Condition { condition, .. } => assert_eq!(
+                    condition, *believed,
+                    "{name} installs {} but the AI's gate watches for {}",
+                    condition.name(),
+                    believed.name()
+                ),
+                _ => panic!("{name}'s rider does not install a condition at all"),
+            }
+        }
+    }
+
     /// Otiluke's Resilient Sphere is a tier-1 lock and had no rung.
     ///
     /// `Sphered` joins `blocks_action_economy`, so a sphered creature
@@ -15570,13 +15610,15 @@ mod tests {
         // Every module-level name list the heuristics consult. A new
         // list belongs here; the cost of forgetting is a heuristic that
         // quietly never fires.
-        let lists: [(&str, &[&str]); 6] = [
+        let lists: [(&str, &[&str]); 8] = [
             ("MELEE_ADJACENT_PRIMES", MELEE_ADJACENT_PRIMES),
             ("SELF_TELEPORT_ESCAPES", SELF_TELEPORT_ESCAPES),
             ("AREA_CONTROL_SPELLS", AREA_CONTROL_SPELLS),
             ("HEIGHTENED_LOCKDOWN", HEIGHTENED_LOCKDOWN),
             ("HEIGHTENED_BURST", HEIGHTENED_BURST),
             ("EXTENDABLE", EXTENDABLE),
+            ("ENGAGED_SELF_POSTURES", ENGAGED_SELF_POSTURES),
+            ("WALL_SPELLS", WALL_SPELLS),
         ];
         // Two entries name real spells that no playable template
         // currently carries — a level-8 lockdown and a level-1 temp-HP
@@ -15609,6 +15651,37 @@ mod tests {
                 if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
                     orphans.push(format!("{}: {:?}", list_name, row.name));
                 }
+            }
+        }
+        // The remaining struct-row cohorts, each of which resolves its
+        // action by the same string lookup and fails the same silent
+        // way. Written as three loops rather than one because the row
+        // types differ in everything except the column that matters
+        // here.
+        for row in CONCENTRATION_MARKS {
+            if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
+                orphans.push(format!("CONCENTRATION_MARKS: {:?}", row.name));
+            }
+        }
+        for (list_name, entries) in [
+            ("SELF_BUFFS_ABOVE_DUPLICITY", SELF_BUFFS_ABOVE_DUPLICITY),
+            ("SELF_BUFFS_BELOW_DUPLICITY", SELF_BUFFS_BELOW_DUPLICITY),
+        ] {
+            for row in entries {
+                if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
+                    orphans.push(format!("{}: {:?}", list_name, row.name));
+                }
+            }
+        }
+        for row in TURN_BURST_PICKS {
+            let name = row.config.name;
+            if !known.contains(name) && !waiting_on_a_template.contains(name) {
+                orphans.push(format!("TURN_BURST_PICKS: {:?}", name));
+            }
+        }
+        for (name, _, _) in ARCANE_SHOT_ORDER {
+            if !known.contains(name) && !waiting_on_a_template.contains(name) {
+                orphans.push(format!("ARCANE_SHOT_ORDER: {:?}", name));
             }
         }
         assert!(

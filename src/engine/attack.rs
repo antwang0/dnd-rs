@@ -4014,7 +4014,7 @@ pub fn attack_damage_penalty(encounter: &mut EncounterInstance, caster_id: usize
 /// maneuvers, etc.) lives here. `Dice::new` is a const fn so the table
 /// stays a `const &[..]` — adding a rider doesn't bump a hardcoded
 /// length.
-const ON_HIT_RIDERS: &[OnHitRider] = &[
+pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         OnHitRider {
             condition: Condition::CrusadersMantled,
             dice: Dice::new(1, 4),
