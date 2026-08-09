@@ -22,7 +22,17 @@ pub static HARPY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'H',
         ac: 11,
         hitpoints: "7d8+7".parse().unwrap(),
-        speed: 20., // walk speed (flying not modeled)
+        // RAW is "20 ft., fly 40 ft." and the engine's convention for an
+        // innate flier is to collapse the two onto the fly speed — the
+        // board is 2D, nothing pathfinds through the air, and a creature
+        // that spends the fight on the wing should move at the speed it
+        // actually moves at. Twenty-eight other templates read that way
+        // (griffon, giant eagle, gargoyle, erinyes, bone devil…); this
+        // one alone took the walking number, which made the engine's
+        // only flying charmer the slowest monstrosity on the roster and
+        // left its 30 ft song permanently out of range of anything that
+        // opened at distance.
+        speed: 40.,
         strength: 12,
         dexterity: 13,
         constitution: 12,

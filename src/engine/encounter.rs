@@ -1652,7 +1652,7 @@ fn ring_at(center: Coordinate, ring: isize) -> impl Iterator<Item = Coordinate> 
 /// most negative offset that happened to be legal, which is as far from
 /// the caster as the search box allows. Both call themselves "adjacent"
 /// and only one was.
-fn rings_outward(center: Coordinate, radius: isize) -> impl Iterator<Item = Coordinate> {
+pub(crate) fn rings_outward(center: Coordinate, radius: isize) -> impl Iterator<Item = Coordinate> {
     (1..=radius).flat_map(move |ring| ring_at(center, ring))
 }
 
@@ -5944,18 +5944,6 @@ impl EncounterInstance {
         (0..w).all(|ox| {
             (0..w).all(|oy| self.is_spawnable(Coordinate::new(origin.x + ox, origin.y + oy)))
         })
-    }
-
-    /// The tiles around `center`, closest ring first, out to `radius`
-    /// Chebyshev steps — `center` itself excluded. Method-shaped wrapper
-    /// over the free `rings_outward` walk so sibling modules can reach
-    /// it.
-    pub(crate) fn rings_outward_from(
-        &self,
-        center: Coordinate,
-        radius: isize,
-    ) -> impl Iterator<Item = Coordinate> {
-        rings_outward(center, radius)
     }
 
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
@@ -14212,16 +14200,24 @@ impl EncounterInstance {
     /// permanently disconnected pockets — otherwise the AI loops
     /// skipping forever.
     pub fn is_stalemate(&self) -> bool {
-        // A board with somebody off it is a board that is about to
-        // change, and the whole premise of this check is that the
-        // arrangement is permanent. The party that has just banished the
-        // last enemy can reach nothing, which is a stalemate by every
-        // test below and by none of the ones that matter — the enemy
-        // returns to the space it left in a handful of rounds. Bailing
-        // early rather than counting banished creatures as combatants,
-        // because `can_engage` would then be asked to path to a body
-        // that owns no tiles.
-        if self.actors.values().any(|a| a.is_off_board()) {
+        // A board with somebody still held off it is a board that is
+        // about to change, and the whole premise of this check is that
+        // the arrangement is permanent. The party that has just banished
+        // the last enemy can reach nothing, which is a stalemate by
+        // every test below and by none of the ones that matter — the
+        // enemy returns to the space it left in a handful of rounds.
+        // Bailing early rather than counting banished creatures as
+        // combatants, because `can_engage` would then be asked to path
+        // to a body that owns no tiles.
+        //
+        // `belongs_off_board`, deliberately, and not `is_off_board`.
+        // The two disagree in exactly one state: a creature whose
+        // banishment has lapsed but which has found no legal tile to
+        // return to (see `find_return_anchor`). Nothing is holding that
+        // one away any more, so nothing is coming — and a board too
+        // full to put one body back down is precisely the deadlock this
+        // check exists to break rather than a reason to keep waiting.
+        if self.actors.values().any(|a| a.belongs_off_board()) {
             return false;
         }
         let combatants: Vec<(usize, usize)> = self

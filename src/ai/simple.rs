@@ -1760,7 +1760,14 @@ struct LockdownPick {
     name: &'static str,
     /// The condition the lock leaves on its victim — the "already
     /// handled" marker, not a description of the spell.
-    condition: Condition,
+    ///
+    /// `None` for the one row that leaves no marker because it leaves no
+    /// victim: Plane Shift takes its target off the board for good, so
+    /// there is nothing to re-check next turn — the creature is simply
+    /// not in the candidate walk any more. Every other row has to say
+    /// what it installed, or the caster would spend its whole fight
+    /// re-Holding the same person.
+    condition: Option<Condition>,
 }
 
 /// The single-target lockdown lane, in preference order.
@@ -1819,28 +1826,41 @@ struct LockdownPick {
 /// be a buff.
 const LOCKDOWNS: &[LockdownPick] = &[
     // --- Tier 1: the target does not act. ---
-    LockdownPick { name: "sleep gaze", condition: Condition::Asleep },
-    LockdownPick { name: "tasha's hideous laughter", condition: Condition::Incapacitated },
-    LockdownPick { name: "hold person", condition: Condition::Stunned },
-    LockdownPick { name: "banishment", condition: Condition::Banished },
-    LockdownPick { name: "hold monster", condition: Condition::Stunned },
-    LockdownPick { name: "otto's irresistible dance", condition: Condition::Dancing },
-    LockdownPick { name: "flesh to stone", condition: Condition::Petrified },
-    LockdownPick { name: "forcecage", condition: Condition::Caged },
-    LockdownPick { name: "maze", condition: Condition::Mazed },
-    LockdownPick { name: "power word stun", condition: Condition::Stunned },
-    LockdownPick { name: "feeblemind", condition: Condition::Feebled },
+    //
+    // Plane Shift leads, and it is the only row that is not a lock at
+    // all: the target is put on another plane and does not come back,
+    // this fight or ever. Nothing else on the list ends a creature's
+    // participation permanently, so nothing else outranks it — and its
+    // touch range is what keeps that honest, because the row can only
+    // validate against something the caster is already standing next
+    // to. It ships on one chassis (the lich) and had no rung that could
+    // reach it: a spell that installs no condition and deals no damage
+    // is invisible to the damage lane, the self-buff cohort and the
+    // area-control registry alike, which is the same three-way miss
+    // that kept the rest of this list unreachable before it was a list.
+    LockdownPick { name: "plane shift", condition: None },
+    LockdownPick { name: "sleep gaze", condition: Some(Condition::Asleep) },
+    LockdownPick { name: "tasha's hideous laughter", condition: Some(Condition::Incapacitated) },
+    LockdownPick { name: "hold person", condition: Some(Condition::Stunned) },
+    LockdownPick { name: "banishment", condition: Some(Condition::Banished) },
+    LockdownPick { name: "hold monster", condition: Some(Condition::Stunned) },
+    LockdownPick { name: "otto's irresistible dance", condition: Some(Condition::Dancing) },
+    LockdownPick { name: "flesh to stone", condition: Some(Condition::Petrified) },
+    LockdownPick { name: "forcecage", condition: Some(Condition::Caged) },
+    LockdownPick { name: "maze", condition: Some(Condition::Mazed) },
+    LockdownPick { name: "power word stun", condition: Some(Condition::Stunned) },
+    LockdownPick { name: "feeblemind", condition: Some(Condition::Feebled) },
     // --- Tier 2: the target acts, but not against us. ---
-    LockdownPick { name: "crown of madness", condition: Condition::Charmed },
-    LockdownPick { name: "suggestion", condition: Condition::Charmed },
-    LockdownPick { name: "charm monster", condition: Condition::Charmed },
-    LockdownPick { name: "dominate beast", condition: Condition::Dominated },
-    LockdownPick { name: "geas", condition: Condition::Charmed },
-    LockdownPick { name: "dominate person", condition: Condition::Dominated },
-    LockdownPick { name: "dominate monster", condition: Condition::Dominated },
+    LockdownPick { name: "crown of madness", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "suggestion", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "charm monster", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "dominate beast", condition: Some(Condition::Dominated) },
+    LockdownPick { name: "geas", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "dominate person", condition: Some(Condition::Dominated) },
+    LockdownPick { name: "dominate monster", condition: Some(Condition::Dominated) },
     // --- Tier 3: the two attrition rows this cohort already had. ---
-    LockdownPick { name: "cause fear", condition: Condition::Frightened },
-    LockdownPick { name: "ray of enfeeblement", condition: Condition::Poisoned },
+    LockdownPick { name: "cause fear", condition: Some(Condition::Frightened) },
+    LockdownPick { name: "ray of enfeeblement", condition: Some(Condition::Poisoned) },
 ];
 
 /// Take the toughest enemy the caster can legally lock out of the fight.
@@ -1887,7 +1907,7 @@ fn pick_from_cohort(
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     let concentrating = actor.is_concentrating();
-    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = cohort
+    let candidates: Vec<(&'static (dyn Action + Send + Sync), Option<Condition>)> = cohort
         .iter()
         .filter_map(|row| {
             let action = actor.find_action(row.name)?;
@@ -1908,7 +1928,7 @@ fn pick_from_cohort(
             continue;
         }
         for (priority, (action, condition)) in candidates.iter().enumerate() {
-            if target.has_condition(*condition) {
+            if condition.is_some_and(|c| target.has_condition(c)) {
                 continue;
             }
             let aei =
@@ -1958,13 +1978,13 @@ const ATTRITION: &[LockdownPick] = &[
     // Level 1, no concentration: one enemy turn, for the cheapest slot
     // in the game. The engine models RAW's "Halt" / "Grovel" as a single
     // round of Stunned.
-    LockdownPick { name: "command", condition: Condition::Stunned },
+    LockdownPick { name: "command", condition: Some(Condition::Stunned) },
     // Level 3, concentration: a lasting penalty on everything the target
     // rolls, and the widest-carried row here — five chassis families.
-    LockdownPick { name: "bestow curse", condition: Condition::Baned },
+    LockdownPick { name: "bestow curse", condition: Some(Condition::Baned) },
     // Level 3, concentration: Confused, which in this engine costs the
     // holder its reactions as well as its aim.
-    LockdownPick { name: "enemies abound", condition: Condition::Confused },
+    LockdownPick { name: "enemies abound", condition: Some(Condition::Confused) },
 ];
 
 /// Make the toughest enemy worse at fighting, once the bursts have
@@ -12727,6 +12747,51 @@ mod tests {
         assert_eq!(aei.action().name(), "telekinetic");
         let targets = aei.target_ids().expect("telekinetic targets a single actor");
         assert_eq!(targets[0], mid, "should pick the mid-range zombie");
+    }
+
+    /// Plane Shift is the top of the lockdown ladder, and the row that
+    /// proves the marker column had to become an `Option`.
+    ///
+    /// It ships on exactly one chassis and had no rung that could reach
+    /// it: a spell that deals no damage, buffs nobody and installs no
+    /// condition is invisible to the damage lane, the self-buff cohort
+    /// and the area-control registry alike. What kept it off `LOCKDOWNS`
+    /// too was the "already handled" column — every other row names the
+    /// condition it leaves behind, and this one leaves no victim to
+    /// leave anything on.
+    ///
+    /// The gate that keeps it honest at the top of the list is its
+    /// range: touch. The lich reaches for it against the body it is
+    /// standing next to and for nothing further away, which the second
+    /// half of this test pins by moving the same fighter two tiles out.
+    #[test]
+    fn ai_plane_shifts_the_creature_it_is_standing_next_to() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::liches::LICH_TEMPLATE;
+
+        let mut e = empty_arena();
+        let lich = e
+            .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let adjacent = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let aei = try_lockdown(&e, lich).expect("a lockdown row should be available");
+        assert_eq!(aei.action().name(), "plane shift");
+        assert_eq!(aei.target_ids().expect("single actor")[0], adjacent);
+
+        // Two tiles further out and the touch range refuses. Something
+        // else on the ladder answers instead — the point is only that
+        // it is not this.
+        e.actors
+            .get_mut(&adjacent)
+            .unwrap()
+            .set_location(Coordinate::new(12, 5));
+        assert!(
+            try_lockdown(&e, lich)
+                .is_none_or(|aei| aei.action().name() != "plane shift"),
+            "touch range is what keeps the top of the ladder honest"
+        );
     }
 
     /// `try_cutting_words` should pick the enemy closest to one of the

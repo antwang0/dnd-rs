@@ -24894,11 +24894,24 @@ pub static ANTILIFE_SHELL: LazyLock<AntilifeShell> = LazyLock::new(|| AntilifeSh
 
 /// Plane Shift — 5e level-7 conjuration, action. Touch range (1 tile).
 /// The caster forces a single target to make a CHA save vs the caster's
-/// spell DC. On fail the target is banished to another plane — we model
-/// this with the `Mazed` condition for 100 rounds (effectively removed
-/// from combat for the rest of the encounter). No concentration — once
-/// the target is gone, they stay gone (RAW there is no concentration
-/// requirement on the offensive use of Plane Shift).
+/// spell DC. On fail the target is put on another plane of existence,
+/// and RAW gives that no duration, no concentration and no way home:
+/// once the target is gone, they stay gone.
+///
+/// So it is a `RemoveFromEncounter` rather than a condition. It used to
+/// be `Mazed` for a hundred rounds, which was the closest the engine
+/// could get to "forever" when the only alternative was an inert body
+/// standing on the grid. Now that `Mazed` genuinely takes a creature
+/// off the board, that spelling would have been actively wrong in a new
+/// way: the hundred-round timer would hold the encounter open —
+/// `living_teams` counts a banished creature as a live claim on the
+/// fight precisely because it is coming back — and a lich who plane
+/// shifted the last surviving PC would win a fight that could not end
+/// for another ninety-odd rounds of nobody doing anything.
+///
+/// The distinction is the point of the two lanes existing side by side.
+/// Banishment lends a creature to a demiplane; Plane Shift gives it
+/// away.
 pub struct PlaneShift {}
 
 impl Action for PlaneShift {
@@ -24954,11 +24967,12 @@ impl Action for PlaneShift {
             return Vec::new();
         }
         encounter.log("  plane shift: target is hurled to another plane of existence");
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Mazed,
-            timer: ConditionTimer::Rounds(100),
-        })]
+        vec![Box::new(
+            crate::engine::side_effects::RemoveFromEncounter {
+                actor_id: target_id,
+                log_verb: "is cast into another plane",
+            },
+        )]
     }
 }
 

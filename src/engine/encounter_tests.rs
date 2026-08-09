@@ -16238,6 +16238,63 @@ fn the_sweep_is_idempotent() {
     }
 }
 
+/// Plane Shift gives a creature away rather than lending it out, which
+/// is the whole difference between it and Banishment: no condition, no
+/// timer, no return, and — the part that matters to the fight — a team
+/// that loses its last member to it has lost.
+///
+/// It used to install `Mazed` for a hundred rounds, which was the
+/// closest the engine could get to "forever" while an off-board lane
+/// did not exist. Once `Mazed` genuinely took a body off the board that
+/// spelling became actively wrong in a new way, because `living_teams`
+/// counts a banished creature as a live claim on the encounter: a lich
+/// who plane shifted the last PC would have won a fight that could not
+/// end for another ninety-odd rounds of nobody doing anything.
+#[test]
+fn plane_shift_takes_a_creature_out_of_the_encounter_for_good() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::PLANE_SHIFT;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::liches::LICH_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let lich = e
+            .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Touch range: the two have to be in contact for the spell to
+        // resolve at all.
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+            .unwrap();
+        let spot = e.actors[&victim].location();
+        let xp_before = e.actors[&lich].xp_value();
+        for ef in PLANE_SHIFT.side_effects(&mut e, lich, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors.contains_key(&victim) {
+            continue; // the CHA save held; try another seed
+        }
+        assert_eq!(
+            e.actor_id_at(spot),
+            None,
+            "and the space it was standing in is free"
+        );
+        assert!(
+            !e.living_teams().contains(&0),
+            "a creature on another plane is not a live claim on this fight"
+        );
+        assert!(e.is_complete(), "so the encounter is over");
+        assert_eq!(
+            e.actors[&lich].xp_value(),
+            xp_before,
+            "nobody was killed, so nothing was earned"
+        );
+        return;
+    }
+    panic!("expected plane shift to land across 40 seeds");
+}
+
 /// The whole lane end to end, with nobody's hand on the wheel: an
 /// AI-driven caster reaches for Banishment off its own lockdown rung,
 /// the target comes off the board, and the board notices.

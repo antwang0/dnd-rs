@@ -103,7 +103,7 @@
 //! in the fight), and **the caster still has to concentrate**.
 
 use crate::conditions::Condition;
-use crate::engine::encounter::EncounterInstance;
+use crate::engine::encounter::{EncounterInstance, rings_outward};
 use crate::engine::mounts::UnseatCause;
 use crate::engine::types::{Coordinate, Size};
 
@@ -256,7 +256,7 @@ impl EncounterInstance {
         if fits(origin) {
             return Some(origin);
         }
-        self.rings_outward_from(origin, RETURN_SEARCH_RADIUS).find(|&c| fits(c))
+        rings_outward(origin, RETURN_SEARCH_RADIUS).find(|&c| fits(c))
     }
 }
 

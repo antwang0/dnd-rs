@@ -1421,6 +1421,41 @@ impl ApplicableSideEffect for RemoveCondition {
     }
 }
 
+/// Take an actor **out of the encounter for good**, without killing it.
+///
+/// The third way off the board, and the one that had no side effect of
+/// its own. `DealDamage` covers dying; `Condition::Banished` covers
+/// leaving and coming back (see `crate::engine::banishment`); this
+/// covers leaving and not coming back. RAW has exactly one offensive
+/// spell in that last category — Plane Shift, whose target is put on
+/// another plane with no duration, no concentration and no way home
+/// inside the fight — and it had been faking permanence with a
+/// hundred-round inert condition because the engine's only removal
+/// paths were reachable from `apply` and not from a spell's effect
+/// list.
+///
+/// Routes through `despawn_actor` rather than `remove_actor`, which is
+/// the distinction that matters: the target is not dead, so no death
+/// burst fires, no experience is awarded, and no loot is rolled. What
+/// it *was* carrying is dropped where it stood, which is the same
+/// policy every other despawn keeps — RAW would take the gear along,
+/// and voiding a party's magic sword because a lich touched its owner
+/// is the worse of the two inaccuracies.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct RemoveFromEncounter {
+    pub actor_id: usize,
+    /// Third-person verb phrase for the log — "is cast into another
+    /// plane". Supplied by the effect rather than fixed here, because
+    /// the whole point of a permanent removal is *how* it happened.
+    pub log_verb: &'static str,
+}
+
+impl ApplicableSideEffect for RemoveFromEncounter {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.despawn_actor(self.actor_id, self.log_verb);
+    }
+}
+
 /// Bring a flying actor down **under control** — strip every source of
 /// magical flight and set the actor on the floor, with no fall damage
 /// and no Prone.
