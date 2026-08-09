@@ -7062,9 +7062,22 @@ impl EncounterInstance {
                 actor.set_altitude_ft(supported);
             }
         }
+        if pending.is_empty() {
+            return;
+        }
         for (actor_id, distance_ft) in pending {
             self.resolve_fall(actor_id, distance_ft);
         }
+        // A fall is real damage and can therefore kill, and every other
+        // site that deals damage clears the corpse behind it. Two of the
+        // three chokepoints this sweep runs at do call `cleanup_dead_actors`
+        // — but both of them call it *before* the sweep, so a creature
+        // the ground finished would sit on the board with its footprint
+        // still stamped until something else happened to die. Guarded on
+        // a fall having actually happened so the overwhelmingly common
+        // "nobody is in the air" pass stays a single walk of the actor
+        // map.
+        self.cleanup_dead_actors();
     }
 
     /// Drop one actor `distance_ft` feet and charge them for it — SRD's

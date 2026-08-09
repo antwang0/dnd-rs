@@ -77842,3 +77842,126 @@ fn a_flier_who_takes_a_long_rest_wakes_up_on_the_ground_and_not_in_a_crater() {
         "nobody wakes up prone from sleeping well"
     );
 }
+
+/// A fall that kills clears the body, the same as anything else that
+/// kills.
+///
+/// Every other damage site in the engine sweeps the corpse behind it,
+/// and two of the three chokepoints the altitude sweep runs at do call
+/// `cleanup_dead_actors` — but both call it *before* the sweep, so a
+/// creature the ground finished would keep its footprint stamped on the
+/// board until something unrelated happened to die.
+#[test]
+fn the_ground_clears_up_after_itself() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::RemoveCondition;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let spot = e.actors[&goblin].location();
+    // One hit point: any fall at all finishes it, so the test doesn't
+    // ride a damage roll.
+    let hp = e.actors[&goblin].hitpoints();
+    e.actors.get_mut(&goblin).unwrap().take_damage(hp - 1);
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+
+    RemoveCondition {
+        actor_id: goblin,
+        condition: Condition::Flying,
+    }
+    .apply(&mut e);
+    e.reconcile_altitudes();
+
+    assert!(
+        !e.actors.contains_key(&goblin),
+        "the fall killed it and the sweep should have cleared it"
+    );
+    assert_eq!(
+        e.actor_id_at(spot),
+        None,
+        "and taken its footprint off the board with it"
+    );
+}
+
+/// The whole feature, end to end, with nobody's hand on the wheel: a
+/// creature holds itself up with its own concentration, an AI-driven
+/// enemy hits it hard enough to end the spell, and the ground collects.
+///
+/// Every other test here stages the drop directly — install the
+/// condition, strip it, call the sweep. That is the right way to pin the
+/// rules and the wrong way to answer the question that decides whether
+/// any of it mattered: does a fight nobody is steering ever produce a
+/// fall? This is the path a real one takes. Nothing in the loop below
+/// knows about altitude; a swing lands, a concentration save fails, the
+/// spell ends, and the sweep at the bottom of `process_stack` does the
+/// rest.
+///
+/// The flight itself is installed rather than cast, and that is a real
+/// limitation rather than test convenience: `Fly` sits on seven chassis
+/// families and the AI has no rung that reaches it, so an unstaged
+/// fixture would be measuring the wrong absence.
+#[test]
+fn a_fight_nobody_is_steering_still_brings_somebody_down() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let ai = SimpleAi {};
+    let mut seeds_that_fell = 0;
+    for seed in 0..16u64 {
+        let mut e = ei_with_terrain_seeded(24, 18, &[], seed);
+        let flier = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        // A hill giant, and adjacent: the point of the fixture is a big
+        // hit landing on a concentrating caster early, which is the
+        // ordinary way a Fly ends in play.
+        e.instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(9, 6), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(9, 9), 1, 1)
+            .unwrap();
+        // A self-cast Fly, staged in the shape the spell leaves behind:
+        // the condition on the target and the concentration that names
+        // it, which is what a failed save rolls back. A martial chassis
+        // holds it because the caster who would really be up there dies
+        // to the blow that breaks the grip, and a corpse does not fall —
+        // the sweep runs after `cleanup_dead_actors` and finds nobody.
+        let mut data = ConcentrationData::new("fly");
+        data.conditions.push((flier, Condition::Flying));
+        e.actors.get_mut(&flier).unwrap().start_concentration(data);
+        e.actors
+            .get_mut(&flier)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Permanent);
+        e.reconcile_altitudes();
+        let _ = e.initialize();
+        for _ in 0..400 {
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(id) = e.current_turn_actor_id() else {
+                break;
+            };
+            match ai.decide(&e, id) {
+                ControllerDecision::Act(aei) => e.push_action(aei),
+                ControllerDecision::AwaitInput => break,
+            }
+        }
+        if e.messages().iter().any(|m| m.contains("hits the ground")) {
+            seeds_that_fell += 1;
+        }
+    }
+    assert!(
+        seeds_that_fell > 0,
+        "sixteen fights with a caster holding itself aloft and the ground never collected once"
+    );
+}
