@@ -1437,6 +1437,22 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a⁴. Dispel Magic — end the enemy's spell rather than
+        //      out-rolling it. Concentration-free, so it does not
+        //      compete with the lane above; it sits here rather than
+        //      higher because it only ever fires when the board
+        //      actually shows something to end, and on a clean board
+        //      the rung costs nothing but a walk of the actor list.
+        //
+        //      Above the damage lanes below because a dispel is worth
+        //      more the earlier it lands: a Haste stripped this turn
+        //      denies the whole rest of the fight, and a flier dropped
+        //      before the Fireball goes out is a flier the Fireball can
+        //      reach.
+        if let Some(aei) = try_dispel_magic(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — a point with no friendly fire that catches two
         //    enemies, or one when the cast spends neither the Action nor
         //    a slot (see `best_burst_placement`'s floor).
@@ -1773,6 +1789,83 @@ fn try_hold_person(
         }
     }
     best.map(|(_, _, aei)| aei)
+}
+
+/// Cast **Dispel Magic** at the enemy carrying the most magic worth
+/// ending.
+///
+/// Five PC / NPC chassis carry the spell — Wizard, Cleric, Druid,
+/// Artificer and the Death Knight — and until this rung existed not one
+/// of them ever cast it. Dispel Magic declares no damage and installs no
+/// condition, so every picker above filtered it out the same way the
+/// summons used to be filtered out: the AI's lanes are damage, lockdown
+/// and buff, and "undo something" is none of the three.
+///
+/// The target ranking is three tiers, and the top one is new:
+///
+///   - **Airborne** (`altitude_ft > 0`). Ending a flier's spell is the
+///     only play on the board that both takes the effect away *and*
+///     charges for the way down — 3d6 and prone, courtesy of the
+///     altitude sweep. It also happens to be the case a damage-shaped
+///     picker is least able to see, because the payoff lands on a
+///     different lane entirely.
+///   - **Concentrating.** RAW's headline use, and the one that scales:
+///     dropping a concentration ends the whole spell on every target it
+///     touched, so one action can undo a Web that pinned three allies.
+///   - **Carrying any dispellable buff.** The long tail — a Raging
+///     barbarian, a Blurred mage, a Hasted brute. Worth an action and a
+///     3rd-level slot, but only once the two above have said no.
+///
+/// Ties inside a tier break to the lowest actor id rather than to the
+/// toughest target, which is the opposite of `try_hold_person`'s rule
+/// one rung up and deliberately so: a lockdown is spent *on* the
+/// creature and wants the scariest one, while a dispel is spent on the
+/// *effect*, and this engine has no way to price one Haste above
+/// another. Lowest id is then the honest tiebreak — reproducible from
+/// the seed, and not pretending to a judgement the AI cannot make.
+///
+/// Range and line of sight are left to `validate`, which owns the 120 ft
+/// band the spell declares.
+fn try_dispel_magic(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("dispel magic")?;
+    let my_team = actor.team();
+    let mut best: Option<(u8, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        let tier = if target.altitude_ft() > 0 {
+            3
+        } else if target.is_concentrating() {
+            2
+        } else if target
+            .conditions()
+            .keys()
+            .any(|c| c.is_dispellable_buff())
+        {
+            1
+        } else {
+            continue;
+        };
+        // Only the winner is built and validated, but the check has to
+        // happen per candidate: a higher-tier target the caster cannot
+        // see must not shut out a lower-tier one it can.
+        if best.as_ref().is_some_and(|(best_tier, _)| tier <= *best_tier) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+        if aei.validate(encounter) {
+            best = Some((tier, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Cast Cause Fear on the toughest in-range enemy if we have it and
@@ -10886,6 +10979,97 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// The dispel rung ranks the board, and a flier outranks everything
+    /// else on it.
+    ///
+    /// Three enemies, three tiers, one wizard: a goblin thirty feet up,
+    /// a goblin concentrating, and a goblin merely Blurred. The picker
+    /// should reach past the two that a damage-shaped lane could at
+    /// least in principle have handled and take the one whose spell is
+    /// also holding it in the air — because ending that spell is the
+    /// only play on the board that collects 3d6 on the way out.
+    ///
+    /// Then the tiers are peeled back one at a time, which is the half
+    /// that would catch a picker that simply preferred the lowest id or
+    /// the nearest body.
+    #[test]
+    fn the_dispel_picker_reaches_for_the_flier_before_the_concentrator() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .unwrap();
+        // Ordered so that id ascends as tier descends — a picker that
+        // preferred the lowest id would agree with the right answer by
+        // accident if these were the other way round.
+        let flier = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+            .unwrap();
+        let concentrator = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 4), 1, 1)
+            .unwrap();
+        let buffed = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 4), 1, 2)
+            .unwrap();
+        e.actors
+            .get_mut(&flier)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        e.actors
+            .get_mut(&concentrator)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("web"));
+        e.actors
+            .get_mut(&buffed)
+            .unwrap()
+            .add_condition(Condition::Blurred, ConditionTimer::Rounds(10));
+
+        let pick = try_dispel_magic(&e, wizard).expect("three legal targets");
+        assert_eq!(pick.action().name(), "dispel magic");
+        assert_eq!(
+            pick.target_ids(),
+            Some(&[flier][..]),
+            "the airborne target outranks the concentrator and the buff"
+        );
+
+        // Take the flier's altitude away and the concentrator inherits
+        // the pick.
+        e.actors
+            .get_mut(&flier)
+            .unwrap()
+            .remove_condition(Condition::Flying);
+        e.actors.get_mut(&flier).unwrap().set_altitude_ft(0);
+        let pick = try_dispel_magic(&e, wizard).expect("two legal targets");
+        assert_eq!(pick.target_ids(), Some(&[concentrator][..]));
+
+        // And with nothing being concentrated on, the bare buff.
+        e.actors.get_mut(&concentrator).unwrap().end_concentration();
+        let pick = try_dispel_magic(&e, wizard).expect("one legal target");
+        assert_eq!(pick.target_ids(), Some(&[buffed][..]));
+
+        // A board with no magic on it at all is a board the rung
+        // declines, rather than one where it burns a 3rd-level slot on
+        // a goblin with nothing to strip.
+        e.actors
+            .get_mut(&buffed)
+            .unwrap()
+            .remove_condition(Condition::Blurred);
+        assert!(
+            try_dispel_magic(&e, wizard).is_none(),
+            "nothing to end means nothing to cast"
+        );
     }
 
     /// The bite rung is the exception to the damage picker, and it is

@@ -12023,9 +12023,13 @@ impl Action for Fear {
 pub static FEAR: LazyLock<Fear> = LazyLock::new(|| Fear {});
 
 /// Greater Restoration — level-5 abjuration. Touch-range cleanse + heal.
-/// Removes one of: Charmed / Petrified / Paralyzed / Stunned / one
-/// exhaustion level (we don't model exhaustion). Then heals 4d8 + caster's
-/// spellcasting modifier. Distinct from Lesser Restoration: GR can lift
+/// Removes one of the heavyweight conditions on `CANDIDATES` below —
+/// including RAW's "reduce the target's exhaustion level by one", which
+/// the `Exhausted` row delivers exactly, since `remove_condition` routes
+/// that flag through the six-rung ladder rather than clearing it. (This
+/// docstring used to claim exhaustion was unmodeled, which the
+/// `CANDIDATES` list one screen below has contradicted since the ladder
+/// landed.) Then heals 4d8 + caster's spellcasting modifier. Distinct from Lesser Restoration: GR can lift
 /// the heavyweight lockdown conditions LR can't touch, and pairs the
 /// cleanse with a real heal — paired action-economy efficiency. RAW
 /// requires a 100gp diamond as material; we don't model components.

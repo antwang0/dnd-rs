@@ -1184,18 +1184,31 @@ impl Action for ActionSurge {
 pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {});
 
 /// 5e Rogue Assassin **Assassinate** (level 3 subclass) feature tag.
-/// Passive once-only rider: the assassin rolls with advantage on any
-/// attack against a creature that hasn't taken a turn yet in this
-/// combat. RAW also crits on a hit against a *surprised* target, but
-/// we don't model surprise as a discrete state — the engine starts
-/// every encounter in initiative order with all actors eligible.
 ///
-/// Read at `EncounterInstance::compute_attack_mode` next to the Pack
-/// Tactics / Wolf Totem advantage clauses; the target's
-/// `has_taken_turn_in_combat` latch is set on the first turn-start
-/// (see `start_turn_for`). Stored as a `has_passive_feature` flag so
-/// it never consumes a per-rest charge — the gate is purely the
-/// target-side latch.
+/// Both RAW halves ship, and they are read in two different places
+/// because they are two different questions:
+///
+///   - **Advantage** against a creature that hasn't taken a turn yet in
+///     this combat. Read at `EncounterInstance::attack_mode_tally` next
+///     to the Pack Tactics / Wolf Totem advantage clauses, off the
+///     target's `has_taken_turn_in_combat` latch, which is set on the
+///     first turn-start (see `start_turn_for`).
+///   - **Auto-crit** on any hit against a *surprised* creature. Read at
+///     `EncounterInstance::target_grants_auto_crit`, off
+///     `Condition::Surprised`.
+///
+/// This docstring used to say the second half was unimplementable
+/// because "we don't model surprise as a discrete state", which stopped
+/// being true when `resolve_opening_surprise` and `Condition::Surprised`
+/// arrived. The clause was wired at the same time; only the excuse was
+/// left behind.
+///
+/// The two are deliberately not folded together: a creature can be
+/// surprised without being first in the order, and can be last in the
+/// order without ever having been surprised.
+///
+/// Stored as a `has_passive_feature` flag so it never consumes a
+/// per-rest charge — both gates are purely target-side.
 pub const ASSASSINATE_TAG: &str = "rogue.assassinate";
 
 /// Rogue Cunning Action — bonus-action Dash. 5e gives the rogue a choice

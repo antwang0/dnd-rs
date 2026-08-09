@@ -77804,3 +77804,41 @@ fn the_wizard_who_loses_their_grip_loses_their_altitude_in_the_same_breath() {
         "the floor charged for the trip"
     );
 }
+
+/// A night's sleep is not a fall. A long rest clears every condition on
+/// the sheet, flight sources included, so an actor who rested in the air
+/// would otherwise be found thirty feet up with nothing holding them
+/// there and charged 3d6 for it on the next sweep.
+#[test]
+fn a_flier_who_takes_a_long_rest_wakes_up_on_the_ground_and_not_in_a_crater() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    assert!(e.actors[&wizard].altitude_ft() > 0, "aloft before the rest");
+
+    e.long_rest();
+    assert_eq!(
+        e.actors[&wizard].altitude_ft(),
+        0,
+        "the rest is where they came down"
+    );
+    let hp = e.actors[&wizard].hitpoints();
+    e.reconcile_altitudes();
+    assert_eq!(
+        e.actors[&wizard].hitpoints(),
+        hp,
+        "and the sweep has nothing to collect"
+    );
+    assert!(
+        !e.actors[&wizard].has_condition(Condition::Prone),
+        "nobody wakes up prone from sleeping well"
+    );
+}

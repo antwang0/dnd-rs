@@ -5964,6 +5964,13 @@ impl ActorInstance {
             self.conditions
                 .insert(Condition::Exhausted, ConditionTimer::Permanent);
         }
+        // The blanket clear above took every flight source with it, so
+        // without this line the altitude sweep would find a creature
+        // thirty feet up with nothing holding it there and charge it
+        // 3d6 for a night's sleep. A creature that has finished a long
+        // rest is on the ground: the rest is where it came down, not a
+        // fall it has yet to take.
+        self.altitude_ft = 0;
         self.concentration = None;
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
