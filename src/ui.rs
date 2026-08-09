@@ -808,12 +808,34 @@ pub fn render_sideinfo(
             } else {
                 Style::default()
             };
-            Line::from(vec![
+            // 5e weapon mastery: name the property beside the weapon
+            // that carries it, but only for a wielder who is trained to
+            // use it. An untrained hand gets nothing from the tag, and
+            // printing it anyway would advertise a clause that will not
+            // fire — which is worse than saying nothing, because the
+            // player would plan around it.
+            let mastery = crate::engine::mastery::effective_mastery(
+                encounter,
+                curr_actor_id,
+                action.weapon_mastery(),
+            );
+            let mut spans = vec![
                 Span::raw(prefix),
                 Span::styled(tag, base_style),
                 Span::raw(" "),
                 Span::styled(action.name().to_string(), base_style),
-            ])
+            ];
+            if let Some(m) = mastery {
+                spans.push(Span::styled(
+                    format!(" \u{00b7}{}", m.name()),
+                    if is_selected {
+                        base_style
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    },
+                ));
+            }
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(
@@ -842,7 +864,16 @@ mod tests {
     /// A `TestBackend` render is the cheapest thing that can tell the
     /// difference.
     fn rendered_panel(encounter: &EncounterInstance) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("test backend");
+        rendered_panel_tall(encounter, 24)
+    }
+
+    /// `rendered_panel` with the terminal height as a parameter, for the
+    /// tests that read the *action* list. The panel splits its height
+    /// three ways, so at the default 24 rows the action pane is six
+    /// lines and a martial's weapon sits well below the fold — a test
+    /// that asserted on it there would be asserting about the fold.
+    fn rendered_panel_tall(encounter: &EncounterInstance, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(60, height)).expect("test backend");
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -1105,6 +1136,43 @@ mod tests {
                 .any(|l| l.starts_with("Resistant:") && !l.contains("Bludgeoning")),
             "the unqualified line must not claim the qualified types: {:?}",
             rendered
+        );
+    }
+
+    /// 5e weapon mastery is annotated on the action list, and only for
+    /// the wielder who can use it.
+    ///
+    /// The gate is the point of the test. The tag lives on shared weapon
+    /// statics — the goblin's scimitar *is* the fighter's — so a panel
+    /// that printed it off the weapon alone would advertise
+    /// "scimitar ·nick" to every goblin on the roster: a clause the
+    /// player would plan around and that would never fire.
+    #[test]
+    fn the_action_list_names_a_mastery_property_only_for_a_trained_wielder() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        // The action list only renders while somebody is being prompted,
+        // so each fixture needs a live turn — hence the second actor and
+        // the `process_stack` that opens the first slot.
+        let mut trained = encounter_with(&[(&FIGHTER_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        trained.process_stack();
+        let panel = rendered_panel_tall(&trained, 90);
+        assert!(
+            panel.contains("\u{00b7}nick"),
+            "a fighter's scimitar should name what it does:\n{panel}"
+        );
+
+        let mut untrained = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        untrained.process_stack();
+        let panel = rendered_panel_tall(&untrained, 90);
+        assert!(
+            panel.contains("scimitar"),
+            "the goblin is holding the same weapon:\n{panel}"
+        );
+        assert!(
+            !panel.contains("\u{00b7}nick"),
+            "an untrained wielder should be promised nothing:\n{panel}"
         );
     }
 

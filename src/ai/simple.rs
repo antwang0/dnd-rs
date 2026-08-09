@@ -7814,6 +7814,147 @@ fn matchup_penalty(
     }
 }
 
+/// What a weapon's 5e mastery property is worth to `actor_id` against
+/// `target_id`, in damage-equivalent points, for the attack picker's
+/// last sort key.
+///
+/// Zero for an untrained wielder, an unmastered weapon, and every
+/// property whose value the picker cannot act on. The numbers are
+/// deliberately small — a die or less, except for Cleave — because this
+/// is a tie-break folded into the damage estimate, not a second ranking:
+/// a property should decide between two weapons that are otherwise
+/// close, and should never talk a martial out of the bigger die.
+///
+/// Why each is what it is:
+///
+///   - **Cleave** is a whole extra swing at a second creature, so it is
+///     worth the weapon's own dice — but only when there *is* a second
+///     creature beside the target and inside the wielder's reach, and
+///     only if the once-per-turn allowance is still unspent. Off those
+///     conditions it is worth nothing, which is the case that stops a
+///     greataxe from outranking everything in a duel.
+///   - **Graze** is the ability modifier on a miss. Priced at roughly a
+///     third of it: the estimate this folds into is a damage-on-a-hit
+///     number with no hit probability in it, so pricing the graze at
+///     full value would be counting it on every swing including the
+///     ones that land.
+///   - **Topple** is advantage on every melee swing at the target for as
+///     long as they stay down, which for a wielder with Extra Attack
+///     starts paying inside the same turn. Worth nothing against a
+///     creature already on the floor.
+///   - **Vex** is advantage on the next swing, so it is worth more to a
+///     wielder who has another swing coming.
+///   - **Sap** and **Slow** are defensive: they cost the target a swing's
+///     accuracy and ten feet of ground. Real, small, and not damage.
+///   - **Push** and **Nick** score nothing. Nick's value is already in
+///     the picker via the cost it removes, and Push moves a creature the
+///     wielder may well want to stay next to — a picker that chased it
+///     would be optimising for the wrong thing.
+fn mastery_damage_bonus(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    target_id: usize,
+    action: &dyn Action,
+    reach: isize,
+) -> f32 {
+    use crate::engine::mastery::{CLEAVE_TAG, WeaponMastery, effective_mastery};
+    let Some(mastery) = effective_mastery(encounter, actor_id, action.weapon_mastery()) else {
+        return 0.0;
+    };
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return 0.0;
+    };
+    let another_swing_coming = actor.has_extra_attack();
+    match mastery {
+        WeaponMastery::Cleave => {
+            if actor.once_per_turn_used(CLEAVE_TAG)
+                || !action.is_melee_attack()
+                || !has_cleavable_neighbour(encounter, actor_id, target_id, reach)
+            {
+                return 0.0;
+            }
+            action
+                .expected_damage(encounter, actor_id)
+                .map(|d| d * 0.5)
+                .unwrap_or(0.0)
+        }
+        WeaponMastery::Graze => {
+            let ability = crate::engine::types::AbilityScoreType::Strength;
+            // The picker has no view of which ability the swing rolls,
+            // so it prices the graze off the better of the two a weapon
+            // can use. Both are the wielder's own numbers, and a martial
+            // with a Graze weapon is holding it with whichever is higher.
+            let dex = crate::engine::types::AbilityScoreType::Dexterity;
+            let modifier = actor
+                .ability_modifier(ability)
+                .max(actor.ability_modifier(dex))
+                .max(0) as f32;
+            modifier / 3.0
+        }
+        WeaponMastery::Topple => {
+            let already_down = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.has_condition(Condition::Prone));
+            if already_down {
+                0.0
+            } else if another_swing_coming {
+                2.0
+            } else {
+                1.0
+            }
+        }
+        WeaponMastery::Vex => {
+            if another_swing_coming {
+                1.5
+            } else {
+                0.75
+            }
+        }
+        WeaponMastery::Sap => 1.0,
+        WeaponMastery::Slow => {
+            let already_slow = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.has_condition(Condition::Hobbled));
+            if already_slow { 0.0 } else { 0.75 }
+        }
+        WeaponMastery::Push | WeaponMastery::Nick => 0.0,
+    }
+}
+
+/// True if some enemy other than `target_id` is standing within 5 feet
+/// of it and inside `reach` of the wielder — the shape 5e's **Cleave**
+/// asks for.
+///
+/// Shares its predicate with `engine::mastery`'s own target sweep by
+/// asking the same two footprint questions in the same order; what it
+/// deliberately does *not* share is the sweep's tie-break, because the
+/// picker only needs to know whether a second creature exists, not which
+/// one the swing would carry into.
+fn has_cleavable_neighbour(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    target_id: usize,
+    reach: isize,
+) -> bool {
+    let Some(team) = encounter.actors.get(&actor_id).map(|a| a.team()) else {
+        return false;
+    };
+    encounter.actors.iter().any(|(id, a)| {
+        *id != target_id
+            && *id != actor_id
+            && a.team() != team
+            && a.is_combat_active()
+            && encounter
+                .footprint_distance(target_id, *id)
+                .is_some_and(|d| d <= crate::actions::action_template::MELEE_REACH)
+            && encounter
+                .footprint_distance(actor_id, *id)
+                .is_some_and(|d| d <= reach)
+    })
+}
+
 fn best_attack_against(
     actor_id: usize,
     actor: &crate::actors::actor_template::ActorInstance,
@@ -7983,7 +8124,16 @@ fn best_attack_against(
             crate::engine::dice::RollMode::Disadvantage,
         );
         let mode = mode_priority(encounter.resolve_attack_mode_against(target_id, tally));
-        let damage = action.expected_damage(encounter, actor_id);
+        // The damage key, plus what this weapon's 5e mastery property is
+        // worth against *this* target. Folded into the estimate rather
+        // than added as a fifth sort key on purpose: a property is worth
+        // something, not everything, and a rung of its own would let a
+        // club's Slow outrank a greataxe's dice. Expressed in
+        // damage-equivalent points, it decides a close call and loses a
+        // lopsided one — see `mastery_damage_bonus`.
+        let damage = action
+            .expected_damage(encounter, actor_id)
+            .map(|d| d + mastery_damage_bonus(encounter, actor_id, target_id, action, reach));
         let pick = match &best {
             None => true,
             Some((bs, bm, br, bd, _)) => {
@@ -14799,5 +14949,74 @@ mod tests {
         assert_eq!(free.action().name(), "melf's minute meteors");
     }
 
-}
+    /// 5e **Cleave** is only worth something when there is a second
+    /// creature for the swing to carry into, and the picker prices it
+    /// that way — the same greataxe that wins a crowd loses a duel to a
+    /// heavier die.
+    ///
+    /// Both halves are the test. A flat bonus for holding a Cleave
+    /// weapon would pass the first assertion and fail the second, and
+    /// that is the failure worth pinning: a picker that always reached
+    /// for the axe would be optimising for a clause that cannot fire.
+    #[test]
+    fn the_picker_prices_cleave_by_whether_there_is_a_second_body() {
+        use crate::actions::monster_attacks::{GREATAXE, GREATSWORD};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 
+        // 1d12 (6.5) against 2d6 (7.0): the greatsword wins on dice
+        // alone, so anything the axe wins it wins on its property.
+        let pick_with_crowd = |crowd: bool| -> String {
+            let mut e = empty_arena();
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            if crowd {
+                e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
+                    .unwrap();
+            }
+            let mut actor = e.actors[&fighter].clone();
+            actor.actions = vec![&GREATAXE, &GREATSWORD];
+            best_attack_against(fighter, &actor, &e, target)
+                .map(|(_, a)| a.name().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+        assert_eq!(pick_with_crowd(true), "greataxe", "a crowd is what Cleave is for");
+        assert_eq!(pick_with_crowd(false), "greatsword", "a duel is not");
+    }
+
+    /// The training gate reaches the picker too. The same two weapons in
+    /// an untrained hand are ranked on their dice and nothing else, so a
+    /// creature with no Weapon Mastery never picks the axe for a clause
+    /// it cannot use.
+    #[test]
+    fn an_untrained_picker_ranks_the_same_two_weapons_on_dice_alone() {
+        use crate::actions::monster_attacks::{GREATAXE, GREATSWORD};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
+            .unwrap();
+        let mut actor = e.actors[&fighter].clone();
+        actor.actions = vec![&GREATAXE, &GREATSWORD];
+        actor.set_weapon_mastery(false);
+        e.actors.get_mut(&fighter).unwrap().set_weapon_mastery(false);
+        assert_eq!(
+            best_attack_against(fighter, &actor, &e, target)
+                .map(|(_, a)| a.name().to_string())
+                .unwrap_or_else(|| "<none>".to_string()),
+            "greatsword",
+            "an untrained wielder is ranked on dice"
+        );
+    }
+}
