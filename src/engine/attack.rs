@@ -102,6 +102,31 @@ pub trait ActionOnHitRider {
         is_crit: bool,
         effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32;
+
+    /// Called on a swing that *didn't* land, before the miss-side
+    /// reactions (Unfailing Inspiration's refund, Riposte, Redirect
+    /// Attack) get their look at it.
+    ///
+    /// Defaulted to nothing, because almost no clause in the game fires
+    /// on a miss and every rider that existed before this hook did
+    /// wanted exactly that. The one that doesn't is 5e's **Graze**
+    /// weapon mastery — *"if your attack roll with this weapon misses a
+    /// creature, you can deal damage to that creature equal to the
+    /// ability modifier"* — which is a rule about the swing and
+    /// therefore belongs on the swing's rider rather than in a second
+    /// attack-resolution path beside this one.
+    ///
+    /// Same contract as `apply`: push side effects onto `effects`,
+    /// return the damage added so the caller's `damage_dealt` figure
+    /// stays honest. A miss that grazes reports the graze.
+    fn on_miss(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _p: &AttackParams,
+        _effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        0
+    }
 }
 
 /// The rider every attack that doesn't have one uses. Adds nothing.
@@ -117,6 +142,50 @@ impl ActionOnHitRider for NoRider {
         _effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     ) -> u32 {
         0
+    }
+}
+
+/// Two riders on one swing, run in order.
+///
+/// The pipeline takes a single `&dyn ActionOnHitRider`, which was enough
+/// while a rider belonged to an action and an action had one. Weapon
+/// mastery broke that: the property belongs to the *weapon*, and a
+/// rogue's shortsword is both a Vex weapon and the thing Sneak Attack
+/// rides. Rather than teach either clause about the other — the
+/// alternative, and the one that would have put a mastery check inside
+/// `SneakAttack` — the two compose here.
+///
+/// `first` runs before `second` on both the hit and the miss hook, and
+/// the two damage figures sum. Nesting composes further if a third ever
+/// shows up.
+pub struct AttackRiderPair<'a, S> {
+    pub first: &'a dyn ActionOnHitRider,
+    pub second: S,
+}
+
+impl<S: ActionOnHitRider> ActionOnHitRider for AttackRiderPair<'_, S> {
+    fn apply(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &AttackParams,
+        mode: RollMode,
+        is_crit: bool,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        let a = self.first.apply(encounter, p, mode, is_crit, effects);
+        let b = self.second.apply(encounter, p, mode, is_crit, effects);
+        a.saturating_add(b)
+    }
+
+    fn on_miss(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &AttackParams,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        let a = self.first.on_miss(encounter, p, effects);
+        let b = self.second.on_miss(encounter, p, effects);
+        a.saturating_add(b)
     }
 }
 
@@ -1933,6 +2002,14 @@ pub fn resolve_attack_outcome_with_rider(
         outcome,
     ));
     if !hit {
+        // The action's own miss-side clause — 5e's Graze weapon
+        // mastery, and anything that joins it. Runs first, because it
+        // is part of the attacker's swing: the target takes the graze
+        // whether or not they then Riposte, and a Riposte that drops
+        // the attacker should not retroactively erase damage the swing
+        // had already dealt.
+        let mut miss_effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let miss_damage = rider.on_miss(encounter, &p, &mut miss_effects);
         // 5e College of Eloquence Bard **Unfailing Inspiration**: the
         // die the swing just spent comes back, because the swing
         // missed. Fires before Riposte so the refund lands whether or
@@ -1964,7 +2041,7 @@ pub fn resolve_attack_outcome_with_rider(
             // no chassis on the roster holds both.
             try_fire_attack_redirect(encounter, &p, RedirectLane::Miss);
         }
-        return (Vec::new(), 0);
+        return (miss_effects, miss_damage);
     }
     // Post-hit interception: a connecting swing may still land on
     // something that isn't the target — a Mirror Image decoy, or the

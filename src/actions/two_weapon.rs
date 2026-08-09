@@ -46,6 +46,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
+        mastery::{MasteryRider, WeaponMastery, effective_mastery},
         side_effects::{ApplicableSideEffect, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
     },
@@ -110,6 +111,36 @@ pub struct OffHandAttack {
     pub damage_dice: Dice,
     /// The off-hand weapon's damage type.
     pub damage_type: DamageType,
+    /// The 5e mastery property of the weapon in the off hand — see
+    /// `engine::mastery`.
+    ///
+    /// Both lanes matter here and they are different lanes. **Nick** is
+    /// read by `cost` below and makes this swing free; every other
+    /// property rides the swing itself through `MasteryRider`, exactly
+    /// as it would in the main hand. A dual-wielder holding a dagger
+    /// (Nick) and a shortsword (Vex) gets a free off-hand dagger *and*
+    /// a vexed target from the shortsword, which is precisely the
+    /// build RAW's mastery table is inviting.
+    pub mastery: Option<WeaponMastery>,
+}
+
+impl OffHandAttack {
+    /// True if this swing rides the Attack action rather than a bonus
+    /// action — the whole of 5e's **Nick** mastery property.
+    ///
+    /// Three clauses, and each is doing work: the weapon has to *be* a
+    /// Nick weapon, the wielder has to be trained (`effective_mastery`
+    /// carries that gate for every mastery read in the engine), and no
+    /// off-hand swing may have been made yet this turn.
+    fn nick_is_free(&self, encounter: &EncounterInstance, wielder: usize) -> bool {
+        if effective_mastery(encounter, wielder, self.mastery) != Some(WeaponMastery::Nick) {
+            return false;
+        }
+        encounter
+            .actors
+            .get(&wielder)
+            .is_some_and(|a| !a.once_per_turn_used(crate::engine::mastery::NICK_TAG))
+    }
 }
 
 impl Action for OffHandAttack {
@@ -160,15 +191,46 @@ impl Action for OffHandAttack {
         vec![self.damage_type]
     }
 
+    /// One bonus action — unless the weapon in the off hand has the
+    /// **Nick** mastery property and its wielder is trained to use it,
+    /// in which case the swing is free.
+    ///
+    /// RAW: *"when you make the extra attack of the Light property, you
+    /// can make it as part of the Attack action instead of as a Bonus
+    /// Action."* Riding as part of the Attack action is, in this
+    /// engine's action economy, exactly "costs nothing extra": the
+    /// Action that opened the two-weapon window has already been paid
+    /// for, and `custom_validate_input` below is what checks it was.
+    ///
+    /// RAW's *"only once per turn"* is enforced by `NICK_TAG`, which the
+    /// stack stamps after **any** off-hand swing resolves — see
+    /// `EncounterInstance::mark_offhand_swing`. Keying the tag on the
+    /// swing rather than on the discount is what keeps this function
+    /// honest during its own action's resolution: `Action::execute`
+    /// evaluates `cost` twice, once to check affordability and once to
+    /// build the `ConsumeResource`, and a flag that flipped in between
+    /// would have handed out a free swing and then billed a bonus
+    /// action for it.
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
+        if self.nick_is_free(e, c) {
+            return Vec::new();
+        }
         vec![Resource::BonusAction]
+    }
+
+    fn weapon_mastery(&self) -> Option<WeaponMastery> {
+        self.mastery
+    }
+
+    fn is_offhand_swing(&self) -> bool {
+        true
     }
 
     /// RAW's opening clause, and the reason the ledger exists.
@@ -237,7 +299,7 @@ impl Action for OffHandAttack {
         let damage_bonus = offhand_damage_ability(caster, self.attack_ability)
             .map(|a| caster.ability_modifier(a))
             .unwrap_or(0);
-        crate::engine::attack::resolve_attack(
+        crate::engine::attack::resolve_attack_with_rider(
             encounter,
             crate::engine::attack::AttackParams {
                 caster_id,
@@ -252,6 +314,12 @@ impl Action for OffHandAttack {
                 min_range: None,
                 is_spell: false,
             },
+            // Every property but Nick applies to the off-hand swing
+            // exactly as it would to the main-hand one — RAW's mastery
+            // is a property of the weapon, and nothing in it cares
+            // which hand the weapon is in. Nick is the exception and
+            // it has already been spent, at the cost lane above.
+            &MasteryRider::new(self.mastery, self.attack_ability),
         )
         // No `maybe_chain_extra_attack`: Extra Attack multiplies the
         // Attack action, and this is not it.
@@ -269,6 +337,9 @@ pub static OFF_HAND_SHORTSWORD: OffHandAttack = OffHandAttack {
     attack_ability: AbilityScoreType::Dexterity,
     damage_dice: Dice::new(1, 6),
     damage_type: DamageType::Piercing,
+    // RAW's shortsword masters Vex, not Nick: the off-hand blade that
+    // sets up the *next* swing rather than paying for this one.
+    mastery: Some(WeaponMastery::Vex),
 };
 
 /// Off-hand dagger — DEX-based 1d4 piercing. The smallest blade on the
@@ -281,4 +352,9 @@ pub static OFF_HAND_DAGGER: OffHandAttack = OffHandAttack {
     attack_ability: AbilityScoreType::Dexterity,
     damage_dice: Dice::new(1, 4),
     damage_type: DamageType::Piercing,
+    // RAW's dagger masters Nick, which is what makes a dagger in the
+    // off hand worth more than its 1d4 suggests: for a trained
+    // wielder the swing costs nothing, leaving the bonus action for a
+    // Cunning Action or a Flurry.
+    mastery: Some(WeaponMastery::Nick),
 };

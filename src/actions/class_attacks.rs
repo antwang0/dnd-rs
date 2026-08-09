@@ -12,6 +12,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
+        mastery::{MasteryRider, WeaponMastery},
         side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, GiveResource, Resource},
         types::{Coordinate, DamageType},
         util::{footprint_chebyshev, get_tiles_from_size},
@@ -66,6 +67,14 @@ pub struct RogueWeapon {
     /// `None` for an ordinary weapon; the second psychic blade uses it
     /// to enforce RAW's "immediately after you take the Attack action".
     pub extra_gate: Option<fn(&EncounterInstance, usize) -> bool>,
+    /// The weapon's 5e mastery property — see `engine::mastery`.
+    ///
+    /// `Some` on the shortsword, which is an object out of the weapon
+    /// shop and carries what RAW prints beside it; `None` on both
+    /// psychic blades, which are not. A Soulknife's blade is
+    /// manifested psionic force with no entry in the weapon table, and
+    /// RAW's mastery list is that table.
+    pub mastery: Option<WeaponMastery>,
 }
 
 impl Action for RogueWeapon {
@@ -95,6 +104,10 @@ impl Action for RogueWeapon {
     /// neither light nor melee and would fail either check alone.
     fn is_light_melee_weapon(&self) -> bool {
         self.is_light && self.is_melee
+    }
+
+    fn weapon_mastery(&self) -> Option<WeaponMastery> {
+        self.mastery
     }
 
     fn damage_types(&self) -> Vec<DamageType> {
@@ -159,6 +172,11 @@ impl Action for RogueWeapon {
         // Every rogue weapon is finesse or thrown-finesse, so DEX drives
         // both halves of the swing.
         let dex_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
+        // Two riders on one swing: the rogue's Sneak Attack and the
+        // weapon's mastery property. `AttackRiderPair` composes them
+        // rather than either one learning about the other — a rogue's
+        // shortsword is a Vex weapon *and* the thing Sneak Attack rides,
+        // and neither clause has an opinion about the other.
         resolve_attack_with_rider(
             encounter,
             AttackParams {
@@ -174,7 +192,12 @@ impl Action for RogueWeapon {
                 min_range: None,
                 is_spell: false,
             },
-            &SneakAttack,
+            &MasteryRider::with_reach(
+                self.mastery,
+                AbilityScoreType::Dexterity,
+                self.reach,
+            )
+            .over(&SneakAttack),
         )
     }
 }
@@ -401,6 +424,10 @@ pub static ROGUE_SHORTSWORD: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapo
     is_light: true,
     cost_resource: Resource::Action,
     extra_gate: None,
+    // RAW's shortsword masters Vex — the first hit buys advantage on
+    // the second, which for a rogue is the difference between a Sneak
+    // Attack that lands and one that does not.
+    mastery: Some(WeaponMastery::Vex),
 });
 
 /// Psychic Blades — Soulknife Rogue (subclass level 3). A blade of
@@ -424,6 +451,7 @@ pub static PSYCHIC_BLADE: LazyLock<RogueWeapon> = LazyLock::new(|| RogueWeapon {
     is_light: false,
     cost_resource: Resource::Action,
     extra_gate: None,
+    mastery: None,
 });
 
 /// The Soulknife's second blade — RAW: "immediately after you take the
@@ -452,6 +480,7 @@ pub static PSYCHIC_BLADE_FLOURISH: LazyLock<RogueWeapon> = LazyLock::new(|| Rogu
             .get(&caster_id)
             .is_some_and(|a| a.action_slots() == 0)
     }),
+    mastery: None,
 });
 
 /// True if `target_id` carries the Inquisitive Rogue's `Analyzed` mark

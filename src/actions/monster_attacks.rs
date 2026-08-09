@@ -13,6 +13,7 @@ use crate::{
         attack::{AttackParams, resolve_attack},
         dice::Dice,
         encounter::EncounterInstance,
+        mastery::{MasteryRider, WeaponMastery},
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
     },
@@ -409,6 +410,52 @@ pub fn simple_weapon_attack_ranged(
     normal_range: Option<isize>,
     min_effective_range: Option<isize>,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    simple_weapon_attack_with_mastery(
+        encounter,
+        caster_id,
+        target_ids,
+        action_name,
+        attack_ability,
+        damage_ability,
+        damage_dice,
+        damage_type,
+        is_melee,
+        normal_range,
+        min_effective_range,
+        None,
+        MELEE_REACH,
+    )
+}
+
+/// `simple_weapon_attack_ranged` with the weapon's 5e mastery property
+/// carried onto the swing — see `engine::mastery`.
+///
+/// Split out rather than folded into the eleven-argument function above
+/// because the bestiary's forty-odd call sites have no mastery to pass
+/// and would all have grown a `None`. `reach` is the wielder's own
+/// reach in tile-gap units, needed only by Cleave, whose second target
+/// must be "within your reach" — a glaive's envelope is wider than a
+/// greataxe's and the rider cannot see the weapon it came from.
+///
+/// The property is still inert for a wielder without the class feature;
+/// the gate lives inside the rider. Passing `Some(..)` here is a
+/// statement about the *weapon*, which is where RAW puts it.
+#[allow(clippy::too_many_arguments)]
+pub fn simple_weapon_attack_with_mastery(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    action_name: &str,
+    attack_ability: AbilityScoreType,
+    damage_ability: Option<AbilityScoreType>,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+    normal_range: Option<isize>,
+    min_effective_range: Option<isize>,
+    mastery: Option<WeaponMastery>,
+    reach: isize,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(target_id) = first_target_id(target_ids) else {
         return Vec::new();
     };
@@ -419,7 +466,7 @@ pub fn simple_weapon_attack_ranged(
     let damage_mod = damage_ability
         .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
-    resolve_attack(
+    crate::engine::attack::resolve_attack_with_rider(
         encounter,
         AttackParams {
             caster_id,
@@ -434,6 +481,7 @@ pub fn simple_weapon_attack_ranged(
             min_range: min_effective_range,
             is_spell: false,
         },
+        &MasteryRider::with_reach(mastery, attack_ability, reach),
     )
 }
 
@@ -754,6 +802,23 @@ pub struct SimpleWeapon {
     /// it, and pairing it with each would be four more near-identical
     /// constructors to keep in step.
     pub is_light: bool,
+    /// 5e (2024 / SRD 5.2) **weapon mastery** property — the one clause
+    /// printed beside this weapon in the armoury table, or `None` for
+    /// the natural weapons and improvised objects RAW never lists.
+    ///
+    /// Inert unless the wielder has the Weapon Mastery class feature,
+    /// which is checked at the single chokepoint
+    /// `engine::mastery::effective_mastery` rather than here: these
+    /// statics are shared between the bestiary and the class templates
+    /// — the fighter's `SCIMITAR` *is* the goblin's — so a property
+    /// that fired off weapon data alone would hand the whole bestiary a
+    /// feature RAW gives five classes.
+    ///
+    /// Defaulted to `None` by every constructor and set with the
+    /// `mastery()` builder, for the same reason `is_light` is: the tag
+    /// is orthogonal to all four weapon shapes, and pairing it with
+    /// each would be four more near-identical constructors.
+    pub mastery: Option<WeaponMastery>,
 }
 
 impl SimpleWeapon {
@@ -816,6 +881,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            mastery: None,
         }
     }
 
@@ -857,6 +923,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            mastery: None,
         }
     }
 
@@ -895,6 +962,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            mastery: None,
         }
     }
 
@@ -933,6 +1001,22 @@ impl SimpleWeapon {
     pub const fn light(self) -> Self {
         Self {
             is_light: true,
+            ..self
+        }
+    }
+
+    /// Const builder that stamps a weapon with its 5e mastery property
+    /// — `SimpleWeapon::melee(...).mastery(WeaponMastery::Sap)`.
+    ///
+    /// A builder for the same reason `light` and `gated_on` are: the
+    /// property is orthogonal to every shape above it, and RAW prints
+    /// one for melee weapons, ranged weapons and thrown weapons alike.
+    /// Carried across `thrown()` untouched — a thrown handaxe still
+    /// vexes, because RAW's mastery is a property of the object rather
+    /// than of what was done with it.
+    pub const fn mastery(self, mastery: WeaponMastery) -> Self {
+        Self {
+            mastery: Some(mastery),
             ..self
         }
     }
@@ -1052,6 +1136,9 @@ impl Action for SimpleWeapon {
     fn is_light_melee_weapon(&self) -> bool {
         self.is_light && self.is_melee
     }
+    fn weapon_mastery(&self) -> Option<WeaponMastery> {
+        self.mastery
+    }
     fn requires_los(&self) -> bool {
         self.requires_los
     }
@@ -1113,7 +1200,7 @@ impl Action for SimpleWeapon {
         // only fires on Action-cost swings: bonus-action bow shots and
         // reaction strikes don't get the second hit per RAW.
         let swing = |e: &mut EncounterInstance| {
-            simple_weapon_attack_ranged(
+            simple_weapon_attack_with_mastery(
                 e,
                 caster_id,
                 target_ids,
@@ -1125,6 +1212,8 @@ impl Action for SimpleWeapon {
                 self.is_melee,
                 self.normal_range,
                 self.min_effective_range,
+                self.mastery,
+                self.reach,
             )
         };
         let mut effects = swing(encounter);
@@ -1996,7 +2085,8 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     20,
     12,
-);
+)
+.mastery(WeaponMastery::Slow);
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
 /// canonical "monster fist" attack so multislams (and tests) reference it.
@@ -2017,7 +2107,8 @@ pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Slashing,
-).light();
+).light()
+.mastery(WeaponMastery::Nick);
 
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
@@ -2036,6 +2127,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     requires_condition: None,
     min_effective_range: None,
     is_light: false,
+    mastery: Some(WeaponMastery::Vex),
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -2063,7 +2155,8 @@ const DAGGER_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 4),
     DamageType::Piercing,
-).light();
+).light()
+.mastery(WeaponMastery::Nick);
 
 pub static DAGGER: SimpleWeapon = DAGGER_PROFILE;
 
@@ -2094,7 +2187,8 @@ const HANDAXE_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Slashing,
-).light();
+).light()
+.mastery(WeaponMastery::Vex);
 
 pub static HANDAXE: SimpleWeapon = HANDAXE_PROFILE;
 
@@ -2115,7 +2209,8 @@ pub static GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
     Dice::new(1, 10),
     DamageType::Bludgeoning,
     2,
-);
+)
+.mastery(WeaponMastery::Push);
 
 /// Warhammer — STR-based 1d8 bludgeoning martial weapon. The classic
 /// dwarven sidearm; in our engine the versatile-2H clause collapses to
@@ -2129,7 +2224,8 @@ pub static WARHAMMER: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 8),
     DamageType::Bludgeoning,
-);
+)
+.mastery(WeaponMastery::Push);
 
 /// Mace — STR-based 1d6 bludgeoning simple weapon. The canonical Thug /
 /// Acolyte / Priest sidearm in 5e — same damage die as the scimitar but
@@ -2144,7 +2240,8 @@ pub static MACE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Bludgeoning,
-);
+)
+.mastery(WeaponMastery::Sap);
 
 /// Spear — STR-based 1d6 piercing simple weapon. Tribal Warrior /
 /// generic-tribal NPC sidearm. RAW the spear is versatile (1d8 two-handed)
@@ -2158,7 +2255,8 @@ const SPEAR_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Piercing,
-);
+)
+.mastery(WeaponMastery::Sap);
 
 pub static SPEAR: SimpleWeapon = SPEAR_PROFILE;
 
@@ -2202,7 +2300,8 @@ pub static SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 6),
     DamageType::Piercing,
-).light();
+).light()
+.mastery(WeaponMastery::Vex);
 
 /// Club — STR-based 1d4 bludgeoning simple weapon. The peasant's only
 /// sidearm — a stick. Lowest damage tier in the weapon pool (tied with
@@ -2217,7 +2316,8 @@ pub static CLUB: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 4),
     DamageType::Bludgeoning,
-).light();
+).light()
+.mastery(WeaponMastery::Slow);
 
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
@@ -2474,7 +2574,8 @@ pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 12),
     DamageType::Slashing,
-);
+)
+.mastery(WeaponMastery::Cleave);
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
 /// Longbow in damage die (1d10 vs 1d8) and conceptually loading time
@@ -2492,7 +2593,8 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     16,
     10,
-);
+)
+.mastery(WeaponMastery::Push);
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -3844,7 +3946,8 @@ pub static LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 8),
     DamageType::Slashing,
-);
+)
+.mastery(WeaponMastery::Sap);
 
 /// Greatsword — STR-based 2d6 slashing melee weapon. The paladin's
 /// signature heavy weapon: bigger dice than the longsword (1d8) at the
@@ -3856,7 +3959,8 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Slashing,
-);
+)
+.mastery(WeaponMastery::Graze);
 
 /// Pact Blade — the Hexblade Warlock's **Hex Warrior** weapon: 1d8
 /// slashing, but keyed to **Charisma** rather than Strength.
@@ -3909,6 +4013,7 @@ pub static LANCE: SimpleWeapon = SimpleWeapon {
         DamageType::Piercing,
         2,
     )
+    .mastery(WeaponMastery::Topple)
 };
 
 /// Knight's double-longsword multiattack — two swings per Action,
@@ -8525,7 +8630,8 @@ pub static GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
     Dice::new(1, 10),
     DamageType::Slashing,
     2,
-);
+)
+.mastery(WeaponMastery::Graze);
 
 /// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
 /// lord's signature move: two reach-2 slashing strikes that let it
@@ -8600,7 +8706,8 @@ pub static JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     48,
     12,
-);
+)
+.mastery(WeaponMastery::Slow);
 
 /// Hobgoblin Warlord multiattack -- three longsword swings per Action.
 pub static HOBGOBLIN_WARLORD_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {

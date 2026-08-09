@@ -516,6 +516,29 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     // the same deviation `LungingAttacking` above already accepts —
     // and a near-moot one on a chassis whose kit is unarmed strikes.
     Condition::Shadowstepping,
+    // 5e Sap weapon mastery — the only entry here that is a *penalty*
+    // rather than a prime. It rides the cohort for the same reason the
+    // others do: its whole effect is one attack roll's worth of mode,
+    // and the swing that eats the disadvantage is the swing that should
+    // clear it.
+    Condition::Sapped,
+];
+
+/// Conditions the *target* of an attack loses the moment the attacker
+/// who put them there swings again — the counterparty-scoped sibling of
+/// `CONSUMED_ON_ATTACK`.
+///
+/// Every entry is back-linked (see `LINKED_CONDITIONS`), and the link is
+/// what the clear is keyed on: a `Vexed` creature stays vexed for
+/// everybody else on the board when the vexer takes their shot, because
+/// the advantage the flag hands out was never theirs. A flag with no
+/// link and a blanket clear would have spent one attacker's setup on
+/// another attacker's swing.
+const CONSUMED_BY_LINKED_ATTACKER: &[Condition] = &[
+    // 5e Vex weapon mastery: "advantage on your next attack roll
+    // against that creature". Spent by that next roll, hit or miss —
+    // RAW's grant is on the roll, not on the outcome.
+    Condition::Vexed,
 ];
 
 /// Conditions consumed at the saving-throw site the moment their holder
@@ -2350,6 +2373,34 @@ impl EncounterInstance {
         }
     }
 
+    /// Stamp the swinger's once-per-turn off-hand ledger after an
+    /// off-hand swing resolves.
+    ///
+    /// The ledger is what enforces 5e **Nick**'s *"you can make this
+    /// extra attack only once per turn"* — see
+    /// `two_weapon::OffHandAttack::cost`, which reads it back. Every
+    /// off-hand swing stamps it, not only the free ones: RAW's Light
+    /// property grants one extra attack per turn whatever it is paid
+    /// for with, so a wielder who spent a bonus action on the first
+    /// off-hand swing has already used the opening Nick would have
+    /// discounted.
+    ///
+    /// Runs *after* `execute` rather than before, and that ordering is
+    /// the whole reason this is a separate hook from
+    /// `mark_two_weapon_opening` directly above it. `Action::execute`
+    /// asks for `cost` twice — once through `validate_input` and once
+    /// to build the `ConsumeResource` — and a ledger stamped before
+    /// those two calls would answer them differently: the swing would
+    /// be waved through as free and then billed a bonus action.
+    fn mark_offhand_swing(&mut self, aei: &ActionExecutionInfo) {
+        if !aei.action().is_offhand_swing() {
+            return;
+        }
+        if let Some(caster) = self.actors.get_mut(&aei.caster_id()) {
+            caster.mark_once_per_turn_used(crate::engine::mastery::NICK_TAG);
+        }
+    }
+
     /// Logs a play-by-play line for an action that consumes the
     /// action-economy (Action / BonusAction / Reaction / LegendaryAction).
     /// Movement and free actions are intentionally excluded — the AI takes
@@ -3705,6 +3756,17 @@ impl EncounterInstance {
                 target,
                 attacker_id,
                 Condition::Sworn,
+                RollMode::Advantage,
+            ));
+            // 5e **Vex** weapon mastery — the same "I marked you, I get
+            // the buff" shape as Vow of Enmity directly above, and the
+            // reason `matched_link_mode` was worth extracting. Spent by
+            // the roll it buys at `clear_attack_advantage_riders`; see
+            // `CONSUMED_BY_LINKED_ATTACKER`.
+            tally.add(matched_link_mode(
+                target,
+                attacker_id,
+                Condition::Vexed,
                 RollMode::Advantage,
             ));
         }
@@ -10662,6 +10724,16 @@ impl EncounterInstance {
             }
             attacker.consume_help_for(target_id);
         }
+        // Target-side one-shots whose owner is this attacker — see
+        // `CONSUMED_BY_LINKED_ATTACKER`. Read the link before removing,
+        // because `remove_condition` drops it with the flag.
+        if let Some(target) = self.actors.get_mut(&target_id) {
+            for c in CONSUMED_BY_LINKED_ATTACKER {
+                if target.linked_by(*c) == Some(caster_id) {
+                    target.remove_condition(*c);
+                }
+            }
+        }
         // Concentration spells that explicitly break on attack (Invisibility,
         // not Greater Invisibility) drop here. Flag-based to avoid the
         // fragile spell-name string check; see ConcentrationData::breaks_on_attack.
@@ -14288,6 +14360,7 @@ impl EncounterInstance {
                     self.log_action_use(&a);
                     self.mark_two_weapon_opening(&a);
                     let mut side_effects = a.execute(self);
+                    self.mark_offhand_swing(&a);
                     for sen in side_effects.drain(..) {
                         self.enqueue_event(StackElementEntry::SideEffect(sen));
                     }

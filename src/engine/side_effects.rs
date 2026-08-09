@@ -1800,6 +1800,12 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // falls back to the item DC there. See
     // `EncounterInstance::sanctuary_save_blocks`.
     crate::conditions::Condition::Sanctuary,
+    // 5e Vex weapon mastery. The link is the wielder who landed the
+    // blow, and it is the entire content of the condition: without it
+    // the flag would hand the advantage to whoever swung next rather
+    // than to the creature RAW gives it to. Same positive polarity as
+    // Sworn and Analyzed above.
+    crate::conditions::Condition::Vexed,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

@@ -8,6 +8,7 @@ pub mod errors;
 pub mod lair_actions;
 pub mod lighting;
 pub mod magic;
+pub mod mastery;
 pub mod mounts;
 pub mod prompt;
 pub mod saves;

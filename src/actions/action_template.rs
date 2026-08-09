@@ -896,6 +896,40 @@ pub trait Action {
         false
     }
 
+    /// True if this action is the two-weapon-fighting **off-hand
+    /// swing** — `actions::two_weapon::OffHandAttack` and nothing else.
+    ///
+    /// Read once per resolved action at the stack's execution
+    /// chokepoint, which stamps the swinger's once-per-turn off-hand
+    /// ledger; the **Nick** weapon mastery reads that ledger back to
+    /// decide whether this turn's off-hand swing is free. Kept as a
+    /// declared property rather than inferred from the cost, because
+    /// Nick *changes* the cost — inferring "is this the off-hand swing"
+    /// from "does it cost a bonus action" would stop being true for
+    /// exactly the swing the ledger exists to count.
+    fn is_offhand_swing(&self) -> bool {
+        false
+    }
+
+    /// This weapon's 5e (2024 / SRD 5.2) **mastery property**, or `None`
+    /// for an action that isn't an armoury weapon.
+    ///
+    /// Purely descriptive at this level: the property is *applied* by
+    /// the weapon's own swing, which hands `engine::mastery::MasteryRider`
+    /// to the shared attack pipeline. What reads it here is everything
+    /// that wants to talk *about* the weapon without swinging it — the
+    /// UI's action list, which annotates a mastered weapon with the
+    /// clause it carries, and the AI's attack picker, which prefers a
+    /// weapon whose property is worth something against the target in
+    /// front of it.
+    ///
+    /// Defaults to `None`, which is right for every natural weapon and
+    /// every spell: RAW's mastery table lists objects out of the weapon
+    /// shop, and a bite is not one.
+    fn weapon_mastery(&self) -> Option<crate::engine::mastery::WeaponMastery> {
+        None
+    }
+
     /// True when resolving this action lands more than one attack — the
     /// `Multiattack` and `CompoundAttack` wrappers, which sit on the
     /// same action list as the swings they contain.

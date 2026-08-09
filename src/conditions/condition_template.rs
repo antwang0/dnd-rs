@@ -2203,6 +2203,57 @@ pub enum Condition {
     /// `BLADE_OF_DISASTER`'s cost lane so the opening Action-and-slot
     /// cast gives way to bonus-action swings.
     BladeOfDisaster,
+    /// 5e **Sap** weapon mastery: *"if you hit a creature with this
+    /// weapon, that creature has Disadvantage on its next attack roll
+    /// before the start of your next turn."*
+    ///
+    /// Two cohorts carry the whole rule and no code is needed beyond
+    /// them: `imposes_attacker_disadvantage` makes the holder's swings
+    /// roll at disadvantage, and membership in `CONSUMED_ON_ATTACK`
+    /// spends the flag on the first of those swings. The one-round
+    /// timer covers the other half of RAW's window — a creature that
+    /// never attacks simply shrugs it off.
+    ///
+    /// Deliberately not stacked. RAW's clause is about *the next*
+    /// attack roll, so a second sap landing on an already-sapped target
+    /// changes nothing, and the install site skips the re-apply rather
+    /// than refreshing the timer: a mace-wielding pair should not be
+    /// able to hold one creature at permanent disadvantage.
+    Sapped,
+    /// 5e **Slow** weapon mastery: *"you can reduce its Speed by 10 feet
+    /// until the start of your next turn."*
+    ///
+    /// One row on `CONDITION_SPEED_BONUSES` at -10 ft, which is the
+    /// whole implementation, and RAW's *"the Speed reduction doesn't
+    /// exceed 10 feet"* clause comes out of the representation for
+    /// free: a held condition is a set membership, so a creature hit by
+    /// three Slow weapons in a round holds one `Hobbled` and loses ten
+    /// feet, not thirty.
+    ///
+    /// Named for what it does to the target rather than after the
+    /// property, because `Slowed` was already taken by the *spell*,
+    /// which halves speed and costs the target their action — a
+    /// different rule that would have been silently widened by sharing
+    /// a flag.
+    Hobbled,
+    /// 5e **Vex** weapon mastery: *"if you hit a creature with this
+    /// weapon and deal damage to it, you have Advantage on your next
+    /// attack roll against that creature."*
+    ///
+    /// Back-linked to the attacker who landed the blow, and read
+    /// through `matched_link_mode` in `attack_mode_tally` — the same
+    /// sweep the Vengeance Paladin's Vow of Enmity rides. The link is
+    /// what makes the advantage *theirs*: an ally swinging at the same
+    /// vexed creature gets nothing, which is what RAW's "you have
+    /// Advantage" says and what a flag with no owner could not.
+    ///
+    /// Consumed by the vexer's next attack roll at
+    /// `clear_attack_advantage_riders`, and expiring on its own after a
+    /// round if they never take one. RAW's window closes at the end of
+    /// the vexer's current turn; a round timer is a little more
+    /// generous and is the shortest window the timer vocabulary can
+    /// express for a condition held by somebody other than its owner.
+    Vexed,
 }
 
 impl Condition {
@@ -2417,6 +2468,9 @@ impl Condition {
             Condition::GuidedStriking => "primed with a guided strike",
             Condition::ChillTouched => "chilled by the grave's touch",
             Condition::HexbladeCursed => "cursed by a hexblade",
+            Condition::Sapped => "sapped",
+            Condition::Hobbled => "hobbled",
+            Condition::Vexed => "vexed",
         }
     }
 
@@ -2777,6 +2831,10 @@ impl Condition {
                 | Condition::Disarmed
                 | Condition::WaterSphered
                 | Condition::PowerWordPained
+                // 5e Sap weapon mastery. The only one-shot entry on the
+                // cohort — see `CONSUMED_ON_ATTACK`, which spends it on
+                // the swing it penalises.
+                | Condition::Sapped
         )
     }
 

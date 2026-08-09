@@ -121,6 +121,13 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW-legally hold two styles, but a level-10+ Champion would.
         has_dueling_style: true,
         skills: HashSet::from([Skill::Athletics, Skill::Perception]),
+        // 5e (2024 / SRD 5.2) **Weapon Mastery** — the level-1 class
+        // feature of all five martial classes, and the switch that
+        // turns on the mastery property printed beside every weapon in
+        // this template's kit. Inherited by every subclass template in
+        // this file through its `..BASE.clone()` tail, which is why it
+        // is set once on the chassis rather than at each subclass.
+        has_weapon_mastery: true,
         ..CreatureTemplate::defaults()
     }
 });
@@ -269,6 +276,13 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // buy in AC on a chain-mail chassis.
         has_dueling_style: true,
         skills: HashSet::from([Skill::Athletics, Skill::Perception]),
+        // 5e (2024 / SRD 5.2) **Weapon Mastery** — the level-1 class
+        // feature of all five martial classes, and the switch that
+        // turns on the mastery property printed beside every weapon in
+        // this template's kit. Inherited by every subclass template in
+        // this file through its `..BASE.clone()` tail, which is why it
+        // is set once on the chassis rather than at each subclass.
+        has_weapon_mastery: true,
         ..CreatureTemplate::defaults()
     }
 });

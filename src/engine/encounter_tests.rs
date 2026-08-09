@@ -8426,6 +8426,13 @@ fn rogue_sneak_attack_ally_adjacent_gated_by_no_disadvantage() {
     for _ in 0..200 {
         let max = e.actors[&target].max_hitpoints();
         e.actors.get_mut(&target).unwrap().heal(max);
+        // 5e Vex weapon mastery: the rogue's shortsword is a Vex
+        // weapon and the rogue has Weapon Mastery, so every landed
+        // swing in this loop leaves the target vexed and the *next*
+        // swing rolls at advantage — which is a sneak-attack path in
+        // its own right and not the one under test. Cleared each
+        // iteration so the loop keeps measuring the path it names.
+        e.actors.get_mut(&target).unwrap().remove_condition(Condition::Vexed);
         e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
         // reset clears certain conditions — re-add Poisoned each
         // iteration so the disadvantage stays sticky.
@@ -63586,6 +63593,13 @@ fn rakish_audacity_grants_solo_sneak_attack_path() {
         for _ in 0..200 {
             let max = e.actors[&target].max_hitpoints();
             e.actors.get_mut(&target).unwrap().heal(max);
+            // 5e Vex weapon mastery: the rogue's shortsword is a Vex
+            // weapon and the rogue has Weapon Mastery, so every landed
+            // swing in this loop leaves the target vexed and the *next*
+            // swing rolls at advantage — which is a sneak-attack path in
+            // its own right and not the one under test. Cleared each
+            // iteration so the loop keeps measuring the path it names.
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Vexed);
             e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
             let log_before = e.messages().len();
             let tv = vec![target];
@@ -63622,6 +63636,13 @@ fn rakish_audacity_grants_solo_sneak_attack_path() {
         for _ in 0..200 {
             let max = e.actors[&target].max_hitpoints();
             e.actors.get_mut(&target).unwrap().heal(max);
+            // 5e Vex weapon mastery: the rogue's shortsword is a Vex
+            // weapon and the rogue has Weapon Mastery, so every landed
+            // swing in this loop leaves the target vexed and the *next*
+            // swing rolls at advantage — which is a sneak-attack path in
+            // its own right and not the one under test. Cleared each
+            // iteration so the loop keeps measuring the path it names.
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Vexed);
             e.actors.get_mut(&swash).unwrap().reset_for_new_round();
             let log_before = e.messages().len();
             let tv = vec![target];
@@ -63672,6 +63693,13 @@ fn rakish_audacity_gate_closes_when_second_enemy_adjacent_to_swash() {
     for _ in 0..200 {
         let max = e.actors[&target].max_hitpoints();
         e.actors.get_mut(&target).unwrap().heal(max);
+        // 5e Vex weapon mastery: the rogue's shortsword is a Vex
+        // weapon and the rogue has Weapon Mastery, so every landed
+        // swing in this loop leaves the target vexed and the *next*
+        // swing rolls at advantage — which is a sneak-attack path in
+        // its own right and not the one under test. Cleared each
+        // iteration so the loop keeps measuring the path it names.
+        e.actors.get_mut(&target).unwrap().remove_condition(Condition::Vexed);
         e.actors.get_mut(&swash).unwrap().reset_for_new_round();
         let log_before = e.messages().len();
         let tv = vec![target];
@@ -76480,4 +76508,647 @@ fn the_darkvision_spell_is_a_floor_and_not_a_replacement() {
     }
     assert_eq!(e.actors[&human].darkvision_tiles(), DARKVISION_SPELL_TILES);
     assert_eq!(e.actors[&drow].darkvision_tiles(), drow_innate);
+}
+
+// ---------------------------------------------------------------
+// 5e (2024 / SRD 5.2) Weapon Mastery — `engine::mastery`.
+//
+// Every test below drives a real weapon's `side_effects` through the
+// shared attack pipeline rather than calling the mastery helpers
+// directly, because the thing worth pinning is not that the helpers
+// compute the right number — it is that a swing routed through
+// `resolve_attack` picks the property up at all. Several of them loop
+// over repeated swings: the engine has no die-rigging hook, so a test
+// that needs a hit (or a miss) asks for one until the dice oblige, the
+// same idiom the sneak-attack and save-rider tests above use.
+// ---------------------------------------------------------------
+
+/// Swing `weapon` at `target` until `predicate` sees what it is looking
+/// for in the log, or `attempts` swings have gone by. Returns whether it
+/// was ever seen.
+///
+/// **Both** creatures are topped up each iteration, not just the one
+/// being hit. The attacker takes damage too — a defender with Riposte
+/// counter-attacks every miss, and two hundred misses will kill the
+/// creature making them — and an attacker who dies mid-loop is removed
+/// from the map, which used to end the loop in an `unwrap` on `None`
+/// rather than in the assertion the test was written to make.
+///
+/// The reset each iteration is what makes every pass a fresh turn, which
+/// the once-per-turn properties (Cleave's, Slow's) are counted against.
+fn swing_until(
+    e: &mut EncounterInstance,
+    weapon: &dyn Action,
+    attacker: usize,
+    target: usize,
+    attempts: usize,
+    predicate: impl Fn(&str) -> bool,
+) -> bool {
+    for _ in 0..attempts {
+        for id in [attacker, target] {
+            let Some(max) = e.actors.get(&id).map(|a| a.max_hitpoints()) else {
+                return false;
+            };
+            let a = e.actors.get_mut(&id).unwrap();
+            a.heal(max);
+            a.reset_for_new_round();
+        }
+        let before = e.messages().len();
+        let tv = vec![target];
+        let effects = weapon.side_effects(e, attacker, Some(&tv), None, None);
+        for eff in effects {
+            eff.apply(e);
+        }
+        if e.messages()[before..].iter().any(|l| predicate(l)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Put both creatures back on their feet at full health without ending
+/// their turn — the between-phases reset for a test that keeps swinging
+/// after `swing_until` has found what it wanted.
+fn top_up(e: &mut EncounterInstance, ids: &[usize]) {
+    for &id in ids {
+        let Some(max) = e.actors.get(&id).map(|a| a.max_hitpoints()) else {
+            continue;
+        };
+        e.actors.get_mut(&id).unwrap().heal(max);
+    }
+}
+
+/// The training gate. The bestiary swings the same statics the class
+/// templates do — the goblin's scimitar *is* the fighter's — so a
+/// property that fired off weapon data alone would hand five classes'
+/// worth of feature to every creature on the roster.
+#[test]
+fn a_mastery_property_is_inert_in_an_untrained_hand() {
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::mastery::{WeaponMastery, effective_mastery};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+        .unwrap();
+
+    // Same weapon, same tag, two different answers — which is the whole
+    // reason `effective_mastery` exists.
+    assert_eq!(LONGSWORD.mastery, Some(WeaponMastery::Sap));
+    assert_eq!(effective_mastery(&e, goblin, LONGSWORD.mastery), None);
+    assert_eq!(
+        effective_mastery(&e, fighter, LONGSWORD.mastery),
+        Some(WeaponMastery::Sap)
+    );
+
+    // And the swing agrees: a hundred goblin longsword hits sap nobody.
+    let sapped = swing_until(&mut e, &LONGSWORD, goblin, fighter, 100, |l| {
+        l.contains("sap:")
+    });
+    assert!(!sapped, "an untrained wielder gets nothing from the tag");
+}
+
+/// **Graze** — the miss still costs the target the wielder's ability
+/// modifier, and it is the only property that fires on a miss at all.
+#[test]
+fn graze_lands_the_ability_modifier_on_a_miss() {
+    use crate::actions::monster_attacks::GREATSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Animated armour: AC 18, high enough that misses are plentiful.
+    let target = e
+        .instantiate_creature(
+            &crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE,
+            Coordinate::new(6, 5),
+            1,
+            0,
+        )
+        .unwrap();
+    let str_mod = e.actors[&fighter].ability_modifier(AbilityScoreType::Strength);
+    assert!(str_mod > 0, "the fixture's graze has to be worth something");
+
+    let grazed = swing_until(&mut e, &GREATSWORD, fighter, target, 200, |l| {
+        l.contains("graze:")
+    });
+    assert!(grazed, "a greatsword miss should still graze");
+    let line = e
+        .messages()
+        .iter()
+        .rev()
+        .find(|l| l.contains("graze:"))
+        .unwrap()
+        .clone();
+    assert!(
+        line.contains(&format!("{} slashing", str_mod)),
+        "graze pays the attack ability's modifier, in the weapon's type: {line}"
+    );
+}
+
+/// The floor on Graze. RAW's clause is "damage equal to the ability
+/// modifier", and a Strength-8 wielder grazing for -1 would be handing
+/// out healing.
+#[test]
+fn a_negative_modifier_grazes_for_nothing_rather_than_healing() {
+    use crate::actions::monster_attacks::GREATSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let weakling = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    {
+        let w = e.actors.get_mut(&weakling).unwrap();
+        w.set_weapon_mastery(true);
+        assert!(
+            w.ability_modifier(AbilityScoreType::Strength) <= 0,
+            "the fixture needs a wielder the clause is written about"
+        );
+    }
+    let grazed = swing_until(&mut e, &GREATSWORD, weakling, target, 200, |l| {
+        l.contains("graze:")
+    });
+    assert!(!grazed, "a non-positive modifier grazes for nothing at all");
+}
+
+/// **Sap** — the target's *next* attack roll, and only that one.
+#[test]
+fn sap_costs_the_target_exactly_one_attack_roll() {
+    use crate::actions::monster_attacks::{LONGSWORD, SLAM};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+
+    let sapped = swing_until(&mut e, &LONGSWORD, fighter, zombie, 200, |l| {
+        l.contains("sap:")
+    });
+    assert!(sapped, "a longsword hit should sap");
+    assert!(e.actors[&zombie].has_condition(Condition::Sapped));
+    assert_eq!(
+        e.peek_attack_mode(zombie, fighter, true),
+        crate::engine::dice::RollMode::Disadvantage,
+        "the sapped creature swings at disadvantage"
+    );
+
+    // Their swing spends it, whether it lands or not. Both are topped
+    // up first: the fighter ripostes a missed slam, and a zombie that
+    // dies to the counter-attack is off the map before the assertion.
+    top_up(&mut e, &[fighter, zombie]);
+    let tv = vec![fighter];
+    for eff in SLAM.side_effects(&mut e, zombie, Some(&tv), None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&zombie].has_condition(Condition::Sapped),
+        "one attack roll spends the sap"
+    );
+}
+
+/// **Slow** — ten feet off the target's speed, and ten feet however many
+/// club-wielders line up. RAW says the reduction "doesn't exceed 10
+/// feet"; the representation is what enforces it.
+#[test]
+fn slow_takes_ten_feet_and_takes_it_only_once() {
+    use crate::actions::monster_attacks::CLUB;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let a = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let b = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 7), 0, 1)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+        .unwrap();
+    let base = e.actors[&zombie].speed();
+
+    assert!(swing_until(&mut e, &CLUB, a, zombie, 200, |l| l
+        .contains("slow:")));
+    assert!(e.actors[&zombie].has_condition(Condition::Hobbled));
+    let once = e.actors[&zombie].speed();
+    assert_eq!(once, base - 10.0, "one club, ten feet");
+
+    // A second wielder lands the same property on the same creature.
+    assert!(swing_until(&mut e, &CLUB, b, zombie, 200, |l| l
+        .contains("slow:")));
+    assert_eq!(
+        e.actors[&zombie].speed(),
+        once,
+        "a second Slow weapon does not take a second ten feet"
+    );
+}
+
+/// **Slow** is once per turn per wielder, which is what keeps an Extra
+/// Attack chain from re-arming it three times.
+#[test]
+fn slow_fires_once_per_turn_per_wielder() {
+    use crate::actions::monster_attacks::CLUB;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::mastery::SLOW_TAG;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    assert!(swing_until(&mut e, &CLUB, fighter, zombie, 200, |l| l
+        .contains("slow:")));
+    assert!(e.actors[&fighter].once_per_turn_used(SLOW_TAG));
+
+    // Same turn, more swings, no second install — the mark stays set
+    // because `swing_until`'s reset is what would clear it.
+    e.actors
+        .get_mut(&zombie)
+        .unwrap()
+        .remove_condition(Condition::Hobbled);
+    let before = e.messages().len();
+    let tv = vec![zombie];
+    for _ in 0..20 {
+        for eff in CLUB.side_effects(&mut e, fighter, Some(&tv), None, None) {
+            eff.apply(&mut e);
+        }
+    }
+    assert!(
+        !e.messages()[before..].iter().any(|l| l.contains("slow:")),
+        "the second swing of the same turn re-installs nothing"
+    );
+}
+
+/// **Topple** — a Constitution save or the target goes down.
+#[test]
+fn topple_puts_a_failed_save_on_the_floor() {
+    use crate::actions::monster_attacks::LANCE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Two tiles back: a lance is at disadvantage inside its own reach,
+    // and this test is about the save, not the swing.
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+    let toppled = swing_until(&mut e, &LANCE, fighter, zombie, 300, |l| {
+        l.contains("topple:")
+    });
+    assert!(toppled, "a lance hit should eventually topple");
+    assert!(e.actors[&zombie].has_condition(Condition::Prone));
+}
+
+/// **Vex** — the advantage belongs to the wielder who bought it, and to
+/// nobody else swinging at the same creature.
+#[test]
+fn vex_hands_the_advantage_to_its_owner_alone() {
+    use crate::actions::monster_attacks::SHORTSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let vexer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 7), 0, 1)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+        .unwrap();
+
+    assert!(swing_until(&mut e, &SHORTSWORD, vexer, zombie, 200, |l| l
+        .contains("vex:")));
+    assert_eq!(e.actors[&zombie].linked_by(Condition::Vexed), Some(vexer));
+    assert_eq!(e.peek_attack_mode(vexer, zombie, true), RollMode::Advantage);
+    assert_eq!(
+        e.peek_attack_mode(bystander, zombie, true),
+        RollMode::Normal,
+        "an ally swinging at the same creature gets nothing"
+    );
+
+    // The vexer's next roll spends it; the bystander's does not.
+    e.clear_attack_advantage_riders(bystander, zombie);
+    assert!(e.actors[&zombie].has_condition(Condition::Vexed));
+    e.clear_attack_advantage_riders(vexer, zombie);
+    assert!(!e.actors[&zombie].has_condition(Condition::Vexed));
+}
+
+/// **Push** — ten feet away, and only for a target Large or smaller.
+#[test]
+fn push_moves_the_small_and_leaves_the_huge_where_it_stands() {
+    use crate::actions::monster_attacks::WARHAMMER;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    let start = e.actors[&zombie].location();
+    assert!(swing_until(&mut e, &WARHAMMER, fighter, zombie, 200, |l| l
+        .contains("push:")));
+    assert_ne!(
+        e.actors[&zombie].location(),
+        start,
+        "a Medium target is driven back"
+    );
+
+    // A Huge giant is not.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&giant].size().ordinal() > crate::engine::types::Size::Large.ordinal(),
+        "the fixture has to be bigger than the clause allows"
+    );
+    let pushed = swing_until(&mut e, &WARHAMMER, fighter, giant, 100, |l| {
+        l.contains("push:")
+    });
+    assert!(!pushed, "nothing bigger than Large is shoved by a hammer");
+}
+
+/// **Cleave** — one free swing at a second enemy beside the first, once
+/// per turn, and without the wielder's ability modifier on the damage.
+#[test]
+fn cleave_carries_into_a_second_enemy_once_per_turn() {
+    use crate::actions::monster_attacks::GREATAXE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::mastery::CLEAVE_TAG;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let first = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    let second = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
+        .unwrap();
+    // Both zombies stand within the axe's reach and beside each other,
+    // which is what the clause asks for.
+    assert!(e.footprint_distance(first, second).unwrap() <= 1);
+    assert!(e.footprint_distance(fighter, second).unwrap() <= 1);
+
+    let cleaved = swing_until(&mut e, &GREATAXE, fighter, first, 200, |l| {
+        l.contains("cleave:")
+    });
+    assert!(cleaved, "a greataxe hit beside a second enemy should cleave");
+    assert!(e.actors[&fighter].once_per_turn_used(CLEAVE_TAG));
+
+    // The rest of this turn's swings carry into nobody.
+    let before = e.messages().len();
+    let tv = vec![first];
+    for _ in 0..20 {
+        for eff in GREATAXE.side_effects(&mut e, fighter, Some(&tv), None, None) {
+            eff.apply(&mut e);
+        }
+    }
+    assert!(
+        !e.messages()[before..].iter().any(|l| l.contains("cleave:")),
+        "cleave is once per turn"
+    );
+}
+
+/// The follow-up swing takes the weapon's dice and not the wielder's
+/// arm — RAW: "don't add your ability modifier to that damage".
+#[test]
+fn a_cleave_follow_up_carries_the_dice_and_not_the_modifier() {
+    use crate::actions::monster_attacks::GREATAXE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let first = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    let second = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
+        .unwrap();
+    let _ = second;
+    let str_mod = e.actors[&fighter].ability_modifier(AbilityScoreType::Strength);
+    assert!(str_mod > 0);
+
+    let mut checked = false;
+    for _ in 0..300 {
+        for id in [first, second] {
+            let max = e.actors[&id].max_hitpoints();
+            e.actors.get_mut(&id).unwrap().heal(max);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+        let before = e.messages().len();
+        let tv = vec![first];
+        for eff in GREATAXE.side_effects(&mut e, fighter, Some(&tv), None, None) {
+            eff.apply(&mut e);
+        }
+        let lines: Vec<String> = e.messages()[before..].to_vec();
+        let Some(idx) = lines.iter().position(|l| l.contains("cleave:")) else {
+            continue;
+        };
+        // The follow-up's damage line is the first `1d12` roll after
+        // the cleave announcement. `+0` is the whole assertion.
+        if let Some(dmg) = lines[idx..].iter().find(|l| l.contains("1d12")) {
+            assert!(
+                !dmg.contains(&format!("+{}", str_mod)),
+                "the cleave follow-up adds no ability modifier: {dmg}"
+            );
+            checked = true;
+            break;
+        }
+    }
+    assert!(checked, "never observed a landed cleave to inspect");
+}
+
+/// **Nick** — the first off-hand swing of the turn is free for a
+/// trained wielder holding a Nick weapon; the next one costs the bonus
+/// action it always did.
+#[test]
+fn nick_makes_one_off_hand_swing_a_turn_free() {
+    use crate::actions::two_weapon::{OFF_HAND_DAGGER, OFF_HAND_SHORTSWORD};
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::mastery::NICK_TAG;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    let tv = vec![zombie];
+
+    assert!(
+        OFF_HAND_DAGGER.cost(&e, rogue, Some(&tv), None, None).is_empty(),
+        "a Nick dagger's first off-hand swing of the turn is free"
+    );
+    // The shortsword is a Vex weapon, not a Nick one — same hand, same
+    // turn, and it still costs what it always did.
+    assert_eq!(
+        OFF_HAND_SHORTSWORD.cost(&e, rogue, Some(&tv), None, None),
+        vec![Resource::BonusAction]
+    );
+
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .mark_once_per_turn_used(NICK_TAG);
+    assert_eq!(
+        OFF_HAND_DAGGER.cost(&e, rogue, Some(&tv), None, None),
+        vec![Resource::BonusAction],
+        "the second off-hand swing of the turn pays"
+    );
+
+    // …and an untrained wielder never gets the discount at all.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let target = vec![goblin];
+    assert_eq!(
+        OFF_HAND_DAGGER.cost(&e, goblin, Some(&target), None, None),
+        vec![Resource::BonusAction]
+    );
+}
+
+/// Every property the enum declares is carried by at least one weapon a
+/// martial can actually pick up. A property with no weapon is a rule
+/// nothing can trigger, which is the failure mode a table of eight
+/// invites.
+#[test]
+fn every_mastery_property_is_on_a_weapon_somebody_can_hold() {
+    use crate::actions::monster_attacks::*;
+    use crate::engine::mastery::WeaponMastery;
+
+    let armoury: &[Option<WeaponMastery>] = &[
+        LONGSWORD.mastery,
+        GREATSWORD.mastery,
+        GREATAXE.mastery,
+        SCIMITAR.mastery,
+        SHORTSWORD.mastery,
+        DAGGER.mastery,
+        HANDAXE.mastery,
+        MACE.mastery,
+        SPEAR.mastery,
+        CLUB.mastery,
+        GREATCLUB.mastery,
+        WARHAMMER.mastery,
+        LONGBOW.mastery,
+        SHORTBOW.mastery,
+        HEAVY_CROSSBOW.mastery,
+        GLAIVE.mastery,
+        JAVELIN.mastery,
+        LANCE.mastery,
+    ];
+    for property in [
+        WeaponMastery::Cleave,
+        WeaponMastery::Graze,
+        WeaponMastery::Nick,
+        WeaponMastery::Push,
+        WeaponMastery::Sap,
+        WeaponMastery::Slow,
+        WeaponMastery::Topple,
+        WeaponMastery::Vex,
+    ] {
+        assert!(
+            armoury.contains(&Some(property)),
+            "{} is a rule with no weapon to trigger it",
+            property.name()
+        );
+    }
+}
+
+/// A thrown weapon keeps the property of the object it is — RAW's
+/// mastery belongs to the weapon, not to what was done with it.
+#[test]
+fn a_thrown_weapon_keeps_the_property_the_object_carries() {
+    use crate::actions::monster_attacks::{HANDAXE, THROWN_HANDAXE};
+    assert_eq!(THROWN_HANDAXE.mastery, HANDAXE.mastery);
+    assert!(THROWN_HANDAXE.mastery.is_some());
+}
+
+/// The five classes RAW trains, and nobody on the bestiary.
+#[test]
+fn weapon_mastery_belongs_to_the_five_martial_chassis() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for trained in [
+        &*FIGHTER_TEMPLATE,
+        &*BARBARIAN_TEMPLATE,
+        &*PALADIN_TEMPLATE,
+        &*RANGER_TEMPLATE,
+        &*ROGUE_TEMPLATE,
+    ] {
+        assert!(
+            trained.has_weapon_mastery,
+            "{} is one of RAW's five",
+            trained.name
+        );
+    }
+    for untrained in [&*WIZARD_TEMPLATE, &*CLERIC_TEMPLATE, &*GOBLIN_TEMPLATE] {
+        assert!(
+            !untrained.has_weapon_mastery,
+            "{} is not",
+            untrained.name
+        );
+    }
+}
+
+/// Subclass templates inherit the flag through their `..BASE.clone()`
+/// tail rather than restating it. Pinned because the inheritance is
+/// invisible at the subclass literal, and a subclass built from
+/// `CreatureTemplate::defaults()` instead would silently lose it.
+#[test]
+fn martial_subclasses_inherit_their_chassis_training() {
+    use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+    use crate::actors::creatures::rogues::{
+        ASSASSIN_ROGUE_TEMPLATE, SOULKNIFE_ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE,
+    };
+
+    for t in [
+        &*CHAMPION_TEMPLATE,
+        &*ASSASSIN_ROGUE_TEMPLATE,
+        &*SWASHBUCKLER_ROGUE_TEMPLATE,
+        &*SOULKNIFE_ROGUE_TEMPLATE,
+    ] {
+        assert!(t.has_weapon_mastery, "{} lost its chassis training", t.name);
+    }
 }

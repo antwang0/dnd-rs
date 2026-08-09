@@ -1620,6 +1620,17 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
         flag: |a| a.has_condition(Condition::Bladesinging),
         bonus_ft: 10.0,
     },
+    // 5e **Slow** weapon mastery: "you can reduce its Speed by 10 feet
+    // until the start of your next turn." Second negative row on the
+    // cohort, and the one RAW explicitly caps — "if the creature is hit
+    // more than once by weapons that have this property, the Speed
+    // reduction doesn't exceed 10 feet". The cap needs no code: the
+    // condition is held or it isn't, so three club hits in a round
+    // still sum to one row.
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::Hobbled),
+        bonus_ft: -10.0,
+    },
 ];
 
 /// One row in a **boolean cohort** — a single source of some yes/no
@@ -3143,6 +3154,26 @@ pub struct CreatureTemplate {
     /// Paladin (both use two-handed weapons where Dueling doesn't apply
     /// RAW).
     pub has_dueling_style: bool,
+    /// 5e (2024 / SRD 5.2) **Weapon Mastery** — the level-1 class
+    /// feature that turns on the mastery property printed beside every
+    /// weapon in the armoury.
+    ///
+    /// RAW grants it to five classes (Barbarian, Fighter, Paladin,
+    /// Ranger, Rogue) and to nobody else, and it is the *only* thing
+    /// standing between a hobgoblin's longsword and a fighter's: the
+    /// weapon statics are shared, so `SCIMITAR` is literally the same
+    /// object on a goblin's action list and a fighter's. Every read of
+    /// a weapon's `mastery` tag therefore goes through
+    /// `engine::mastery::effective_mastery`, which gates on this flag.
+    ///
+    /// RAW also caps *how many* weapons a character has mastery with
+    /// (two at level 1, rising to six), chosen at each long rest. The
+    /// engine does not model the choice: a template that holds the flag
+    /// masters every weapon on its own action list, which for the class
+    /// chassis here is between one and three. Modelling the pick list
+    /// would add a per-actor set and a rest-time selection step to buy
+    /// a distinction no template on the roster is wide enough to feel.
+    pub has_weapon_mastery: bool,
     /// 5e Fighting Style: **Great Weapon Fighting** (Fighter / Paladin
     /// / Ranger lv1 pick): when the holder rolls a 1 or 2 on a damage
     /// die for a melee weapon attack made while wielding a two-handed
@@ -3770,6 +3801,7 @@ impl CreatureTemplate {
             has_archery_style: false,
             has_defense_style: false,
             has_dueling_style: false,
+            has_weapon_mastery: false,
             has_great_weapon_fighting: false,
             has_two_weapon_fighting_style: false,
             has_protection_style: false,
@@ -4452,6 +4484,9 @@ pub struct ActorInstance {
     /// 5e Fighting Style: Dueling (+2 melee weapon damage). See
     /// `CreatureTemplate` docs.
     has_dueling_style: bool,
+    /// 5e Weapon Mastery — the level-1 martial class feature that turns
+    /// on a weapon's mastery property. See `CreatureTemplate` docs.
+    has_weapon_mastery: bool,
     /// 5e Fighting Style: Great Weapon Fighting (reroll 1s / 2s on melee
     /// weapon damage dice). See `CreatureTemplate` docs.
     has_great_weapon_fighting: bool,
@@ -4721,6 +4756,7 @@ impl ActorInstance {
             has_archery_style: ct.has_archery_style,
             has_defense_style: ct.has_defense_style,
             has_dueling_style: ct.has_dueling_style,
+            has_weapon_mastery: ct.has_weapon_mastery,
             has_great_weapon_fighting: ct.has_great_weapon_fighting,
             has_two_weapon_fighting_style: ct.has_two_weapon_fighting_style,
             has_protection_style: ct.has_protection_style,
@@ -5069,6 +5105,25 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_dueling_style(&mut self, value: bool) {
         self.has_dueling_style = value;
+    }
+
+    /// 5e **Weapon Mastery** — true if this creature is trained to use
+    /// the mastery property printed on the weapons it wields.
+    ///
+    /// Read only through `engine::mastery::effective_mastery`, which is
+    /// the chokepoint every mastery clause goes through; see
+    /// `CreatureTemplate::has_weapon_mastery` for why the gate has to be
+    /// per-wielder rather than per-weapon.
+    pub fn has_weapon_mastery(&self) -> bool {
+        self.has_weapon_mastery
+    }
+
+    /// Test-only setter for the Weapon Mastery flag, so a mastery
+    /// property can be exercised on any chassis without standing up a
+    /// martial template for it. Mirrors `set_dueling_style`.
+    #[cfg(test)]
+    pub fn set_weapon_mastery(&mut self, value: bool) {
+        self.has_weapon_mastery = value;
     }
 
     /// 5e Fighting Style: Great Weapon Fighting — reroll 1 / 2 on a
