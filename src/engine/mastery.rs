@@ -280,12 +280,12 @@ impl ActionOnHitRider for MasteryRider {
         let Some(mastery) = effective_mastery(encounter, p.caster_id, self.mastery) else {
             return 0;
         };
-        // RAW words two of the eight on the blow *landing* rather than
-        // merely connecting — "hit a creature **and deal damage to it**"
-        // — and the other four on the hit alone. The asymmetry is the
+        // Slow and Vex below ask `deals_damage` first: RAW words those
+        // two on the blow *landing* rather than merely connecting —
+        // "hit a creature **and deal damage to it**" — and Sap, Push,
+        // Topple and Cleave on the hit alone. The asymmetry is the
         // book's, and it is the difference between vexing a creature
         // your weapon cannot hurt and not.
-        let dealt_damage = deals_damage(encounter, p, hit);
         match mastery {
             WeaponMastery::Cleave => cleave(encounter, p, self.reach, effects),
             WeaponMastery::Push => {
@@ -297,7 +297,7 @@ impl ActionOnHitRider for MasteryRider {
                 0
             }
             WeaponMastery::Slow => {
-                if dealt_damage {
+                if deals_damage(encounter, p, hit) {
                     slow(encounter, p, effects);
                 }
                 0
@@ -307,7 +307,7 @@ impl ActionOnHitRider for MasteryRider {
                 0
             }
             WeaponMastery::Vex => {
-                if dealt_damage {
+                if deals_damage(encounter, p, hit) {
                     vex(encounter, p, effects);
                 }
                 0

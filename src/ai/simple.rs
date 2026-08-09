@@ -9863,6 +9863,14 @@ mod tests {
         use crate::actors::creatures::yetis::YETI_TEMPLATE;
         use crate::engine::types::Coordinate;
 
+        /// The log prefixes `engine::mastery` writes, one per property
+        /// that has anything to say. Nick is absent on purpose: it
+        /// changes what the off-hand swing costs and never announces
+        /// itself, so there is no line for it to leave.
+        const MASTERY_LOG_TAGS: &[&str] = &[
+            "  cleave:", "  graze:", "  push:", "  sap:", "  slow:", "  topple:", "  vex:",
+        ];
+        let mut mastery_fired = false;
         for seed in [3u64, 11, 71] {
             let tp = TerrainGenParams {
                 width: 30,
@@ -10513,7 +10521,30 @@ mod tests {
                 "seed {}: somebody on this board should have found a saddle",
                 seed
             );
+            // 5e weapon mastery, end to end. Martial chassis stand on
+            // team 0 holding weapons out of the armoury, so a driver in
+            // which no mastery property ever fires is one where the
+            // whole chain — the template's training flag, the tag on
+            // the weapon, the picker that ranks it, the rider on the
+            // pipeline — is being exercised by its unit tests alone.
+            //
+            // Accumulated across the seed sweep rather than asserted
+            // per seed, and that is not a hedge: on one of these three
+            // boards the martials are still closing when the casters
+            // finish the fight, and a per-seed assertion would be
+            // testing which end of the map the AI walked to. Every
+            // property is separately pinned in `engine::mastery`'s own
+            // tests; what only a live board can show is that a swing
+            // the AI chose, against a target it picked, still carries
+            // the clause.
+            mastery_fired |= MASTERY_LOG_TAGS
+                .iter()
+                .any(|tag| e.messages().iter().any(|m| m.contains(tag)));
         }
+        assert!(
+            mastery_fired,
+            "martials swung on three boards and no weapon mastery ever fired"
+        );
     }
 
     /// Build a no-actors encounter we can hand-place creatures into.
