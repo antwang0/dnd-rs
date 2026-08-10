@@ -33723,6 +33723,240 @@ fn a_clinging_zone_charges_the_pathfinder() {
     );
 }
 
+/// Glyph of Warding lays a ward and nothing else — no damage at the
+/// moment of casting, and a wizard standing on the tile it was
+/// inscribed on is not hurt by inscribing it.
+///
+/// The clause worth pinning is `catch_present: false`. Every other
+/// area on the layer charges whoever is standing in it when it lands,
+/// and a glyph that did the same would be a Fireball with extra steps:
+/// RAW is explicit that the spell does nothing at all until its
+/// trigger happens.
+#[test]
+fn a_glyph_is_armed_rather_than_cast() {
+    use crate::actions::spells::GLYPH_OF_WARDING;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 10), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 10), 1, 0)
+        .unwrap();
+    let wizard_hp = e.actors[&wizard].hitpoints();
+    let goblin_hp = e.actors[&goblin].hitpoints();
+
+    let point = Coordinate::new(6, 10);
+    let effects = GLYPH_OF_WARDING.side_effects(&mut e, wizard, None, Some(&vec![point]), None);
+    for effect in effects {
+        effect.apply(&mut e);
+    }
+
+    let zone = e
+        .zones()
+        .iter()
+        .find(|z| z.name == "glyph of warding")
+        .expect("the glyph should be on the board");
+    assert_eq!(
+        zone.effect.ward,
+        Some(0),
+        "the ward remembers the side that set it rather than reading it \
+         off an owner who can die"
+    );
+    assert!(!zone.concentration, "a glyph is not concentration");
+    assert_eq!(
+        e.actors[&wizard].hitpoints(),
+        wizard_hp,
+        "inscribing a glyph does not detonate it"
+    );
+    assert_eq!(
+        e.actors[&goblin].hitpoints(),
+        goblin_hp,
+        "not even on the creature standing where it was drawn"
+    );
+    // …and it is invisible to the thing standing on it.
+    assert!(!e.tile_is_hazardous(point));
+}
+
+/// Symbol sets the same kind of ward as its third-level cousin, and
+/// its clause is the stun rather than a bigger die.
+///
+/// Paired with the glyph test rather than folded into it, because the
+/// two spells are the layer's only two callers and the thing worth
+/// pinning is that they differ in exactly one place — a level-7 slot
+/// buying a save-or-lose instead of 5d8.
+#[test]
+fn symbol_sets_a_stunning_ward() {
+    use crate::actions::spells::SYMBOL;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 10), 0, 0)
+        .unwrap();
+    let effects = SYMBOL.side_effects(
+        &mut e,
+        wizard,
+        None,
+        Some(&vec![Coordinate::new(6, 10)]),
+        None,
+    );
+    for effect in effects {
+        effect.apply(&mut e);
+    }
+    let zone = e
+        .zones()
+        .iter()
+        .find(|z| z.name == "symbol")
+        .expect("the symbol should be on the board");
+    assert_eq!(zone.effect.ward, Some(0));
+    let contact = zone.effect.contact.expect("a ward has a trigger clause");
+    assert_eq!(
+        contact.condition.map(|(c, _)| c),
+        Some(Condition::Stunned),
+        "Symbol's modeled mode is Stunning"
+    );
+    assert!(
+        contact.damage.is_none(),
+        "and it is the save-or-lose mode rather than the damage one"
+    );
+}
+
+/// A ward is the one area the pathfinder cannot see.
+///
+/// The three ward clauses are one feature and the first of them is
+/// this: routing around a Glyph of Warding would make the spell
+/// unusable against anything the AI drives, because RAW's glyph is
+/// "nearly invisible" and the whole point is that somebody walks onto
+/// it. Asserted against the identical hazard without the flag, so what
+/// is pinned is the flag and not the geometry.
+///
+/// Walked step by step through `step_toward_actor` rather than measured
+/// with `path_cost_to`, because the hazard-avoiding pass lives in the
+/// former: the Dijkstra costing is about distance and prices a web the
+/// same as clean floor.
+#[test]
+fn the_pathfinder_walks_straight_onto_a_ward_and_around_the_same_hazard() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::dice::Dice;
+
+    let bite = || ZoneContact::damage(Dice::new(4, 4), DamageType::Slashing);
+    // True if the walker's route ever puts it inside the area.
+    let route_enters = |effect: ZoneEffect| {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 10), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 10), 0, 0)
+            .unwrap();
+        let origin = Coordinate::new(9, 10);
+        let radius = 2;
+        e.install_zone(test_zone(origin, radius, effect));
+        for _ in 0..40 {
+            let Some(step) = e.step_toward_actor(goblin, target) else {
+                break;
+            };
+            e.place_actor_at(goblin, step).expect("a legal step");
+            if origin.chebyshev_to(step) <= radius {
+                return true;
+            }
+        }
+        false
+    };
+    assert!(
+        !route_enters(ZoneEffect::hazard(bite())),
+        "a visible hazard should be walked around on an open map"
+    );
+    // Team 0 set the ward; the goblin walking is team 1, so it is
+    // exactly the creature the trigger is armed against — and it still
+    // cannot see it.
+    assert!(
+        route_enters(ZoneEffect::ward(bite(), 0)),
+        "a ward is nearly invisible: the same walker should cross it"
+    );
+}
+
+/// A ward is sprung by its setter's enemies, catches everybody in the
+/// blast, and is spent by going off.
+///
+/// All three clauses in one test because they are one feature: the
+/// trigger filter exists only because the pathfinder blindness above
+/// took away the AI's ability to avoid it, and the spend exists
+/// because "the spell ends when it is triggered" is a lifecycle the
+/// round-end tick cannot express.
+#[test]
+fn a_ward_is_sprung_by_the_setters_enemies_and_is_spent_when_it_fires() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::dice::Dice;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // Team 0 set it. An ally standing in the blast, and two enemies.
+    let ally = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 10), 0, 0)
+        .unwrap();
+    let enemy = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 11), 1, 1)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 10), 1, 2)
+        .unwrap();
+    let zone_id = e.install_zone(test_zone(
+        Coordinate::new(7, 10),
+        2,
+        // DC 100 so nobody saves and the assertions are about who was
+        // charged rather than about a die roll.
+        ZoneEffect::ward(
+            ZoneContact::save_for_half(
+                AbilityScoreType::Dexterity,
+                100,
+                Dice::new(5, 8),
+                DamageType::Fire,
+            ),
+            0,
+        ),
+    ));
+
+    // The setter's own side steps on it and nothing happens — not the
+    // damage, and not the spend.
+    let ally_hp = e.actors[&ally].hitpoints();
+    e.touch_zone(zone_id, ally);
+    assert_eq!(
+        e.actors[&ally].hitpoints(),
+        ally_hp,
+        "the setter's own side does not spring its ward"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.id == zone_id),
+        "and does not spend it either"
+    );
+
+    // An enemy does. The blast is not filtered the way the trigger is:
+    // the ally standing in it is caught, and so is the second enemy who
+    // never touched the tile.
+    let bystander_hp = e.actors[&bystander].hitpoints();
+    e.touch_zone(zone_id, enemy);
+    assert!(
+        e.actors[&enemy].hitpoints() < e.actors[&enemy].max_hitpoints(),
+        "the creature that sprung it is caught"
+    );
+    assert!(
+        e.actors[&bystander].hitpoints() < bystander_hp,
+        "and so is everybody else in the area"
+    );
+    assert!(
+        e.actors[&ally].hitpoints() < ally_hp,
+        "including the setter's own ally — the trigger picks sides, the \
+         eruption does not"
+    );
+    assert!(
+        !e.zones().iter().any(|z| z.id == zone_id),
+        "a ward is spent by going off"
+    );
+}
+
 /// The AI walks around a hazard when it can, and through it when
 /// the only route runs that way.
 #[test]

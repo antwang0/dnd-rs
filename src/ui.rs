@@ -351,7 +351,17 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
         if !zone.covers(coord) {
             continue;
         }
-        let glyph = if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
+        // A set ward outranks everything, including a skull it is
+        // sitting under. The map is the player's-eye view of the board
+        // and a ward they laid is the one area whose *position* they
+        // most need back — a Glyph of Warding is invisible to the
+        // pathfinder (see `ZoneEffect::ward`), so the map is the only
+        // record of where it is. Its own glyph rather than the skull,
+        // because "armed and waiting" and "burning right now" are the
+        // two facts a player standing next to one has to tell apart.
+        let glyph = if zone.effect.ward.is_some() {
+            '◈'
+        } else if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
             '☠'
         } else if zone.effect.is_harmful() || zone.effect.difficult {
             '≈'
@@ -361,6 +371,7 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
             continue;
         };
         let rank = |g: char| match g {
+            '◈' => 3,
             '☠' => 2,
             '≈' => 1,
             _ => 0,
@@ -1346,6 +1357,61 @@ mod tests {
             panel.contains("seed 4"),
             "the seed should be readable off the panel:\n{}",
             panel
+        );
+    }
+
+    /// A set ward is drawn with its own glyph, not the hazard skull.
+    ///
+    /// The map is the only record of where a ward is: `ZoneEffect::ward`
+    /// makes it invisible to the pathfinder, so nothing else on screen
+    /// can tell a player which tile they armed three rounds ago. Its own
+    /// glyph rather than the skull, because "armed and waiting" and
+    /// "burning right now" are the two facts a player standing beside
+    /// one has to tell apart — and the ward outranks the skull so a
+    /// glyph laid under a cloud is still findable.
+    #[test]
+    fn a_set_ward_is_drawn_as_a_ward_and_not_as_a_live_hazard() {
+        use crate::engine::dice::Dice;
+        use crate::engine::types::{AbilityScoreType, DamageType};
+        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let bite = || {
+            ZoneContact::save_for_half(
+                AbilityScoreType::Dexterity,
+                15,
+                Dice::new(5, 8),
+                DamageType::Fire,
+            )
+        };
+        let lay = |e: &mut EncounterInstance, origin: Coordinate, effect: ZoneEffect| {
+            e.install_zone(Zone {
+                id: 0,
+                name: "test area",
+                owner_id: 0,
+                origin,
+                radius: 1,
+                effect,
+                rounds_remaining: 10,
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+            });
+        };
+
+        // A live damaging hazard is a skull; the same clause set as a
+        // ward is not.
+        lay(&mut e, Coordinate::new(4, 4), ZoneEffect::hazard(bite()));
+        let map = rendered_map(&e);
+        assert!(map.contains('☠'), "a live hazard is a skull:\n{}", map);
+        assert!(!map.contains('◈'), "and is not a ward:\n{}", map);
+
+        // Laid over the top of it, the ward wins the tile.
+        lay(&mut e, Coordinate::new(4, 4), ZoneEffect::ward(bite(), 0));
+        let map = rendered_map(&e);
+        assert!(
+            map.contains('◈'),
+            "a ward is drawn, and outranks the skull under it:\n{}",
+            map
         );
     }
 

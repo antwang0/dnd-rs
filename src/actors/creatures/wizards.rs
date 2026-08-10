@@ -125,6 +125,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*FIRE_SHIELD);
     actions.push(&*CLOUDKILL);
     actions.push(&*WALL_OF_FORCE);
+    // The ward family — lv3 Glyph of Warding and lv7 Symbol. The
+    // engine's first areas that are *set* rather than cast: invisible
+    // to the pathfinder, stepped over by the wizard's own side, and
+    // spent the moment an enemy walks in. See `ZoneEffect::ward`.
+    actions.push(&*crate::actions::spells::GLYPH_OF_WARDING);
+    actions.push(&*crate::actions::spells::SYMBOL);
     // Latest additions: lv2 Spike Growth (control), lv3 Counterspell
     // (anti-caster), lv4 Polymorph (transformation buff), lv5
     // Telekinesis (forced movement), lv6 Globe of Invulnerability

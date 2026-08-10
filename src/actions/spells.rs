@@ -13244,6 +13244,246 @@ impl Action for SleetStorm {
 
 pub static SLEET_STORM: LazyLock<SleetStorm> = LazyLock::new(|| SleetStorm {});
 
+/// Glyph of Warding — 5e level-3 abjuration (bard / cleric / wizard /
+/// artificer). "You inscribe a glyph that harms other creatures…"
+///
+/// The engine's first **ward**: an area that is *set* rather than cast,
+/// and the reason `ZoneEffect::ward` exists. Everything else on the
+/// zone layer happens to you because you were standing there when the
+/// wizard finished the sentence; a glyph sits on the floor waiting, and
+/// the interesting decision is where you put it several rounds before
+/// anybody walks near.
+///
+/// Three clauses come from the ward flag rather than from here — it is
+/// invisible to the pathfinder, its setter's own side steps over it,
+/// and it is spent the moment it fires. See the field for why the three
+/// arrive together.
+///
+/// **Explosive Runes**, the one glyph mode with a combat surface: "the
+/// glyph erupts with magical energy in a 20-foot-radius sphere. Each
+/// creature in the area makes a Dexterity saving throw. A creature
+/// takes 5d8 damage of a type you choose on a failed save, or half as
+/// much on a successful one." The type is fixed at fire, because the
+/// choice is made at inscription time and the engine has no prompt for
+/// it; the other glyph mode ("the glyph stores a spell") would need a
+/// spell to be chosen and aimed by somebody who is not there when it
+/// goes off, which is a lane the engine does not have.
+///
+/// RAW's duration is "until it is triggered or dispelled" — no
+/// concentration, and no clock. `WAITS_FOR` is the engine's stand-in
+/// for forever: longer than any encounter runs, so the only two ways a
+/// glyph ends are the two RAW names.
+///
+/// **The AI will not set one, and that is the spell rather than a gap
+/// in the picker.** The range is touch, so every tile a caster can
+/// inscribe is a tile inside its own eruption — and `best_burst_placement`
+/// disqualifies any spot that catches the caster's own side, correctly.
+/// The two facts together say something true about the spell: a glyph
+/// is set before initiative is rolled, by somebody who then walks
+/// away, and this engine starts at initiative. Widening the range to
+/// make the AI reach for it would be inventing a different spell to
+/// satisfy a heuristic, so the range stays at touch and the ward is a
+/// spell the player casts. The layer underneath it —
+/// `ZoneEffect::ward` — is what the AI meets, from the wrong end.
+pub struct GlyphOfWarding {}
+
+impl GlyphOfWarding {
+    /// 20-ft radius RAW; held at 4 tiles (10 ft), the same footprint
+    /// every other burst on this layer uses, so a glyph laid in a
+    /// corridor catches the corridor rather than the room behind it.
+    const RADIUS: isize = 4;
+    /// Longer than any encounter lasts. A glyph ends by going off or by
+    /// being dispelled, and a number small enough to expire would be a
+    /// third way that RAW does not have.
+    const WAITS_FOR: u32 = 1000;
+}
+
+impl Action for GlyphOfWarding {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "glyph of warding"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["glyph", "gow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW is touch — you inscribe it on a surface you can reach.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let team = caster.team();
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "glyph of warding",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::ward(
+                    ZoneContact::save_for_half(
+                        AbilityScoreType::Dexterity,
+                        dc,
+                        Dice::new(5, 8),
+                        DamageType::Fire,
+                    ),
+                    team,
+                ),
+                rounds_remaining: Self::WAITS_FOR,
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+            },
+            // A ward is armed, not cast. Charging whoever happens to be
+            // standing on the tile at inscription time would make it a
+            // Fireball with extra steps — and RAW is explicit that the
+            // glyph does nothing at all until its trigger happens.
+            catch_present: false,
+        })]
+    }
+}
+
+pub static GLYPH_OF_WARDING: LazyLock<GlyphOfWarding> = LazyLock::new(|| GlyphOfWarding {});
+
+/// Symbol — 5e level-7 abjuration (bard / cleric / wizard). The glyph
+/// grown up: same ward lifecycle, a wider blast, and a save-or-lose
+/// clause instead of damage.
+///
+/// RAW prints eight modes (Death, Discord, Fear, Hopelessness,
+/// Insanity, Pain, Sleep, Stunning). **Stunning** is the one modeled:
+/// "each creature in the area must succeed on a Wisdom saving throw or
+/// become stunned for 1 minute." It is the mode with the cleanest
+/// surface here — Death is Glyph of Warding with bigger dice, and four
+/// of the remaining six turn on rules the engine has no lane for
+/// (Discord's arguing, Hopelessness's refusal to attack, Insanity's
+/// babbling, Sleep's hour).
+///
+/// The stun is capped at three rounds rather than RAW's ten. A
+/// seventh-level slot that removes a creature from the fight for a full
+/// minute removes it from the fight, and the engine's encounters do not
+/// run long enough for the difference between "ten rounds" and "over"
+/// to be visible — three is long enough to be the reason you lost and
+/// short enough to be a fight rather than a result.
+///
+/// Player-cast, for the reason Glyph of Warding is — see its docstring.
+pub struct Symbol {}
+
+impl Symbol {
+    /// 60-ft radius RAW; held at 8 tiles (20 ft), which is the widest
+    /// burst on the layer and still fits a generated room.
+    const RADIUS: isize = 8;
+}
+
+impl Action for Symbol {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "symbol"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sym", "sigil"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let team = caster.team();
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "symbol",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::ward(
+                    ZoneContact::save_or(
+                        AbilityScoreType::Wisdom,
+                        dc,
+                        Condition::Stunned,
+                        ConditionTimer::Rounds(3),
+                    ),
+                    team,
+                ),
+                rounds_remaining: GlyphOfWarding::WAITS_FOR,
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+            },
+            catch_present: false,
+        })]
+    }
+}
+
+pub static SYMBOL: LazyLock<Symbol> = LazyLock::new(|| Symbol {});
+
 /// Reverse Gravity — 5e level-7 transmutation, concentration. Gravity
 /// reverses in a wide column; creatures inside fall *up*, then crash
 /// back down when concentration drops. We model the cast's load-bearing

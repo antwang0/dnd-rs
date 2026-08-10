@@ -65,6 +65,10 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*COMMAND);
     actions.push(&*DIVINE_FAVOR);
     actions.push(&*SPIRIT_GUARDIANS);
+    // The ward family — lv3 Glyph of Warding and lv7 Symbol, both on
+    // the cleric list RAW. See `ZoneEffect::ward`.
+    actions.push(&*crate::actions::spells::GLYPH_OF_WARDING);
+    actions.push(&*crate::actions::spells::SYMBOL);
     actions.push(&*BESTOW_CURSE);
     actions.push(&*MASS_CURE_WOUNDS);
     actions.push(&*HASTE);

@@ -6807,8 +6807,63 @@ impl EncounterInstance {
         if zone.effect.contact.is_none() || !self.actor_in_zone(actor_id, zone) {
             return;
         }
+        // 5e wards (Glyph of Warding, Symbol): the trigger is refined to
+        // the setter's enemies, so their own side walks over the glyph
+        // without springing it. See `ZoneEffect::ward` for why this is
+        // the one friend-or-foe clause on a friend-or-foe-blind layer.
+        let ward = zone.effect.ward;
+        if let Some(setter_team) = ward
+            && self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.team() == setter_team)
+        {
+            return;
+        }
         self.zone_contacts_this_turn.insert((zone_id, actor_id));
         self.apply_zone_contact(zone_id, actor_id);
+        if ward.is_some() {
+            self.detonate_ward(zone_id, actor_id);
+        }
+    }
+
+    /// Spring a ward that `sprung_by` has just set off: charge its
+    /// contact clause to everybody else standing in the area, then
+    /// spend it.
+    ///
+    /// The blast is *not* filtered the way the trigger is. RAW's
+    /// eruption catches "each creature in the area", so the setter's
+    /// own allies — and the setter — are caught by a glyph their enemy
+    /// stepped on. Only the tripwire knows whose side anyone is on.
+    ///
+    /// The ward is removed rather than left to a timer, which is the
+    /// lifecycle that made this a layer change rather than a spell:
+    /// every other area here ends on a round-end tick or on dropped
+    /// concentration, and "the spell ends when it is triggered" is
+    /// neither.
+    fn detonate_ward(&mut self, zone_id: usize, sprung_by: usize) {
+        let (name, caught) = {
+            let Some(zone) = self.zones.iter().find(|z| z.id == zone_id) else {
+                return;
+            };
+            let mut caught: Vec<usize> = self
+                .actors
+                .iter()
+                .filter(|(id, a)| **id != sprung_by && a.is_combat_active())
+                .map(|(id, _)| *id)
+                .filter(|id| self.actor_in_zone(*id, zone))
+                .collect();
+            // Sorted so a seeded replay charges them in the same order,
+            // which matters because each one rolls a save.
+            caught.sort_unstable();
+            (zone.name, caught)
+        };
+        self.log(format!("The {} flares and is spent.", name));
+        for id in caught {
+            self.zone_contacts_this_turn.insert((zone_id, id));
+            self.apply_zone_contact(zone_id, id);
+        }
+        self.remove_zone(zone_id);
     }
 
     /// Resolve one zone's contact clause against one creature: the save

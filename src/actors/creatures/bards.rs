@@ -198,6 +198,10 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::INTELLECT_FORTRESS);
     actions.push(&*crate::actions::spells::ENEMIES_ABOUND);
     actions.push(&crate::actions::spells::SUMMON_FEY);
+    // The ward family — lv3 Glyph of Warding and lv7 Symbol, both on
+    // the bard list RAW. See `ZoneEffect::ward`.
+    actions.push(&*crate::actions::spells::GLYPH_OF_WARDING);
+    actions.push(&*crate::actions::spells::SYMBOL);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

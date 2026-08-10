@@ -380,6 +380,59 @@ pub struct ZoneEffect {
     /// of 3rd level or lower". A bare bool could implement the first
     /// and not the second.
     pub darkens: Option<u32>,
+    /// 5e's **ward** family — Glyph of Warding, Symbol, and every other
+    /// area that is *set* rather than cast: "you inscribe a glyph that
+    /// harms other creatures… when triggered, the glyph erupts."
+    ///
+    /// One flag rather than three, and that is the design rather than a
+    /// shortcut. A ward differs from every other area on this layer in
+    /// three ways at once, and in 5e the three are not independent —
+    /// they are what the word means:
+    ///
+    ///   - **Nobody can see it.** RAW's glyph is "nearly invisible and
+    ///     requires a successful Intelligence (Investigation) check
+    ///     against your spell save DC to be found." So the two
+    ///     predicates the pathfinder routes around bad ground with —
+    ///     `tile_is_hazardous` and `has_bad_ground_for` — answer
+    ///     `false` for a ward. It is the one area in the game a
+    ///     creature is *supposed* to walk into.
+    ///
+    ///   - **Its owner's side does not spring it.** RAW: "you can
+    ///     further refine the trigger so the spell activates only under
+    ///     certain circumstances", and the circumstance every caster
+    ///     picks is "somebody who is not us". This is the only
+    ///     friend-or-foe clause on a layer whose module docstring calls
+    ///     itself friend-or-foe blind, and the exception is forced by
+    ///     the clause above rather than chosen: the layer can afford to
+    ///     catch the wizard who cast the web *because* the AI can see
+    ///     the web and route around it. Take the seeing away and leave
+    ///     the blindness, and a glyph is a spell whose most likely
+    ///     victim is the party that set it.
+    ///
+    ///     The *trigger* is enemies-only; the blast is not. RAW's
+    ///     eruption catches "each creature in the area", so an ally
+    ///     standing beside the goblin who stepped on it is caught by
+    ///     it — which is both the rule and the reason placement is
+    ///     still a decision.
+    ///
+    ///   - **It is spent when it fires.** Every other area on this
+    ///     layer ends on a timer or on its owner's concentration. A
+    ///     ward ends because it went off — "the spell ends when it is
+    ///     triggered" — which is the one lifecycle the round-end tick
+    ///     cannot express.
+    ///
+    /// `Some(team)` carries the side that set it, snapshotted at
+    /// install time rather than read live off `owner_id` — the same
+    /// choice, for the same reason, that `ZoneSave::dc` makes one field
+    /// up. A ward outlives the state that made it: RAW's glyph holds
+    /// "until it is triggered or dispelled" and nothing in that
+    /// sentence is about the setter still being alive. Read live, a
+    /// glyph whose caster fell would quietly stop having a trigger at
+    /// all, since there would be no team to compare anybody against.
+    ///
+    /// See `EncounterInstance::touch_zone`, which is where all three
+    /// clauses are enforced.
+    pub ward: Option<usize>,
 }
 
 impl ZoneEffect {
@@ -391,6 +444,7 @@ impl ZoneEffect {
         per_step_damage: None,
         suppresses_magic: false,
         darkens: None,
+        ward: None,
     };
 
     /// The Darkness spell: heavily obscured *and* unlit.
@@ -412,6 +466,7 @@ impl ZoneEffect {
         per_step_damage: None,
         suppresses_magic: false,
         darkens: Some(Self::DARKNESS_SPELL_LEVEL),
+        ward: None,
     };
 
     /// The level the Darkness spell is cast at, and therefore the level
@@ -429,6 +484,7 @@ impl ZoneEffect {
         per_step_damage: None,
         suppresses_magic: false,
         darkens: None,
+        ward: None,
     };
 
     /// A zone whose only clause is that magic does not work inside it
@@ -441,6 +497,7 @@ impl ZoneEffect {
         per_step_damage: None,
         suppresses_magic: true,
         darkens: None,
+        ward: None,
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
@@ -453,6 +510,7 @@ impl ZoneEffect {
             per_step_damage: None,
             suppresses_magic: false,
             darkens: None,
+            ward: None,
         }
     }
 
@@ -466,6 +524,7 @@ impl ZoneEffect {
             per_step_damage: Some((dice, damage_type)),
             suppresses_magic: false,
             darkens: None,
+            ward: None,
         }
     }
 
@@ -480,6 +539,7 @@ impl ZoneEffect {
             per_step_damage: None,
             suppresses_magic: false,
             darkens: None,
+            ward: None,
         }
     }
 
@@ -493,14 +553,43 @@ impl ZoneEffect {
             per_step_damage: None,
             suppresses_magic: false,
             darkens: None,
+            ward: None,
         }
     }
 
-    /// True if standing in this zone can cost a creature something.
-    /// Obscurement doesn't count: it is as much a hiding place as a
+    /// A set ward (Glyph of Warding, Symbol): the contact clause fires,
+    /// nothing about the ground changes, and the three `ward` clauses
+    /// apply — see the field.
+    ///
+    /// Deliberately the same body as `hazard` plus the flag, rather
+    /// than `hazard(..).warded()`: a chainable would let any area on
+    /// the layer be turned invisible to the pathfinder, and the three
+    /// clauses only compose safely with each other.
+    pub const fn ward(contact: ZoneContact, setter_team: usize) -> Self {
+        Self {
+            obscures: false,
+            difficult: false,
+            contact: Some(contact),
+            per_step_damage: None,
+            suppresses_magic: false,
+            darkens: None,
+            ward: Some(setter_team),
+        }
+    }
+
+    /// True if standing in this zone can cost a creature something, and
+    /// therefore whether anything walking the board should route around
+    /// it. Obscurement doesn't count: it is as much a hiding place as a
     /// handicap, and the AI treats it as free ground.
+    ///
+    /// A ward doesn't count either, and for the opposite reason — not
+    /// because it is harmless but because it cannot be seen. This is
+    /// the predicate both pathfinder gates read, so answering `false`
+    /// here is the whole of "nearly invisible": a creature routes
+    /// around a web and walks straight onto a glyph.
     pub fn is_harmful(&self) -> bool {
-        self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some()
+        self.ward.is_none()
+            && (self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some())
     }
 }
 

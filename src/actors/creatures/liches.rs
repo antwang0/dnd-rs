@@ -43,6 +43,10 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level 4 / 5 — control + damage curve.
     actions.push(&*ICE_STORM);
     actions.push(&*BANISHMENT);
+    // A lich that has had centuries to prepare its tomb sets wards in
+    // it — lv3 Glyph of Warding and lv7 Symbol.
+    actions.push(&*crate::actions::spells::GLYPH_OF_WARDING);
+    actions.push(&*crate::actions::spells::SYMBOL);
     actions.push(&*HOLD_MONSTER);
     actions.push(&*CLOUDKILL);
     actions.push(&*CONE_OF_COLD);
