@@ -184,6 +184,82 @@ pub fn resolve_enemy_burst_save_damage(
     .0
 }
 
+/// `resolve_enemy_burst_save_damage`, with the dice rolled and the
+/// effects applied on the spot.
+///
+/// Every other caller of the `resolve_*` family is an `Action`, which
+/// hands its effects back so the turn's side-effect stack can run them
+/// in order. The layers that fire *outside* anybody's turn —
+/// `engine::lair_actions`, `engine::legendary_actions`, the reaction
+/// dispatcher — have no stack to queue onto and no turn to be part of,
+/// so each of them wrapped this call in the same three lines: roll the
+/// dice once, resolve, drain the vec.
+///
+/// Written down here rather than twice more out there for the reason
+/// `install_condition_on_failed_saves` gives one screen up: a loop
+/// written twice is a rule that can be fixed in one place and stay
+/// broken in the other. The single roll is the part worth centralizing
+/// — a burst rolls its dice once and bills every target from the same
+/// number, and a caller that rolled inside the loop would be a
+/// different rule that looked like this one.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_enemy_burst_save_damage(
+    encounter: &mut EncounterInstance,
+    owner_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: crate::engine::dice::Dice,
+    damage_type: DamageType,
+    policy: SaveDamagePolicy,
+) {
+    let damage = encounter.roll(&dice);
+    let effects = resolve_enemy_burst_save_damage(
+        encounter,
+        owner_id,
+        center,
+        radius,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+        policy,
+    );
+    for effect in effects {
+        effect.apply(encounter);
+    }
+}
+
+/// `resolve_burst_save_condition`, applied on the spot. The condition
+/// half of `apply_enemy_burst_save_damage`, and there for the same
+/// callers and the same reason — see its docstring.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_burst_save_condition(
+    encounter: &mut EncounterInstance,
+    owner_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+) {
+    let effects = resolve_burst_save_condition(
+        encounter,
+        owner_id,
+        center,
+        radius,
+        save_ability,
+        dc,
+        condition,
+        timer,
+    );
+    for effect in effects {
+        effect.apply(encounter);
+    }
+}
+
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
 /// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /
 /// reach weapons would be 2. Ranged actions return their max range here.

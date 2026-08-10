@@ -25,7 +25,7 @@
 //! the lair didn't just use.
 
 use crate::actions::action_template::{
-    resolve_enemy_burst_save_damage, resolve_burst_save_condition,
+    apply_burst_save_condition, apply_enemy_burst_save_damage,
 };
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
@@ -135,21 +135,17 @@ fn lair_burst_damage(
         return;
     };
     let dc = lair_dc(encounter, resident_id);
-    let damage = encounter.roll(&dice);
-    let effects = resolve_enemy_burst_save_damage(
+    apply_enemy_burst_save_damage(
         encounter,
         resident_id,
         center,
         radius,
         save,
         dc,
-        damage,
+        dice,
         damage_type,
         policy,
     );
-    for effect in effects {
-        effect.apply(encounter);
-    }
 }
 
 /// Resolve a "each creature in the lair must save or pick something up"
@@ -167,12 +163,9 @@ fn lair_burst_condition(
         return;
     };
     let dc = lair_dc(encounter, resident_id);
-    let effects = resolve_burst_save_condition(
+    apply_burst_save_condition(
         encounter, resident_id, center, radius, save, dc, condition, timer,
     );
-    for effect in effects {
-        effect.apply(encounter);
-    }
 }
 
 /// **Dragon lair** (MM, chromatic dragon lairs). Three effects: the

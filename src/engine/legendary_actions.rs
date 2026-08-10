@@ -72,9 +72,9 @@
 //! smaller lie than a dragon that never acts at all.
 
 use crate::actions::action_template::{
-    resolve_burst_save_condition, resolve_enemy_burst_save_damage,
+    apply_burst_save_condition, apply_enemy_burst_save_damage,
 };
-use crate::actions::monster_attacks::weapon_swing_with_damage;
+use crate::engine::attack::{AttackParams, resolve_attack_outcome};
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
@@ -171,14 +171,49 @@ fn nearest_enemy_within(
 /// end to end, so the filter that matters is the reach and not this.
 const LEGENDARY_SEARCH: isize = 40;
 
-/// The five facts that describe one legendary swing.
+/// What kind of attack roll a legendary option makes.
 ///
-/// A struct rather than five positional parameters threaded through
+/// Two independent yes/no questions — is it melee, is it a spell — and
+/// three of the four combinations occur on these lists, which is why
+/// this is an enum rather than two booleans on the struct below: the
+/// fourth combination (a ranged *weapon* attack) has no entry, and a
+/// pair of bools would let a future option ask for one by accident.
+///
+/// Both answers reach real rules. `is_melee` drives the prone-target
+/// clause in `compute_attack_mode`, which is inverted between the two
+/// — a swing at a prone creature has advantage and a shot at one has
+/// disadvantage — so a ray resolved as a melee swing is a ray that
+/// gets *better* the more of the party is on the floor. `is_spell` is
+/// what marks an attack roll as magic for the riders that ask.
+#[derive(Debug, Clone, Copy)]
+enum SwingKind {
+    /// A limb: the dragon's tail, the kraken's tentacle, the vampire's
+    /// fist.
+    Melee,
+    /// A melee *spell* attack — the lich's Paralyzing Touch, which RAW
+    /// rolls at touch range off its spellcasting ability.
+    MeleeSpell,
+    /// A ranged spell attack: the beholder's eye ray.
+    RangedSpell,
+}
+
+impl SwingKind {
+    const fn is_melee(self) -> bool {
+        matches!(self, SwingKind::Melee | SwingKind::MeleeSpell)
+    }
+    const fn is_spell(self) -> bool {
+        matches!(self, SwingKind::MeleeSpell | SwingKind::RangedSpell)
+    }
+}
+
+/// The facts that describe one legendary swing.
+///
+/// A struct rather than six positional parameters threaded through
 /// three helpers, for the reason `attack::HitContext` gives for being
 /// one: `legendary_attack_with_grab(e, id, "chomp", Strength,
-/// Dice::new(4, 12), Piercing, 6, Grappled, Permanent)` is a call
-/// nobody can read at the site, and the two riders below would each
-/// have carried the whole list again.
+/// Dice::new(4, 12), Piercing, 6, Melee, Grappled, Permanent)` is a
+/// call nobody can read at the site, and the two riders below would
+/// each have carried the whole list again.
 struct Swing {
     /// Names the option in the log and on the attack roll.
     name: &'static str,
@@ -190,6 +225,7 @@ struct Swing {
     damage_type: DamageType,
     /// Footprint-to-footprint reach in tiles.
     reach: isize,
+    kind: SwingKind,
 }
 
 /// One swing of a legendary melee option at the nearest enemy in reach.
@@ -208,16 +244,29 @@ fn legendary_attack(
     swing: &Swing,
 ) -> Option<usize> {
     let target_id = nearest_enemy_within(encounter, actor_id, swing.reach)?;
-    let (effects, _damage) = weapon_swing_with_damage(
+    let actor = encounter.actors.get(&actor_id)?;
+    let attack_bonus = actor.spell_attack_modifier(swing.ability);
+    let damage_bonus = actor.ability_modifier(swing.ability);
+    let (effects, _damage) = resolve_attack_outcome(
         encounter,
-        actor_id,
-        target_id,
-        swing.name,
-        swing.ability,
-        swing.dice,
-        swing.damage_type,
-        true,
-        None,
+        AttackParams {
+            caster_id: actor_id,
+            target_id,
+            action_name: swing.name,
+            attack_bonus,
+            damage_dice: swing.dice,
+            damage_bonus,
+            damage_type: swing.damage_type,
+            is_melee: swing.kind.is_melee(),
+            // No long-range falloff: RAW prints one reach per legendary
+            // option and no second band beyond it, so there is no
+            // threshold for a shot to cross.
+            long_range: None,
+            // Only the lance minds being crowded, and nothing on these
+            // lists is one.
+            min_range: None,
+            is_spell: swing.kind.is_spell(),
+        },
     );
     let landed = !effects.is_empty();
     for effect in effects {
@@ -275,21 +324,17 @@ fn legendary_burst_damage(
         return;
     };
     let dc = legendary_dc(encounter, actor_id);
-    let damage = encounter.roll(&dice);
-    let effects = resolve_enemy_burst_save_damage(
+    apply_enemy_burst_save_damage(
         encounter,
         actor_id,
         center,
         radius,
         save,
         dc,
-        damage,
+        dice,
         damage_type,
         policy,
     );
-    for effect in effects {
-        effect.apply(encounter);
-    }
 }
 
 /// The condition half of `legendary_burst_damage`, centred the same way.
@@ -305,12 +350,9 @@ fn legendary_burst_condition(
         return;
     };
     let dc = legendary_dc(encounter, actor_id);
-    let effects = resolve_burst_save_condition(
+    apply_burst_save_condition(
         encounter, actor_id, center, radius, save, dc, condition, timer,
     );
-    for effect in effects {
-        effect.apply(encounter);
-    }
 }
 
 /// A single enemy in sight makes a save or takes a condition — the
@@ -454,6 +496,7 @@ pub const DRAGON_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(2, 8),
                     damage_type: DamageType::Bludgeoning,
                     reach: REACH_LONG,
+                    kind: SwingKind::Melee,
                 },
             );
         },
@@ -509,6 +552,7 @@ pub const LICH_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(3, 6),
                     damage_type: DamageType::Cold,
                     reach: MELEE,
+                    kind: SwingKind::MeleeSpell,
                 },
             ) else {
                 return;
@@ -585,6 +629,7 @@ pub const BEHOLDER_LEGENDARY: &[LegendaryAction] = &[LegendaryAction {
                 dice: Dice::new(4, 8),
                 damage_type: DamageType::Force,
                 reach: LEGENDARY_SEARCH,
+                kind: SwingKind::RangedSpell,
             },
         );
     },
@@ -610,6 +655,7 @@ pub const KRAKEN_LEGENDARY: &[LegendaryAction] = &[
                     damage_type: DamageType::Bludgeoning,
                     // 30 ft of tentacle.
                     reach: 12,
+                    kind: SwingKind::Melee,
                 },
                 Condition::Grappled,
                 ConditionTimer::Permanent,
@@ -657,6 +703,7 @@ pub const VAMPIRE_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(1, 8),
                     damage_type: DamageType::Bludgeoning,
                     reach: MELEE,
+                    kind: SwingKind::Melee,
                 },
                 Condition::Grappled,
                 ConditionTimer::Permanent,
@@ -676,6 +723,7 @@ pub const VAMPIRE_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(1, 6),
                     damage_type: DamageType::Piercing,
                     reach: MELEE,
+                    kind: SwingKind::Melee,
                 },
                 Dice::new(3, 6),
             )
@@ -699,6 +747,7 @@ pub const TARRASQUE_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(4, 8),
                     damage_type: DamageType::Slashing,
                     reach: REACH_LONG,
+                    kind: SwingKind::Melee,
                 },
             );
         },
@@ -722,6 +771,7 @@ pub const TARRASQUE_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(4, 12),
                     damage_type: DamageType::Piercing,
                     reach: REACH_LONG,
+                    kind: SwingKind::Melee,
                 },
                 Condition::Grappled,
                 ConditionTimer::Permanent,
@@ -748,6 +798,7 @@ pub const PIT_FIEND_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(2, 8),
                     damage_type: DamageType::Slashing,
                     reach: MELEE,
+                    kind: SwingKind::Melee,
                 },
             );
         },
@@ -828,6 +879,7 @@ pub const ANDROSPHINX_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(2, 10),
                     damage_type: DamageType::Slashing,
                     reach: REACH_LONG,
+                    kind: SwingKind::Melee,
                 },
             );
         },
@@ -870,6 +922,7 @@ pub const DEATH_KNIGHT_LEGENDARY: &[LegendaryAction] = &[
                     dice: Dice::new(2, 8),
                     damage_type: DamageType::Slashing,
                     reach: MELEE,
+                    kind: SwingKind::Melee,
                 },
             );
         },
@@ -1037,6 +1090,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The two questions `SwingKind` answers are independent, and the
+    /// table says so. Pinned because the pair is easy to collapse into
+    /// one bool by somebody who notices that two of the three variants
+    /// agree on either question taken alone.
+    #[test]
+    fn a_swing_kind_answers_melee_and_spell_separately() {
+        assert!(SwingKind::Melee.is_melee());
+        assert!(!SwingKind::Melee.is_spell());
+        assert!(SwingKind::MeleeSpell.is_melee());
+        assert!(SwingKind::MeleeSpell.is_spell());
+        assert!(!SwingKind::RangedSpell.is_melee());
+        assert!(SwingKind::RangedSpell.is_spell());
+    }
+
+    /// A ray fired across the room at a creature lying on the floor
+    /// rolls at *disadvantage*, not advantage.
+    ///
+    /// 5e's prone clause is inverted between the two lanes — "attack
+    /// rolls against the creature have advantage if the attacker is
+    /// within 5 feet, disadvantage otherwise" — so a ranged option
+    /// resolved as a melee swing is not a cosmetic mislabel: it is an
+    /// eye ray that gets *better* the more of the party is on the
+    /// floor. That is exactly what the beholder's ray did while every
+    /// legendary swing shared one hardcoded `is_melee: true`.
+    #[test]
+    fn a_ranged_legendary_option_is_taxed_by_range_rather_than_rewarded_by_it() {
+        use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = arena();
+        let beholder = e
+            .instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(24, 6), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+
+        let entry = &BEHOLDER_LEGENDARY[0];
+        let before = e.messages().len();
+        (entry.fire)(&mut e, beholder);
+        let log = e.messages()[before..].join("\n");
+        assert!(
+            log.contains("(dis)"),
+            "a ray at a prone target across the room should be at \
+             disadvantage:\n{}",
+            log
+        );
+        assert!(
+            !log.contains("(adv)"),
+            "and must not be rewarded for the target being down:\n{}",
+            log
+        );
     }
 
     /// Every repertoire written here is attached to the creature it was
