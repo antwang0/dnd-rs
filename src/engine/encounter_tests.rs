@@ -38489,6 +38489,129 @@ fn a_spell_attack_out_of_the_water_is_untouched() {
     }
 }
 
+/// The picker's answer to "is this a weapon attack" and the die's are
+/// the same answer, for every weapon chassis in the armoury.
+///
+/// There are two copies of that fact and there have to be.
+/// `resolve_attack` reads `!AttackParams::is_spell`, which is
+/// authoritative; the AI's attack picker holds a `&dyn Action` and can
+/// only ask `Action::is_weapon_attack`. Four chassis used to answer
+/// `false` there while answering `true` down at the die — every
+/// save-rider and flat-rider natural weapon in the bestiary, plus the
+/// drow's hand crossbow.
+///
+/// The visible cost was in the water. The picker ranked a swing as
+/// though the water cost it nothing and the die then rolled it at
+/// disadvantage, and a shot the water makes impossible was never
+/// dropped from the candidate list — the `AutoMiss` early-out is the
+/// one underwater clause the picker owns outright, and it fires only
+/// for something it believes is a weapon.
+///
+/// **Read off the armoury source rather than off the templates**, and
+/// for the reason `a_weapon_deals_the_damage_its_name_implies` gives
+/// next door: a template walk can only see chassis that something in
+/// the pool happens to carry, and the failure being guarded against is
+/// a whole chassis — the unit a fifth one would be added as. Every
+/// `impl Action for Weapon*` block in the armoury is a shared weapon
+/// chassis by construction of its name, and every one of them has to
+/// answer the question the same way the die does.
+#[test]
+fn every_weapon_chassis_in_the_armoury_admits_to_being_one() {
+    use std::path::Path;
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actions/monster_attacks.rs"),
+    )
+    .expect("the armoury should be readable");
+
+    let blocks: Vec<&str> = source.split("\nimpl Action for ").skip(1).collect();
+    let mut checked = 0;
+    for block in blocks {
+        let name = block.split_whitespace().next().unwrap_or("");
+        // The shared chassis, by the naming convention they are
+        // declared under. Bespoke one-off actions (`GhoulClaws`,
+        // `BeholderEyeRay`) are deliberately out of scope: the trait
+        // doc says a bespoke natural weapon may leave the flag false,
+        // and a sweep that demanded otherwise would be inventing a
+        // rule rather than enforcing one.
+        if !name.starts_with("Weapon") && name != "SimpleWeapon" {
+            continue;
+        }
+        checked += 1;
+        assert!(
+            block.contains("fn is_weapon_attack"),
+            "{} is a shared weapon chassis and does not declare is_weapon_attack — \
+             the AI's picker will read it as a spell while the die reads it as a swing",
+            name
+        );
+    }
+    assert!(
+        checked >= 5,
+        "expected the armoury's five weapon chassis, found {}",
+        checked
+    );
+
+    // …and one live instance of each, so a regression that deletes an
+    // override fails on the weapon's name as well as the chassis's.
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{
+        BEARDED_DEVIL_BEARD, CHUUL_PINCER, DROW_POISONED_CROSSBOW, WOLF_BITE, YETI_CLAWS,
+    };
+    for a in [
+        &YETI_CLAWS as &dyn Action,          // WeaponWithRider
+        &WOLF_BITE,                          // WeaponWithSaveCondition
+        &BEARDED_DEVIL_BEARD,                // …and a second of the same
+        &CHUUL_PINCER,                       // WeaponWithCondition
+        &DROW_POISONED_CROSSBOW,             // WeaponWithSaveDamage, ranged
+    ] {
+        assert!(
+            a.is_weapon_attack(),
+            "{} resolves as a weapon swing and must say so",
+            a.name()
+        );
+    }
+
+    // …and the drow's crossbow declares the band the `AutoMiss` clause
+    // needs. Without it `beyond_normal_range` is never true and the
+    // clause cannot fire however honest the weapon flag is.
+    assert_eq!(DROW_POISONED_CROSSBOW.normal_range, Some(12));
+}
+
+/// The three underwater outcomes, read off a rider-chassis weapon
+/// rather than a `SimpleWeapon` — which is the case that used to come
+/// back `Unaffected` for all three.
+#[test]
+fn a_save_rider_weapon_obeys_the_water_like_any_other() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, WOLF_BITE};
+    use crate::engine::underwater::UnderwaterVerdict;
+    let (e, swimmer, _) = swimmer_and_bystander();
+
+    // A bite is not one of RAW's five thrusting weapons, so a swimmer
+    // without a swimming speed bites at disadvantage. This is the
+    // verdict that used to come back `Unaffected` — not because the
+    // wolf was exempt, but because the chassis claimed the bite was not
+    // a weapon attack and the whole rule was skipped.
+    let bite: &dyn Action = &WOLF_BITE;
+    assert_eq!(
+        e.underwater_verdict(swimmer, bite.name(), true, bite.is_weapon_attack(), false),
+        UnderwaterVerdict::Disadvantage,
+        "a bite drags through the water like any other swing"
+    );
+
+    // A crossbow is exempt from the ranged disadvantage clause…
+    let bow: &dyn Action = &DROW_POISONED_CROSSBOW;
+    assert_eq!(
+        e.underwater_verdict(swimmer, bow.name(), false, bow.is_weapon_attack(), false),
+        UnderwaterVerdict::Unaffected,
+    );
+    // …and exempt from nothing at all past its normal range.
+    assert_eq!(
+        e.underwater_verdict(swimmer, bow.name(), false, bow.is_weapon_attack(), true),
+        UnderwaterVerdict::AutoMiss,
+        "no ranged weapon escapes the range cut"
+    );
+}
+
 /// "Creatures and objects that are fully immersed in water have
 /// resistance to fire damage."
 #[test]

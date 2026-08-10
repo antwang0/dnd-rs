@@ -1342,16 +1342,27 @@ impl Action for WeaponWithRider {
     /// trait's default is a guess made by something that doesn't.
     ///
     /// Every swing on this chassis resolves through `resolve_attack`
-    /// with `is_spell: false`. That is the engine's own definition of a
-    /// weapon attack, and until now four whole chassis — every
-    /// save-rider and flat-rider natural weapon in the bestiary, plus
-    /// the drow's hand crossbow — answered `false` to the question and
-    /// so were read as spells by the one consumer that asks it: 5e's
-    /// Underwater Combat rules, whose every clause says "weapon
-    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
-    /// with a spear got no credit for carrying one of the five weapons
-    /// RAW exempts, and a crossbow bolt fired across a lake could not
-    /// be told from a Fire Bolt.
+    /// with `is_spell: false`, which is the engine's own definition of
+    /// a weapon attack — and the attack site reads exactly that when it
+    /// asks 5e's Underwater Combat rules what the water does to the
+    /// swing. This method is the *other* copy of that answer, the one
+    /// the AI's attack picker has to use because it holds a `&dyn
+    /// Action` and never sees an `AttackParams`.
+    ///
+    /// So the bug this fixes is a divergence rather than a missing
+    /// rule: four whole chassis — every save-rider and flat-rider
+    /// natural weapon in the bestiary, plus the drow's hand crossbow —
+    /// answered `false` here while the die answered `true` down there.
+    /// The picker therefore ranked a shark's bite in its own ocean as
+    /// though the water cost it nothing, and then the die rolled it at
+    /// disadvantage; and a ranged shot the water makes impossible was
+    /// never dropped from the candidate list, because the clause that
+    /// drops it is the one clause the picker owns outright.
+    ///
+    /// Prediction and resolution disagreeing is worse than either being
+    /// wrong alone. The picker's whole job is to choose between swings
+    /// by what they will do, and it was choosing by a rule the engine
+    /// does not use.
     fn is_weapon_attack(&self) -> bool {
         true
     }
@@ -1539,16 +1550,27 @@ impl Action for WeaponWithSaveCondition {
     /// trait's default is a guess made by something that doesn't.
     ///
     /// Every swing on this chassis resolves through `resolve_attack`
-    /// with `is_spell: false`. That is the engine's own definition of a
-    /// weapon attack, and until now four whole chassis — every
-    /// save-rider and flat-rider natural weapon in the bestiary, plus
-    /// the drow's hand crossbow — answered `false` to the question and
-    /// so were read as spells by the one consumer that asks it: 5e's
-    /// Underwater Combat rules, whose every clause says "weapon
-    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
-    /// with a spear got no credit for carrying one of the five weapons
-    /// RAW exempts, and a crossbow bolt fired across a lake could not
-    /// be told from a Fire Bolt.
+    /// with `is_spell: false`, which is the engine's own definition of
+    /// a weapon attack — and the attack site reads exactly that when it
+    /// asks 5e's Underwater Combat rules what the water does to the
+    /// swing. This method is the *other* copy of that answer, the one
+    /// the AI's attack picker has to use because it holds a `&dyn
+    /// Action` and never sees an `AttackParams`.
+    ///
+    /// So the bug this fixes is a divergence rather than a missing
+    /// rule: four whole chassis — every save-rider and flat-rider
+    /// natural weapon in the bestiary, plus the drow's hand crossbow —
+    /// answered `false` here while the die answered `true` down there.
+    /// The picker therefore ranked a shark's bite in its own ocean as
+    /// though the water cost it nothing, and then the die rolled it at
+    /// disadvantage; and a ranged shot the water makes impossible was
+    /// never dropped from the candidate list, because the clause that
+    /// drops it is the one clause the picker owns outright.
+    ///
+    /// Prediction and resolution disagreeing is worse than either being
+    /// wrong alone. The picker's whole job is to choose between swings
+    /// by what they will do, and it was choosing by a rule the engine
+    /// does not use.
     fn is_weapon_attack(&self) -> bool {
         true
     }
@@ -1902,16 +1924,27 @@ impl Action for WeaponWithSaveDamage {
     /// trait's default is a guess made by something that doesn't.
     ///
     /// Every swing on this chassis resolves through `resolve_attack`
-    /// with `is_spell: false`. That is the engine's own definition of a
-    /// weapon attack, and until now four whole chassis — every
-    /// save-rider and flat-rider natural weapon in the bestiary, plus
-    /// the drow's hand crossbow — answered `false` to the question and
-    /// so were read as spells by the one consumer that asks it: 5e's
-    /// Underwater Combat rules, whose every clause says "weapon
-    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
-    /// with a spear got no credit for carrying one of the five weapons
-    /// RAW exempts, and a crossbow bolt fired across a lake could not
-    /// be told from a Fire Bolt.
+    /// with `is_spell: false`, which is the engine's own definition of
+    /// a weapon attack — and the attack site reads exactly that when it
+    /// asks 5e's Underwater Combat rules what the water does to the
+    /// swing. This method is the *other* copy of that answer, the one
+    /// the AI's attack picker has to use because it holds a `&dyn
+    /// Action` and never sees an `AttackParams`.
+    ///
+    /// So the bug this fixes is a divergence rather than a missing
+    /// rule: four whole chassis — every save-rider and flat-rider
+    /// natural weapon in the bestiary, plus the drow's hand crossbow —
+    /// answered `false` here while the die answered `true` down there.
+    /// The picker therefore ranked a shark's bite in its own ocean as
+    /// though the water cost it nothing, and then the die rolled it at
+    /// disadvantage; and a ranged shot the water makes impossible was
+    /// never dropped from the candidate list, because the clause that
+    /// drops it is the one clause the picker owns outright.
+    ///
+    /// Prediction and resolution disagreeing is worse than either being
+    /// wrong alone. The picker's whole job is to choose between swings
+    /// by what they will do, and it was choosing by a rule the engine
+    /// does not use.
     fn is_weapon_attack(&self) -> bool {
         true
     }
@@ -2134,16 +2167,27 @@ impl Action for WeaponWithCondition {
     /// trait's default is a guess made by something that doesn't.
     ///
     /// Every swing on this chassis resolves through `resolve_attack`
-    /// with `is_spell: false`. That is the engine's own definition of a
-    /// weapon attack, and until now four whole chassis — every
-    /// save-rider and flat-rider natural weapon in the bestiary, plus
-    /// the drow's hand crossbow — answered `false` to the question and
-    /// so were read as spells by the one consumer that asks it: 5e's
-    /// Underwater Combat rules, whose every clause says "weapon
-    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
-    /// with a spear got no credit for carrying one of the five weapons
-    /// RAW exempts, and a crossbow bolt fired across a lake could not
-    /// be told from a Fire Bolt.
+    /// with `is_spell: false`, which is the engine's own definition of
+    /// a weapon attack — and the attack site reads exactly that when it
+    /// asks 5e's Underwater Combat rules what the water does to the
+    /// swing. This method is the *other* copy of that answer, the one
+    /// the AI's attack picker has to use because it holds a `&dyn
+    /// Action` and never sees an `AttackParams`.
+    ///
+    /// So the bug this fixes is a divergence rather than a missing
+    /// rule: four whole chassis — every save-rider and flat-rider
+    /// natural weapon in the bestiary, plus the drow's hand crossbow —
+    /// answered `false` here while the die answered `true` down there.
+    /// The picker therefore ranked a shark's bite in its own ocean as
+    /// though the water cost it nothing, and then the die rolled it at
+    /// disadvantage; and a ranged shot the water makes impossible was
+    /// never dropped from the candidate list, because the clause that
+    /// drops it is the one clause the picker owns outright.
+    ///
+    /// Prediction and resolution disagreeing is worse than either being
+    /// wrong alone. The picker's whole job is to choose between swings
+    /// by what they will do, and it was choosing by a rule the engine
+    /// does not use.
     fn is_weapon_attack(&self) -> bool {
         true
     }
