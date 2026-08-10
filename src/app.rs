@@ -327,7 +327,7 @@ impl App {
             self.encounter_number, current_cr
         );
         if self.encounter.is_complete() {
-            if self.encounter.winning_team() == Some(self.actor_params.start_team) {
+            if self.player_may_continue() {
                 return format!("{}  R: long rest & continue  Esc: quit", prefix);
             }
             return format!("{}  Esc: quit", prefix);
@@ -368,15 +368,14 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent) -> Tick {
         // Once the encounter is decided, the only keys that matter are
-        // quit and (on player victory) "R" to long-rest into the next
-        // encounter. Everything else is ignored so stray input doesn't
+        // quit and — for a player who is still standing, whether they
+        // won or the fight was called a draw — "R" to long-rest into
+        // the next encounter. Everything else is ignored so stray input doesn't
         // get buffered into the input box behind the banner.
         if self.encounter.is_complete() {
             return match key.code {
                 KeyCode::Esc => Tick::Quit,
-                KeyCode::Char('r') | KeyCode::Char('R')
-                    if self.encounter.winning_team() == Some(self.actor_params.start_team) =>
-                {
+                KeyCode::Char('r') | KeyCode::Char('R') if self.player_may_continue() => {
                     self.start_next_encounter();
                     Tick::Continue
                 }
@@ -420,6 +419,50 @@ impl App {
         }
     }
 
+    /// True once the fight is over *and* the player walked out of it —
+    /// the condition for offering "R: long rest & continue".
+    ///
+    /// Three call sites read this: the banner that offers the key, the
+    /// status line that advertises it, and the handler that honours it.
+    /// All three used to compare `winning_team()` against the player's
+    /// team by hand, which agreed with itself only as long as "the
+    /// player survived" and "the player won" were the same sentence.
+    /// A draw makes them different: the engine can end a fight with
+    /// several teams still standing (see
+    /// `EncounterInstance::is_stalemate`), and a player who is alive at
+    /// the end of one has no more reason to be sent to the quit prompt
+    /// than a player who won.
+    ///
+    /// Asking after the player's own team rather than after the winner
+    /// is also the more direct question, and it answers the win case
+    /// identically: a victory is by definition the state where the
+    /// player's team is the only one left standing.
+    fn player_may_continue(&self) -> bool {
+        self.encounter.is_complete()
+            && self
+                .encounter
+                .actors
+                .values()
+                .any(|a| a.team() == self.actor_params.start_team && a.is_combat_active())
+    }
+
+    /// What the banner says once the fight is over.
+    ///
+    /// `winning_team` answers `None` for two completely different
+    /// endings, and the banner used to print the same sentence for
+    /// both. "No survivors" is right for the one where everybody is
+    /// dead and badly wrong for the other — a draw, where the board is
+    /// still full of people who simply could not finish each other.
+    /// The engine ends those two ways deliberately (see
+    /// `EncounterInstance::is_stalemate`, both halves), so the player
+    /// deserves to be told which one they are looking at, not least
+    /// because the mutual-annihilation ending is genuinely rare and
+    /// reads as a bug when it is announced over a board of live
+    /// creatures.
+    ///
+    /// A draw offers the same "long rest and continue" the win does.
+    /// The player did not lose — nobody did — and the alternative is
+    /// making them quit over a fight the engine called off.
     fn completion_banner(&self) -> Option<String> {
         if !self.encounter.is_complete() {
             return None;
@@ -434,6 +477,22 @@ impl App {
                 "Team {} wins. You fall in encounter {}. (Esc to quit)",
                 team, self.encounter_number
             )),
+            // Somebody is still standing, so this is the draw rather
+            // than the wipe. Read off the board rather than off
+            // `is_stalemate`, because the question the sentence answers
+            // is "is anyone left?" and that is what to ask.
+            None if self
+                .encounter
+                .actors
+                .values()
+                .any(|a| a.is_combat_active()) =>
+            {
+                Some(format!(
+                    "Encounter {} ends in a stalemate — nobody could finish it. \
+                     (R: long rest & continue, Esc: quit)",
+                    self.encounter_number
+                ))
+            }
             None => Some(format!(
                 "No survivors of encounter {}. (Esc to quit)",
                 self.encounter_number
@@ -658,3 +717,122 @@ impl App {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    /// An empty 20×20 arena with the generator's roster switched off,
+    /// so the only actors on the board are the ones a test puts there.
+    fn app_with_empty_board() -> App {
+        let terrain_params = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let actor_params = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let encounter = EncounterInstance::from_params(&terrain_params, &actor_params, Some(0))
+            .expect("an empty board generates");
+        App::new(encounter, terrain_params, actor_params)
+    }
+
+    fn spawn(app: &mut App, team: usize, at: Coordinate) -> usize {
+        app.encounter
+            .instantiate_creature(&GOBLIN_TEMPLATE, at, team, team)
+            .expect("the goblin fits")
+    }
+
+    /// The player cleared the board: the banner says so and offers the
+    /// key that starts the next fight.
+    #[test]
+    fn a_cleared_board_offers_the_next_encounter() {
+        let mut app = app_with_empty_board();
+        spawn(&mut app, 0, Coordinate::new(5, 5));
+        assert!(app.encounter.is_complete(), "one team left is a win");
+        assert!(app.player_may_continue());
+        let banner = app.completion_banner().expect("a finished fight has a banner");
+        assert!(banner.contains("cleared"), "got: {banner}");
+        assert!(banner.contains("long rest"), "got: {banner}");
+    }
+
+    /// The player fell: no continue, and the banner names the winner
+    /// rather than offering a rest the player cannot take.
+    #[test]
+    fn a_lost_board_offers_nothing_but_the_exit() {
+        let mut app = app_with_empty_board();
+        spawn(&mut app, 1, Coordinate::new(5, 5));
+        assert!(app.encounter.is_complete());
+        assert!(
+            !app.player_may_continue(),
+            "nobody on the player's team is standing"
+        );
+        let banner = app.completion_banner().expect("a finished fight has a banner");
+        assert!(banner.contains("Team 1 wins"), "got: {banner}");
+        assert!(!banner.contains("long rest"), "got: {banner}");
+    }
+
+    /// A draw is not a wipe, and the banner has to stop saying it is.
+    ///
+    /// `winning_team` answers `None` for both endings, and the banner
+    /// used to print "No survivors" for each — over a board with two
+    /// live goblins standing on it, in this case. The player is alive
+    /// and did not lose, so they get the same offer a winner gets.
+    #[test]
+    fn a_draw_is_reported_as_a_draw_and_the_survivor_may_continue() {
+        let mut app = app_with_empty_board();
+        let pc = spawn(&mut app, 0, Coordinate::new(5, 5));
+        let foe = spawn(&mut app, 1, Coordinate::new(6, 5));
+        assert!(!app.encounter.is_complete(), "the fight has not started yet");
+
+        // Neither goblin ever swings, so the fight makes no progress
+        // and the engine eventually calls it. See
+        // `EncounterInstance::is_stalemate`.
+        let mut steps = 0usize;
+        while !app.encounter.is_complete() && steps < 200_000 {
+            steps += 1;
+            app.encounter.process_stack();
+            if app.encounter.is_complete() {
+                break;
+            }
+            let Some(prompt) = app.encounter.peek_prompt() else {
+                break;
+            };
+            let actor_id = prompt.actor_id();
+            app.encounter.pop_prompt();
+            app.encounter.push_action(ActionExecutionInfo::new(
+                &*crate::actions::default_actions::SKIP,
+                actor_id,
+                None,
+                None,
+                None,
+            ));
+        }
+
+        assert!(app.encounter.is_complete(), "the draw was called");
+        assert_eq!(app.encounter.winning_team(), None, "nobody won");
+        assert!(
+            app.encounter.actors[&pc].is_combat_active()
+                && app.encounter.actors[&foe].is_combat_active(),
+            "both are still standing, which is what makes this a draw and not a wipe"
+        );
+        let banner = app.completion_banner().expect("a finished fight has a banner");
+        assert!(banner.contains("stalemate"), "got: {banner}");
+        assert!(
+            !banner.contains("No survivors"),
+            "there are two of them right there: {banner}"
+        );
+        assert!(
+            app.player_may_continue(),
+            "a player who walked out of a draw has no more reason to be sent \
+             to the quit prompt than one who won"
+        );
+    }
+}
