@@ -77084,6 +77084,136 @@ fn a_creature_that_is_a_light_source_lights_the_room_and_takes_it_with_it() {
     );
 }
 
+/// Dancing Lights lights ground the caster is nowhere near, and stays
+/// there when the caster walks off.
+///
+/// The anchor is the whole point of the cantrip and the one thing that
+/// separates it from Light, which is carried. A wizard who throws four
+/// motes forty tiles down a corridor and then retreats has bought
+/// information about the far end of the corridor; a wizard who lit
+/// *themselves* would have bought the enemy a target. So the assertion
+/// that matters is the one taken after the caster moves.
+///
+/// Dim rather than bright is the other half, and RAW: four motes are
+/// enough to see something is there, not enough to shoot it cleanly.
+#[test]
+fn dancing_lights_hangs_a_dim_lamp_where_the_caster_is_not() {
+    use crate::actions::spells::DANCING_LIGHTS;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::lighting::LightLevel;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let far = Coordinate::new(20, 2);
+    assert_eq!(e.light_at(far), LightLevel::Dark);
+
+    for x in DANCING_LIGHTS.side_effects(&mut e, wizard, None, Some(&vec![far]), None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(
+        e.light_at(far),
+        LightLevel::Dim,
+        "four motes are dim light, not a floodlight"
+    );
+    assert_eq!(
+        e.light_at(Coordinate::new(2, 2)),
+        LightLevel::Dark,
+        "the caster did not light themselves — that is the Light cantrip's job"
+    );
+    assert!(e.actors[&wizard].is_concentrating());
+
+    // Fixed, not carried: walking away leaves the lamp behind.
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .set_location(Coordinate::new(28, 28));
+    assert_eq!(
+        e.light_at(far),
+        LightLevel::Dim,
+        "the motes hang where they were cast rather than following the caster"
+    );
+
+    // And it refuses to be cast on a board that already has light
+    // everywhere, so the AI never burns an action — or a concentration
+    // — on the ambient default.
+    let mut lit = ei_with_terrain(30, 30, &[]);
+    lit.set_ambient_light(AmbientLight::Daylight);
+    let sunlit_wizard = lit
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(!DANCING_LIGHTS.validate_input(&lit, sunlit_wizard, None, Some(&vec![far]), None));
+}
+
+/// Mislead hands the caster both halves at once — invisibility and the
+/// illusory double — and the swing that cashes them in still gets
+/// them.
+///
+/// The ordering is the assertion worth having. `breaks_on_attack`
+/// fires from `clear_attack_advantage_riders`, which runs *after* the
+/// attack resolves, so the level-5 slot is not spent on a spell that
+/// evaporates the instant it becomes useful. If that ever inverted,
+/// Mislead would silently become a worse Greater Invisibility and
+/// every test but this one would stay green.
+#[test]
+fn mislead_hands_over_both_halves_and_the_swing_that_ends_it_still_gets_them() {
+    use crate::actions::spells::MISLEAD;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 1)
+        .unwrap();
+
+    for x in MISLEAD.side_effects(&mut e, bard, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert!(e.actors[&bard].has_condition(Condition::Invisible));
+    assert!(e.actors[&bard].has_condition(Condition::Duplicity));
+    assert!(e.actors[&bard].is_concentrating());
+
+    // Both halves are on the caster's attack-advantage cohort, so the
+    // swing that ends the spell is made with it.
+    assert!(
+        Condition::Invisible.grants_self_attack_advantage()
+            && Condition::Duplicity.grants_self_attack_advantage()
+    );
+
+    // Now spend it. The attack takes the spell down with it — RAW ends
+    // only the invisibility, and the engine's divergence is documented
+    // on `spells::MISLEAD`.
+    let scimitar = e.actors[&bard]
+        .find_action("scimitar")
+        .expect("the bard carries a blade");
+    let aei = ActionExecutionInfo::new(scimitar, bard, Some(vec![goblin]), None, None);
+    e.push_action(aei);
+    e.process_stack();
+    assert!(
+        !e.actors[&bard].is_concentrating(),
+        "attacking ends Mislead"
+    );
+    assert!(!e.actors[&bard].has_condition(Condition::Invisible));
+    assert!(
+        !e.actors[&bard].has_condition(Condition::Duplicity),
+        "the concentration that held both halves took both halves with it"
+    );
+
+    // Re-casting while already holding a half is refused rather than
+    // spending a level-5 slot to refresh a timer.
+    e.actors
+        .get_mut(&bard)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+    assert!(!MISLEAD.validate_input(&e, bard, None, None, None));
+}
+
 /// Every stat block RAW prints **Illumination** on carries it, and
 /// nothing else does.
 ///

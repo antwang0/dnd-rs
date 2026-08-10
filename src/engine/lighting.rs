@@ -307,8 +307,26 @@ impl LightSource {
     /// and only the encounter knows: a fixed sphere is a point, and a
     /// carried torch is wherever its bearer's body is. See the module
     /// note on why light does not respect walls.
+    ///
+    /// **A source with no bright radius sheds no bright light, not even
+    /// on the tile it sits on.** The `> 0` guard is the whole of that
+    /// sentence, and without it `dist <= self.bright_tiles` is true at
+    /// `dist == 0` for a source declaring `bright_tiles: 0` — so a
+    /// spell whose entire RAW text is "sheds *dim* light in a 10-foot
+    /// radius" would put a single tile of bright light at its centre.
+    /// Nothing in the engine declared a zero bright radius until
+    /// Dancing Lights did, which is why the off-by-one sat here
+    /// unexposed: every torch, glow and sphere has a bright core, and
+    /// for all of them the guard changes nothing.
+    ///
+    /// The centre tile is exactly where it would have mattered. A
+    /// caster throws four motes down a corridor to find out what is
+    /// standing at the end of it, and the one tile that would have read
+    /// `Bright` is the tile the thing is standing on — so the cantrip
+    /// would have handed out the clean shot that separates it from
+    /// Daylight.
     pub fn level_at_distance(&self, dist: isize) -> LightLevel {
-        if dist <= self.bright_tiles {
+        if self.bright_tiles > 0 && dist <= self.bright_tiles {
             LightLevel::Bright
         } else if dist <= self.bright_tiles + self.dim_tiles {
             LightLevel::Dim
@@ -427,6 +445,59 @@ mod tests {
         assert_eq!(LightLevel::Dark.upgraded(), LightLevel::Dim);
         assert_eq!(LightLevel::Dim.upgraded(), LightLevel::Bright);
         assert_eq!(LightLevel::Bright.upgraded(), LightLevel::Bright);
+    }
+
+    /// A source with a bright core lights it, and the collar beyond it
+    /// dim — the ordinary shape every torch and sphere in the engine
+    /// has.
+    #[test]
+    fn a_source_lights_its_bright_core_and_a_dim_collar_beyond_it() {
+        let torch = LightSource {
+            id: 0,
+            name: "torch",
+            anchor: LightAnchor::Fixed(Coordinate::new(0, 0)),
+            bright_tiles: 8,
+            dim_tiles: 8,
+            rounds_remaining: None,
+            spell_level: 0,
+            innate: false,
+        };
+        assert_eq!(torch.level_at_distance(0), LightLevel::Bright);
+        assert_eq!(torch.level_at_distance(8), LightLevel::Bright);
+        assert_eq!(torch.level_at_distance(9), LightLevel::Dim);
+        assert_eq!(torch.level_at_distance(16), LightLevel::Dim);
+        assert_eq!(torch.level_at_distance(17), LightLevel::Dark);
+    }
+
+    /// A source with no bright radius sheds no bright light *anywhere*,
+    /// including the tile it sits on.
+    ///
+    /// The centre tile is the whole test. `dist <= bright_tiles` is
+    /// true at `dist == 0` for `bright_tiles: 0`, so the obvious
+    /// implementation gives a dim-only source a one-tile bright core —
+    /// and the one tile it would appear on is the tile whatever the
+    /// caster is looking at is standing on. Dancing Lights is the
+    /// engine's only zero-bright source and would have been the only
+    /// thing to notice.
+    #[test]
+    fn a_source_with_no_bright_radius_is_dim_at_its_own_centre() {
+        let motes = LightSource {
+            id: 0,
+            name: "dancing lights",
+            anchor: LightAnchor::Fixed(Coordinate::new(0, 0)),
+            bright_tiles: 0,
+            dim_tiles: 4,
+            rounds_remaining: Some(10),
+            spell_level: 0,
+            innate: false,
+        };
+        assert_eq!(
+            motes.level_at_distance(0),
+            LightLevel::Dim,
+            "the tile the motes hang over is dim, not bright"
+        );
+        assert_eq!(motes.level_at_distance(4), LightLevel::Dim);
+        assert_eq!(motes.level_at_distance(5), LightLevel::Dark);
     }
 
     /// The default is the fully-lit board the engine behaved as before

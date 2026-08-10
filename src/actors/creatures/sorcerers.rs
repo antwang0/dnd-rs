@@ -53,6 +53,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // somebody who is already lit, so it costs nothing on the ambient
     // default and is there when the lights are out.
     actions.push(&*crate::actions::spells::LIGHT);
+    // Dancing Lights — the cantrip that lights ground the party has
+    // not walked onto yet. Free and remote at once, which neither the
+    // Light cantrip (free, but has to be touched onto somebody) nor
+    // Daylight (remote, but a level-3 slot) manages. Holds
+    // concentration, so it competes with the real spells rather than
+    // stacking on them, and declines to cast on a board that is
+    // already bright. See `spells::DANCING_LIGHTS`.
+    actions.push(&*crate::actions::spells::DANCING_LIGHTS);
     actions.push(&*RAY_OF_FROST);
     actions.push(&*CHILL_TOUCH);
     actions.push(&*ACID_SPLASH);

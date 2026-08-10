@@ -10336,6 +10336,291 @@ impl Action for Daylight {
 
 pub static DAYLIGHT: LazyLock<Daylight> = LazyLock::new(|| Daylight {});
 
+/// Dancing Lights — evocation cantrip (bard / sorcerer / wizard /
+/// artificer), action, concentration. Four wandering lights drift to a
+/// tile within 120 ft and shed dim light in a 10-ft radius.
+///
+/// The third and last light in the engine's lighting layer, and the
+/// only one that is *free and remote at once*. Light is free but has to
+/// be touched onto somebody, so it lights wherever the party already
+/// is; Daylight reaches 120 ft but costs a level-3 slot, which no party
+/// spends on seeing. This is the cantrip a caster throws down the
+/// corridor to find out what is at the end of it, and it is the answer
+/// to the one board state the engine had no cheap answer to: a dark
+/// map, where every attack past a torch's collar is made blind.
+///
+/// **Dim, not bright**, which is the whole balance of the thing and is
+/// RAW to the word: the lights "shed dim light in a 10-foot radius".
+/// Dim light is not sight — a creature in it is lightly obscured — so
+/// this reveals where something is without handing the party the
+/// clean shot Daylight does. That is the cantrip-versus-slot
+/// difference expressed on the light layer rather than in a damage
+/// number.
+///
+/// Two RAW clauses are dropped:
+///
+///   - **Moving the lights.** "As a bonus action on your turn, you can
+///     move the lights up to 60 feet to a new spot within range."
+///     There is no channel for a bonus action that re-aims an installed
+///     light source, and the AI has no way to answer "where to?". The
+///     lights are anchored where they were cast, like Daylight's
+///     sphere.
+///   - **The humanoid form.** "You can also combine the four lights
+///     into one glowing, vaguely humanoid form of Medium size." A
+///     decoy with no body: nothing in the engine can be fooled by it,
+///     and giving it one would be a different spell.
+///
+/// It holds concentration, which Light and Daylight do not, and that is
+/// the price RAW sets: a wizard lighting the corridor with this is a
+/// wizard not holding Web. A caster who wants light *and* a
+/// concentration spell casts Light on somebody instead and walks the
+/// party's own lamp forward.
+pub struct DancingLights {}
+
+impl DancingLights {
+    /// The dim collar, in tiles. RAW's "dim light in a 10-foot radius"
+    /// on the 2.5 ft grid.
+    const DIM_TILES: isize = 4;
+    /// No bright core at all — see the docstring. Named rather than
+    /// written as a bare `0` at the construction site so the zero reads
+    /// as the rule it is rather than as a field somebody forgot.
+    const BRIGHT_TILES: isize = 0;
+    /// RAW's duration is one minute; ten rounds is the same stand-in
+    /// Daylight uses, and it lapses with the concentration either way.
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for DancingLights {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "dancing lights"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dancing", "dl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles. The longest reach of any light in the
+        // engine, and the reason the cantrip is worth casting: it lights
+        // ground the party has not walked onto yet.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Two refusals, both about not throwing away a concentration on
+        // nothing. A board that is already bright has nothing for four
+        // dim lights to add — the same gate the Light cantrip applies,
+        // and the reason neither is a turn the AI burns every round on
+        // the ambient default. And a caster already concentrating would
+        // be trading a landed spell for a lamp.
+        encounter.ambient_light().level() != crate::engine::lighting::LightLevel::Bright
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| !a.is_concentrating() && a.is_combat_active())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Installed in the builder rather than queued as a side effect,
+        // for the reason Daylight's sphere is: the light *is* the spell,
+        // and there is no ordering against another effect to get wrong.
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "dancing lights",
+            anchor: LightAnchor::Fixed(point),
+            bright_tiles: Self::BRIGHT_TILES,
+            dim_tiles: Self::DIM_TILES,
+            rounds_remaining: Some(Self::ROUNDS),
+            // A cantrip, so the first thing a Darkness cast puts out —
+            // `dispel_light_in` compares against this. Same rung as the
+            // Light cantrip.
+            spell_level: 0,
+            innate: false,
+        });
+        encounter.log("  dancing lights: four pale motes drift out over the dark.".to_string());
+        // A bare concentration mark: the spell installs no condition on
+        // anybody, so there is nothing for the drop path to prune. The
+        // light itself lapses on its own timer — see the note on
+        // `ConcentrationData::new`.
+        vec![Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Dancing Lights"),
+        })]
+    }
+}
+
+pub static DANCING_LIGHTS: LazyLock<DancingLights> = LazyLock::new(|| DancingLights {});
+
+/// Mislead — 5e level-5 illusion (bard / warlock / wizard), action,
+/// concentration. The caster vanishes and an illusory double of them
+/// stays behind.
+///
+/// Both halves already existed as conditions and neither had a second
+/// user: `Invisible`, which four spells install, and `Duplicity`, which
+/// until now was reachable only by a Trickery Domain Cleric spending
+/// their entire Channel Divinity budget on it. Mislead is the two of
+/// them in one action, and the combination is worth a level-5 slot
+/// precisely because the engine already prices each half — invisibility
+/// is advantage on the caster's attacks and disadvantage on everyone
+/// else's, and the double is a second, *persistent* source of attack
+/// advantage that survives the first swing.
+///
+/// **The divergence, stated plainly.** RAW ends only the invisibility
+/// when the caster attacks — "the double lasts for the duration, but
+/// the invisibility ends if you attack or cast a spell" — and here the
+/// whole spell ends, double included. `breaks_on_attack` is a property
+/// of a *concentration*, not of one condition inside it, so splitting
+/// them would mean a per-condition flag that no other spell in the
+/// engine would ever set. The cost falls on the caster rather than on
+/// their enemies, which is the direction a simplification should err,
+/// and the swing that ends it still lands with both halves' advantage
+/// on it: the attack is resolved before `clear_attack_advantage_riders`
+/// takes the spell down.
+///
+/// What that leaves is a spell with a genuinely different shape from
+/// Greater Invisibility one slot below it. Greater Invisibility is
+/// bought to attack from; Mislead is bought to *not* attack from — ten
+/// rounds of unassailable repositioning, cashed out whenever the caster
+/// decides one swing is worth ending it for. A rogue-flavoured warlock
+/// walking through a room under Mislead and opening with a doubly
+/// advantaged blade is the whole spell.
+///
+/// Dropped: "you can see through its eyes and hear through its ears"
+/// and the bonus action that walks the double. The engine has no second
+/// vision origin and no body to walk — the double is a flag on the
+/// caster, not an actor, for the reasons `Condition::Duplicity` gives.
+pub struct Mislead {}
+
+impl Action for Mislead {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn name(&self) -> &str {
+        "mislead"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ml", "double"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-cast: RAW's range is Self, and both conditions land on
+        // the caster.
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && !a.is_concentrating()
+                // Nothing to buy if the caster already holds either
+                // half — re-casting would spend a level-5 slot to
+                // refresh a timer.
+                && !a.has_condition(Condition::Invisible)
+                && !a.has_condition(Condition::Duplicity)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "  mislead: {} steps out of sight and leaves a copy standing there.",
+            name
+        ));
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Invisible,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Duplicity,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Mislead",
+                    vec![
+                        (caster_id, Condition::Invisible),
+                        (caster_id, Condition::Duplicity),
+                    ],
+                )
+                // See the docstring: RAW breaks only the invisibility,
+                // the engine breaks the concentration that holds both.
+                .breaking_on_attack(),
+            }),
+        ]
+    }
+}
+
+pub static MISLEAD: LazyLock<Mislead> = LazyLock::new(|| Mislead {});
+
 /// Fire Shield — level-4 evocation. The caster ignites in protective flame
 /// for 10 rounds: they gain resistance to cold damage and any creature
 /// that hits them with a melee attack within reach takes 2d8 fire damage

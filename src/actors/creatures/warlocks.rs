@@ -66,6 +66,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MISTY_STEP);
     actions.push(&*HOLD_PERSON);
     actions.push(&*INVISIBILITY);
+    // Mislead — the level-5 illusion that is the two halves the engine
+    // already priced, in one action: `Invisible` and the Trickery
+    // Cleric's `Duplicity`, which until now no spell could reach. Not a
+    // better Greater Invisibility but a differently shaped one — bought
+    // to *not* attack from, and cashed out whenever one doubly
+    // advantaged swing is worth ending it for. See `spells::MISLEAD`.
+    actions.push(&*crate::actions::spells::MISLEAD);
     actions.push(&*BLINDNESS);
     actions.push(&*SUGGESTION);
     // Level 3 — Fear (cone Frightened), Counterspell (anti-caster),

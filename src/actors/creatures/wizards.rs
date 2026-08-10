@@ -39,6 +39,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // somebody who is already lit, so it costs nothing on the ambient
     // default and is there when the lights are out.
     actions.push(&*crate::actions::spells::LIGHT);
+    // Dancing Lights — the cantrip that lights ground the party has
+    // not walked onto yet. Free and remote at once, which neither the
+    // Light cantrip (free, but has to be touched onto somebody) nor
+    // Daylight (remote, but a level-3 slot) manages. Holds
+    // concentration, so it competes with the real spells rather than
+    // stacking on them, and declines to cast on a board that is
+    // already bright. See `spells::DANCING_LIGHTS`.
+    actions.push(&*crate::actions::spells::DANCING_LIGHTS);
     actions.push(&*RAY_OF_FROST);
     actions.push(&*MAGIC_MISSILE);
     actions.push(&*THUNDERWAVE);
@@ -79,6 +87,13 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*TRUE_STRIKE);
     actions.push(&*DISPEL_MAGIC);
     actions.push(&*GREATER_INVISIBILITY);
+    // Mislead — the level-5 illusion that is the two halves the engine
+    // already priced, in one action: `Invisible` and the Trickery
+    // Cleric's `Duplicity`, which until now no spell could reach. Not a
+    // better Greater Invisibility but a differently shaped one — bought
+    // to *not* attack from, and cashed out whenever one doubly
+    // advantaged swing is worth ending it for. See `spells::MISLEAD`.
+    actions.push(&*crate::actions::spells::MISLEAD);
     actions.push(&*ICE_STORM);
     actions.push(&*WITCH_BOLT);
     actions.push(&*TASHAS_HIDEOUS_LAUGHTER);

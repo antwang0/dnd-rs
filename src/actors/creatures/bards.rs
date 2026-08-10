@@ -119,6 +119,20 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // somebody who is already lit, so it costs nothing on the ambient
     // default and is there when the lights are out.
     actions.push(&*crate::actions::spells::LIGHT);
+    // Dancing Lights — the cantrip that lights ground the party has
+    // not walked onto yet. Free and remote at once, which neither the
+    // Light cantrip (free, but has to be touched onto somebody) nor
+    // Daylight (remote, but a level-3 slot) manages. Holds
+    // concentration, so it competes with the real spells rather than
+    // stacking on them, and declines to cast on a board that is
+    // already bright. See `spells::DANCING_LIGHTS`.
+    actions.push(&*crate::actions::spells::DANCING_LIGHTS);
+    // Mislead — the level-5 illusion that is the two halves the engine
+    // already priced, in one action: `Invisible` and the Trickery
+    // Cleric's `Duplicity`, which until now no spell could reach. The
+    // bard is the class it fits best: a full caster with no other
+    // invisibility on its list at all. See `spells::MISLEAD`.
+    actions.push(&*crate::actions::spells::MISLEAD);
     actions.push(&*BARDIC_INSPIRATION);
     actions.push(&*CURE_WOUNDS);
     actions.push(&HEALING_WORD);
