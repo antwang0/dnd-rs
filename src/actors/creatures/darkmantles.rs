@@ -104,7 +104,9 @@ mod tests {
         assert!(a.find_action("darkness").is_some());
         assert_eq!(a.spell_slot_manager.spell_slots(2).spell_slots, 1);
         assert!(
-            a.senses().iter().any(|s| matches!(s, SpecialSense::Blindsight(r) if *r >= 60)),
+            a.senses()
+                .iter()
+                .any(|s| matches!(s, SpecialSense::Blindsight(r) if *r >= 60)),
             "the darkmantle needs blindsight to fight in its own cloud"
         );
     }

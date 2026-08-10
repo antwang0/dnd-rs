@@ -16374,10 +16374,10 @@ pub static ASSASSIN_SHORTSWORD: WeaponWithSaveDamage = WeaponWithSaveDamage::mel
 
 /// Assassin Light Crossbow — DEX-based 1d8+DEX piercing shot with the
 /// same DC 15 / 7d6 venom on the bolt. RAW: "Light Crossbow. Ranged
-/// Weapon Attack: +6 to hit, range 80/320 ft., one target. Hit: 7 (1d8
-/// + 3) piercing damage, and the target must make a DC 15 Constitution
-/// saving throw, taking 24 (7d6) poison damage on a failed save, or
-/// half as much damage on a successful one."
+/// Weapon Attack: +6 to hit, range 80/320 ft., one target. Hit:
+/// 7 (1d8 + 3) piercing damage, and the target must make a DC 15
+/// Constitution saving throw, taking 24 (7d6) poison damage on a failed
+/// save, or half as much damage on a successful one."
 ///
 /// The ranged half of the same poison. It matters that both lanes carry
 /// it: an assassin whose crossbow was a plain bow would be a melee
@@ -16457,10 +16457,10 @@ pub static AZER_WARHAMMER: WeaponWithRider = WeaponWithRider::melee(
 // ─── Barbed Devil ───────────────────────────────────────────────────
 
 /// Barbed Devil Claw — STR-based 1d6+STR piercing melee. RAW: "Claw.
-/// Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 6 (1d6
-/// + 3) piercing damage." Piercing rather than slashing because the
-/// hamatula's hands end in spikes rather than blades — the same spikes
-/// that make its hide dangerous to touch.
+/// Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit:
+/// 6 (1d6 + 3) piercing damage." Piercing rather than slashing because
+/// the hamatula's hands end in spikes rather than blades — the same
+/// spikes that make its hide dangerous to touch.
 pub static BARBED_DEVIL_CLAW: SimpleWeapon = SimpleWeapon::melee(
     "barbed devil claw",
     &["bdv-claw", "hamatula-claw"],

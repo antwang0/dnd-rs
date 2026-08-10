@@ -88,10 +88,7 @@ pub static ARCHMAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-        ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Intelligence, AbilityScoreType::Wisdom]),
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 1, 1, 1],
         has_magic_resistance: true,
         ..CreatureTemplate::defaults()

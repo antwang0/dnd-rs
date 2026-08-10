@@ -3,7 +3,9 @@ use crate::actions::monster_attacks::{DUERGAR_JAVELIN, DUERGAR_WAR_PICK};
 use crate::actions::spells::{ENLARGE_REDUCE, INVISIBILITY};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::lighting::SunlightFrailty;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -74,10 +76,7 @@ pub static DUERGAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Invisibility and Enlarge are both level 2, and RAW gives the
         // duergar one casting of each per day.
         spell_slots_by_level: vec![0, 2],
-        damage_modifiers: damage_modifiers_from([(
-            DamageType::Poison,
-            DamageModifier::Resistance,
-        )]),
+        damage_modifiers: damage_modifiers_from([(DamageType::Poison, DamageModifier::Resistance)]),
         has_magic_resistance: true,
         sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         ..CreatureTemplate::defaults()
@@ -132,7 +131,9 @@ mod tests {
         let a = make();
         assert_eq!(a.sunlight_frailty(), Some(SunlightFrailty::Sensitivity));
         assert!(
-            a.senses().iter().any(|s| matches!(s, SpecialSense::Darkvision(r) if *r >= 120)),
+            a.senses()
+                .iter()
+                .any(|s| matches!(s, SpecialSense::Darkvision(r) if *r >= 120)),
             "the gray dwarf sees further underground than anything else in its band"
         );
     }

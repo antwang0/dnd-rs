@@ -1,4 +1,6 @@
-use crate::actions::class_features::{ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE};
+use crate::actions::class_features::{
+    ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     ASSASSIN_LIGHT_CROSSBOW, ASSASSIN_MULTI, ASSASSIN_SHORTSWORD,
