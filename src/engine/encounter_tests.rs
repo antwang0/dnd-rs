@@ -53644,6 +53644,124 @@ fn typing_a_spell_name_beats_another_actions_alias() {
     assert_eq!(by_alias.action().name(), "maddening darkness");
 }
 
+/// Every creature template written in the bestiary is reachable in
+/// play — by the encounter generator, by a player picking a class, by
+/// a summoning spell, or by a class feature.
+///
+/// This is the sweep for the engine's oldest recurring bug, and it has
+/// bitten at least twice. Twenty-one PC templates — every dragonborn
+/// ancestry and six lineage builds — sat fully implemented and
+/// completely unreachable until `pc_template_families` was written:
+/// absent from the player's picker and absent from the encounter
+/// pool, instantiated only by a unit test. The four SRD conjurations
+/// added alongside this test are the same story from the other
+/// direction: five stat blocks in the pool that no caster could ever
+/// call up as an ally.
+///
+/// The failure is silent by construction. An unreachable template
+/// compiles, passes its own file's tests, and is indistinguishable
+/// from a working one in every way except that nobody will ever see
+/// it. Nothing short of a sweep finds it.
+///
+/// **How the declared side is counted.** There is no reflection in
+/// Rust to enumerate statics with, so the count comes from reading the
+/// bestiary directory at test time and counting
+/// `pub static …_TEMPLATE` declarations. Blunt, and the right
+/// instrument: the alternative is a hand-maintained list of four
+/// hundred and sixty entries, which is one more thing to forget to
+/// edit and so reintroduces the bug it would exist to catch.
+///
+/// **How the reachable side is counted.** Pointer identity across the
+/// four registries a template can be reachable through, plus the
+/// short list below of templates reachable only through a class
+/// feature's own action — those have no registry to walk, so they are
+/// named here.
+#[test]
+fn every_creature_template_in_the_bestiary_is_reachable() {
+    use crate::actors::creatures::pc_template_families;
+    use crate::actors::actor_template::CreatureTemplate;
+    use std::collections::HashSet;
+
+    // Reachable only through a class feature's own action — a Beast
+    // Master's companion, an Artillerist's cannon, a Shepherd Druid's
+    // totem. Each is summoned by a bespoke action rather than by a
+    // `SummonSpell`, so no registry lists them and the sweep would
+    // otherwise call them unreachable. They are named here rather than
+    // exempted by pattern, so that a *genuinely* stranded template
+    // cannot hide behind a rule like "anything ending in _COMPANION".
+    let by_class_feature: &[&'static CreatureTemplate] = &[
+        &crate::actors::creatures::spirit_totems::BEAR_SPIRIT_TOTEM_TEMPLATE,
+        &crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE,
+        &crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE,
+        &crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE,
+        &crate::actors::creatures::steel_defenders::STEEL_DEFENDER_TEMPLATE,
+        &crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE,
+        &crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+        &crate::actors::creatures::eldritch_cannons::FLAMETHROWER_CANNON_TEMPLATE,
+        &crate::actors::creatures::eldritch_cannons::FORCE_BALLISTA_CANNON_TEMPLATE,
+        &crate::actors::creatures::eldritch_cannons::PROTECTOR_CANNON_TEMPLATE,
+        &crate::actors::creatures::tiny_animated_objects::TINY_ANIMATED_OBJECT_TEMPLATE,
+    ];
+
+    let mut reachable: HashSet<usize> = HashSet::new();
+    let mut note = |t: &'static CreatureTemplate| {
+        reachable.insert(std::ptr::from_ref(t) as usize);
+    };
+    for t in EncounterInstance::template_pool() {
+        note(t);
+    }
+    for (_family, templates) in pc_template_families() {
+        for t in templates {
+            note(t);
+        }
+    }
+    for spell in crate::actions::spells::all_summon_spells() {
+        note(spell.template);
+    }
+    for t in by_class_feature {
+        note(t);
+    }
+
+    // Cargo runs tests with the working directory set to the package
+    // root, which is what makes reading the tree here work at all.
+    let dir = std::path::Path::new("src/actors/creatures");
+    let mut declared = 0usize;
+    let mut files = 0usize;
+    for entry in std::fs::read_dir(dir).expect("the bestiary directory is readable") {
+        let path = entry.expect("a readable directory entry").path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        files += 1;
+        let source = std::fs::read_to_string(&path).expect("a readable bestiary file");
+        declared += source
+            .lines()
+            .filter(|line| {
+                line.starts_with("pub static ") && line.contains("_TEMPLATE: LazyLock<")
+            })
+            .count();
+    }
+    // Guard against the scan silently finding nothing and the whole
+    // test passing vacuously — the exact way a source-reading check
+    // rots.
+    assert!(
+        files > 300 && declared > 400,
+        "the bestiary scan found {declared} templates across {files} files, \
+         which means it stopped working rather than that the bestiary shrank"
+    );
+
+    assert_eq!(
+        reachable.len(),
+        declared,
+        "the bestiary declares {declared} creature templates but only {} are \
+         reachable — a template that no pool, no class picker, no summon and no \
+         feature can produce is a stat block nobody will ever see. Add it to \
+         `EncounterInstance::template_pool`, `pc_template_families`, \
+         `all_summon_spells`, or the by-class-feature list in this test.",
+        reachable.len()
+    );
+}
+
 /// Every PC class family renders unambiguously *within itself*: no
 /// two templates in a family share a name or a map glyph.
 ///
