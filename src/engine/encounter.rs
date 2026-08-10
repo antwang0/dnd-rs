@@ -3475,9 +3475,12 @@ impl EncounterInstance {
     ) -> RollModeTally {
         let mut tally = RollModeTally::NONE;
 
-        // 5e: ranged attacks have disadvantage when a hostile creature
-        // is footprint-adjacent to the shooter.
-        if !is_melee && self.has_adjacent_enemy(attacker_id) {
+        // 5e Ranged Attacks in Close Combat — disadvantage when a
+        // hostile creature that can see the shooter, and that isn't
+        // Incapacitated, is standing within five feet. All three
+        // clauses live in the predicate; see it for what the first
+        // draft of this line left out.
+        if !is_melee && self.ranged_attack_is_crowded(attacker_id) {
             tally.add(RollMode::Disadvantage);
         }
 
@@ -13531,17 +13534,60 @@ impl EncounterInstance {
         self.is_concentration_mark_target(caster_id, target_id, "Hex", Condition::Hexed)
     }
 
-    /// True if any combat-active actor on a different team is within
-    /// five feet of `actor_id`. Gates the 5e "ranged attacks at
-    /// disadvantage in melee" clause.
+    /// True if somebody is close enough, awake enough and sighted
+    /// enough to spoil `actor_id`'s aim — 5e's **Ranged Attacks in
+    /// Close Combat** (PHB p.195):
     ///
-    /// Thin wrapper over `combat_active_enemy_ids_adjacent` — the public
-    /// helper already encodes the same "different team, combat-active,
-    /// footprint-adjacent" filter. Calling it here keeps both gates in
-    /// sync at one chokepoint and saves re-inlining the geometry +
-    /// liveness checks.
-    fn has_adjacent_enemy(&self, actor_id: usize) -> bool {
-        !self.combat_active_enemy_ids_adjacent(actor_id).is_empty()
+    /// > You have disadvantage on a ranged attack roll if you are
+    /// > within 5 feet of a hostile creature **that can see you and
+    /// > that isn't Incapacitated**.
+    ///
+    /// The two emphasised clauses are the whole reason this is not a
+    /// bare `!combat_active_enemy_ids_adjacent(...).is_empty()`, which
+    /// is what it used to be. That version asked only "is anything
+    /// hostile standing next to me", and the sentence RAW wrote is
+    /// three questions:
+    ///
+    ///   1. **Adjacent** — the shared geometry, unchanged, read off
+    ///      the public helper so the "five feet" here and the five feet
+    ///      Ashardalon's Stride scorches stay the same distance.
+    ///   2. **Not Incapacitated** — a paralyzed ogre standing in
+    ///      contact is not crowding anybody. `is_incapacitated` reads
+    ///      the whole action-economy cohort, so Stunned, Unconscious,
+    ///      Asleep, Petrified, Surprised and Banished all stop
+    ///      spoiling the shot too, which is RAW: every one of them is
+    ///      Incapacitated by definition.
+    ///   3. **Can see you** — the clause the old gate got most
+    ///      visibly wrong. An archer who has just turned Invisible, or
+    ///      who is shooting out of a fog bank, or who is standing in
+    ///      the dark beside a guard with no darkvision, was still
+    ///      taxed for being crowded by a creature that has no idea
+    ///      where they are.
+    ///
+    /// Clause 3 also composes correctly with the rest of the tally
+    /// rather than double-counting against it. When the adjacent
+    /// creature *is* the target, `attack_mode_tally` has already
+    /// handed the shooter Advantage for the target's blindness through
+    /// `sight_denied_between`; dropping the crowding disadvantage on
+    /// top of that is not the same clause twice but RAW's two separate
+    /// sentences agreeing, and the tally keeps them distinct because it
+    /// counts sources rather than folding them.
+    ///
+    /// Note the asymmetry with `combat_active_enemy_ids_adjacent`'s
+    /// other two callers, and why this filter does not belong on the
+    /// shared helper: Ashardalon's Stride burns whoever is standing in
+    /// the fire whether or not they can see the caster, and a horse
+    /// deciding whether it is safe to stand up cares that something
+    /// hostile is there, not that it is looking.
+    fn ranged_attack_is_crowded(&self, actor_id: usize) -> bool {
+        self.combat_active_enemy_ids_adjacent(actor_id)
+            .into_iter()
+            .any(|enemy_id| {
+                self.actors
+                    .get(&enemy_id)
+                    .is_some_and(|e| !e.is_incapacitated())
+                    && self.viewer_can_see(enemy_id, actor_id)
+            })
     }
 
     /// True if `actor_id` exists AND is not currently concentrating on a

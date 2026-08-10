@@ -11607,6 +11607,87 @@ fn ranged_attack_in_melee_imposes_disadvantage() {
     assert_eq!(mode, RollMode::Disadvantage);
 }
 
+/// …and the two clauses RAW attaches to that sentence, which the gate
+/// used to drop: the adjacent creature has to be able to see you, and
+/// it has to not be Incapacitated.
+///
+/// > You have disadvantage on a ranged attack roll if you are within 5
+/// > feet of a hostile creature **that can see you and that isn't
+/// > Incapacitated**.
+///
+/// Both halves are checked against the same board the test above sets
+/// up, one clause at a time, so a regression that restores the bare
+/// "is anything hostile next to me" gate fails here twice and passes
+/// the test above — which is the point of keeping them as two tests.
+///
+/// The crowder is *not* the target in either case. That separation is
+/// load-bearing: blinding the target would hand the shooter Advantage
+/// through the unseen-target clause and the mode would come out
+/// `Normal` from a cancelled pair rather than from nothing at all,
+/// which is a different claim and one this test would pass for the
+/// wrong reason.
+#[test]
+fn a_crowder_that_cannot_see_or_cannot_act_does_not_spoil_the_shot() {
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::dice::RollMode;
+
+    let board = || {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let shooter = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let crowder = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+            .unwrap();
+        (e, shooter, crowder, target)
+    };
+
+    // A zombie that cannot see the archer is not crowding them.
+    let (mut e, shooter, crowder, target) = board();
+    e.actors
+        .get_mut(&crowder)
+        .unwrap()
+        .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+    assert_eq!(
+        e.compute_attack_mode(shooter, target, false),
+        RollMode::Normal,
+        "a blinded crowder has no idea where the archer is"
+    );
+
+    // …and neither is one that cannot act. Stunned rather than the
+    // bare Incapacitated so the cohort read is exercised rather than
+    // the single variant: RAW's clause names Incapacitated, and every
+    // condition on the action-economy cohort carries it.
+    let (mut e, shooter, crowder, target) = board();
+    e.actors
+        .get_mut(&crowder)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+    assert_eq!(
+        e.compute_attack_mode(shooter, target, false),
+        RollMode::Normal,
+        "a stunned crowder is Incapacitated and stops crowding"
+    );
+
+    // An archer the crowder cannot see because the archer isn't there
+    // to be seen. Same clause from the other side, and the one a
+    // sight-blind gate gets most obviously wrong.
+    let (mut e, shooter, _crowder, target) = board();
+    e.actors
+        .get_mut(&shooter)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    assert_eq!(
+        e.compute_attack_mode(shooter, target, false),
+        RollMode::Advantage,
+        "an invisible archer is not crowded, and shoots unseen besides"
+    );
+}
+
 #[test]
 fn damage_immunity_reduces_to_zero() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
