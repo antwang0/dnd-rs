@@ -29699,22 +29699,17 @@ fn a_summon_with_no_room_takes_no_concentration() {
     );
 }
 
-/// The summon family's declarations are internally consistent: the
-/// slot ladder only ever goes up, no two spells share an
-/// instance-id band, and no band collides with the summons that
-/// predate the family.
+/// The Tasha's summon family's slot ladder only ever goes up.
 ///
-/// The instance-id half is the reason this test exists. A duplicated
-/// `base_instance_id` produces two creatures with the same display
-/// suffix on the same board — "Fey Spirit 102" twice — which is not
-/// an error anywhere in the engine, just a map a player can't read.
-/// The failure is silent by construction, so it has to be swept for.
+/// Half of what this test used to assert; the instance-id half moved
+/// to `no_two_summoning_spells_share_an_instance_id` next door, which
+/// sweeps every summon in the engine rather than this family plus a
+/// hand-written list. The ladder is genuinely a property of *this*
+/// family — the eight spirits scale with the slot they cost — so it
+/// stays here and keeps reading `summon_family()`.
 #[test]
 fn the_summon_family_declares_a_consistent_ladder() {
-    use crate::actions::spells::{
-        ANIMATE_DEAD, CONJURE_ANIMALS, CONJURE_ELEMENTAL, summon_family,
-    };
-    use std::collections::HashMap;
+    use crate::actions::spells::summon_family;
 
     let mut previous = 0;
     for spell in summon_family() {
@@ -29725,26 +29720,83 @@ fn the_summon_family_declares_a_consistent_ladder() {
         );
         previous = spell.slot_level;
     }
+}
 
-    // Every id the summon lane hands out — the family plus the three
-    // spells that predate it. Conjure Animals spawns two, so it
-    // claims its base *and* the id above it.
+/// No two summoning spells hand out the same instance id.
+///
+/// A duplicated `base_instance_id` produces two creatures with the
+/// same display suffix on the same board — "Fey Spirit 102" twice —
+/// which is not an error anywhere in the engine, and not a panic
+/// anywhere in the tests. It is just a map a player can't read. The
+/// failure is silent by construction, so the only thing that catches
+/// it is this sweep, and the only thing that makes the sweep
+/// meaningful is that it reads a list that is genuinely complete.
+///
+/// It used to read `summon_family()` plus a hand-written trio of
+/// legacy spells, which left Find Steed (120) and Find Greater Steed
+/// (121) — declared later, at ids nobody re-checked — outside the
+/// sweep entirely. They happened not to collide. That is the exact
+/// failure mode `all_summon_spells` exists to close, so this reads
+/// the registry and nothing else.
+#[test]
+fn no_two_summoning_spells_share_an_instance_id() {
+    use crate::actions::spells::all_summon_spells;
+    use std::collections::HashMap;
+
+    // A spell that spawns N minions claims its base id *and* the N-1
+    // ids above it — Conjure Woodland Beings' four satyrs are 130
+    // through 133 — so the bands have to be walked, not just the
+    // bases compared.
     let mut claimed: HashMap<usize, &str> = HashMap::new();
-    let mut claim = |id: usize, who: &'static str| {
-        if let Some(other) = claimed.insert(id, who) {
-            panic!("{} and {} both spawn at instance id {}", who, other, id);
-        }
-    };
-    for spell in summon_family() {
+    for spell in all_summon_spells() {
         for offset in 0..spell.count {
-            claim(spell.base_instance_id + offset, spell.name());
+            let id = spell.base_instance_id + offset;
+            if let Some(other) = claimed.insert(id, spell.name()) {
+                panic!(
+                    "{} and {} both spawn at instance id {}",
+                    spell.name(),
+                    other,
+                    id
+                );
+            }
         }
     }
-    for legacy in [&CONJURE_ANIMALS, &CONJURE_ELEMENTAL, &ANIMATE_DEAD] {
-        for offset in 0..legacy.count {
-            claim(legacy.base_instance_id + offset, legacy.name());
-        }
-    }
+}
+
+/// Every `SummonSpell` in the engine is in the registry.
+///
+/// The registry is a hand-maintained list, which makes "somebody
+/// declared a twelfth summon and didn't add the line" the failure it
+/// is built to prevent and also the failure it is vulnerable to. There
+/// is no reflection to enumerate statics with, so the check is a
+/// count: the number of `pub static … : SummonSpell` declarations in
+/// the spell file has to equal the registry's length.
+///
+/// Reading the source text is a blunt instrument and it is the right
+/// one here. The alternative — trusting the list — is what let the two
+/// steeds sit outside the id sweep for as long as they did, and a
+/// grep that fails loudly on the day a declaration is added without a
+/// registry line costs one string search in a suite that already
+/// takes thirty seconds.
+#[test]
+fn the_summon_registry_lists_every_summon_spell_declared() {
+    use crate::actions::spells::all_summon_spells;
+
+    let source = include_str!("../actions/spells.rs");
+    let declared = source
+        .lines()
+        .filter(|line| {
+            line.starts_with("pub static ") && line.ends_with(": SummonSpell = SummonSpell {")
+        })
+        .count();
+    assert_eq!(
+        declared,
+        all_summon_spells().len(),
+        "spells.rs declares {} SummonSpell statics but all_summon_spells() lists {} — \
+         a summon outside the registry is a summon outside every sweep that reads it",
+        declared,
+        all_summon_spells().len()
+    );
 }
 
 /// Conjure Elemental's validate gate fizzles when there's no room
@@ -29774,6 +29826,159 @@ fn conjure_elemental_fails_when_no_adjacent_space() {
         !CONJURE_ELEMENTAL.validate_input(&e, wizard, None, None, None),
         "validate should fail when no adjacent Large slot is free"
     );
+}
+
+/// Conjure Woodland Beings puts down the widest cohort on the summon
+/// lane: four satyrs, all on the caster's team, all `Conjured`, all
+/// anchored to one concentration.
+///
+/// The count is the assertion that matters. Every other summon in the
+/// engine spawns one or two bodies, and the spawn helper is
+/// best-effort by design — it only insists the *first* minion fits
+/// (see `SummonSpell::count`) — so a cohort of four is the first case
+/// where "found room for all of them" and "found room for one of them"
+/// are meaningfully different outcomes. In a clear arena it has to be
+/// all four.
+#[test]
+fn conjure_woodland_beings_spawns_a_cohort_of_four_satyrs() {
+    use crate::actions::spells::CONJURE_WOODLAND_BEINGS;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::conditions::Condition;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    let team = e.actors[&druid].team();
+    let before = e.actors.len();
+    for x in CONJURE_WOODLAND_BEINGS.side_effects(&mut e, druid, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors.len(),
+        before + 4,
+        "a clear arena has room for the whole cohort"
+    );
+    let satyrs: Vec<usize> = e
+        .actors
+        .iter()
+        .filter(|(id, a)| **id != druid && a.has_condition(Condition::Conjured))
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(satyrs.len(), 4);
+    for id in &satyrs {
+        assert_eq!(e.actors[id].team(), team, "the cohort fights for the druid");
+        assert!(
+            e.actors[id].name().starts_with("Satyr"),
+            "the cohort is satyrs, not the branch of the option table somebody \
+             swapped in later: got {}",
+            e.actors[id].name()
+        );
+    }
+    // One concentration holds all four — dropping it clears the board.
+    assert!(e.actors[&druid].is_concentrating());
+    e.drop_concentration(druid);
+    assert_eq!(
+        e.actors.len(),
+        before,
+        "one concentration anchors the whole cohort, not just the first satyr"
+    );
+}
+
+/// Conjure Celestial summons the couatl, and the couatl is the point:
+/// a level-7 slot buys the hardest body on the summon lane to remove
+/// rather than the biggest one.
+///
+/// Pins the three defensive clauses the choice was made for. A future
+/// edit that swapped the template for something with a bigger hit die
+/// would pass every other test in this file and quietly turn the
+/// cleric's apex summon into a worse Conjure Elemental.
+#[test]
+fn conjure_celestial_summons_a_couatl_that_is_hard_to_remove() {
+    use crate::actions::spells::CONJURE_CELESTIAL;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::types::{CreatureType, DamageType};
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    let before = e.actors.len();
+    for x in CONJURE_CELESTIAL.side_effects(&mut e, cleric, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(e.actors.len(), before + 1);
+    let couatl = *e
+        .actors
+        .keys()
+        .find(|id| **id != cleric)
+        .expect("the celestial is on the board");
+    assert_eq!(e.actors[&couatl].creature_type(), CreatureType::Celestial);
+    assert_eq!(e.actors[&couatl].team(), e.actors[&cleric].team());
+    assert!(e.actors[&couatl].has_condition(Condition::Conjured));
+    assert!(
+        e.actors[&couatl].has_magic_resistance(),
+        "magic resistance is half of why this template and not a bigger one"
+    );
+    assert_eq!(
+        e.actors[&couatl].damage_modifier(DamageType::Psychic),
+        Some(crate::engine::types::DamageModifier::Immunity)
+    );
+    assert!(
+        e.actors[&couatl].is_immune_to_condition(Condition::Charmed)
+            && e.actors[&couatl].is_immune_to_condition(Condition::Frightened),
+        "the summon a cleric spends a level-7 slot on should not be walked \
+         off the board by a charm"
+    );
+}
+
+/// Phantom Steed is a mount: the wizard casts it, keeps their
+/// concentration, and can then get on it with the ordinary Mount
+/// action.
+///
+/// The concentration half is the clause with teeth. Every conjuration
+/// on this lane bar the steeds anchors its minion to the caster, and a
+/// Phantom Steed that did the same would be strictly worse than
+/// walking — the wizard would be spending a level-3 slot and their
+/// whole concentration budget on transport. Casting it while already
+/// concentrating on something else has to leave that something else
+/// alone.
+#[test]
+fn phantom_steed_is_a_mount_the_caster_can_ride_while_concentrating() {
+    use crate::actions::spells::PHANTOM_STEED;
+    use crate::actors::creatures::phantom_steeds::PHANTOM_STEED_SPEED;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    // Put something on the wizard's concentration first, so the
+    // assertion below is about the steed leaving it alone rather than
+    // about an empty slot staying empty. Blur is the cheapest
+    // concentration in the engine that spawns nothing and so doesn't
+    // disturb the body count.
+    for x in crate::actions::spells::BLUR.side_effects(&mut e, wizard, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert!(e.actors[&wizard].is_concentrating());
+    let before = e.actors.len();
+    for x in PHANTOM_STEED.side_effects(&mut e, wizard, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(e.actors.len(), before + 1);
+    let steed = *e
+        .actors
+        .keys()
+        .find(|id| **id != wizard)
+        .expect("the steed is on the board");
+    assert_eq!(e.actors[&steed].speed(), PHANTOM_STEED_SPEED);
+    assert!(
+        e.actors[&wizard].is_concentrating(),
+        "a steed that ate the wizard's concentration would be worse than walking"
+    );
+    // And it is genuinely rideable, which is the whole spell.
+    assert!(e.can_mount(wizard, steed).is_ok());
+    assert!(e.mount(wizard, steed).is_ok());
+    assert!(e.is_mounted(wizard));
 }
 
 /// Animate Objects spawns up to ten Tiny construct minions on the
@@ -68256,14 +68461,27 @@ fn rangers_companion_puts_a_beast_on_the_rangers_team() {
 #[test]
 fn every_summoning_action_declares_itself() {
     use crate::actions::action_template::Action;
-    let summons: &[&'static (dyn Action + Send + Sync)] = &[
-        &crate::actions::spells::CONJURE_ANIMALS,
-        &crate::actions::spells::CONJURE_ELEMENTAL,
-        &crate::actions::spells::ANIMATE_DEAD,
+    // Every spell on the `SummonSpell` chassis, read off the registry
+    // rather than named one at a time — the declaration is a contract
+    // that has to hold for the twelfth summon as much as the first,
+    // and a hand-written list only ever covers the ones somebody
+    // remembered.
+    for spell in crate::actions::spells::all_summon_spells() {
+        assert!(
+            spell.summons_allies(),
+            "{} puts bodies on the board and has to say so",
+            spell.name()
+        );
+    }
+    // The two summons that are *not* on that chassis. They have their
+    // own action types, so the registry cannot reach them, and the
+    // declaration is exactly the contract that reaches across chassis
+    // — which is why they are still named here by hand.
+    let off_chassis: &[&'static (dyn Action + Send + Sync)] = &[
         &*crate::actions::spells::ANIMATE_OBJECTS,
         &crate::actions::class_features::RANGERS_COMPANION,
     ];
-    for action in summons {
+    for action in off_chassis {
         assert!(
             action.summons_allies(),
             "{} puts bodies on the board and has to say so",

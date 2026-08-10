@@ -248,6 +248,7 @@ pub mod giant_owls;
 pub mod giant_poisonous_snakes;
 pub mod killer_whales;
 pub mod crawling_claws;
+pub mod phantom_steeds;
 pub mod riding_horses;
 pub mod draft_horses;
 pub mod awakened_shrubs;

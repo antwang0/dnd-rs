@@ -94,6 +94,14 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::spells::SUMMON_UNDEAD);
     actions.push(&crate::actions::spells::SUMMON_ABERRATION);
     actions.push(&crate::actions::spells::SUMMON_FIEND);
+    // lv6 **Conjure Fey** — RAW is druid and warlock, and on the
+    // warlock it lands somewhere it lands nowhere else: Pact Magic's
+    // slots are all top-level and all come back on a short rest, so
+    // this is the only class that can put a green hag on the board
+    // twice in an afternoon. Sibling to Summon Fiend on the same rung
+    // and the same recharge; the fiend is the tougher body, the hag is
+    // the one with an action list.
+    actions.push(&crate::actions::spells::CONJURE_FEY);
     // Level 4 — Banishment (single-target removal), Dimension Door
     // (teleport). Sickening Radiance: enemy-only 30ft burst with
     // Exhausted-on-fail; fits the warlock's "control burst" niche.

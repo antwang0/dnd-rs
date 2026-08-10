@@ -319,6 +319,29 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::spells::SUMMON_FEY);
     actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
     actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
+    // The rest of the SRD `conjure` family, druid half — the three
+    // rungs that sat between Conjure Animals (lv3, two wolves) and
+    // Conjure Elemental (lv5, one Large body) with nothing on them.
+    //
+    // Both level-4 spells put down a *cohort of four*, which is a
+    // shape the druid's summon lane didn't previously have at any
+    // slot: two bodies is a screen, four is an encirclement, and
+    // flanking is the rule that turns the difference into damage. They
+    // differ on what the cohort is for — four satyrs are a wall that
+    // walks (40 ft speed, Medium), four magma mephits are four delayed
+    // fire bursts the enemy sets off by killing them (Small, Death
+    // Burst) — so the choice between them is about the board rather
+    // than about which is better.
+    //
+    // Conjure Fey at lv6 is the top of the druid's summon ladder and
+    // the only rung above Conjure Elemental: one green hag, bought for
+    // its action list rather than its hit points.
+    //
+    // All three hold concentration, like every other body on this
+    // lane.
+    actions.push(&crate::actions::spells::CONJURE_WOODLAND_BEINGS);
+    actions.push(&crate::actions::spells::CONJURE_MINOR_ELEMENTALS);
+    actions.push(&crate::actions::spells::CONJURE_FEY);
     // lv4 **Dominate Beast** (enchantment): single-target concentration
     // charm + dominate on a Beast-typed enemy. WIS save vs the druid's
     // spell DC; on fail target is Charmed by the druid AND has

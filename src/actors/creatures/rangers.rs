@@ -141,6 +141,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::spells::SUMMON_BEAST);
     actions.push(&crate::actions::spells::SUMMON_FEY);
     actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
+    // lv4 **Conjure Woodland Beings** — RAW is druid *and* ranger, and
+    // it is the top of the ranger's spell list rather than a middle
+    // rung: a half-caster's level-4 slot is the last one they get. Four
+    // satyrs for it is the only time a ranger puts more bodies on the
+    // board than the Beast Master's single companion.
+    actions.push(&crate::actions::spells::CONJURE_WOODLAND_BEINGS);
     // 5e Ranger **Vanish** (class feature, level 14). Bonus-action Hide
     // gated on `VANISH_TAG` — same one-shot attack-advantage rider as
     // the baseline Hide action, at the cheaper bonus-action cost.

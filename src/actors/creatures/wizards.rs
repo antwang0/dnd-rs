@@ -601,6 +601,19 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
     actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
     actions.push(&crate::actions::spells::SUMMON_FIEND);
+    // lv4 **Conjure Minor Elementals** — the wizard's half of the SRD
+    // conjure family, and the only four-body cohort on the arcane list.
+    // Four Small footprints where every other wizard summon is one
+    // Medium or Large one, which is a different purchase: the summon
+    // family's spirits are a body that fights, and this is four bodies
+    // that occupy tiles. Concentration, like all of them.
+    actions.push(&crate::actions::spells::CONJURE_MINOR_ELEMENTALS);
+    // lv3 **Phantom Steed** (illusion) — the arcane mount, and the
+    // reason `engine::mounts` is reachable by a class other than the
+    // paladin. No concentration, so the wizard rides it *and* casts
+    // from it; 100 ft of speed, which is more than any other body on
+    // the board can cover. See `spells::PHANTOM_STEED`.
+    actions.push(&crate::actions::spells::PHANTOM_STEED);
     // lv5 **Animate Objects** (transmutation): summon ten Tiny Construct
     // minions adjacent to the caster. Trades the per-target damage of
     // Cone of Cold or the single-target lockdown of Hold Monster for

@@ -15888,6 +15888,20 @@ mod tests {
             // horse could never smite from its back.
             ("find steed", false),
             ("find greater steed", false),
+            // The third and last `None` on the chassis, and the same
+            // sentence one class over: a wizard who had to concentrate
+            // on their own horse could not concentrate on anything
+            // worth casting from it.
+            ("phantom steed", false),
+            // The rest of the SRD conjure family. All four concentrate,
+            // like the two that predate them — a conjured body lasts as
+            // long as the caster keeps thinking about it, and the two
+            // steeds are the exception precisely because nothing about
+            // a horse depends on that.
+            ("conjure woodland beings", true),
+            ("conjure minor elementals", true),
+            ("conjure fey", true),
+            ("conjure celestial", true),
             ("summon beast", true),
             ("summon fey", true),
             ("summon undead", true),

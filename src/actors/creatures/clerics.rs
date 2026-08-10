@@ -133,6 +133,15 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // in the scrum but reach, and radiant damage against exactly the
     // undead the cleric's kit is otherwise built to turn.
     actions.push(&crate::actions::spells::SUMMON_CELESTIAL);
+    // lv7 **Conjure Celestial** — RAW is cleric-only, and it is the
+    // apex of the divine summon lane rather than a second rung on it.
+    // Where Summon Celestial buys reach and radiant damage, the couatl
+    // buys *durability*: AC 19, magic resistance, psychic immunity and
+    // immunity to Charmed and Frightened make it the hardest summon in
+    // the engine to remove or turn around, which is what a seventh-
+    // level slot on a class with no seventh-level nuke should be spent
+    // on.
+    actions.push(&crate::actions::spells::CONJURE_CELESTIAL);
     actions.push(&*SPIRIT_SHROUD);
     actions.push(&*HOLY_AURA);
     // Latest druidic-flavored additions for the cleric kit: lv3 Plant

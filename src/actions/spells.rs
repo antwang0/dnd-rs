@@ -16072,9 +16072,223 @@ pub static FIND_GREATER_STEED: SummonSpell = SummonSpell {
     concentration: None,
 };
 
+/// Phantom Steed — 5e level-3 illusion (wizard), action, no
+/// concentration. A Large quasi-real horse on a free tile beside the
+/// caster, with a hundred feet of walking speed.
+///
+/// The arcane answer to Find Steed, and the reason it is worth having
+/// both: Find Steed is a paladin spell, and before this the entire
+/// mounted-combat layer — `engine::mounts`, four hundred lines of
+/// saddle rules, unseating, rider interposition and the trample lane —
+/// was reachable by exactly one class unless the encounter generator
+/// happened to roll a horse. A wizard could cast Fly and a druid could
+/// Wild Shape; nobody else could get on anything.
+///
+/// **No concentration**, which is RAW and which is the whole point of
+/// spending a level-3 slot on transport. A wizard holding concentration
+/// on their own horse could not hold it on anything worth casting from
+/// horseback, and the spell would be strictly worse than walking.
+/// Shared with Find Steed, Find Greater Steed and Animate Dead — see
+/// `SummonSpell::concentration` for why those four are the exceptions.
+///
+/// Two RAW clauses have no combat surface and are dropped rather than
+/// approximated:
+///
+///   - **The ritual tag and the 1-minute casting time.** Both are
+///     out-of-combat clauses; the engine's clock starts at initiative.
+///     Shipping it as an ordinary action is the same trade every
+///     ritual-tagged spell in the engine makes.
+///   - **The fade.** "When the spell ends, the steed gradually fades,
+///     giving the rider 1 minute to dismount." The spell's RAW hour
+///     outlasts every fight, so there is no in-encounter moment at
+///     which the fade would fire, and modelling it would mean a timer
+///     that never ticks.
+///
+/// The steed also does *not* seat the caster, exactly as Find Steed
+/// does not — it appears beside you and you spend the ordinary Mount
+/// action to get on. See `actors::creatures::phantom_steeds` for why
+/// the stat block is the riding horse's with one number changed.
+pub static PHANTOM_STEED: SummonSpell = SummonSpell {
+    display_name: "phantom steed",
+    aliases: &["phantom", "psteed"],
+    // Illusion, not conjuration — the one summon in the engine that is
+    // not a conjuration, and RAW's own classification. It matters:
+    // school-gated features read `Action::school`, so an Illusion
+    // Wizard's subclass reaches this and an Evoker's Sculpt Spells does
+    // not.
+    school: SpellSchool::Illusion,
+    slot_level: 3,
+    template: &crate::actors::creatures::phantom_steeds::PHANTOM_STEED_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    // Widened to 4 like every other Large summon: the anchor search
+    // walks rings outward and a 4-tile footprint rarely fits in the
+    // first one. RAW's envelope is 30 ft, so 4 tiles is well inside it.
+    search_radius: 4,
+    base_instance_id: 122,
+    concentration: None,
+};
+
+// ---------------------------------------------------------------------
+// The rest of the SRD `conjure <kind>` family.
+//
+// Conjure Animals (lv3) and Conjure Elemental (lv5) shipped years
+// before the Tasha's family did, and the four spells below are the ones
+// that were still missing from the row they sit in: the SRD prints six
+// `conjure` spells that put bodies on the board and the engine had two.
+//
+// Every one of them is a `SummonSpell` declaration and nothing else.
+// That is the point of the chassis, and it is why these four are worth
+// adding as a batch rather than one at a time: the stat blocks they
+// call up were *already in the bestiary*, sitting in the encounter
+// generator's pool, unreachable by any caster. A pixie could be rolled
+// as an enemy and could never be summoned as an ally.
+//
+// **How the option tables collapse.** Each of these spells is written
+// in RAW as a menu — "one CR 2, two CR 1, four CR ½, or eight CR ¼" —
+// and `SummonSpell::template` explains why the engine picks one branch
+// and says so instead of scaling. The branch picked here is in every
+// case the one whose stat block already existed, which is also, not by
+// coincidence, the branch the spell is famous for.
+//
+// Instance-id bands run 130..139, clear of the summon family (100–114),
+// the steeds (120–122) and the three that predate both (80, 90–91, 99).
+// ---------------------------------------------------------------------
+
+/// Conjure Woodland Beings — 5e level-4 conjuration (druid / ranger),
+/// concentration, action. Four satyrs on free tiles beside the caster.
+///
+/// RAW's menu is one CR 2 / two CR 1 / four CR ½ / eight CR ¼ fey; we
+/// ship the four-satyr branch. Four is the widest cohort any summon in
+/// the engine puts down — twice Conjure Animals' pair — and that width
+/// is the spell's identity rather than a tuning choice. A single
+/// summoned body is a wall; four bodies is a *shape*, because four
+/// Medium footprints on a 2.5 ft grid can surround something, and
+/// surrounding something is how the engine's flanking rule pays out.
+///
+/// The satyr is the branch worth having for a second reason: at CR ½ it
+/// carries a 40 ft speed and a ram, so the cohort arrives where it is
+/// needed on the turn it is cast rather than the turn after. Eight
+/// pixies would be more bodies and, at 10 ft of walking speed apiece,
+/// eight bodies standing next to the druid.
+pub static CONJURE_WOODLAND_BEINGS: SummonSpell = SummonSpell {
+    display_name: "conjure woodland beings",
+    aliases: &["woodland", "cwb"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::satyrs::SATYR_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 4,
+    // Four Medium bodies need more room than the two Conjure Animals
+    // places, and each spawn occupies its own anchor — so the ring the
+    // fourth satyr is looking in is two wider than the first's.
+    search_radius: 4,
+    base_instance_id: 130,
+    concentration: Some("Conjure Woodland Beings"),
+};
+
+/// Conjure Minor Elementals — 5e level-4 conjuration (druid / wizard),
+/// concentration, action. Four magma mephits on free tiles beside the
+/// caster.
+///
+/// Conjure Woodland Beings' twin: same slot, same four-body cohort,
+/// same RAW menu one CR tier at a time. What separates them is what the
+/// bodies do when they die. A magma mephit's Death Burst is a 5 ft
+/// fire blast on a DEX save, so a cohort of four is four delayed area
+/// attacks that the *enemy* chooses the timing of by killing them —
+/// which inverts the usual summon calculus. Focusing the summons down
+/// is the correct answer to a satyr wall and the wrong one here.
+///
+/// Small rather than Medium, which is the other half of the trade:
+/// four Small footprints fit through a doorway a four-satyr wall
+/// cannot, and the anchor search almost never has to widen for them.
+pub static CONJURE_MINOR_ELEMENTALS: SummonSpell = SummonSpell {
+    display_name: "conjure minor elementals",
+    aliases: &["minor elementals", "cme"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::mephits::MAGMA_MEPHIT_TEMPLATE,
+    size: crate::engine::types::Size::Small,
+    count: 4,
+    search_radius: 3,
+    base_instance_id: 134,
+    concentration: Some("Conjure Minor Elementals"),
+};
+
+/// Conjure Fey — 5e level-6 conjuration (druid / warlock),
+/// concentration, action. One green hag on a free tile beside the
+/// caster.
+///
+/// RAW is "a fey creature of challenge rating 6 or lower", and the SRD
+/// bestiary's largest fey is the CR-3 green hag — so this ships the
+/// ceiling the *roster* has rather than the one the spell names. That
+/// is a real gap and it is left visible rather than papered over with a
+/// hand-built stat block: the day a CR-6 fey lands in the bestiary,
+/// this declaration changes by one line.
+///
+/// The hag is nonetheless the right body for a level-6 slot in a way a
+/// bigger sack of hit points would not be, because what it brings is
+/// its *action list*: illusory appearance and a claw, on an Innate
+/// Spellcasting chassis. A summon that only swings is a summon the AI
+/// spends the same way every round.
+pub static CONJURE_FEY: SummonSpell = SummonSpell {
+    display_name: "conjure fey",
+    aliases: &["cfey", "conjure-fey"],
+    school: SpellSchool::Conjuration,
+    slot_level: 6,
+    template: &crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 138,
+    concentration: Some("Conjure Fey"),
+};
+
+/// Conjure Celestial — 5e level-7 conjuration (cleric), concentration,
+/// action. One couatl on a free tile beside the caster.
+///
+/// RAW's ceiling is "a celestial of challenge rating 4 or lower" and
+/// the couatl is CR 4 exactly, so this is the one spell in the batch
+/// that ships the branch RAW actually names rather than the best the
+/// roster can do.
+///
+/// It is also the highest slot the engine spends on a summon, and the
+/// couatl earns it on defense rather than damage: AC 19, magic
+/// resistance, psychic immunity, immunity to Charmed and Frightened,
+/// and 120 ft of truesight make it the single hardest body on the
+/// summon lane to remove *or* to turn around. A cleric who lands one
+/// has bought several rounds of the enemy's attention, which — at
+/// seventh level, on a class whose other seventh-level options are area
+/// damage — is a different purchase from anything else on the list.
+///
+/// The truesight is the clause worth noticing, because it is the only
+/// one on the lane: the couatl is the only summon in the engine that
+/// can see an invisible enemy, so it is also the only one that can be
+/// pointed at a Greater Invisibility the party otherwise has no answer
+/// to.
+pub static CONJURE_CELESTIAL: SummonSpell = SummonSpell {
+    display_name: "conjure celestial",
+    aliases: &["ccelestial", "conjure-celestial"],
+    school: SpellSchool::Conjuration,
+    slot_level: 7,
+    template: &crate::actors::creatures::couatls::COUATL_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 139,
+    concentration: Some("Conjure Celestial"),
+};
+
 /// Every spell in the Tasha's summon family, in ascending slot order.
 /// The list the sweeps read, and the one place a ninth has to be added
 /// for every invariant that holds across the family to cover it.
+///
+/// Narrower than [`all_summon_spells`] on purpose: this is the eight
+/// spells that share a *design*, and the sweeps that read it are the
+/// ones asserting things true of that design (the slot ladder rises,
+/// the spirits scale with it). Invariants that hold of every summoning
+/// spell in the engine — id bands, the `summons_allies` declaration —
+/// belong to the wider registry next door.
 pub fn summon_family() -> Vec<&'static SummonSpell> {
     vec![
         &SUMMON_BEAST,
@@ -16086,6 +16300,53 @@ pub fn summon_family() -> Vec<&'static SummonSpell> {
         &SUMMON_DRACONIC_SPIRIT,
         &SUMMON_FIEND,
     ]
+}
+
+/// **Every** `SummonSpell` in the engine — the Tasha's family, the two
+/// steeds, the phantom steed, the four SRD conjurations and the two
+/// summons that predate all of them.
+///
+/// The registry exists because the invariant that actually bites is not
+/// about the family, it is about the whole lane: no two summoning
+/// spells may share an instance-id band. A collision produces two
+/// creatures with the same display suffix on one board — "Satyr 130"
+/// twice — which is not an error anywhere in the engine and not a
+/// panic anywhere in the tests. It is just a map a player cannot read,
+/// and it is invisible by construction, so the only thing that can
+/// catch it is a sweep over a list that is genuinely complete.
+///
+/// The list it replaced was not. `the_summon_family_declares_a_consistent_ladder`
+/// swept `summon_family()` plus a hand-written trio of "legacy" spells,
+/// which meant Find Steed (120) and Find Greater Steed (121) — added
+/// later, at ids nobody checked — were never covered by the collision
+/// sweep at all. They happened not to collide. The next one added at a
+/// guessed id might not, and the test that exists to catch exactly that
+/// would have stayed green.
+///
+/// So: one list, and adding a summoning spell is one line in it. Same
+/// contract, and for the same reason, as
+/// `actors::creatures::pc_template_families`.
+///
+/// Animate Dead is a `SummonSpell` and belongs here; `ANIMATE_OBJECTS`
+/// and the Ranger's Companion are summons that are *not* built on this
+/// chassis (they have their own action types) and so cannot be. They
+/// are swept separately for the `summons_allies` declaration, which is
+/// the one contract that reaches across chassis.
+pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
+    let mut all = summon_family();
+    all.extend([
+        &CONJURE_ANIMALS,
+        &CONJURE_ELEMENTAL,
+        &ANIMATE_DEAD,
+        &FIND_STEED,
+        &FIND_GREATER_STEED,
+        &PHANTOM_STEED,
+        &CONJURE_WOODLAND_BEINGS,
+        &CONJURE_MINOR_ELEMENTALS,
+        &CONJURE_FEY,
+        &CONJURE_CELESTIAL,
+    ]);
+    all
 }
 
 /// Power Word Pain — 5e level-7 necromancy (XGtE), action,
