@@ -32,6 +32,14 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 10,
         charisma: 11,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        // 5e **Illumination**: "the flameskull sheds either bright
+        // light in a 15-foot radius and dim light for an additional
+        // 15 feet, or dim light in a 15-foot radius. It can switch
+        // between the options as an action." The dimmed option is
+        // dropped — it is an action spent to be harder to see, which
+        // no stat block in the engine has a reason to take and the AI
+        // has no rung for. The lit option is the one it fights under.
+        innate_light: Some((6, 6)),
         // Flameskulls understand Common and retain languages from life
         // but can't speak — we list Common for targeting / interaction.
         languages: HashSet::from([Language::Common]),

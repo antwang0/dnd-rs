@@ -3995,11 +3995,21 @@ impl EncounterInstance {
     /// is where the tile comes from. A source whose bearer is already
     /// gone has no last known position to pin it to and is snuffed
     /// instead, which is the honest answer rather than a guess.
+    ///
+    /// A creature that *is* the light is the exception, and the only
+    /// one: an azer's glow is the azer being made of fire, so it goes
+    /// out with them rather than lying on the flagstones. That is what
+    /// `LightSource::innate` marks, and it is the difference between
+    /// killing something that carries a lamp and killing something that
+    /// is one — the second darkens the room.
     pub fn drop_light_sources_carried_by(&mut self, actor_id: usize) {
         let dropped_at = self.actors.get(&actor_id).map(|a| a.location());
         self.light_sources.retain_mut(|source| {
             if source.anchor != LightAnchor::Carried(actor_id) {
                 return true;
+            }
+            if source.innate {
+                return false;
             }
             match dropped_at {
                 Some(loc) => {
@@ -14421,6 +14431,24 @@ impl EncounterInstance {
         // its own mechanic).
         for &(c, timer) in &creature_template.innate_conditions {
             actor.add_condition(c, timer);
+        }
+        // …and the same lane on the map rather than on the body: 5e's
+        // **Illumination**, the trait a creature made of fire carries
+        // instead of a torch. Anchored `Carried` so it walks with the
+        // azer, and flagged `innate` so it goes out with it — see
+        // `LightSource::innate` for why a glow and a torch part company
+        // at exactly that moment.
+        if let Some((bright, dim)) = creature_template.innate_light {
+            self.add_light_source(crate::engine::lighting::LightSource {
+                id: 0,
+                name: "illumination",
+                anchor: crate::engine::lighting::LightAnchor::Carried(actor_id),
+                bright_tiles: bright,
+                dim_tiles: dim,
+                rounds_remaining: None,
+                spell_level: 0,
+                innate: true,
+            });
         }
 
         if self.initialized {

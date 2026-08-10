@@ -44,13 +44,16 @@ pub static AZER_HEATED_BODY: MeleeReflect = MeleeReflect {
 ///     map, and they are why a party that opened with fire has wasted
 ///     its opener.
 ///
-/// The fourth is **Illumination**: RAW's azer sheds bright light in a
-/// 10-foot radius. Not modeled — the lighting layer takes light sources
-/// from carried torches and cast spells, and a creature that is itself
-/// a light source has no hook there. The tactical half of the clause
-/// (you cannot sneak up on an azer in the dark, and the azer cannot
-/// sneak up on you) is lost; the damage half, which is the whole rest of
-/// the stat block, is not.
+/// The fourth is **Illumination**: RAW's azer "sheds bright light in a
+/// 10-foot radius and dim light for an additional 10 feet". It rides
+/// `innate_light`, which is the lighting layer's lane for a creature
+/// that *is* a light source rather than one carrying a torch — the glow
+/// walks with the azer and goes out when the azer does.
+///
+/// It is the trait that decides how the fight goes in the dark, and in
+/// both directions: an azer cannot hide and cannot be hidden from, and
+/// it lights up whoever is standing next to it, which at ten feet is
+/// whoever is fighting it.
 ///
 /// Stat shape per the SRD: AC 17 (natural armor, shield), 39 HP
 /// (6d8+12), STR 17 / DEX 12 / CON 15 / INT 12 / WIS 13 / CHA 10. Speed
@@ -75,6 +78,11 @@ pub static AZER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 13,
         charisma: 10,
         languages: HashSet::from([Language::Primordial]),
+        // Illumination — 10 ft bright, 10 ft dim.
+        innate_light: Some((
+            crate::engine::lighting::GLOW_BRIGHT_TILES,
+            crate::engine::lighting::GLOW_DIM_TILES,
+        )),
         cr: 2.0,
         size: Size::Medium,
         creature_type: CreatureType::Elemental,

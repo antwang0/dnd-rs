@@ -260,6 +260,23 @@ pub struct LightSource {
     /// level on the source is what lets the second sentence be
     /// implemented at all.
     pub spell_level: u32,
+    /// True when the source *is* the creature carrying it rather than
+    /// something the creature is holding — 5e's **Illumination**
+    /// trait, which the azer, the magmin, the flameskull, the
+    /// will-o'-wisp and the fire elemental all print in those words.
+    ///
+    /// Read by exactly one rule, and it is the rule that separates a
+    /// glow from a torch: `drop_light_sources_carried_by` leaves a
+    /// dead bearer's torch burning on the tile they fell on, which is
+    /// both RAW and the more interesting board. A body that *was* the
+    /// light does not do that. The azer's glow is the azer being made
+    /// of fire, and when the fire goes out the corridor goes dark —
+    /// which is the whole tactical shape of killing one.
+    ///
+    /// Only meaningful on a `LightAnchor::Carried` source. A fixed
+    /// innate light is a contradiction (nothing is carrying it) and the
+    /// drop routine never looks at one.
+    pub innate: bool,
 }
 
 impl LightSource {
@@ -377,6 +394,16 @@ impl SunlightFrailty {
 pub const TORCH_BRIGHT_TILES: isize = 8;
 pub const TORCH_DIM_TILES: isize = 8;
 
+/// 5e **Illumination**, the ten-foot flavour: "sheds bright light in a
+/// 10-foot radius and dim light for an additional 10 feet." The azer's
+/// and the magmin's, and the most common printing of the trait.
+///
+/// Four tiles on the 2.5-ft grid — half a torch, which is the right
+/// relationship: a creature that glows is a worse lamp than a lamp, and
+/// the interesting half of the trait is that it cannot be put away.
+pub const GLOW_BRIGHT_TILES: isize = 4;
+pub const GLOW_DIM_TILES: isize = 4;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +493,7 @@ mod tests {
             dim_tiles: 3,
             rounds_remaining: None,
             spell_level: 0,
+            innate: false,
         };
         for (dist, expected) in [
             (0, LightLevel::Bright),

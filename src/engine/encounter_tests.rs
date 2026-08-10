@@ -76677,6 +76677,120 @@ fn darkvision_reaches_exactly_its_radius_and_no_further() {
     }
 }
 
+/// 5e **Illumination** — a creature that is itself a light source
+/// lights the room, walks its light around with it, and takes the light
+/// with it when it dies.
+///
+/// The third clause is the one that needed a new field. Every other
+/// carried light in the engine is a torch, and a dead torch-bearer's
+/// torch stays lit on the tile they fell on, which is both RAW and the
+/// better board. A body that *was* the light cannot do that: an azer's
+/// glow is the azer being made of fire. So `LightSource::innate`
+/// exists to split the two at exactly that moment, and killing the
+/// thing that lights the corridor darkens the corridor — which is the
+/// whole tactical shape of the trait.
+#[test]
+fn a_creature_that_is_a_light_source_lights_the_room_and_takes_it_with_it() {
+    use crate::actors::creatures::azers::AZER_TEMPLATE;
+    use crate::engine::lighting::LightLevel;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let azer = e
+        .instantiate_creature(&AZER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+
+    // Ten feet of bright and ten more of dim, off the azer's body.
+    // Read at range rather than on its own tile: a source that lit only
+    // the square it stood on would pass an on-tile assertion and be
+    // useless.
+    assert_eq!(e.light_at(Coordinate::new(7, 5)), LightLevel::Bright);
+    assert_eq!(e.light_at(Coordinate::new(13, 5)), LightLevel::Dim);
+    assert_eq!(
+        e.light_at(Coordinate::new(19, 5)),
+        LightLevel::Dark,
+        "the far end of the room is still unlit"
+    );
+
+    // …and it walks. The glow is anchored to the bearer rather than to
+    // the tile it was lit on, so the lit patch moves with the body
+    // instead of staying where the azer spawned.
+    e.actors
+        .get_mut(&azer)
+        .unwrap()
+        .set_location(Coordinate::new(16, 5));
+    assert_eq!(
+        e.light_at(Coordinate::new(5, 5)),
+        LightLevel::Dark,
+        "the tile the azer spawned on goes dark when the azer leaves it"
+    );
+    assert_eq!(e.light_at(Coordinate::new(19, 5)), LightLevel::Bright);
+
+    // …and it goes out with the azer, rather than lying on the
+    // flagstones the way a dropped torch would. This is the assertion
+    // the `innate` flag exists for.
+    e.despawn_actor(azer, "is destroyed");
+    assert_eq!(
+        e.light_at(Coordinate::new(19, 5)),
+        LightLevel::Dark,
+        "the fire went out with the thing that was on fire"
+    );
+    assert!(
+        e.light_sources().is_empty(),
+        "no orphan glow left behind on the board"
+    );
+}
+
+/// Every stat block RAW prints **Illumination** on carries it, and
+/// nothing else does.
+///
+/// Both directions, which is what the list is for. The trait is not
+/// implied by creature type or by damage immunity — the salamander is
+/// made of fire and RAW pointedly does not give it one, while the
+/// will-o'-wisp is a CR 2 undead that glows brighter than anything
+/// below CR 5. It is a fact about the Monster Manual, so the Monster
+/// Manual's answer is what gets written down; and a one-line field in a
+/// struct literal is exactly the sort of thing that gets copy-pasted
+/// onto the next template down the file.
+#[test]
+fn exactly_the_stat_blocks_that_glow_carry_a_glow() {
+    use crate::actors::creatures::{azers, fire_elementals, flameskulls, magmins, wisps};
+
+    let expected: Vec<(&str, (isize, isize))> = vec![
+        // RAW radii, in feet, over the 2.5-ft grid: 10/10, 10/10,
+        // 15/15, 5/10, 30/30.
+        (azers::AZER_TEMPLATE.name, (4, 4)),
+        (magmins::MAGMIN_TEMPLATE.name, (4, 4)),
+        (flameskulls::FLAMESKULL_TEMPLATE.name, (6, 6)),
+        (wisps::WISP_TEMPLATE.name, (2, 4)),
+        (fire_elementals::FIRE_ELEMENTAL_TEMPLATE.name, (12, 12)),
+    ];
+
+    for (name, radii) in &expected {
+        let t = EncounterInstance::template_pool()
+            .into_iter()
+            .find(|t| t.name == *name)
+            .unwrap_or_else(|| panic!("{} should be in the pool", name));
+        assert_eq!(
+            t.innate_light,
+            Some(*radii),
+            "{} sheds the wrong light",
+            name
+        );
+    }
+
+    for t in EncounterInstance::template_pool() {
+        if t.innate_light.is_none() {
+            continue;
+        }
+        assert!(
+            expected.iter().any(|(n, _)| *n == t.name),
+            "{} sheds light and is not on the list",
+            t.name
+        );
+    }
+}
+
 /// The Fighter has no darkvision, so an unlit board blinds them at any
 /// distance — including one tile away.
 #[test]
@@ -76709,6 +76823,7 @@ fn shooting_out_of_the_dark_into_the_light_is_advantage_one_way_only() {
         dim_tiles: 0,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     assert!(
         !e.darkness_blinds(fighter, zombie),
@@ -76758,6 +76873,7 @@ fn a_light_source_lights_a_bright_core_and_a_dim_collar_on_the_board() {
         dim_tiles: TORCH_DIM_TILES,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     assert_eq!(e.light_at(Coordinate::new(8, 0)), LightLevel::Bright);
     assert_eq!(e.light_at(Coordinate::new(9, 0)), LightLevel::Dim);
@@ -76780,6 +76896,7 @@ fn a_carried_light_travels_with_its_bearer() {
         dim_tiles: 0,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     assert_eq!(e.light_at(Coordinate::new(1, 2)), LightLevel::Bright);
     assert_eq!(e.light_at(Coordinate::new(20, 2)), LightLevel::Dark);
@@ -76806,6 +76923,7 @@ fn a_dead_bearers_torch_keeps_burning_on_the_tile_they_fell_on() {
         dim_tiles: 0,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     e.drop_light_sources_carried_by(fighter);
     e.actors.remove(&fighter);
@@ -76853,6 +76971,7 @@ fn magical_darkness_beats_darkvision_and_beats_a_torch() {
         dim_tiles: 8,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     assert_eq!(e.light_at(sphere), LightLevel::Dark);
     assert_eq!(
@@ -76926,6 +77045,7 @@ fn darkness_snuffs_cheap_light_and_spares_daylight() {
             dim_tiles: 0,
             rounds_remaining: None,
             spell_level: level,
+            innate: false,
         });
     }
     let snuffed = e.dispel_light_in(point, 4, ZoneEffect::DARKNESS_SPELL_LEVEL);
@@ -76993,6 +77113,7 @@ fn a_timed_light_gutters_out_and_an_untimed_one_does_not() {
         dim_tiles: 0,
         rounds_remaining: Some(2),
         spell_level: 3,
+        innate: false,
     });
     e.add_light_source(LightSource {
         id: 0,
@@ -77002,6 +77123,7 @@ fn a_timed_light_gutters_out_and_an_untimed_one_does_not() {
         dim_tiles: 0,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     e.round_end();
     assert_eq!(e.light_sources().len(), 2);
@@ -77254,6 +77376,7 @@ fn casting_darkness_installs_the_sphere_and_snuffs_the_torch_under_it() {
         dim_tiles: 8,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     assert_eq!(e.light_at(point), LightLevel::Bright);
 
@@ -77732,6 +77855,7 @@ fn a_huge_bearers_torch_is_centred_on_its_body_and_not_on_its_corner() {
         dim_tiles: 0,
         rounds_remaining: None,
         spell_level: 0,
+        innate: false,
     });
     // The body occupies x = 16 ..= 16 + span - 1. `footprint_chebyshev`
     // reports the *gap*, so the last lit tile on either side is

@@ -5375,6 +5375,10 @@ impl Action for LightTorch {
             // Nonmagical flame, and therefore the first thing a
             // Darkness sphere puts out.
             spell_level: 0,
+            // A spell's light and a lit torch are both things a
+            // creature carries, not things it is. See
+            // `LightSource::innate`.
+            innate: false,
         });
         let name = encounter.actor_name(caster_id);
         encounter.log(format!("{} lights a torch.", name));

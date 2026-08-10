@@ -10315,6 +10315,10 @@ impl Action for Daylight {
             dim_tiles: Self::RADIUS,
             rounds_remaining: Some(Self::ROUNDS),
             spell_level: 3,
+            // A spell's light and a lit torch are both things a
+            // creature carries, not things it is. See
+            // `LightSource::innate`.
+            innate: false,
         });
         encounter
             .ally_burst_targets(caster_id, point, Self::RADIUS)
@@ -19486,6 +19490,10 @@ impl Action for Light {
             // A cantrip, and therefore the first thing a Darkness cast
             // puts out — `dispel_light_in` compares against this.
             spell_level: 0,
+            // A spell's light and a lit torch are both things a
+            // creature carries, not things it is. See
+            // `LightSource::innate`.
+            innate: false,
         });
         let name = encounter.actor_name(target_id);
         encounter.log(format!("  {} begins to glow.", name));

@@ -3646,6 +3646,28 @@ pub struct CreatureTemplate {
     /// conditions listed here are installed exactly once and not
     /// auto-restored if dispelled / consumed mid-fight.
     pub innate_conditions: Vec<(Condition, ConditionTimer)>,
+    /// 5e **Illumination** — the bright / dim radii, in tiles, this
+    /// creature sheds by existing. `None` for everything that doesn't
+    /// glow, which is nearly everything.
+    ///
+    /// The sibling of `innate_conditions` on the map layer rather than
+    /// the body layer: both are "this creature arrives already like
+    /// this", and both are installed once at instantiation. It is a
+    /// pair of radii rather than a `bool` because RAW's trait is
+    /// printed as a pair and the printings differ — the azer and the
+    /// magmin shed 10/10, the flameskull 15/15, the will-o'-wisp 5/10,
+    /// the fire elemental 30/30 — and a single "glows" flag would have
+    /// to pick one of them for all four.
+    ///
+    /// What it buys is not a lamp. The lighting layer already drives
+    /// darkvision, Sunlight Sensitivity, hiding, and the sight-denied
+    /// clauses on both sides of every attack roll, and a creature that
+    /// cannot stop shining reaches all of them from the wrong side: an
+    /// azer cannot hide, cannot be hidden from, and lights up the
+    /// party's archers along with itself. That last part is the trait's
+    /// actual cost and the reason RAW prints it on stat blocks rather
+    /// than in the equipment list.
+    pub innate_light: Option<(isize, isize)>,
 }
 
 impl CreatureTemplate {
@@ -3850,6 +3872,7 @@ impl CreatureTemplate {
             death_burst: None,
             natural_melee_reflect: None,
             innate_conditions: Vec::new(),
+            innate_light: None,
         }
     }
 }

@@ -29,6 +29,13 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 14,
         charisma: 11,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
+        // 5e **Consume Life** aside, this is what a will-o'-wisp *is*:
+        // "the wisp sheds bright light in a 5-foot radius and dim
+        // light for an additional 10 feet." The narrowest bright
+        // radius and the widest collar relative to it, which is the
+        // shape of a lure — a light you can see from a long way off
+        // and that shows you nothing when you arrive.
+        innate_light: Some((2, 4)),
         languages: HashSet::from([Language::Common]),
         cr: 2.0,
         size: Size::Tiny,

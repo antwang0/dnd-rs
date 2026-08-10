@@ -81,6 +81,11 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         constitution: 16,
         charisma: 7,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        // 5e **Illumination**: "the elemental sheds bright light in
+        // a 30-foot radius and dim light for an additional 30 feet."
+        // The widest glow in the bestiary — a fire elemental lights a
+        // room the way a bonfire does, and cannot stop.
+        innate_light: Some((12, 12)),
         languages: HashSet::from([Language::Primordial]),
         cr: 5.0,
         size: Size::Large,

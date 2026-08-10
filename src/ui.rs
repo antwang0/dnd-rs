@@ -1118,6 +1118,7 @@ mod tests {
             dim_tiles: 0,
             rounds_remaining: None,
             spell_level: 0,
+            innate: false,
         });
         assert!(
             rendered_map(&e).contains(GOBLIN_TEMPLATE.glyph),

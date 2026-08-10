@@ -67,9 +67,12 @@ pub static MAGMIN_DEATH_BURST: DeathBurst = DeathBurst {
 /// dying magmin is excluded from its own blast via the standard
 /// `resolve_burst_save_damage` caster-exclusion gate.
 ///
-/// **Ignited Illumination** (the magmin sheds bright light in a 10-ft
-/// radius and dim light for another 10 ft) — omitted as a flavor clause
-/// since the engine doesn't model per-tile illumination from creatures.
+/// **Ignited Illumination** — RAW: "the magmin sheds bright light in a
+/// 10-foot radius and dim light for an additional 10 feet." Carried on
+/// `innate_light`, which walks with the magmin and goes out with it.
+/// It was omitted for years as a flavour clause on the grounds that the
+/// engine did not model per-tile illumination from creatures; the
+/// lighting layer arrived, and nobody came back for the note.
 pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*MAGMIN_TOUCH);
@@ -91,6 +94,11 @@ pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 10,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Primordial]),
+        // Ignited Illumination — 10 ft bright, 10 ft dim.
+        innate_light: Some((
+            crate::engine::lighting::GLOW_BRIGHT_TILES,
+            crate::engine::lighting::GLOW_DIM_TILES,
+        )),
         cr: 0.5,
         size: Size::Small,
         creature_type: CreatureType::Elemental,
