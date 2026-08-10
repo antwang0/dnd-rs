@@ -2678,6 +2678,14 @@ pub static LOOT_POOL: &[&Item] = &[
     &BOOTS_OF_STRIDING,
     &CLOAK_OF_RESISTANCE,
     &CLOAK_OF_PROTECTION,
+    // The plainest item in the file, and the last one nothing could
+    // find. A Shield is +2 AC and no clause at all — no save bonus, no
+    // resistance, nothing to read at any gate — which is precisely why
+    // it went unnoticed for as long as it did: an item with no rule to
+    // fire has no symptom when it never reaches anybody. It sat
+    // written, documented and tested, reachable only from the test
+    // that carried it.
+    &SHIELD,
     &AMULET_OF_HEALTH,
     &HEADBAND_OF_INSIGHT,
     &BRACERS_OF_DEFENSE,
@@ -3368,6 +3376,110 @@ mod tests {
         assert!(
             LOOT_POOL.iter().any(|l| l.name == SILVERED_WEAPON.name),
             "a silvered weapon nobody can find answers nothing"
+        );
+    }
+
+    /// Every item written in this file is one somebody can end up
+    /// holding.
+    ///
+    /// There are exactly two roads into an inventory, and the sweep
+    /// looks down both rather than keeping an exempt list:
+    ///
+    ///   1. `LOOT_POOL` — a corpse drops it.
+    ///   2. A `CreatureTemplate`'s `items` — something starts with it.
+    ///
+    /// The failure this names is the quietest one the file admits.
+    /// `SHIELD` is +2 AC and nothing else: no save bonus, no
+    /// resistance, no `on_use`, not one gate anywhere in the engine
+    /// that reads it. So an item that never reached anybody produced no
+    /// symptom at all — not a crash, not a dead-code warning (it is
+    /// `pub`), not a failing test, because it *had* a test. It was
+    /// written, documented, tested, and unobtainable, and the only
+    /// evidence was its absence from a loot table nobody counts.
+    ///
+    /// Sibling in shape and motive to
+    /// `every_creature_template_written_is_one_something_can_put_on_a_board`
+    /// and to `every_action_written_is_an_action_something_can_reach`.
+    /// Like both of those it reads the source rather than a registry,
+    /// because the registry is the thing that gets forgotten: the whole
+    /// bug is a line nobody wrote.
+    #[test]
+    fn every_item_written_is_one_somebody_can_end_up_holding() {
+        use std::collections::HashSet;
+        use std::path::Path;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let own = std::fs::read_to_string(root.join("items/item_template.rs"))
+            .expect("this file should be readable");
+
+        // Every `pub static NAME: Item` in the file. Matched on the
+        // identifier rather than on `Item.name`, for the reason the
+        // creature sweep gives: the two diverge exactly where a
+        // hand-written mapping would be most tempting and most wrong.
+        let declared: Vec<&str> = own
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("pub static "))
+            .filter(|rest| rest.contains(": Item ="))
+            .filter_map(|rest| rest.split(':').next().map(str::trim))
+            .collect();
+        assert!(
+            declared.len() > 150,
+            "only {} items found — the source scan has stopped working",
+            declared.len()
+        );
+
+        // Road 1, read as source rather than by walking the slice: the
+        // slice would answer for the items it holds and could not tell
+        // a missing one from a misspelled one.
+        let pool_src = {
+            let start = own.find("pub static LOOT_POOL").expect("the loot pool");
+            let end = own[start..].find("\n];").expect("its closing bracket") + start;
+            &own[start..end]
+        };
+
+        // Road 2 — every creature file, read whole. Whole rather than
+        // just the `items:` blocks on purpose: an identifier appearing
+        // anywhere in a stat block is a stat block that mentions it,
+        // and the failure being guarded against is an item mentioned
+        // *nowhere*.
+        let mut carried = String::new();
+        for entry in
+            std::fs::read_dir(root.join("actors/creatures")).expect("the creature directory")
+        {
+            let path = entry.expect("a readable dir entry").path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                carried.push_str(&std::fs::read_to_string(&path).expect("a creature module"));
+            }
+        }
+
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for ident in declared {
+            assert!(seen.insert(ident), "{} is declared twice", ident);
+            let needle = format!("&{}", ident);
+            // Word-boundary on the tail so `&SHIELD` does not match
+            // `&SHIELD_OF_FAITH` — the file is full of names that
+            // contain each other, and a bare `contains` would vouch for
+            // an item on the strength of a longer one that happens to
+            // start the same way.
+            let named_in = |hay: &str| {
+                hay.match_indices(&needle).any(|(at, _)| {
+                    hay[at + needle.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+                })
+            };
+            if !named_in(pool_src) && !named_in(&carried) {
+                orphans.push(ident);
+            }
+        }
+        orphans.sort_unstable();
+        assert!(
+            orphans.is_empty(),
+            "these items are written but nobody can obtain them — add each to `LOOT_POOL` \
+             or to a creature template's `items`:\n  {}",
+            orphans.join("\n  ")
         );
     }
 
