@@ -16835,3 +16835,239 @@ pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "panther pounce knockdown",
     once_per_turn_tag: None,
 };
+
+// ─── Remorhaz ───────────────────────────────────────────────────────
+
+/// Remorhaz Bite — STR-based 6d10+STR piercing melee with a flat 3d6
+/// fire rider. RAW: "Bite. Melee Weapon Attack: +11 to hit, reach 10
+/// ft., one target. Hit: 40 (6d10 + 7) piercing damage plus 10 (3d6)
+/// fire damage. If the target is a Large or smaller creature, it is
+/// grappled (escape DC 17). Until this grapple ends, the target is
+/// restrained, and the remorhaz can't bite another target."
+///
+/// The heaviest single die pool in the bestiary short of the tarrasque,
+/// and the fire is not a garnish: the remorhaz's body runs hot enough
+/// that swallowing something cooks it. The grapple / swallow half is
+/// dropped — the engine has no swallow lane, and a Restrained install
+/// on top of forty average damage would make the bite a save-or-lose at
+/// a CR that already has enough. `WeaponWithRider` rather than a
+/// bespoke action, so the two damage types meet the target's resistance
+/// table separately, which is the whole reason a fire-immune creature
+/// takes forty from this and not fifty.
+pub static REMORHAZ_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
+    "remorhaz bite",
+    &["rz-bite", "remorhaz-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(6, 10),
+    DamageType::Piercing,
+    2,
+    Dice::new(3, 6),
+    DamageType::Fire,
+    "superheated gullet",
+);
+
+// ─── Water Weird ────────────────────────────────────────────────────
+
+/// Water Weird Constrict — STR-based 3d6+STR bludgeoning melee at reach
+/// 10 ft. whose hit Restrains the target. RAW: "Constrict. Melee Weapon
+/// Attack: +6 to hit, reach 10 ft., one creature. Hit: 13 (3d6 + 3)
+/// bludgeoning damage. If the target is Medium or smaller, it is
+/// grappled (escape DC 13) and pulled 5 feet toward the water weird.
+/// Until this grapple ends, the target is restrained, the water weird
+/// tries to drown it, and the water weird can't constrict another
+/// target."
+///
+/// An auto-install rather than a save, which is the one place this
+/// leaves the engine's usual grapple shape and does so on RAW's word:
+/// the water weird's grab is not contested at the moment it lands — the
+/// escape DC is what the *victim* rolls against later, on their own
+/// turn, which is a lane the engine spells as a timer rather than as an
+/// opposed check. Two rounds is that timer.
+///
+/// The pull and the drowning are dropped: the first is a forced move on
+/// a chassis that has none, and the second needs a breath clock.
+pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::reach_melee(
+    "water weird constrict",
+    &["ww-constrict", "water-constrict"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Bludgeoning,
+    Condition::Restrained,
+    ConditionTimer::Rounds(2),
+    "coiling water",
+    2,
+);
+
+// ─── Rug of Smothering ──────────────────────────────────────────────
+
+/// Rug of Smothering Smother — STR-based 2d6+STR bludgeoning melee
+/// whose hit Blinds and Restrains at once. RAW: "Smother. Melee Weapon
+/// Attack: +5 to hit, reach 5 ft., one Medium or smaller creature. Hit:
+/// the creature is grappled (escape DC 13). Until this grapple ends,
+/// the target is restrained, blinded, and at risk of suffocating, and
+/// the rug can't smother another target. In addition, at the start of
+/// each of the target's turns, the target takes 10 (2d6 + 3)
+/// bludgeoning damage."
+///
+/// RAW's hit deals no damage at all — the crushing is a per-turn tick
+/// on the grapple, which the weapon chassis has no lane for. Folding
+/// one round of it into the swing is the honest compression: the rug
+/// still trades a hit for roughly ten bludgeoning and a smothered
+/// victim, and the arithmetic across a two-round hold comes out close.
+///
+/// Restrained rather than Blinded, because the engine reads Restrained
+/// as the stronger of the two and installing both would be one
+/// condition doing the other's work — a Restrained creature already
+/// hands out advantage and attacks at disadvantage, which is where the
+/// blinding was going.
+pub static RUG_OF_SMOTHERING_SMOTHER: WeaponWithCondition = WeaponWithCondition::melee(
+    "rug of smothering smother",
+    &["rug-smother", "smother"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    Condition::Restrained,
+    ConditionTimer::Rounds(2),
+    "smothering weave",
+);
+
+// ─── Merfolk ────────────────────────────────────────────────────────
+
+/// Merfolk Spear — STR-based 1d6+STR piercing melee. RAW: "Spear. Melee
+/// or Ranged Weapon Attack: +2 to hit, reach 5 ft. or range 20/60 ft.,
+/// one target. Hit: 3 (1d6) piercing damage, or 4 (1d8) piercing damage
+/// if used with two hands to make a melee attack."
+///
+/// A spear rather than a trident, and the difference matters exactly
+/// once: 5e's Underwater Combat rules exempt both, and the merfolk is
+/// the creature most likely to be swinging one in a lake.
+pub static MERFOLK_SPEAR: SimpleWeapon = SimpleWeapon::melee(
+    "merfolk spear",
+    &["mf-spear", "merfolk-spear"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+// ─── Homunculus ─────────────────────────────────────────────────────
+
+/// Homunculus Bite — DEX-based 1d4 piercing melee, flat damage, with a
+/// CON save (DC 10) for 2d4 poison. RAW: "Bite. Melee Weapon Attack: +4
+/// to hit, reach 5 ft., one target. Hit: 1 piercing damage, and the
+/// target must succeed on a DC 10 Constitution saving throw or be
+/// poisoned for 1 minute. If the saving throw fails by 5 or more, the
+/// target is instead poisoned for 5 (1d10) minutes and unconscious
+/// while poisoned in this way."
+///
+/// RAW's bite deals one point. The venom is the whole attack, and the
+/// fail-by-5 unconsciousness clause is what makes a CR 0 construct
+/// worth putting on a board at all — the engine has no fail-by-N lane,
+/// so the Poisoned install carries the threat and the 2d4 stands in for
+/// the rest.
+pub static HOMUNCULUS_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "homunculus bite",
+    &["hm-bite", "homunculus-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    10,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "alchemical venom",
+    Condition::Poisoned,
+    ConditionTimer::Rounds(3),
+);
+
+// ─── Giant Fire Beetle ──────────────────────────────────────────────
+
+/// Giant Fire Beetle Bite — STR-based 1d6 slashing melee, flat damage.
+/// RAW: "Bite. Melee Weapon Attack: +1 to hit, reach 5 ft., one target.
+/// Hit: 2 (1d6) slashing damage."
+///
+/// Slashing off a bite, which is the one place this beetle breaks the
+/// naming convention and does so on RAW's word — the mandibles shear
+/// rather than puncture. Flat damage: RAW's line carries no ability
+/// modifier and the beetle's STR 8 would subtract one from every hit.
+pub static GIANT_FIRE_BEETLE_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "giant fire beetle bite",
+    &["gfb-bite", "beetle-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+);
+
+// ─── Jackal ─────────────────────────────────────────────────────────
+
+/// Jackal Bite — STR-based 1d4 piercing melee, flat damage. RAW: "Bite.
+/// Melee Weapon Attack: +1 to hit, reach 5 ft., one target. Hit:
+/// 1 (1d4 - 1) piercing damage." The minus is the jackal's STR 8; flat
+/// 1d4 is the engine's nearest expression of a bite that barely breaks
+/// skin.
+pub static JACKAL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "jackal bite",
+    &["jk-bite", "jackal-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
+
+// ─── Raven ──────────────────────────────────────────────────────────
+
+/// Raven Beak — DEX-based 1 piercing melee, flat. RAW: "Beak. Melee
+/// Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 1 piercing
+/// damage." A single point, expressed as the smallest die the engine
+/// has — there is no `Dice::new(0, 0) + 1` and a d4 that averages two
+/// and a half is closer to one than a d6 is.
+pub static RAVEN_BEAK: SimpleWeapon = SimpleWeapon::flat_melee(
+    "raven beak",
+    &["rv-beak", "raven-beak"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 2),
+    DamageType::Piercing,
+);
+
+// ─── Vulture ────────────────────────────────────────────────────────
+
+/// Vulture Beak — STR-based 1d4 piercing melee, flat damage. RAW:
+/// "Beak. Melee Weapon Attack: +2 to hit, reach 5 ft., one target. Hit:
+/// 2 (1d4) piercing damage."
+pub static VULTURE_BEAK: SimpleWeapon = SimpleWeapon::flat_melee(
+    "vulture beak",
+    &["vl-beak", "vulture-beak"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
+
+// ─── Quipper ────────────────────────────────────────────────────────
+
+/// Quipper Bite — DEX-based 1 piercing melee, flat. RAW: "Bite. Melee
+/// Weapon Attack: +5 to hit, reach 5 ft., one creature. Hit: 1 piercing
+/// damage."
+///
+/// One quipper is nothing. The stat block exists so that a river can
+/// contain forty of them, and the threat is `has_pack_tactics` plus
+/// Blood Frenzy on the template rather than anything on this line.
+pub static QUIPPER_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "quipper bite",
+    &["qp-bite", "quipper-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 2),
+    DamageType::Piercing,
+);
+
+// ─── Giant Weasel ───────────────────────────────────────────────────
+
+/// Giant Weasel Bite — DEX-based 1d4+DEX piercing melee. RAW: "Bite.
+/// Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit:
+/// 5 (1d4 + 3) piercing damage." DEX-based off the weasel's 16, which
+/// is where RAW's +3 comes from and why a creature with STR 11 hits
+/// like this.
+pub static GIANT_WEASEL_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant weasel bite",
+    &["gw-bite", "weasel-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);

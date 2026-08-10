@@ -55033,6 +55033,13 @@ fn a_weapon_deals_the_damage_its_name_implies() {
         // of ammunition. Caught by no stem today; listed because the
         // word is one somebody will reach for.
         ("RADIANT_SUN_BOLT", "a bolt of light, not a crossbow bolt"),
+        // "Bite. Melee Weapon Attack ... Hit: 2 (1d6) slashing
+        // damage." A fire beetle's mandibles shear rather than
+        // puncture, and RAW types the hit by what the jaws do.
+        (
+            "GIANT_FIRE_BEETLE_BITE",
+            "RAW: the fire beetle's mandibles shear",
+        ),
     ];
 
     // Matches a `SimpleWeapon` static declared through one of the
@@ -76754,7 +76761,9 @@ fn a_creature_that_is_a_light_source_lights_the_room_and_takes_it_with_it() {
 /// onto the next template down the file.
 #[test]
 fn exactly_the_stat_blocks_that_glow_carry_a_glow() {
-    use crate::actors::creatures::{azers, fire_elementals, flameskulls, magmins, wisps};
+    use crate::actors::creatures::{
+        azers, fire_elementals, flameskulls, giant_fire_beetles, magmins, wisps,
+    };
 
     let expected: Vec<(&str, (isize, isize))> = vec![
         // RAW radii, in feet, over the 2.5-ft grid: 10/10, 10/10,
@@ -76764,6 +76773,12 @@ fn exactly_the_stat_blocks_that_glow_carry_a_glow() {
         (flameskulls::FLAMESKULL_TEMPLATE.name, (6, 6)),
         (wisps::WISP_TEMPLATE.name, (2, 4)),
         (fire_elementals::FIRE_ELEMENTAL_TEMPLATE.name, (12, 12)),
+        // The only beast in the game with the trait, and the reason
+        // anybody keeps one.
+        (
+            giant_fire_beetles::GIANT_FIRE_BEETLE_TEMPLATE.name,
+            (4, 4),
+        ),
     ];
 
     for (name, radii) in &expected {

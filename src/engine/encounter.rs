@@ -1,4 +1,15 @@
 use crate::engine::side_effects::ApplicableSideEffect;
+use crate::actors::creatures::giant_fire_beetles::GIANT_FIRE_BEETLE_TEMPLATE;
+use crate::actors::creatures::giant_weasels::GIANT_WEASEL_TEMPLATE;
+use crate::actors::creatures::homunculi::HOMUNCULUS_TEMPLATE;
+use crate::actors::creatures::jackals::JACKAL_TEMPLATE;
+use crate::actors::creatures::merfolk::MERFOLK_TEMPLATE;
+use crate::actors::creatures::quippers::QUIPPER_TEMPLATE;
+use crate::actors::creatures::ravens::RAVEN_TEMPLATE;
+use crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE;
+use crate::actors::creatures::rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE;
+use crate::actors::creatures::vultures::VULTURE_TEMPLATE;
+use crate::actors::creatures::water_weirds::WATER_WEIRD_TEMPLATE;
 use crate::actors::creatures::acolytes::ACOLYTE_TEMPLATE;
 use crate::actors::creatures::archmages::ARCHMAGE_TEMPLATE;
 use crate::actors::creatures::assassins::ASSASSIN_TEMPLATE;
@@ -10329,6 +10340,40 @@ impl EncounterInstance {
             &WARHORSE_SKELETON_TEMPLATE,
             &WINGED_KOBOLD_TEMPLATE,
             &PANTHER_TEMPLATE,
+            // The tail of the SRD roster — the entries left over once
+            // the appendix and the named monsters were in, each one
+            // filling a rung nothing else sits on:
+            //   - Remorhaz (CR 11 monstrosity): the hardest single
+            //     swing below the ancient dragons, immune to both fire
+            //     and cold, and 3d6 fire back at everything that
+            //     touches it. The largest reflect in the bestiary.
+            //   - Water Weird (CR 3 elemental): arrives invisible and
+            //     restrains on a hit with no save. Vulnerable to cold,
+            //     which is the answer.
+            //   - Rug of Smothering (CR 2 construct): restrains on hit
+            //     and cannot itself be knocked over.
+            //   - Merfolk (CR ⅛ humanoid): the cheapest aquatic body,
+            //     and the one humanoid that swings at no penalty in a
+            //     lake.
+            //   - Homunculus (CR 0 construct): five hit points and a
+            //     DC 10 venom that outweighs the rest of the creature.
+            //   - Giant Fire Beetle (CR 0 beast): the only beast in the
+            //     game that is a lamp.
+            //   - Giant Weasel (CR ⅛), Jackal (CR 0), Raven (CR 0),
+            //     Vulture (CR 0), Quipper (CR 0): the low end. Two of
+            //     them carry Pack Tactics and one carries Blood Frenzy,
+            //     which is what makes a number of them a fight.
+            &REMORHAZ_TEMPLATE,
+            &WATER_WEIRD_TEMPLATE,
+            &RUG_OF_SMOTHERING_TEMPLATE,
+            &MERFOLK_TEMPLATE,
+            &HOMUNCULUS_TEMPLATE,
+            &GIANT_FIRE_BEETLE_TEMPLATE,
+            &GIANT_WEASEL_TEMPLATE,
+            &JACKAL_TEMPLATE,
+            &RAVEN_TEMPLATE,
+            &VULTURE_TEMPLATE,
+            &QUIPPER_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
         pool

@@ -287,6 +287,17 @@ pub mod violet_fungi;
 pub mod warhorse_skeletons;
 pub mod winged_kobolds;
 pub mod panthers;
+pub mod remorhazes;
+pub mod water_weirds;
+pub mod rugs_of_smothering;
+pub mod merfolk;
+pub mod homunculi;
+pub mod jackals;
+pub mod ravens;
+pub mod vultures;
+pub mod quippers;
+pub mod giant_weasels;
+pub mod giant_fire_beetles;
 
 use crate::actors::actor_template::CreatureTemplate;
 
@@ -603,7 +614,9 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &krakens::KRAKEN_TEMPLATE,
         &lizardfolk::LIZARDFOLK_TEMPLATE,
         &marids::MARID_TEMPLATE,
+        &merfolk::MERFOLK_TEMPLATE,
         &merrow::MERROW_TEMPLATE,
+        &quippers::QUIPPER_TEMPLATE,
         &plesiosauruses::PLESIOSAURUS_TEMPLATE,
         &reef_sharks::REEF_SHARK_TEMPLATE,
         &sahuagins::SAHUAGIN_TEMPLATE,
@@ -611,6 +624,7 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &storm_giants::STORM_GIANT_TEMPLATE,
         &swarms::SWARM_OF_QUIPPERS_TEMPLATE,
         &water_elementals::WATER_ELEMENTAL_TEMPLATE,
+        &water_weirds::WATER_WEIRD_TEMPLATE,
     ]
 }
 
