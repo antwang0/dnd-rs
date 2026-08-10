@@ -1330,6 +1330,39 @@ impl Action for WeaponWithRider {
     fn reach_tiles(&self) -> Option<isize> {
         Some(self.reach)
     }
+
+    fn requires_los(&self) -> bool {
+        // Ranged variants need LOS like every other ranged attack; melee
+        // doesn't. Matches `SimpleWeapon`'s `is_melee`-gated LOS rule.
+        !self.is_melee
+    }
+
+    /// Declared rather than derived, for the same reason
+    /// `SimpleWeapon` declares it: this chassis *knows*, and the
+    /// trait's default is a guess made by something that doesn't.
+    ///
+    /// Every swing on this chassis resolves through `resolve_attack`
+    /// with `is_spell: false`. That is the engine's own definition of a
+    /// weapon attack, and until now four whole chassis — every
+    /// save-rider and flat-rider natural weapon in the bestiary, plus
+    /// the drow's hand crossbow — answered `false` to the question and
+    /// so were read as spells by the one consumer that asks it: 5e's
+    /// Underwater Combat rules, whose every clause says "weapon
+    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
+    /// with a spear got no credit for carrying one of the five weapons
+    /// RAW exempts, and a crossbow bolt fired across a lake could not
+    /// be told from a Fire Bolt.
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    /// Declared from the field rather than inferred from `requires_los`
+    /// and a reach band — see `SimpleWeapon::is_melee_attack` for the
+    /// same argument. The inference is right for every entry on this
+    /// chassis today; the field is right by construction.
+    fn is_melee_attack(&self) -> bool {
+        self.is_melee
+    }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type, self.rider_type]
     }
@@ -1494,6 +1527,39 @@ impl Action for WeaponWithSaveCondition {
     fn reach_tiles(&self) -> Option<isize> {
         Some(self.reach)
     }
+
+    fn requires_los(&self) -> bool {
+        // Ranged variants need LOS like every other ranged attack; melee
+        // doesn't. Matches `SimpleWeapon`'s `is_melee`-gated LOS rule.
+        !self.is_melee
+    }
+
+    /// Declared rather than derived, for the same reason
+    /// `SimpleWeapon` declares it: this chassis *knows*, and the
+    /// trait's default is a guess made by something that doesn't.
+    ///
+    /// Every swing on this chassis resolves through `resolve_attack`
+    /// with `is_spell: false`. That is the engine's own definition of a
+    /// weapon attack, and until now four whole chassis — every
+    /// save-rider and flat-rider natural weapon in the bestiary, plus
+    /// the drow's hand crossbow — answered `false` to the question and
+    /// so were read as spells by the one consumer that asks it: 5e's
+    /// Underwater Combat rules, whose every clause says "weapon
+    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
+    /// with a spear got no credit for carrying one of the five weapons
+    /// RAW exempts, and a crossbow bolt fired across a lake could not
+    /// be told from a Fire Bolt.
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    /// Declared from the field rather than inferred from `requires_los`
+    /// and a reach band — see `SimpleWeapon::is_melee_attack` for the
+    /// same argument. The inference is right for every entry on this
+    /// chassis today; the field is right by construction.
+    fn is_melee_attack(&self) -> bool {
+        self.is_melee
+    }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
     }
@@ -1595,6 +1661,20 @@ pub struct WeaponWithSaveDamage {
     /// Crossbow). Same single save gates both riders — matches the RAW
     /// shared-roll semantics.
     pub also_install: Option<(Condition, ConditionTimer)>,
+    /// 5e **normal range** in tiles for the ranged variants, and `None`
+    /// for every melee one. The mirror of `SimpleWeapon::normal_range`,
+    /// and it is here for the same two rules: the long-range
+    /// disadvantage clause, and Underwater Combat's "automatically
+    /// misses a target beyond the weapon's normal range".
+    ///
+    /// The chassis shipped without it, which made its one ranged entry
+    /// — the drow's poisoned hand crossbow — a weapon with no falloff
+    /// at any distance it could reach. Nothing looked wrong: an unset
+    /// threshold is indistinguishable from a shot that is always inside
+    /// its band, so the drow simply never rolled the disadvantage RAW
+    /// gives it, and the shape of the miss is that there was nothing to
+    /// see.
+    pub normal_range: Option<isize>,
 }
 
 impl WeaponWithSaveDamage {
@@ -1630,6 +1710,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            normal_range: None,
         }
     }
 
@@ -1666,6 +1747,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            normal_range: None,
         }
     }
 
@@ -1711,6 +1793,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: Some((condition, timer)),
+            normal_range: None,
         }
     }
 
@@ -1733,6 +1816,7 @@ impl WeaponWithSaveDamage {
         rider_type: DamageType,
         rider_name: &'static str,
         reach: isize,
+        normal_range: isize,
     ) -> Self {
         Self {
             display_name,
@@ -1748,6 +1832,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            normal_range: Some(normal_range),
         }
     }
 
@@ -1775,6 +1860,7 @@ impl WeaponWithSaveDamage {
         rider_type: DamageType,
         rider_name: &'static str,
         reach: isize,
+        normal_range: isize,
         condition: Condition,
         timer: ConditionTimer,
     ) -> Self {
@@ -1792,6 +1878,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: Some((condition, timer)),
+            normal_range: Some(normal_range),
         }
     }
 }
@@ -1808,6 +1895,37 @@ impl Action for WeaponWithSaveDamage {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(self.reach)
+    }
+
+    /// Declared rather than derived, for the same reason
+    /// `SimpleWeapon` declares it: this chassis *knows*, and the
+    /// trait's default is a guess made by something that doesn't.
+    ///
+    /// Every swing on this chassis resolves through `resolve_attack`
+    /// with `is_spell: false`. That is the engine's own definition of a
+    /// weapon attack, and until now four whole chassis — every
+    /// save-rider and flat-rider natural weapon in the bestiary, plus
+    /// the drow's hand crossbow — answered `false` to the question and
+    /// so were read as spells by the one consumer that asks it: 5e's
+    /// Underwater Combat rules, whose every clause says "weapon
+    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
+    /// with a spear got no credit for carrying one of the five weapons
+    /// RAW exempts, and a crossbow bolt fired across a lake could not
+    /// be told from a Fire Bolt.
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    /// Declared from the field rather than inferred from `requires_los`
+    /// and a reach band — see `SimpleWeapon::is_melee_attack` for the
+    /// same argument. The inference is right for every entry on this
+    /// chassis today; the field is right by construction.
+    fn is_melee_attack(&self) -> bool {
+        self.is_melee
+    }
+
+    fn normal_range(&self) -> Option<isize> {
+        self.normal_range
     }
     fn requires_los(&self) -> bool {
         // Ranged variants need LOS like every other ranged attack; melee
@@ -2003,6 +2121,39 @@ impl Action for WeaponWithCondition {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        // Ranged variants need LOS like every other ranged attack; melee
+        // doesn't. Matches `SimpleWeapon`'s `is_melee`-gated LOS rule.
+        !self.is_melee
+    }
+
+    /// Declared rather than derived, for the same reason
+    /// `SimpleWeapon` declares it: this chassis *knows*, and the
+    /// trait's default is a guess made by something that doesn't.
+    ///
+    /// Every swing on this chassis resolves through `resolve_attack`
+    /// with `is_spell: false`. That is the engine's own definition of a
+    /// weapon attack, and until now four whole chassis — every
+    /// save-rider and flat-rider natural weapon in the bestiary, plus
+    /// the drow's hand crossbow — answered `false` to the question and
+    /// so were read as spells by the one consumer that asks it: 5e's
+    /// Underwater Combat rules, whose every clause says "weapon
+    /// attack". A shark bit at no penalty in its own ocean, a sahuagin
+    /// with a spear got no credit for carrying one of the five weapons
+    /// RAW exempts, and a crossbow bolt fired across a lake could not
+    /// be told from a Fire Bolt.
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    /// Declared from the field rather than inferred from `requires_los`
+    /// and a reach band — see `SimpleWeapon::is_melee_attack` for the
+    /// same argument. The inference is right for every entry on this
+    /// chassis today; the field is right by construction.
+    fn is_melee_attack(&self) -> bool {
+        self.is_melee
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
@@ -5552,6 +5703,10 @@ pub static DROW_POISONED_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage::
     Dice::new(2, 4),
     DamageType::Poison,
     "drow poison",
+    // RAW 30/120 ft. Both numbers compress onto a board two dozen tiles
+    // wide: 12 tiles is the normal band, 20 the outer one the bolt can
+    // still reach at disadvantage.
+    20,
     12,
     Condition::Poisoned,
     ConditionTimer::Rounds(2),
@@ -15051,6 +15206,7 @@ pub static GIANT_WOLF_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
     rider_type: DamageType::Poison,
     rider_name: "wolf spider venom",
     also_install: None,
+    normal_range: None,
 };
 
 // ─── Reef Shark ─────────────────────────────────────────────────────
@@ -15974,3 +16130,664 @@ pub static SWARM_OF_POISONOUS_SNAKES_BITES: WeaponWithSaveDamage = WeaponWithSav
     DamageType::Poison,
     "a knot of venom",
 );
+
+// ─── Acolyte ────────────────────────────────────────────────────────
+
+/// Acolyte Club — STR-based 1d4+STR bludgeoning melee. RAW: "Club.
+/// Melee Weapon Attack: +2 to hit, reach 5 ft., one target. Hit: 2
+/// (1d4) bludgeoning damage."
+///
+/// A creature-prefixed club rather than the armoury's shared `CLUB`
+/// because the acolyte is the first template in the bestiary whose
+/// weapon is an afterthought: the stat block exists for the
+/// spellcasting, and the club is what it does when the slots run out.
+/// Naming it after its wielder keeps the AI's log line ("Acolyte swings
+/// acolyte club") legible next to the priest's mace and the cultist's
+/// scimitar, which are the two other entries in the same tier.
+pub static ACOLYTE_CLUB: SimpleWeapon = SimpleWeapon::melee(
+    "acolyte club",
+    &["ac-club", "acolyte-club"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Cultist ────────────────────────────────────────────────────────
+
+/// Cultist Scimitar — DEX-based 1d6+DEX slashing melee. RAW: "Scimitar.
+/// Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6
+/// + 1) slashing damage."
+///
+/// DEX rather than STR: the cultist's RAW +3 to hit comes off DEX 12 and
+/// a +2 proficiency bonus, and the finesse property is what lets a
+/// scimitar read off the higher of the two. Marked `light` so a cultist
+/// pair fighting with two blades reaches the engine's two-weapon lane —
+/// RAW's scimitar carries the property and nothing about being a cultist
+/// takes it away.
+pub static CULTIST_SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
+    "cultist scimitar",
+    &["cs-scim", "cultist-scimitar"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+)
+.light();
+
+// ─── Noble ──────────────────────────────────────────────────────────
+
+/// Noble Rapier — DEX-based 1d8+DEX piercing melee. RAW: "Rapier. Melee
+/// Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d8 + 1)
+/// piercing damage."
+///
+/// The bestiary's first rapier, and the reason it is DEX-based rather
+/// than STR-based is the same reason the noble carries one: RAW's rapier
+/// is a finesse weapon and the noble's STR is 11. Not `light` — RAW's
+/// rapier is explicitly not a light weapon, which is what stops it
+/// pairing with a second blade.
+pub static NOBLE_RAPIER: SimpleWeapon = SimpleWeapon::melee(
+    "noble rapier",
+    &["nb-rapier", "noble-rapier"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+// ─── Spy ────────────────────────────────────────────────────────────
+
+/// Spy Shortsword — DEX-based 1d6+DEX piercing melee. RAW: "Shortsword.
+/// Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6
+/// + 2) piercing damage." Light, so the spy's off-hand lane opens.
+pub static SPY_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "spy shortsword",
+    &["spy-ss", "spy-shortsword"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+)
+.light();
+
+/// Spy Hand Crossbow — DEX-based 1d6+DEX piercing shot. RAW: "Hand
+/// Crossbow. Ranged Weapon Attack: +4 to hit, range 30/120 ft., one
+/// target. Hit: 5 (1d6 + 2) piercing damage."
+///
+/// 12 tiles normal / 20 max on the 2.5 ft grid — the same compressed
+/// band the longbow uses, because the map is the constraint rather than
+/// the bowstring: a board twenty-four tiles wide cannot express 120 feet
+/// as anything but "the whole board", and a shot nothing can be out of
+/// range of is a shot with no long-range clause at all.
+pub static SPY_HAND_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "spy hand crossbow",
+    &["spy-hc", "hand-crossbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    20,
+    12,
+);
+
+// ─── Priest ─────────────────────────────────────────────────────────
+
+/// Priest Mace — STR-based 1d6+STR bludgeoning melee. RAW: "Mace. Melee
+/// Weapon Attack: +2 to hit, reach 5 ft., one target. Hit: 3 (1d6)
+/// bludgeoning damage."
+pub static PRIEST_MACE: SimpleWeapon = SimpleWeapon::melee(
+    "priest mace",
+    &["pr-mace", "priest-mace"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+);
+
+// ─── Gladiator ──────────────────────────────────────────────────────
+
+/// Gladiator Spear — STR-based 2d6+STR piercing melee at reach 5 ft.
+/// RAW: "Spear. Melee or Ranged Weapon Attack: +7 to hit, reach 5 ft.
+/// or range 20/60 ft., one target. Hit: 11 (2d6 + 4) piercing damage,
+/// or 13 (2d8 + 4) piercing damage if used with two hands to make a
+/// melee attack."
+///
+/// The two-handed clause is folded into the single die rather than
+/// modeled as a versatile toggle: the gladiator's Multiattack spends
+/// all three swings in melee, so the versatile half is the one that
+/// always applies, and a toggle nothing ever flips is a rule that reads
+/// as a feature.
+pub static GLADIATOR_SPEAR: SimpleWeapon = SimpleWeapon::melee(
+    "gladiator spear",
+    &["gl-spear", "gladiator-spear"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Gladiator Shield Bash — STR-based 2d4+STR bludgeoning melee whose hit
+/// forces a STR save (DC 15) or the target is knocked Prone. RAW: "Shield
+/// Bash. Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 9
+/// (2d4 + 4) bludgeoning damage. If the target is a Medium or smaller
+/// creature, it must succeed on a DC 15 Strength saving throw or be
+/// knocked prone."
+///
+/// RAW's size gate is dropped. The engine has no per-action size filter
+/// on a save rider, and the alternative — a bespoke `impl Action` that
+/// exists only to skip the save against a Large target — would be forty
+/// lines to encode a clause that fires against roughly one creature in
+/// six. The overreach is in the target's favour exactly as often as it
+/// is not: a gladiator that trips an ogre is a gladiator that spent its
+/// third swing on a save the ogre very probably makes at STR +4.
+pub static GLADIATOR_SHIELD_BASH: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "gladiator shield bash",
+    &["gl-bash", "shield-bash"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Bludgeoning,
+    AbilityScoreType::Strength,
+    15,
+    Condition::Prone,
+    ConditionTimer::Permanent,
+    "shield bash",
+);
+
+/// Gladiator Multiattack — 2 spears + 1 shield bash per Action. RAW:
+/// "The gladiator makes three melee attacks or two ranged attacks."
+///
+/// The shield bash takes the third slot rather than a third spear
+/// because RAW's three attacks are drawn from the whole stat block and
+/// the bash is the only one of the two that does anything a spear does
+/// not. Spending it first would waste the prone on a target the two
+/// spears then have to hit anyway; spending it last means both spears
+/// land before the target is on the floor, and whoever swings next
+/// inherits the advantage.
+pub static GLADIATOR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "gladiator multiattack",
+    parts: vec![(&GLADIATOR_SPEAR, 2), (&GLADIATOR_SHIELD_BASH, 1)],
+});
+
+// ─── Assassin ───────────────────────────────────────────────────────
+
+/// Assassin Shortsword — DEX-based 1d6+DEX piercing melee whose hit
+/// forces a CON save (DC 15) for 7d6 poison. RAW: "Shortsword. Melee
+/// Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 6 (1d6 + 3)
+/// piercing damage, and the target must make a DC 15 Constitution
+/// saving throw, taking 24 (7d6) poison damage on a failed save, or
+/// half as much damage on a successful one."
+///
+/// The venom is the stat block. 7d6 dwarfs the blade three times over,
+/// which is what makes the assassin's CR 8 out of a CR 3 body, and it
+/// is the reason this routes through `WeaponWithSaveDamage` rather than
+/// carrying a flat rider: the save is not a garnish on the hit, it is
+/// where nearly all of the damage lives.
+pub static ASSASSIN_SHORTSWORD: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "assassin shortsword",
+    &["as-ss", "assassin-shortsword"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    15,
+    Dice::new(7, 6),
+    DamageType::Poison,
+    "assassin's blood",
+);
+
+/// Assassin Light Crossbow — DEX-based 1d8+DEX piercing shot with the
+/// same DC 15 / 7d6 venom on the bolt. RAW: "Light Crossbow. Ranged
+/// Weapon Attack: +6 to hit, range 80/320 ft., one target. Hit: 7 (1d8
+/// + 3) piercing damage, and the target must make a DC 15 Constitution
+/// saving throw, taking 24 (7d6) poison damage on a failed save, or
+/// half as much damage on a successful one."
+///
+/// The ranged half of the same poison. It matters that both lanes carry
+/// it: an assassin whose crossbow was a plain bow would be a melee
+/// creature the AI shoots with only when cornered, and RAW's assassin is
+/// exactly as lethal at range as in reach.
+pub static ASSASSIN_LIGHT_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage::ranged(
+    "assassin light crossbow",
+    &["as-lc", "assassin-crossbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    15,
+    Dice::new(7, 6),
+    DamageType::Poison,
+    "assassin's blood",
+    // RAW 80/320 ft, compressed onto the board: 16 tiles of clean band,
+    // 24 of reachable-but-taxed. The widest range band in the bestiary
+    // outside the giants' thrown rocks, which is the point of an
+    // assassin — the venom arrives from somewhere the party is not
+    // looking.
+    24,
+    16,
+);
+
+/// Assassin Multiattack — 2 shortswords per Action. RAW: "The assassin
+/// makes two shortsword attacks."
+pub static ASSASSIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "assassin multiattack",
+    sub_attack: &ASSASSIN_SHORTSWORD,
+    count: 2,
+});
+
+// ─── Archmage ───────────────────────────────────────────────────────
+
+/// Archmage Dagger — DEX-based 1d4+DEX piercing melee. RAW: "Dagger.
+/// Melee or Ranged Weapon Attack: +6 to hit, reach 5 ft. or range 20/60
+/// ft., one target. Hit: 4 (1d4 + 2) piercing damage."
+///
+/// A CR 12 creature's melee lane is not a threat and is not meant to be;
+/// it exists so that an archmage with no slots left has something to do
+/// other than stand still, which is the difference between a caster the
+/// party has beaten and a caster the engine has to skip.
+pub static ARCHMAGE_DAGGER: SimpleWeapon = SimpleWeapon::melee(
+    "archmage dagger",
+    &["am-dagger", "archmage-dagger"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+)
+.light();
+
+// ─── Azer ───────────────────────────────────────────────────────────
+
+/// Azer Warhammer — STR-based 1d8+STR bludgeoning melee with a flat 1d6
+/// fire rider. RAW: "Warhammer. Melee Weapon Attack: +5 to hit, reach 5
+/// ft., one target. Hit: 7 (1d8 + 3) bludgeoning damage, or 8 (1d10 + 3)
+/// bludgeoning damage if used with two hands, plus 3 (1d6) fire damage."
+///
+/// The fire is **Heated Weapon**, and it is not a rider the azer chooses:
+/// the smith's hammer glows because the smith does, which is the same
+/// reason the azer's body burns anyone who touches it. Modeled through
+/// `WeaponWithRider` rather than as a second damage type on one die, so
+/// a target resistant to fire and not to bludgeoning takes the halving
+/// on exactly the half RAW halves.
+pub static AZER_WARHAMMER: WeaponWithRider = WeaponWithRider::melee(
+    "azer warhammer",
+    &["az-hammer", "azer-hammer"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Bludgeoning,
+    Dice::new(1, 6),
+    DamageType::Fire,
+    "heated weapon",
+);
+
+// ─── Barbed Devil ───────────────────────────────────────────────────
+
+/// Barbed Devil Claw — STR-based 1d6+STR piercing melee. RAW: "Claw.
+/// Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 6 (1d6
+/// + 3) piercing damage." Piercing rather than slashing because the
+/// hamatula's hands end in spikes rather than blades — the same spikes
+/// that make its hide dangerous to touch.
+pub static BARBED_DEVIL_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "barbed devil claw",
+    &["bdv-claw", "hamatula-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Barbed Devil Tail — STR-based 2d6+STR piercing melee. RAW: "Tail.
+/// Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 10
+/// (2d6 + 3) piercing damage." The heavy half of the multiattack.
+pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::melee(
+    "barbed devil tail",
+    &["bdv-tail", "hamatula-tail"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Barbed Devil Hurl Flame — CHA-based 3d6 fire at range. RAW: "Hurl
+/// Flame. Ranged Spell Attack: +5 to hit, range 150 ft., one target.
+/// Hit: 10 (3d6) fire damage. If the target is a flammable object that
+/// isn't being worn or carried, it also catches fire."
+///
+/// Filed as a ranged weapon rather than as a spell, which is a
+/// deliberate divergence from RAW's "Ranged Spell Attack" label. The
+/// engine's spell lane exists to carry slot cost, school, concentration
+/// and counterspell exposure, and this attack has none of those — it is
+/// an at-will innate the devil throws all day. What the weapon lane
+/// gives it instead is the range band, which is the clause that
+/// actually shapes how the hamatula fights: it opens at distance and
+/// closes to claw only when something reaches it.
+pub static BARBED_DEVIL_HURL_FLAME: SimpleWeapon = SimpleWeapon::ranged(
+    "hurl flame",
+    &["bdv-flame", "hurl-flame"],
+    AbilityScoreType::Charisma,
+    Dice::new(3, 6),
+    DamageType::Fire,
+    24,
+    16,
+);
+
+/// Barbed Devil Multiattack — 2 claws + 1 tail per Action. RAW: "The
+/// devil makes three melee attacks: one with its tail and two with its
+/// claws."
+pub static BARBED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "barbed devil multiattack",
+    parts: vec![(&BARBED_DEVIL_CLAW, 2), (&BARBED_DEVIL_TAIL, 1)],
+});
+
+// ─── Chain Devil ────────────────────────────────────────────────────
+
+/// Chain Devil Chain — STR-based 2d6+STR slashing melee at reach 10 ft.
+/// whose hit forces a DEX save (DC 15) or the target is Restrained.
+/// RAW: "Chain. Melee Weapon Attack: +8 to hit, reach 10 ft., one
+/// target. Hit: 11 (2d6 + 4) slashing damage. The target is grappled
+/// (escape DC 14) if the devil isn't already grappling a creature.
+/// Until this grapple ends, the target is restrained and takes 7 (2d6)
+/// piercing damage at the start of each of its turns."
+///
+/// Three RAW clauses collapse into one Restrained install. The grapple
+/// and the restraint are the same event here — a creature wrapped in
+/// animate chains is not going anywhere by either name — and the engine
+/// reads Restrained as the stronger of the two, so installing both
+/// would be one condition doing the other's work. The start-of-turn
+/// piercing tick is the clause genuinely dropped; it belongs to the
+/// chain, not the devil, and there is no per-holder damage-over-time
+/// lane on the weapon chassis to hang it from.
+///
+/// The DEX save replaces RAW's contested escape check for the same
+/// reason every other grapple rider in the bestiary does: the engine
+/// prices a grab as a save against the grabber's DC, and a second
+/// mechanic for one creature would be a rule only the chain devil
+/// obeys.
+pub static CHAIN_DEVIL_CHAIN: WeaponWithSaveCondition = WeaponWithSaveCondition::reach_melee(
+    "chain devil chain",
+    &["cdv-chain", "animated-chain"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    AbilityScoreType::Dexterity,
+    15,
+    Condition::Restrained,
+    ConditionTimer::Rounds(2),
+    "animated chains",
+    2,
+);
+
+/// Chain Devil Multiattack — 2 chains per Action. RAW: "The devil makes
+/// two attacks with its chains."
+pub static CHAIN_DEVIL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "chain devil multiattack",
+    sub_attack: &CHAIN_DEVIL_CHAIN,
+    count: 2,
+});
+
+// ─── Darkmantle ─────────────────────────────────────────────────────
+
+/// Darkmantle Crush — STR-based 1d6+STR bludgeoning melee whose hit
+/// Blinds the target. RAW: "Crush. Melee Weapon Attack: +5 to hit,
+/// reach 5 ft., one creature. Hit: 6 (1d6 + 3) bludgeoning damage, and
+/// the darkmantle attaches to the target. If the target is Medium or
+/// smaller and the darkmantle has advantage on the attack roll, it
+/// attaches by covering the target's head, and the target is blinded
+/// and unable to breathe while the darkmantle is attached."
+///
+/// The attach is modeled as an unconditional Blinded install rather
+/// than as a grapple with a sight clause riding on it. RAW gates the
+/// blinding on having had advantage — which the darkmantle arranges by
+/// dropping from a ceiling the party cannot see, a setup the engine has
+/// no vertical axis to express — so gating on it here would mean the
+/// signature clause of the creature almost never fired. The suffocation
+/// half is dropped: the engine has no breath clock.
+pub static DARKMANTLE_CRUSH: WeaponWithCondition = WeaponWithCondition::melee(
+    "darkmantle crush",
+    &["dm-crush", "darkmantle-crush"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+    Condition::Blinded,
+    ConditionTimer::Rounds(2),
+    "smothering membrane",
+);
+
+// ─── Duergar ────────────────────────────────────────────────────────
+
+/// Duergar War Pick — STR-based 1d8+STR piercing melee. RAW: "War Pick.
+/// Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8
+/// + 2) piercing damage, or 11 (2d8 + 2) piercing damage while enlarged."
+///
+/// The enlarged clause is not restated on the weapon: the duergar's
+/// Enlarge routes through the engine's `Enlarged` condition, which
+/// already adds its own die to every weapon hit the holder lands. Two
+/// implementations of the same sentence would double it.
+pub static DUERGAR_WAR_PICK: SimpleWeapon = SimpleWeapon::melee(
+    "duergar war pick",
+    &["dg-pick", "war-pick"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+/// Duergar Javelin — STR-based 1d6+STR piercing throw. RAW: "Javelin.
+/// Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range
+/// 30/120 ft., one target. Hit: 5 (1d6 + 2) piercing damage, or 9 (2d6
+/// + 2) piercing damage while enlarged."
+///
+/// Declared as the ranged half only. The duergar has a war pick for
+/// contact, and a weapon that is both is a weapon the AI has to be
+/// taught to choose a mode for; RAW's dual-profile javelin is one
+/// entry because a stat block is a page, not because the two modes are
+/// the same attack.
+pub static DUERGAR_JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
+    "duergar javelin",
+    &["dg-jav", "duergar-javelin"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    20,
+    12,
+);
+
+// ─── Ochre Jelly ────────────────────────────────────────────────────
+
+/// Ochre Jelly Pseudopod — STR-based 2d6+STR acid melee. RAW:
+/// "Pseudopod. Melee Weapon Attack: +4 to hit, reach 5 ft., one target.
+/// Hit: 9 (2d6 + 2) bludgeoning damage plus 3 (1d6) acid damage."
+///
+/// Typed acid outright rather than split into a bludgeoning body and an
+/// acid rider, which is the one place this stat block deliberately
+/// leaves RAW. The jelly *is* the acid — it has no mass to speak of and
+/// nothing to swing — and the creature it most often gets compared
+/// against, the black pudding, is typed the same way for the same
+/// reason. Naming the whole hit acid means a target immune to acid
+/// takes nothing from an ooze made of it, which is the answer at the
+/// table even when it is not the answer on the page.
+pub static OCHRE_JELLY_PSEUDOPOD: SimpleWeapon = SimpleWeapon::melee(
+    "ochre jelly pseudopod",
+    &["oj-pod", "jelly-pseudopod"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Acid,
+);
+
+// ─── Satyr ──────────────────────────────────────────────────────────
+
+/// Satyr Ram — STR-based 2d4+STR bludgeoning melee. RAW: "Ram. Melee
+/// Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 6 (2d4 + 1)
+/// bludgeoning damage."
+pub static SATYR_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "satyr ram",
+    &["sy-ram", "satyr-ram"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Bludgeoning,
+);
+
+/// Satyr Shortsword — DEX-based 1d6+DEX piercing melee. RAW: "+5 to
+/// hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) piercing damage."
+pub static SATYR_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "satyr shortsword",
+    &["sy-ss", "satyr-shortsword"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+)
+.light();
+
+/// Satyr Shortbow — DEX-based 1d6+DEX piercing shot. RAW: "+5 to hit,
+/// range 80/320 ft., one target. Hit: 5 (1d6 + 2) piercing damage."
+pub static SATYR_SHORTBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "satyr shortbow",
+    &["sy-bow", "satyr-shortbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    20,
+    12,
+);
+
+// ─── Shield Guardian ────────────────────────────────────────────────
+
+/// Shield Guardian Fist — STR-based 2d6+STR bludgeoning melee. RAW:
+/// "Fist. Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit:
+/// 11 (2d6 + 4) bludgeoning damage."
+pub static SHIELD_GUARDIAN_FIST: SimpleWeapon = SimpleWeapon::melee(
+    "shield guardian fist",
+    &["sg-fist", "guardian-fist"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+);
+
+/// Shield Guardian Multiattack — 2 fists per Action. RAW: "The guardian
+/// makes two fist attacks."
+pub static SHIELD_GUARDIAN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "shield guardian multiattack",
+    sub_attack: &SHIELD_GUARDIAN_FIST,
+    count: 2,
+});
+
+// ─── Violet Fungus ──────────────────────────────────────────────────
+
+/// Violet Fungus Rotting Touch — STR-based 1d8 necrotic melee, flat
+/// damage. RAW: "Rotting Touch. Melee Weapon Attack: +2 to hit, reach 10
+/// ft., one creature. Hit: 4 (1d8) necrotic damage."
+///
+/// Flat rather than STR-scaled because RAW's line has no ability
+/// modifier on it, and the fungus's STR 3 would subtract four from every
+/// hit if the modifier were added — a stat block whose whole threat is
+/// three lashes a turn would deal nothing at all.
+pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
+    display_name: "violet fungus rotting touch",
+    aliases: &["vf-touch", "rotting-touch"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: None,
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Necrotic,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+    requires_condition: None,
+    min_effective_range: None,
+    is_light: false,
+    mastery: None,
+};
+
+/// Violet Fungus Multiattack — 3 rotting touches per Action. RAW: "The
+/// fungus makes 1d4 Rotting Touch attacks."
+///
+/// Three rather than a fresh 1d4 each turn. The engine's multiattack
+/// chassis takes a fixed count, and a variable one would have to be a
+/// bespoke action whose only difference from this is that the number of
+/// swings is itself a die roll — three is the round average of 1d4 and
+/// the fungus is a CR ¼ hazard, not a stat block anybody plans around.
+pub static VIOLET_FUNGUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "violet fungus multiattack",
+    sub_attack: &VIOLET_FUNGUS_ROTTING_TOUCH,
+    count: 3,
+});
+
+// ─── Warhorse Skeleton ──────────────────────────────────────────────
+
+/// Warhorse Skeleton Hooves — STR-based 2d6+STR bludgeoning melee. RAW:
+/// "Hooves. Melee Weapon Attack: +6 to hit, reach 5 ft., one target.
+/// Hit: 11 (2d6 + 4) bludgeoning damage."
+pub static WARHORSE_SKELETON_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "warhorse skeleton hooves",
+    &["whs-hooves", "skeletal-hooves"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+);
+
+// ─── Winged Kobold ──────────────────────────────────────────────────
+
+/// Winged Kobold Dagger — DEX-based 1d4+DEX piercing melee. RAW:
+/// "Dagger. Melee Weapon Attack: +4 to hit, reach 5 ft., one target.
+/// Hit: 4 (1d4 + 2) piercing damage."
+pub static WINGED_KOBOLD_DAGGER: SimpleWeapon = SimpleWeapon::melee(
+    "winged kobold dagger",
+    &["wk-dagger", "kobold-dagger"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+)
+.light();
+
+/// Winged Kobold Dropped Rock — DEX-based 1d6 bludgeoning shot, flat
+/// damage. RAW: "Dropped Rock. Ranged Weapon Attack: +5 to hit, one
+/// target directly under the kobold. Hit: 6 (1d6 + 2) bludgeoning
+/// damage."
+///
+/// RAW's "directly under the kobold" is a vertical clause on a board
+/// with no vertical axis, so the rock becomes an ordinary short-range
+/// shot: 4 tiles of clean band, 8 of reach. Keeping the range tight is
+/// what preserves the shape of the clause — a winged kobold has to be
+/// nearly on top of something to drop anything on it.
+pub static WINGED_KOBOLD_DROPPED_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "winged kobold dropped rock",
+    &["wk-rock", "dropped-rock"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+    8,
+    4,
+);
+
+// ─── Panther ────────────────────────────────────────────────────────
+
+/// Panther Bite — STR-based 1d6+STR piercing melee. RAW: "Bite. Melee
+/// Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2)
+/// piercing damage."
+pub static PANTHER_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "panther bite",
+    &["pn-bite", "panther-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Panther Claw — STR-based 1d4+STR slashing melee. RAW: "Claw. Melee
+/// Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 4 (1d4 + 2)
+/// slashing damage."
+pub static PANTHER_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "panther claw",
+    &["pn-claw", "panther-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+);
+
+/// Panther **Pounce** (RAW): "If the panther moves at least 20 feet
+/// straight toward a creature and then hits it with a claw attack on
+/// the same turn, that target must succeed on a DC 12 Strength saving
+/// throw or be knocked prone."
+///
+/// Damage-free — the whole clause is the knockdown, which is what
+/// separates a pounce from the boar's charge. RAW's follow-up bonus-
+/// action bite against a prone target is dropped: the engine has no
+/// conditional bonus-action grant, and the panther already gets the
+/// prone target's advantage on every swing after the first.
+pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
+    weapon: Some("panther claw"),
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Slashing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "panther pounce",
+    knockdown_label: "panther pounce knockdown",
+    once_per_turn_tag: None,
+};

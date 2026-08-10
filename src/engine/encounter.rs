@@ -1,4 +1,24 @@
 use crate::engine::side_effects::ApplicableSideEffect;
+use crate::actors::creatures::acolytes::ACOLYTE_TEMPLATE;
+use crate::actors::creatures::archmages::ARCHMAGE_TEMPLATE;
+use crate::actors::creatures::assassins::ASSASSIN_TEMPLATE;
+use crate::actors::creatures::azers::AZER_TEMPLATE;
+use crate::actors::creatures::barbed_devils::BARBED_DEVIL_TEMPLATE;
+use crate::actors::creatures::chain_devils::CHAIN_DEVIL_TEMPLATE;
+use crate::actors::creatures::cultists::CULTIST_TEMPLATE;
+use crate::actors::creatures::darkmantles::DARKMANTLE_TEMPLATE;
+use crate::actors::creatures::duergar::DUERGAR_TEMPLATE;
+use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+use crate::actors::creatures::nobles::NOBLE_TEMPLATE;
+use crate::actors::creatures::ochre_jellies::OCHRE_JELLY_TEMPLATE;
+use crate::actors::creatures::panthers::PANTHER_TEMPLATE;
+use crate::actors::creatures::priests::PRIEST_TEMPLATE;
+use crate::actors::creatures::satyrs::SATYR_TEMPLATE;
+use crate::actors::creatures::shield_guardians::SHIELD_GUARDIAN_TEMPLATE;
+use crate::actors::creatures::spies::SPY_TEMPLATE;
+use crate::actors::creatures::violet_fungi::VIOLET_FUNGUS_TEMPLATE;
+use crate::actors::creatures::warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE;
+use crate::actors::creatures::winged_kobolds::WINGED_KOBOLD_TEMPLATE;
 use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
 use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
 use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
@@ -10221,6 +10241,81 @@ impl EncounterInstance {
             &crate::actors::creatures::solars::SOLAR_TEMPLATE,
             &crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE,
             &crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE,
+            // The SRD's NPC appendix, which the pool had never carried
+            // a single entry of. Every other family in this list is a
+            // monster; these are people, and a dungeon whose only
+            // humanoids are bandits and cultists' betters is missing
+            // the half of 5e's bestiary that talks.
+            //
+            //   - Acolyte (CR ¼): the cheapest healer in the game.
+            //     Three level-1 slots of Cure Wounds and Bless, which
+            //     is enough to make a mob of anything harder.
+            //   - Cultist (CR ⅛): a scimitar and Dark Devotion —
+            //     advantage against charm and fear, so the low-CR
+            //     answer to a mob does not work on this one.
+            //   - Noble (CR ⅛): AC 15 and a Parry reaction on a
+            //     nine-hit-point body.
+            //   - Spy (CR 1): Cunning Action and a hand crossbow. Never
+            //     where the swing was aimed.
+            //   - Priest (CR 2): two slot tiers, Spiritual Weapon, and
+            //     Guiding Bolt to hand the front line its advantage.
+            //   - Gladiator (CR 5): three attacks, Parry and Brave. The
+            //     appendix's melee boss.
+            //   - Assassin (CR 8): 7d6 of venom on both a blade and a
+            //     bolt, Assassinate, and Evasion.
+            //   - Archmage (CR 12): nine tiers of slots, Counterspell,
+            //     Shield, and Magic Resistance. The apex of the list
+            //     and the only NPC in it that fights like a party.
+            &ACOLYTE_TEMPLATE,
+            &CULTIST_TEMPLATE,
+            &NOBLE_TEMPLATE,
+            &SPY_TEMPLATE,
+            &PRIEST_TEMPLATE,
+            &GLADIATOR_TEMPLATE,
+            &ASSASSIN_TEMPLATE,
+            &ARCHMAGE_TEMPLATE,
+            // …and the monsters that came with them, each filling a
+            // rung the pool could not previously roll:
+            //   - Azer (CR 2 elemental): a body that burns whatever
+            //     touches it and a hammer that burns whatever it
+            //     touches. The cheapest melee-reflect creature there is.
+            //   - Barbed Devil (CR 5 fiend): three piercing swings in
+            //     contact, 3d6 fire at range, and a hide that answers
+            //     back.
+            //   - Chain Devil (CR 8 fiend): two reach-10 chains a round,
+            //     each a save against Restrained. The bestiary's most
+            //     single-minded lockdown creature.
+            //   - Darkmantle (CR ½ monstrosity): casts Darkness and
+            //     then fights inside it on blindsight, and blinds
+            //     whatever it lands on besides.
+            //   - Duergar (CR 1 humanoid): Enlarge and Invisibility on
+            //     a CR 1 frame, paid for with Sunlight Sensitivity.
+            //   - Ochre Jelly (CR 2 ooze): immune to the two damage
+            //     types that would have split it.
+            //   - Satyr (CR ½ fey): Magic Resistance eight CRs early,
+            //     on forty feet of speed.
+            //   - Shield Guardian (CR 7 construct): ten hit points a
+            //     round back, and nothing in the game switches it off.
+            //   - Violet Fungus (CR ¼ plant): three necrotic stalks at
+            //     reach 10 behind AC 5.
+            //   - Warhorse Skeleton (CR ½ undead): the mount an undead
+            //     knight rides, and the pool's first mountable undead.
+            //   - Winged Kobold (CR ¼ humanoid): Pack Tactics that can
+            //     choose where to stand.
+            //   - Panther (CR ¼ beast): fifty feet of speed into a
+            //     pounce, at the bottom of the feline ladder.
+            &AZER_TEMPLATE,
+            &BARBED_DEVIL_TEMPLATE,
+            &CHAIN_DEVIL_TEMPLATE,
+            &DARKMANTLE_TEMPLATE,
+            &DUERGAR_TEMPLATE,
+            &OCHRE_JELLY_TEMPLATE,
+            &SATYR_TEMPLATE,
+            &SHIELD_GUARDIAN_TEMPLATE,
+            &VIOLET_FUNGUS_TEMPLATE,
+            &WARHORSE_SKELETON_TEMPLATE,
+            &WINGED_KOBOLD_TEMPLATE,
+            &PANTHER_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
         pool

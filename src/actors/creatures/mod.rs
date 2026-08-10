@@ -267,6 +267,26 @@ pub mod elks;
 pub mod spirit_totems;
 pub mod summoned_spirits;
 pub mod swarms;
+pub mod acolytes;
+pub mod cultists;
+pub mod nobles;
+pub mod spies;
+pub mod priests;
+pub mod gladiators;
+pub mod assassins;
+pub mod archmages;
+pub mod azers;
+pub mod barbed_devils;
+pub mod chain_devils;
+pub mod darkmantles;
+pub mod duergar;
+pub mod ochre_jellies;
+pub mod satyrs;
+pub mod shield_guardians;
+pub mod violet_fungi;
+pub mod warhorse_skeletons;
+pub mod winged_kobolds;
+pub mod panthers;
 
 use crate::actors::actor_template::CreatureTemplate;
 

@@ -211,8 +211,10 @@ fn templates_with_magical_weapon_attacks() -> Vec<&'static crate::actors::actor_
     vec![
         &androsphinxes::ANDROSPHINX_TEMPLATE,
         &balors::BALOR_TEMPLATE,
+        &barbed_devils::BARBED_DEVIL_TEMPLATE,
         &bearded_devils::BEARDED_DEVIL_TEMPLATE,
         &bone_devils::BONE_DEVIL_TEMPLATE,
+        &chain_devils::CHAIN_DEVIL_TEMPLATE,
         &couatls::COUATL_TEMPLATE,
         &devas::DEVA_TEMPLATE,
         &erinyes::ERINYES_TEMPLATE,
