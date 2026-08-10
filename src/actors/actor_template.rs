@@ -2898,8 +2898,31 @@ pub struct CreatureTemplate {
     /// liches 3, beholders 3, etc. 0 = no legendary actions (the default
     /// for ordinary creatures). The encounter loop grants this many
     /// LegendaryAction resource tokens at the start of the creature's
-    /// turn and the AI spends them between other actors' turns.
+    /// turn, and `EncounterInstance::dispatch_legendary_actions` spends
+    /// them on `legendary_actions` between other actors' turns.
     pub legendary_actions_per_round: u32,
+    /// 5e **Legendary Actions** — the options this creature may take at
+    /// the end of another creature's turn, paid for out of the budget
+    /// above. Empty for everything that isn't a boss.
+    ///
+    /// A list of effects rather than a list of `Action`s, for the
+    /// reason `lair_actions` is: nobody supplies the arguments. RAW's
+    /// text picks its own victims ("each creature within 10 feet of the
+    /// dragon"), and the cost is paid out of a pool the turn's action
+    /// economy knows nothing about.
+    ///
+    /// Separate from `legendary_actions_per_round` rather than folded
+    /// into one `Option`-shaped field because the two are set by
+    /// different things: the budget is a number off the stat block's
+    /// header and the repertoire is the list underneath it, and a
+    /// creature with one and not the other is a state worth being able
+    /// to see — it is the state every legendary creature in the
+    /// bestiary was in before `engine::legendary_actions` existed.
+    ///
+    /// See `engine::legendary_actions` for the entries and
+    /// `EncounterInstance::dispatch_legendary_actions` for when they
+    /// fire.
+    pub legendary_actions: &'static [crate::engine::legendary_actions::LegendaryAction],
     /// 5e **Lair Actions** — the effects the *place* takes, on its own
     /// initiative, while this creature is alive inside it. Empty for
     /// every creature that doesn't have a lair, which is almost all of
@@ -3779,6 +3802,7 @@ impl CreatureTemplate {
             has_magic_resistance: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
+            legendary_actions: &[],
             lair_actions: &[],
             has_extra_attack: false,
             brutal_critical_dice: 0,
@@ -4397,6 +4421,11 @@ pub struct ActorInstance {
     /// The lair's repertoire, copied off the template. Empty for
     /// everything that isn't the resident of somewhere.
     lair_actions: &'static [crate::engine::lair_actions::LairAction],
+    /// The creature's own legendary repertoire, copied off the
+    /// template. Empty for everything that isn't a boss, which is how
+    /// `dispatch_legendary_actions` tells the two apart — the same test
+    /// the lair dispatcher makes one field up.
+    legendary_actions: &'static [crate::engine::legendary_actions::LegendaryAction],
     /// Index into `lair_actions` of whatever the lair did last round, so
     /// the next round can avoid it — RAW: "the [creature] can't use the
     /// same lair action two rounds in a row." `None` before the first
@@ -4746,6 +4775,7 @@ impl ActorInstance {
             mirror_images: 0,
             condition_links: HashMap::new(),
             lair_actions: ct.lair_actions,
+            legendary_actions: ct.legendary_actions,
             last_lair_action: None,
             exhaustion: 0,
             indomitable_pending: false,
@@ -5593,6 +5623,26 @@ impl ActorInstance {
 
     pub fn legendary_actions_per_round(&self) -> u32 {
         self.legendary_actions_per_round
+    }
+
+    /// The creature's legendary repertoire. Empty for a creature that
+    /// is not a boss, which is how `dispatch_legendary_actions` tells
+    /// the two apart.
+    pub fn legendary_actions(
+        &self,
+    ) -> &'static [crate::engine::legendary_actions::LegendaryAction] {
+        self.legendary_actions
+    }
+
+    /// Legendary-action points left this round.
+    ///
+    /// `can_consume_resource(Resource::LegendaryAction)` answers "is
+    /// there at least one", which is all a one-point option needs; the
+    /// dispatcher needs the number, because RAW's expensive options are
+    /// priced at two and three and it must not offer a creature
+    /// something it cannot pay for.
+    pub fn legendary_action_slots(&self) -> u32 {
+        self.legendary_action_slots
     }
 
     /// The lair's repertoire. Empty for a creature with no lair, which

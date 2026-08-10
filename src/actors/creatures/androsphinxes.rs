@@ -125,6 +125,7 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (the Resource::LegendaryAction lane is wired but unused);
         // the bookkeeping is kept for forward compatibility.
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::ANDROSPHINX_LEGENDARY,
         has_extra_attack: true,
         // 5e **Magic Weapons**: "the sphinx's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),

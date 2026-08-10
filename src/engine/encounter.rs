@@ -10729,6 +10729,13 @@ impl EncounterInstance {
     /// `initiative_tracker.advance()` directly so condition timers,
     /// concentration saves, etc. all run at the right moment.
     fn advance_initiative(&mut self) {
+        // 5e legendary actions: "only at the end of another creature's
+        // turn". Read the slot *before* the queue moves, so the
+        // dispatcher knows whose turn just closed and can leave that
+        // creature out — a dragon does not spend legendary actions at
+        // the end of its own turn.
+        let ended = self.initiative_tracker.current_player();
+        self.dispatch_legendary_actions(ended);
         // The slot moved, so whoever lands in it has not had their turn
         // opened yet — even when the queue has a single actor and the
         // "move" lands back on the same id. `ensure_turn_started` reads
@@ -10755,6 +10762,109 @@ impl EncounterInstance {
             // just killed would be resolving against a corpse.
             self.dispatch_lair_actions();
         }
+    }
+
+    /// 5e **legendary actions**: let every boss on the board take one
+    /// option at the end of `ended`'s turn.
+    ///
+    /// ```text
+    /// Only one legendary action option can be used at a time and only
+    /// at the end of another creature's turn.
+    /// ```
+    ///
+    /// Both halves of that sentence are enforced here. *One at a time*
+    /// is one option per creature per call. *Another creature's turn*
+    /// is the `ended` exclusion — a creature does not act at the end of
+    /// its own turn, which is also what stops a solo boss on an empty
+    /// initiative queue from acting twice for every turn it takes.
+    ///
+    /// **Every boss, not one.** Deliberately unlike
+    /// `dispatch_lair_actions`, which picks a single resident: a lair
+    /// belongs to a *place* and two lairs on one board is a situation
+    /// the rules don't describe, but two legendary creatures in one
+    /// fight is an ordinary encounter and each of them has its own
+    /// budget. Sorted by id so a seeded replay resolves them in the
+    /// same order.
+    ///
+    /// **The budget gates it, and so does the creature's state.**
+    /// `can_consume_resource` already refuses a creature whose action
+    /// economy is blocked, which is RAW's "can't take legendary actions
+    /// while incapacitated or otherwise unable to take actions" — and
+    /// it is the difference from a lair action, which fires on behalf
+    /// of a paralyzed dragon because the cave is what is acting.
+    ///
+    /// **Affordability is checked per option.** RAW prices the good
+    /// options at two and three points, so a creature with one point
+    /// left is offered only the cheap half of its list, and a creature
+    /// whose whole list is out of reach simply stops.
+    fn dispatch_legendary_actions(&mut self, ended: Option<usize>) {
+        let mut bosses: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                Some(**id) != ended
+                    && a.is_combat_active()
+                    && !a.legendary_actions().is_empty()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        if bosses.is_empty() {
+            return;
+        }
+        bosses.sort_unstable();
+        for boss_id in bosses {
+            // Re-read liveness each time round: an earlier boss's
+            // option can have killed a later one, and the id list was
+            // taken before any of them acted.
+            let Some(actor) = self.actors.get(&boss_id) else {
+                continue;
+            };
+            if !actor.is_combat_active()
+                || !actor.can_consume_resource(crate::engine::side_effects::Resource::LegendaryAction)
+            {
+                continue;
+            }
+            // Nothing to act *against* is not a reason to burn points.
+            // Every option on every list either swings at somebody or
+            // bursts around them, so a board with no enemies left is a
+            // board where the whole repertoire is a no-op that costs.
+            if !self.has_living_enemy_of(boss_id) {
+                continue;
+            }
+            let (repertoire, budget) = (actor.legendary_actions(), actor.legendary_action_slots());
+            let affordable: Vec<usize> = (0..repertoire.len())
+                .filter(|&i| repertoire[i].cost <= budget)
+                .collect();
+            let Some(&index) = affordable.get(self.roll_index(affordable.len())) else {
+                continue;
+            };
+            let entry = &repertoire[index];
+            let name = self.actor_name(boss_id);
+            self.log(format!("[legendary] {}: {}.", name, entry.name));
+            if let Some(a) = self.actors.get_mut(&boss_id) {
+                for _ in 0..entry.cost {
+                    a.consume_resource(crate::engine::side_effects::Resource::LegendaryAction);
+                }
+            }
+            (entry.fire)(self, boss_id);
+            self.cleanup_dead_actors();
+        }
+    }
+
+    /// True if anybody hostile to `actor_id` is still standing.
+    ///
+    /// The cheap "is there anything to do" pre-check the legendary
+    /// dispatcher makes before it spends a point. Deliberately not a
+    /// distance test: the strides and the ranged options both reach
+    /// across the map, so the question that saves the point is whether
+    /// there is an enemy at all.
+    fn has_living_enemy_of(&self, actor_id: usize) -> bool {
+        let Some(team) = self.actors.get(&actor_id).map(|a| a.team()) else {
+            return false;
+        };
+        self.actors
+            .values()
+            .any(|a| a.team() != team && a.is_combat_active())
     }
 
     /// 5e **lair actions**: fire one, once per round, on behalf of one

@@ -10239,6 +10239,16 @@ mod tests {
             "  cleave:", "  graze:", "  push:", "  sap:", "  slow:", "  topple:", "  vex:",
         ];
         let mut mastery_fired = false;
+        // 5e legendary actions, end to end. Eight of the creatures
+        // placed below carry a legendary repertoire, so a driver in
+        // which none of them ever spends a point is one where the
+        // whole chain — the template's budget, the repertoire beside
+        // it, the turn-end dispatcher, the affordability filter — is
+        // exercised only by its unit tests. Accumulated across the
+        // seed sweep for the same reason `mastery_fired` is: on any
+        // one board the bosses may be dead before their second
+        // turn-end.
+        let mut legendary_fired = false;
         for seed in [3u64, 11, 71] {
             let tp = TerrainGenParams {
                 width: 30,
@@ -10908,10 +10918,16 @@ mod tests {
             mastery_fired |= MASTERY_LOG_TAGS
                 .iter()
                 .any(|tag| e.messages().iter().any(|m| m.contains(tag)));
+            legendary_fired |= e.messages().iter().any(|m| m.contains("[legendary]"));
         }
         assert!(
             mastery_fired,
             "martials swung on three boards and no weapon mastery ever fired"
+        );
+        assert!(
+            legendary_fired,
+            "eight legendary creatures fought on three boards and none of \
+             them ever took a legendary action"
         );
     }
 

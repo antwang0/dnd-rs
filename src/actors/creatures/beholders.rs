@@ -49,6 +49,7 @@ pub static BEHOLDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         condition_immunities: HashSet::from([Condition::Prone]),
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::BEHOLDER_LEGENDARY,
         // 5e lair actions — the aberration's paranoia leaks into the
         // stone. See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::BEHOLDER_LAIR,

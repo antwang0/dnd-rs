@@ -71,6 +71,7 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 3,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::PIT_FIEND_LEGENDARY,
         has_extra_attack: true,
         // 5e **Devil's Sight** — "magical darkness doesn't impede this
         // devil's darkvision." Carried by every devil in the bestiary,

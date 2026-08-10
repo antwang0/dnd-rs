@@ -484,6 +484,29 @@ pub fn render_sideinfo(
                     Style::default().fg(Color::LightMagenta),
                 ));
             }
+            // A boss's remaining legendary actions, which is the one
+            // number in the fight the player has to plan around and
+            // cannot see anywhere else. It is not a resource the action
+            // panel can show — a legendary action is never on anybody's
+            // action list, because it is spent between turns rather
+            // than on one — so without this row the party's only
+            // evidence that a dragon has two tail swipes left is the
+            // log line from the last one it took.
+            //
+            // Drawn only while the creature can still afford something:
+            // a spent boss is back to being an ordinary row, and a
+            // permanent "Lg 0/3" on the queue is noise for the whole
+            // second half of every round.
+            if actor.legendary_actions_per_round() > 0 && actor.legendary_action_slots() > 0 {
+                spans.push(Span::styled(
+                    format!(
+                        " Lg {}/{}",
+                        actor.legendary_action_slots(),
+                        actor.legendary_actions_per_round()
+                    ),
+                    Style::default().fg(Color::LightRed),
+                ));
+            }
             // The two halves of a mounted pair, said on the row rather
             // than left to the map. A ridden mount's slot passes
             // straight through — it acts on its rider's turn — so
@@ -1323,6 +1346,57 @@ mod tests {
             panel.contains("seed 4"),
             "the seed should be readable off the panel:\n{}",
             panel
+        );
+    }
+
+    /// A boss's remaining legendary actions are on the panel, and they
+    /// leave it once they are spent.
+    ///
+    /// The one number in a boss fight the player has to plan around and
+    /// cannot read anywhere else: a legendary action never appears on
+    /// an action list, because it is spent between turns rather than on
+    /// one. Both halves are pinned — the row appears while there is
+    /// something left to spend, and stops once there is not, because a
+    /// permanent "Lg 0/3" would be noise for the second half of every
+    /// round.
+    #[test]
+    fn the_initiative_panel_counts_a_bosss_remaining_legendary_actions() {
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = encounter_with(&[(&ADULT_RED_DRAGON_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let dragon = *e
+            .actors
+            .iter()
+            .find(|(_, a)| a.legendary_actions_per_round() > 0)
+            .map(|(id, _)| id)
+            .expect("the fixture has a legendary creature");
+        assert!(
+            rendered_panel(&e).contains("Lg 3/3"),
+            "a fresh boss shows a full pool:\n{}",
+            rendered_panel(&e)
+        );
+
+        for _ in 0..2 {
+            e.actors
+                .get_mut(&dragon)
+                .unwrap()
+                .consume_resource(Resource::LegendaryAction);
+        }
+        assert!(
+            rendered_panel(&e).contains("Lg 1/3"),
+            "a partly spent pool shows what is left:\n{}",
+            rendered_panel(&e)
+        );
+
+        e.actors
+            .get_mut(&dragon)
+            .unwrap()
+            .consume_resource(Resource::LegendaryAction);
+        assert!(
+            !rendered_panel(&e).contains("Lg "),
+            "a spent boss is an ordinary row again:\n{}",
+            rendered_panel(&e)
         );
     }
 

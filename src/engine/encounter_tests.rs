@@ -26596,6 +26596,202 @@ fn a_lair_answers_to_the_living_and_to_nothing_else() {
     );
 }
 
+/// A boss spends its legendary budget at the end of *other*
+/// creatures' turns and never at the end of its own.
+///
+/// Both halves are RAW's one sentence — "only at the end of another
+/// creature's turn" — and the second half is the one a naive
+/// dispatcher gets wrong: a solo boss whose own turn also fed the
+/// dispatcher would act twice for every turn it took.
+#[test]
+fn a_boss_spends_its_legendary_budget_only_between_other_creatures_turns() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let budget = e.actors[&dragon].legendary_actions_per_round();
+    assert!(budget > 0, "the adult red dragon should carry a budget");
+    assert!(
+        !e.actors[&dragon].legendary_actions().is_empty(),
+        "and a repertoire to spend it on"
+    );
+
+    // End of the dragon's own turn: nothing is spent.
+    e.dispatch_legendary_actions(Some(dragon));
+    assert_eq!(
+        e.actors[&dragon].legendary_action_slots(),
+        budget,
+        "a boss does not act at the end of its own turn"
+    );
+
+    // End of somebody else's: one option, and its price comes out of
+    // the pool.
+    let before = e.messages().len();
+    e.dispatch_legendary_actions(Some(goblin));
+    let spent = budget - e.actors[&dragon].legendary_action_slots();
+    assert!(spent >= 1, "the dragon should have spent something");
+    assert!(
+        e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("[legendary]")),
+        "and said so in the log"
+    );
+}
+
+/// The budget comes back at the start of the boss's own turn, which
+/// is the clause that makes it a budget rather than a pool for the
+/// whole fight.
+#[test]
+fn a_spent_legendary_budget_comes_back_on_the_bosss_own_turn() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let budget = e.actors[&dragon].legendary_actions_per_round();
+    // Drain it: enough turn-ends that even the 3-point options run
+    // the pool dry.
+    for _ in 0..4 {
+        e.dispatch_legendary_actions(Some(goblin));
+    }
+    assert_eq!(
+        e.actors[&dragon].legendary_action_slots(),
+        0,
+        "four turn-ends should exhaust a three-point budget"
+    );
+    e.actors.get_mut(&dragon).unwrap().reset_for_new_round();
+    assert_eq!(
+        e.actors[&dragon].legendary_action_slots(),
+        budget,
+        "the pool refills at the top of the boss's turn"
+    );
+}
+
+/// RAW: "can't take legendary actions while incapacitated or
+/// otherwise unable to take actions."
+///
+/// The clause that separates a legendary action from a lair action,
+/// which fires on behalf of a paralyzed dragon because the cave is
+/// what is acting. Pinned as a pair with
+/// `a_lair_answers_to_the_living_and_to_nothing_else` so a refactor
+/// that unified the two dispatchers fails here.
+#[test]
+fn a_paralyzed_boss_takes_no_legendary_actions_though_its_lair_still_acts() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let budget = e.actors[&dragon].legendary_actions_per_round();
+    e.actors
+        .get_mut(&dragon)
+        .unwrap()
+        .add_condition(Condition::Paralyzed, ConditionTimer::Permanent);
+    e.dispatch_legendary_actions(Some(goblin));
+    assert_eq!(
+        e.actors[&dragon].legendary_action_slots(),
+        budget,
+        "a paralyzed boss keeps its points"
+    );
+    // The lair is unaffected — the two dispatchers answer to
+    // different things.
+    e.round = 2;
+    e.dispatch_lair_actions();
+    assert!(
+        e.actors[&dragon].last_lair_action().is_some(),
+        "a paralyzed resident does not silence its lair"
+    );
+}
+
+/// A boss with nobody left to fight keeps its points rather than
+/// burning them on an empty room.
+///
+/// Every option on every list either swings at somebody or bursts
+/// around them, so the alternative is a log full of a dragon
+/// tail-swiping the air in the tick between the killing blow and the
+/// encounter noticing it is over.
+#[test]
+fn a_boss_with_nobody_left_to_fight_keeps_its_legendary_points() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let budget = e.actors[&dragon].legendary_actions_per_round();
+    e.actors.get_mut(&goblin).unwrap().take_damage(u32::MAX);
+    e.cleanup_dead_actors();
+    e.dispatch_legendary_actions(Some(goblin));
+    assert_eq!(
+        e.actors[&dragon].legendary_action_slots(),
+        budget,
+        "an empty board is not worth a point"
+    );
+}
+
+/// The pool never goes negative, and an option is never taken that
+/// the remaining budget cannot pay for.
+///
+/// The rule that makes RAW's "(Costs 2 Actions)" mean anything: a
+/// dispatcher that drew uniformly from the whole list would let a
+/// one-point remainder buy a three-point option, which is a lich
+/// casting Disrupt Life four times a round.
+#[test]
+fn an_option_is_never_taken_on_credit() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::liches::LICH_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let lich = e
+        .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let cheapest = e.actors[&lich]
+        .legendary_actions()
+        .iter()
+        .map(|o| o.cost)
+        .min()
+        .expect("the lich should have options");
+    for _ in 0..40 {
+        let before = e.actors[&lich].legendary_action_slots();
+        e.dispatch_legendary_actions(Some(goblin));
+        let after = e.actors[&lich].legendary_action_slots();
+        assert!(after <= before, "the pool grew mid-round");
+        if before < cheapest {
+            assert_eq!(after, before, "a remainder too small to buy anything spent");
+        }
+        e.actors.get_mut(&lich).unwrap().reset_for_new_round();
+        // Re-drain to a deliberately awkward remainder so the
+        // affordability filter is exercised at every rung rather
+        // than only at a full pool.
+        while e.actors[&lich].legendary_action_slots() > 1 {
+            e.actors
+                .get_mut(&lich)
+                .unwrap()
+                .consume_resource(Resource::LegendaryAction);
+        }
+    }
+}
+
 /// A source that hands out exhaustion hands out a *level*, and a
 /// second application stacks on the first. Under the old single
 /// flag the second one was swallowed whole by the "already has this

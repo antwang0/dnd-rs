@@ -80,6 +80,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::DRAGON_LEGENDARY,
         // 5e lair actions — the cave itself acts once a round while
         // the dragon lives in it. See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::DRAGON_LAIR,
@@ -172,6 +173,7 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::DRAGON_LEGENDARY,
         // 5e lair actions — the cave itself acts once a round while
         // the dragon lives in it. See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::DRAGON_LAIR,

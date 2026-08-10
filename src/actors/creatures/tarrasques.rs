@@ -89,6 +89,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 3,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::TARRASQUE_LEGENDARY,
         has_extra_attack: true,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

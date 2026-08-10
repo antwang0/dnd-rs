@@ -64,6 +64,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_suppressors: HashSet::from([DamageType::Radiant]),
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::VAMPIRE_LEGENDARY,
         has_extra_attack: true,
         // 5e Vampire **Sunlight Hypersensitivity**: "the vampire takes
         // 20 radiant damage when it starts its turn in sunlight. While
