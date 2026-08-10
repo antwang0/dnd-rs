@@ -10731,17 +10731,31 @@ impl EncounterInstance {
     fn advance_initiative(&mut self) {
         // 5e legendary actions: "only at the end of another creature's
         // turn". Read the slot *before* the queue moves, so the
-        // dispatcher knows whose turn just closed and can leave that
-        // creature out — a dragon does not spend legendary actions at
-        // the end of its own turn.
+        // dispatcher below knows whose turn just closed and can leave
+        // that creature out — a dragon does not spend legendary actions
+        // at the end of its own turn.
         let ended = self.initiative_tracker.current_player();
-        self.dispatch_legendary_actions(ended);
         // The slot moved, so whoever lands in it has not had their turn
         // opened yet — even when the queue has a single actor and the
         // "move" lands back on the same id. `ensure_turn_started` reads
         // this to decide whether a prompt needs a turn start first.
         self.turn_started_for = None;
         let wrapped = self.initiative_tracker.advance();
+        // Dispatched *after* the advance, and the order is load-bearing
+        // rather than stylistic. A legendary action can kill, and
+        // killing sweeps the initiative queue: `remove_actor` leaves
+        // `curr_index` where it was, so the slot behind the dead one
+        // slides into it. Run before `advance`, a boss that finished
+        // off the creature whose turn had just ended would have the
+        // *next* creature slide into that index and then be advanced
+        // straight past — one combatant silently losing a turn for
+        // every boss kill. `dispatch_lair_actions` avoids the same trap
+        // by reading its slot after dispatching rather than before.
+        //
+        // Ahead of `round_end` below, so a creature a legendary action
+        // drops is swept by the round's own cleanup rather than lying
+        // on the board for a tick.
+        self.dispatch_legendary_actions(ended);
         if wrapped {
             self.round = self.round.saturating_add(1);
             // Thief's Reflexes is scoped to round 1, so its extra slots

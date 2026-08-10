@@ -26746,6 +26746,98 @@ fn a_boss_with_nobody_left_to_fight_keeps_its_legendary_points() {
     );
 }
 
+/// A boss that finishes off the creature whose turn just ended does
+/// not cost the next creature in the queue its turn.
+///
+/// The trap is in the interaction between two individually correct
+/// pieces. `InitiativeTracker::remove_actor` deliberately leaves
+/// `curr_index` alone when the active slot is the one removed, so "the
+/// next actor naturally slides into place there" — exactly right for
+/// every other caller. And `advance` moves one slot on. Dispatch
+/// legendary actions *before* the advance and the two compose into a
+/// skipped turn: the dead creature's slot is vacated, the next
+/// combatant slides into it, and the advance steps straight over them.
+///
+/// The fixture is built to tell the two orderings apart, which took
+/// some doing. A wide burst that kills every enemy at once cannot: with
+/// one survivor left, both orderings land on it. So the boss here is
+/// the beholder, whose whole repertoire is a single-target ray, and
+/// only one goblin is ever within a hit point of dying — the rest of
+/// the queue survives to be skipped over.
+#[test]
+fn a_legendary_kill_does_not_swallow_the_next_creatures_turn() {
+    use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut discriminating = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        e.instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        // The ray takes the nearest enemy it can see, so the goblin
+        // beside the beholder is the only one it will ever pick.
+        let victim = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 1)
+            .unwrap();
+        let victim_hp = e.actors[&victim].hitpoints();
+        // Three more goblins, out of the ray's reach because it only
+        // ever has one target, and at full health besides. They are the
+        // queue the bug eats a slot out of.
+        for (i, spot) in [(24, 24), (24, 22), (22, 24)].into_iter().enumerate() {
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(spot.0, spot.1), 1, i + 2)
+                .unwrap();
+        }
+
+        for _ in 0..8 {
+            let queue = e.initiative_slots();
+            if queue.len() < 3 || !e.actors.contains_key(&victim) {
+                break;
+            }
+            let ended = queue[0].actor_id;
+            // Put the victim one hit point from death only on the turn
+            // end that is actually under test — its own. On every other
+            // turn end the ray lands and it survives, which keeps the
+            // fixture alive long enough to reach the case that matters.
+            let hp = e.actors[&victim].hitpoints();
+            if ended == victim {
+                if hp > 1 {
+                    e.actors.get_mut(&victim).unwrap().take_damage(hp - 1);
+                }
+            } else if hp < victim_hp {
+                e.actors.get_mut(&victim).unwrap().heal(victim_hp - hp);
+            }
+
+            e.advance_initiative();
+
+            // Whoever is first behind the ended slot and still standing
+            // is owed the next turn. Stated once rather than as a case
+            // analysis, so the assertion is the invariant itself.
+            let Some(owed) = queue[1..]
+                .iter()
+                .map(|s| s.actor_id)
+                .find(|id| e.actors.contains_key(id))
+            else {
+                break;
+            };
+            assert_eq!(
+                e.initiative_tracker.current_player(),
+                Some(owed),
+                "seed {}: the turn after {}'s went to the wrong creature",
+                seed,
+                ended
+            );
+            if ended == victim && !e.actors.contains_key(&ended) {
+                discriminating += 1;
+            }
+        }
+    }
+    assert!(
+        discriminating > 0,
+        "no seed in the sweep ended a creature's turn by killing it with a \
+         legendary action — the ordering under test was never exercised"
+    );
+}
+
 /// The pool never goes negative, and an option is never taken that
 /// the remaining budget cannot pay for.
 ///
