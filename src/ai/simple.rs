@@ -9397,6 +9397,148 @@ mod tests {
         }
     }
 
+    /// Every stat block the encounter generator can roll survives being
+    /// driven by the AI that will drive it.
+    ///
+    /// The sibling of `every_pc_template_can_be_driven_by_the_ai_to_completion`
+    /// on the other side of the screen, and the gap it fills is the
+    /// larger one: there are three PC families and two hundred and
+    /// fifty monsters, every one of them reachable from the generator,
+    /// and nothing checked that any of them could take a turn.
+    ///
+    /// Two failures are worth naming because they are the ones that do
+    /// not announce themselves:
+    ///
+    ///   - **The AI queues an action that fails its own `validate`.**
+    ///     A stat block that carries an action with an unsatisfiable
+    ///     gate — a self-condition it never installs, a resource it
+    ///     never has — produces a creature that picks that action,
+    ///     fails the re-check, and does nothing. The fight still ends;
+    ///     the monster just never fought.
+    ///   - **`AwaitInput` from a monster.** The AI is the only
+    ///     controller a generated creature ever gets. A rung that falls
+    ///     through to "ask the player" is a hang in the real loop and a
+    ///     panic here.
+    ///
+    /// Bounded rather than run to completion, which is the one place
+    /// this differs from the PC sweep. Two hundred and fifty duels
+    /// fought to the last hit point would dominate the suite's runtime,
+    /// and the bugs above show up on the first turn a creature takes —
+    /// so the sweep spends a fixed budget of decisions per template and
+    /// asserts that every one of them was legal. The completion half is
+    /// left to the PC sweep, which is small enough to afford it.
+    ///
+    /// The opponent is a pair of Commoners rather than an Ogre. A pair,
+    /// because a single target hides every bug in the picker's ranking
+    /// behind "there was only one"; Commoners, because a CR 0 body
+    /// cannot kill anything, so the budget is spent on the monster's
+    /// turns rather than on its funeral. They start six tiles away so
+    /// that the first decision is an engagement rather than the first
+    /// of five walks across an empty board. Same seed and same open
+    /// board throughout, so a failure reproduces from the template name
+    /// alone.
+    #[test]
+    fn every_template_the_generator_can_roll_survives_a_turn_of_the_ai() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::engine::encounter::EncounterInstance;
+
+        // Enough decisions to get every creature past its opening move
+        // and into its second turn, where the recharge / prime / spend
+        // rungs come up. Small enough that 250 of them stay cheap.
+        const DECISION_BUDGET: usize = 24;
+
+        let (mut driven, mut engaged) = (0, 0);
+        for template in EncounterInstance::template_pool() {
+            let tp = TerrainGenParams {
+                width: 24,
+                height: 16,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+            e.instantiate_creature(template, Coordinate::new(3, 8), 0, 0)
+                .unwrap_or_else(|_| panic!("{} should instantiate", template.name));
+            for (i, x) in [9isize, 11].into_iter().enumerate() {
+                e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(x, 8), 1, i)
+                    .expect("a commoner should instantiate");
+            }
+            driven += 1;
+
+            let victim_hp_before: u32 = e
+                .actors
+                .values()
+                .filter(|a| a.team() == 1)
+                .map(|a| a.hitpoints())
+                .sum();
+
+            let ai = SimpleAi;
+            for _ in 0..DECISION_BUDGET {
+                e.process_stack();
+                if e.is_complete() {
+                    break;
+                }
+                let Some(prompt) = e.peek_prompt() else {
+                    break;
+                };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => panic!(
+                        "{}: SimpleAi asked for player input — a generated creature has \
+                         no player to ask",
+                        template.name
+                    ),
+                    ControllerDecision::Act(aei) => {
+                        assert!(
+                            aei.validate(&e),
+                            "{}: the AI queued \"{}\", which fails its own validate",
+                            template.name,
+                            aei.action().name()
+                        );
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            e.process_stack();
+            let victim_hp_after: u32 = e
+                .actors
+                .values()
+                .filter(|a| a.team() == 1)
+                .map(|a| a.hitpoints())
+                .sum();
+            if victim_hp_after < victim_hp_before {
+                engaged += 1;
+            }
+        }
+        assert!(
+            driven > 200,
+            "the pool should be the whole bestiary, found {}",
+            driven
+        );
+        // The sweep is only worth its runtime if the budget actually
+        // reaches combat, and "no template crashed" is exactly what a
+        // sweep that never got past the walking phase would also
+        // report. Not all of them: a caster that opens by buffing, a
+        // summoner that opens by summoning, and anything whose reach
+        // the board denies will legitimately spend twenty-four
+        // decisions without landing a hit. A large majority is the
+        // claim, and it fails loudly if the budget is ever cut below
+        // the engagement it was chosen to buy.
+        assert!(
+            engaged * 4 >= driven * 3,
+            "only {} of {} templates landed a hit inside the budget — the sweep has \
+             stopped reaching combat and is now testing the pathfinder",
+            engaged,
+            driven
+        );
+    }
+
     /// The AI reaches summons at all — the behavioural half of the
     /// `summons_allies` contract.
     ///
