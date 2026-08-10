@@ -25772,6 +25772,127 @@ impl Action for PlaneShift {
 
 pub static PLANE_SHIFT: LazyLock<PlaneShift> = LazyLock::new(|| PlaneShift {});
 
+/// Imprisonment — 5e level-9 abjuration (warlock / wizard), action,
+/// 30 ft. One creature, one Wisdom save, and on a failure it is out of
+/// the fight and not coming back.
+///
+/// The second offensive spell in the engine that ends a creature
+/// without killing it, and the reason `RemoveFromEncounter` was written
+/// as a side effect rather than as a special case inside Plane Shift.
+/// Its docstring says RAW has "exactly one offensive spell in that
+/// category"; this is the other one, and it is the one the category is
+/// really about — Plane Shift is a level-7 touch spell that happens to
+/// remove somebody, and Imprisonment is a level-9 spell whose entire
+/// text is the removal.
+///
+/// **No concentration and no timer**, both RAW, and between them they
+/// are the whole difference from Maze one slot below. Maze is level 8,
+/// holds the caster's concentration and lasts ten rounds — a very
+/// expensive way to take one creature out of three rounds of a fight
+/// that will probably be over before it lapses. This costs a ninth-level
+/// slot and takes the creature out of *this* fight and every round of
+/// it, with the caster's concentration left free for a second spell.
+/// Against the one enemy the party cannot beat, that is what a
+/// ninth-level slot is for.
+///
+/// It is also the only save-or-lose in the engine with no rider and no
+/// half-measure, which is why the save is the one place it is generous:
+/// Wisdom, the save that the things worth casting this on — the giants,
+/// the dragons, the liches — are most likely to be good at. A ninth-
+/// level slot spent on a failed cast is a ninth-level slot gone.
+///
+/// RAW's five binding forms (Minimus Containment, Burial, Chaining,
+/// Hedged Prison, Slumber) all differ only in where the creature is
+/// kept and what would release it, and every one of those differences
+/// is a thing that happens after the fight. They collapse to one
+/// removal. So does the "special component worth at least 500 gp" and
+/// the RAW escape clause, which names dispel magic and the caster's own
+/// choice — neither reachable inside an encounter.
+///
+/// The removal drops what the target was carrying where it stood, which
+/// is `RemoveFromEncounter`'s standing policy rather than this spell's
+/// choice; see there for why the gear staying on the floor is the better
+/// of the two available inaccuracies.
+pub struct Imprisonment {}
+
+impl Action for Imprisonment {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "imprisonment"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["imprison", "bind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW range 30 ft = 12 tiles. Short for a ninth-level spell, and
+        // deliberately not widened: the caster has to be close enough
+        // to the thing they are trying to remove that failing the cast
+        // is dangerous.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Warlock *and* wizard, so the DC cannot be anchored to a fixed
+        // ability: a fixed INT would quietly build a warlock's ninth-
+        // level slot out of a stat they never invested in, and the cast
+        // would still fire and still log and still roll a save. See
+        // `ActorInstance::spellcasting_save_dc`.
+        let dc = caster.spellcasting_save_dc();
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            encounter.log("  imprisonment: the binding does not take hold");
+            return Vec::new();
+        }
+        encounter.log("  imprisonment: the binding closes and the fight is one short");
+        vec![Box::new(
+            crate::engine::side_effects::RemoveFromEncounter {
+                actor_id: target_id,
+                log_verb: "is bound away",
+            },
+        )]
+    }
+}
+
+pub static IMPRISONMENT: LazyLock<Imprisonment> = LazyLock::new(|| Imprisonment {});
+
 /// Wall of Stone — level-5 evocation (druid / sorcerer / wizard),
 /// concentration. Up to ten 10-ft panels of nonmagical stone, raised at
 /// a point within 120 ft.

@@ -109,6 +109,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SUGGESTION);
     actions.push(&*MASS_SUGGESTION);
     actions.push(&*POWER_WORD_KILL);
+    // Imprisonment — the ninth-level abjuration that ends one creature
+    // and asks for nothing else: one Wisdom save, no concentration, no
+    // timer. Where Maze spends a level-8 slot *and* the caster's whole
+    // concentration to remove somebody for ten rounds, this removes
+    // them for the fight and leaves the concentration free. Against the
+    // one enemy the party cannot beat, that is the purchase.
+    // See `spells::IMPRISONMENT`.
+    actions.push(&*crate::actions::spells::IMPRISONMENT);
     actions.push(&*METEOR_SWARM);
     actions.push(&*SUNBEAM);
     // Antimagic Field — lv8 abjuration, concentration. The engine's

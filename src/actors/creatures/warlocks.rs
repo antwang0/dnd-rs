@@ -127,6 +127,14 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // boss-killers; the warlock's apex damage button).
     actions.push(&*POWER_WORD_STUN);
     actions.push(&*POWER_WORD_KILL);
+    // Imprisonment — the ninth-level abjuration that ends one creature
+    // and asks for nothing else: one Wisdom save, no concentration, no
+    // timer. Where Maze spends a level-8 slot *and* the caster's whole
+    // concentration to remove somebody for ten rounds, this removes
+    // them for the fight and leaves the concentration free. Against the
+    // one enemy the party cannot beat, that is the purchase.
+    // See `spells::IMPRISONMENT`.
+    actions.push(&*crate::actions::spells::IMPRISONMENT);
     // Newest warlock additions:
     //   - cantrip **Thunderclap**: self-centered CON-save burst.
     //   - lv2 **Mind Spike**: single-target psychic save-for-half.

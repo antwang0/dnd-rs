@@ -16376,6 +16376,74 @@ fn plane_shift_takes_a_creature_out_of_the_encounter_for_good() {
     panic!("expected plane shift to land across 40 seeds");
 }
 
+/// Imprisonment ends a creature without killing it, and — the clause
+/// that distinguishes it from every other lockdown in the engine —
+/// without asking the caster for anything after the cast.
+///
+/// Maze is the comparison worth drawing, and this test draws it. Maze
+/// is one slot cheaper, holds the caster's concentration for the whole
+/// ten rounds it lasts, and hands the creature back at the end.
+/// Imprisonment costs the ninth-level slot and is finished: the target
+/// is gone, the caster's concentration is untouched, and there is no
+/// timer for anyone to wait out.
+///
+/// The concentration assertion is the load-bearing one. Modelling this
+/// as a very long Maze — which is what the engine would have had to do
+/// before `RemoveFromEncounter` existed — would have passed a test
+/// that only checked the target was off the board, while quietly
+/// making a ninth-level slot cost the caster their concentration as
+/// well.
+#[test]
+fn imprisonment_ends_a_creature_and_costs_the_caster_nothing_further() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::IMPRISONMENT;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+            .unwrap();
+        let spot = e.actors[&victim].location();
+        // Something already on the wizard's concentration, so "the
+        // spell left it alone" is an assertion about the spell rather
+        // than about an empty slot.
+        for x in crate::actions::spells::BLUR.side_effects(&mut e, wizard, None, None, None) {
+            x.apply(&mut e);
+        }
+        let xp_before = e.actors[&wizard].xp_value();
+
+        for ef in IMPRISONMENT.side_effects(&mut e, wizard, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors.contains_key(&victim) {
+            continue; // the WIS save held; try another seed
+        }
+        assert_eq!(e.actor_id_at(spot), None, "the space it stood in is free");
+        assert!(
+            !e.living_teams().contains(&1),
+            "a bound creature is not a live claim on this fight"
+        );
+        assert!(e.is_complete(), "so the encounter is over");
+        assert_eq!(
+            e.actors[&wizard].xp_value(),
+            xp_before,
+            "nobody was killed, so nothing was earned"
+        );
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "this is the half that separates it from Maze — the caster's \
+             concentration is still on what it was on"
+        );
+        return;
+    }
+    panic!("expected imprisonment to land across 40 seeds");
+}
+
 /// The whole lane end to end, with nobody's hand on the wheel: an
 /// AI-driven caster reaches for Banishment off its own lockdown rung,
 /// the target comes off the board, and the board notices.
