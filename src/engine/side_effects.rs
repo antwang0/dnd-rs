@@ -1426,13 +1426,21 @@ impl ApplicableSideEffect for RemoveCondition {
 /// The third way off the board, and the one that had no side effect of
 /// its own. `DealDamage` covers dying; `Condition::Banished` covers
 /// leaving and coming back (see `crate::engine::banishment`); this
-/// covers leaving and not coming back. RAW has exactly one offensive
-/// spell in that last category — Plane Shift, whose target is put on
-/// another plane with no duration, no concentration and no way home
-/// inside the fight — and it had been faking permanence with a
+/// covers leaving and not coming back.
+///
+/// Two spells are in that last category. **Plane Shift** puts its
+/// target on another plane with no duration, no concentration and no
+/// way home inside the fight, and had been faking permanence with a
 /// hundred-round inert condition because the engine's only removal
 /// paths were reachable from `apply` and not from a spell's effect
-/// list.
+/// list. **Imprisonment** is the level-9 abjuration whose entire text
+/// is this effect, and is the reason the shape generalised rather than
+/// staying a special case inside Plane Shift: written as a condition
+/// with a very long timer it would have looked like a working spell
+/// while quietly leaving a live claim on the encounter for ninety
+/// rounds — see `is_stalemate` for what that costs — and, since the
+/// only long-duration removal on hand holds concentration, would have
+/// charged a ninth-level slot the caster's concentration on top.
 ///
 /// Routes through `despawn_actor` rather than `remove_actor`, which is
 /// the distinction that matters: the target is not dead, so no death
