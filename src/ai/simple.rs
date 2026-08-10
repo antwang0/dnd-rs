@@ -9315,6 +9315,108 @@ mod tests {
     }
 
     /// than trading at range forever).
+    /// Generated encounters run to completion, whatever the generator
+    /// rolls.
+    ///
+    /// The suite's other end-to-end AI test drives one hand-placed PC
+    /// against one hand-placed ogre on one fixed map. This one drives
+    /// whatever `EncounterInstance::from_params` produces — generated
+    /// terrain at a dozen sizes, generated rosters at CR targets from 1
+    /// to 14, two to four factions, half of them in the dark — and
+    /// asserts only that the fight ends.
+    ///
+    /// "The fight ends" turns out to be the hard part, and this test is
+    /// how `is_stalemate`'s attrition half was found: a Yeti with a
+    /// chilling gaze against a Shield Guardian regenerating 10 hit
+    /// points a round, with three other factions dashing about out of
+    /// everyone's reach, ran to round 4261 and would have run forever.
+    /// Every actor had a legal action every round. Nobody could win.
+    ///
+    /// Deliberately a *small* number of seeds. The sweep that found the
+    /// deadlock ran nine hundred, which takes minutes; the regression
+    /// value is almost all in the first few, because the failure is a
+    /// hang rather than a rare wrong answer, and a hang that survives
+    /// eighteen assorted boards is not seed-specific. The seeds are
+    /// chosen to spread across the parameter space rather than to be
+    /// the ones that once failed.
+    #[test]
+    fn generated_encounters_of_every_shape_run_to_completion() {
+        use crate::actors::creatures::pc_template_families;
+        let families = pc_template_families();
+        for seed in 0u64..18 {
+            let tp = TerrainGenParams {
+                width: 16 + (seed % 12) as usize * 2,
+                height: 10 + (seed % 7) as usize,
+                branch_depth: (seed % 6) as usize,
+                branch_prob: 0.5,
+            };
+            let fam = &families[(seed as usize) % families.len()].1;
+            let pc = fam[(seed as usize) % fam.len()];
+            let ap = ActorGenParams {
+                cr_target: 1.0 + (seed % 9) as f32,
+                // Two to four factions. More than two is not a
+                // configuration the binary ships, and it is where the
+                // deadlock showed up first — a three-way fight has more
+                // ways to arrive at nobody being able to finish.
+                n_teams: 2 + (seed % 3) as usize,
+                pc_template: Some(pc),
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed))
+                .unwrap_or_else(|err| panic!("seed {seed}: generation failed: {err}"));
+            if seed % 3 == 0 {
+                // Half the boards unlit, so the lighting layer, the
+                // darkvision gates and the AI's torch rung are on the
+                // path too.
+                e.set_ambient_light(crate::engine::lighting::AmbientLight::Darkness);
+            }
+            let ai = SimpleAi;
+            // The cap is a backstop for a genuine hang, not a budget:
+            // a settled fight uses a low four-figure number of steps,
+            // and a deadlock caught by the draw uses tens of thousands
+            // of cheap ones.
+            let mut steps = 0usize;
+            let settled = loop {
+                if steps >= 400_000 {
+                    break false;
+                }
+                steps += 1;
+                e.process_stack();
+                if e.is_complete() {
+                    break true;
+                }
+                let Some(prompt) = e.peek_prompt() else {
+                    break true;
+                };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => {
+                        panic!("seed {seed} ({}): SimpleAi asked for player input", pc.name)
+                    }
+                    ControllerDecision::Act(aei) => {
+                        assert!(
+                            aei.validate(&e),
+                            "seed {seed} ({}): the AI queued '{}', which fails its own validate",
+                            pc.name,
+                            aei.action().name()
+                        );
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            };
+            assert!(
+                settled,
+                "seed {seed} ({}): still going at round {} after {steps} steps — \
+                 neither a win nor a draw, which means something can act \
+                 forever without getting anywhere and `is_stalemate` did not \
+                 notice",
+                pc.name,
+                e.round()
+            );
+        }
+    }
+
     #[test]
     fn every_pc_template_can_be_driven_by_the_ai_to_completion() {
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;

@@ -53644,6 +53644,84 @@ fn typing_a_spell_name_beats_another_actions_alias() {
     assert_eq!(by_alias.action().name(), "maddening darkness");
 }
 
+/// A fight in which nothing happens is over, even when everybody can
+/// reach everybody.
+///
+/// The positional half of `is_stalemate` cannot see this one: the two
+/// combatants are standing next to each other, so `can_engage` is
+/// true in both directions and the reachability walk correctly says
+/// the fight is live. It is live. It is also never going to end, and
+/// the only thing that separates the two is time.
+///
+/// Two goblins that never swing are the honest minimum of the case
+/// that found this — a Yeti that could hit a Shield Guardian but not
+/// out-damage its regeneration, which is the same fight with more
+/// dice in it.
+#[test]
+fn a_fight_where_nobody_lands_anything_is_eventually_called_a_draw() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let a = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let b = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 1)
+        .unwrap();
+
+    // Adjacent and on opposite teams, so the reachability half is
+    // emphatically not what ends this.
+    assert!(!e.is_stalemate(), "a fresh fight is not a draw");
+
+    // Now let both of them do nothing, round after round. `SKIP` is
+    // the whole turn, so this is the cleanest possible zero-progress
+    // fight: no damage, no healing, no conditions, no movement.
+    let mut steps = 0usize;
+    while !e.is_complete() && steps < 200_000 {
+        steps += 1;
+        e.process_stack();
+        if e.is_complete() {
+            break;
+        }
+        let Some(prompt) = e.peek_prompt() else { break };
+        let actor_id = prompt.actor_id();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(
+            &*crate::actions::default_actions::SKIP,
+            actor_id,
+            None,
+            None,
+            None,
+        ));
+    }
+
+    assert!(
+        e.is_complete(),
+        "two goblins staring at each other for {} rounds is not an ongoing fight",
+        e.round()
+    );
+    assert!(
+        e.is_stalemate(),
+        "and it ended as a draw rather than as somebody's win"
+    );
+    assert_eq!(
+        e.winning_team(),
+        None,
+        "a draw has no winner — both goblins are still standing"
+    );
+    // Both alive, so this really was the attrition rule and not one of
+    // them quietly dying to something.
+    assert!(e.actors[&a].is_combat_active() && e.actors[&b].is_combat_active());
+    // And it took roughly the declared threshold to call it, rather
+    // than firing early on the opening rounds.
+    assert!(
+        e.round() >= EncounterInstance::NO_PROGRESS_ROUNDS,
+        "the draw was called at round {} — earlier than the threshold that \
+         is supposed to govern it",
+        e.round()
+    );
+}
+
 /// Every creature template written in the bestiary is reachable in
 /// play — by the encounter generator, by a player picking a class, by
 /// a summoning spell, or by a class feature.
