@@ -6578,7 +6578,7 @@ impl EncounterInstance {
     pub fn tile_is_hazardous(&self, coord: Coordinate) -> bool {
         self.zones
             .iter()
-            .any(|z| z.effect.is_harmful() && z.covers(coord))
+            .any(|z| z.effect.deters_walkers() && z.covers(coord))
     }
 
     /// True if heavy obscurement stands between (or on top of) the two
@@ -8744,7 +8744,7 @@ impl EncounterInstance {
     /// pathfinder skip its first pass entirely on the common board.
     fn has_bad_ground_for(&self, actor_id: usize) -> bool {
         self.zones.iter().any(|z| {
-            z.effect.is_harmful() || (z.effect.suppresses_magic && self.actor_casts_spells(actor_id))
+            z.effect.deters_walkers() || (z.effect.suppresses_magic && self.actor_casts_spells(actor_id))
         })
     }
 

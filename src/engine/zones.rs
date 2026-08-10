@@ -577,17 +577,24 @@ impl ZoneEffect {
         }
     }
 
-    /// True if standing in this zone can cost a creature something, and
-    /// therefore whether anything walking the board should route around
-    /// it. Obscurement doesn't count: it is as much a hiding place as a
-    /// handicap, and the AI treats it as free ground.
+    /// True if anything walking the board should route around this
+    /// area.
     ///
-    /// A ward doesn't count either, and for the opposite reason — not
-    /// because it is harmless but because it cannot be seen. This is
-    /// the predicate both pathfinder gates read, so answering `false`
-    /// here is the whole of "nearly invisible": a creature routes
-    /// around a web and walks straight onto a glyph.
-    pub fn is_harmful(&self) -> bool {
+    /// Named for the question its callers ask rather than for the one
+    /// it used to answer. As `is_harmful` it was very nearly a synonym
+    /// for "can this hurt you", and a ward broke the synonym: a glyph
+    /// deals 5d8 fire and must still be walked straight into, because
+    /// nobody can see it. A predicate called `is_harmful` that answers
+    /// `false` for 5d8 fire is a name that lies, and the three callers
+    /// — both pathfinder gates and the map's dangerous-ground glyph —
+    /// were all asking about avoidance in the first place.
+    ///
+    /// Two clauses, for opposite reasons. Obscurement doesn't deter:
+    /// it is as much a hiding place as a handicap, and the AI treats
+    /// fog as free ground. A ward doesn't deter either — not because
+    /// it is harmless but because it is invisible. Answering `false`
+    /// here is the whole of RAW's "nearly invisible".
+    pub fn deters_walkers(&self) -> bool {
         self.ward.is_none()
             && (self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some())
     }
@@ -779,7 +786,7 @@ mod tests {
 
     #[test]
     fn obscurement_alone_is_not_harmful() {
-        assert!(!ZoneEffect::OBSCURING.is_harmful());
+        assert!(!ZoneEffect::OBSCURING.deters_walkers());
     }
 
     /// A still area is still: nothing about the default motion asks the
@@ -838,14 +845,14 @@ mod tests {
     }
 
     #[test]
-    fn a_contact_clause_that_only_saves_is_still_harmful() {
+    fn a_contact_clause_that_only_saves_still_deters_a_walker() {
         let effect = ZoneEffect::clinging(ZoneContact::save_or(
             AbilityScoreType::Dexterity,
             13,
             Condition::Restrained,
             ConditionTimer::Rounds(10),
         ));
-        assert!(effect.is_harmful());
+        assert!(effect.deters_walkers());
         assert!(effect.difficult);
     }
 
@@ -917,19 +924,42 @@ mod tests {
         assert_eq!(sleet.condition, Some((Condition::Prone, ConditionTimer::Permanent)));
     }
 
-    /// Thorny ground is harmful on the strength of the per-step clause
-    /// alone, with no contact clause at all — which is the only way the
-    /// AI's hazard check sees Spike Growth.
+    /// Thorny ground deters a walker on the strength of the per-step
+    /// clause alone, with no contact clause at all — which is the only
+    /// way the AI's hazard check sees Spike Growth.
     #[test]
-    fn per_step_damage_alone_makes_a_zone_harmful() {
+    fn per_step_damage_alone_deters_a_walker() {
         let effect = ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing);
         assert!(effect.contact.is_none());
         assert!(effect.difficult);
-        assert!(effect.is_harmful());
-        // Bad ground with nothing else on it is not.
+        assert!(effect.deters_walkers());
+        // Bad ground with nothing else on it does not.
         let rough = ZoneEffect::ROUGH;
-        assert!(!rough.is_harmful());
+        assert!(!rough.deters_walkers());
         assert!(rough.difficult);
+    }
+
+    /// A ward deters nobody, and it is the one entry on this list that
+    /// does so while dealing damage. Pinned beside the rows above
+    /// because the whole reason the predicate is named for avoidance
+    /// rather than for harm is that this row exists.
+    #[test]
+    fn a_ward_deters_nobody_however_hard_it_hits() {
+        let effect = ZoneEffect::ward(
+            ZoneContact::save_for_half(
+                AbilityScoreType::Dexterity,
+                15,
+                Dice::new(5, 8),
+                DamageType::Fire,
+            ),
+            0,
+        );
+        assert!(
+            effect.contact.is_some_and(|c| c.is_harmful()),
+            "the clause itself can very much hurt you"
+        );
+        assert!(!effect.deters_walkers(), "and nothing routes around it");
+        assert_eq!(effect.ward, Some(0));
     }
 
     #[test]
@@ -938,7 +968,7 @@ mod tests {
             Dice::new(4, 4),
             DamageType::Slashing,
         ));
-        assert!(effect.is_harmful());
+        assert!(effect.deters_walkers());
         assert!(!effect.difficult);
         assert!(!effect.obscures);
     }

@@ -363,7 +363,7 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
             '◈'
         } else if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
             '☠'
-        } else if zone.effect.is_harmful() || zone.effect.difficult {
+        } else if zone.effect.deters_walkers() || zone.effect.difficult {
             '≈'
         } else if zone.effect.obscures {
             '▚'
