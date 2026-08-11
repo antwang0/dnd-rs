@@ -22452,13 +22452,64 @@ pub static ERUPTING_EARTH: LazyLock<EruptingEarth> = LazyLock::new(|| EruptingEa
 
 /// Blight — level-4 necromancy (warlock / sorcerer / wizard). A single
 /// target within 30 ft (12 tiles) makes a CON save vs the caster's spell
-/// save DC: fail = 8d8 necrotic, success = half. Undead and constructs
-/// shrug it off via the engine's necrotic immunity / resistance tables.
-/// Plants take maximum damage by RAW (we don't model creature type at
-/// that granularity — the standard damage roll applies). Slots between
-/// Vitriolic Sphere (lv4 acid AoE) and Sickening Radiance (lv4 burst) as
-/// the wizard's single-target lv4 necromancy nuke.
+/// save DC: fail = 8d8 necrotic, success = half. Slots between Vitriolic
+/// Sphere (lv4 acid AoE) and Sickening Radiance (lv4 burst) as the
+/// wizard's single-target lv4 necromancy nuke.
+///
+/// RAW has three more sentences than that, and all three are about what
+/// the target *is*:
+///
+///   > This spell has no effect on undead or constructs. If you target a
+///   > plant creature or a magical plant, it makes the saving throw with
+///   > disadvantage, and the spell deals maximum damage to it.
+///
+/// This docstring used to concede all of it — "undead and constructs
+/// shrug it off via the engine's necrotic immunity / resistance tables"
+/// and "plants take maximum damage by RAW (we don't model creature type
+/// at that granularity)". The first was a collapse that mostly worked
+/// and quietly failed on any construct without necrotic immunity, and
+/// the second was simply not true: `ActorInstance::creature_type` has
+/// existed for as long as the bestiary has, and its sibling spell has
+/// been reading it. **Horrid Wilting** is the same clause on a bigger
+/// area — "construct and undead exclusion" plus "plants have
+/// disadvantage" — written out in full, `is_bone_dry` and
+/// `is_waterlogged` and all, one screen up in this same file.
+///
+/// So Blight now reads the type too, and shares the predicate rather
+/// than growing a second copy of it: `HorridWilting::is_bone_dry` is
+/// exactly RAW's "no effect on undead or constructs", down to the
+/// wording, and two spells asking it must not be able to disagree.
+///
+/// The plant half is Blight's alone, and it is *both* clauses — the
+/// disadvantage and the maximum damage. Written as a swing on the roll
+/// rather than as a flat multiplier on the result, because "maximum
+/// damage" in 5e means every die comes up on its highest face, which is
+/// the same 64 whether the save landed or not and is then halved on a
+/// success like any other save-for-half. A vine blight that saves takes
+/// 32; one that fails takes 64. There is nothing here that a wizard
+/// would rather cast at a treant.
 pub struct Blight {}
+
+impl Blight {
+    const DICE: Dice = Dice::new(8, 8);
+
+    /// True if the target is the thing 5e's Blight is written to kill —
+    /// RAW's "a plant creature or a magical plant".
+    ///
+    /// Narrower than `HorridWilting::is_waterlogged`, which is the
+    /// same-shaped clause on the neighbouring spell and also catches
+    /// water elementals. The two are not the same predicate and are
+    /// deliberately not shared: Blight withers living tissue and a water
+    /// elemental is not tissue, so borrowing the wider one would have
+    /// given a marid disadvantage against a spell RAW does not aim at
+    /// it, and maximum damage on top.
+    fn is_plant(encounter: &EncounterInstance, id: usize) -> bool {
+        encounter
+            .actors
+            .get(&id)
+            .is_some_and(|a| a.creature_type() == crate::engine::types::CreatureType::Plant)
+    }
+}
 
 impl Action for Blight {
     fn name(&self) -> &str {
@@ -22509,16 +22560,54 @@ impl Action for Blight {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let (dmg, _) = save_for_half_damage(
-            encounter,
-            caster_id,
+        // RAW: "this spell has no effect on undead or constructs." A
+        // hard exclusion rather than the necrotic-immunity collapse this
+        // spell used to lean on — most undead on the roster are immune
+        // and would have shrugged it off anyway, but a construct is not,
+        // and an iron golem taking 8d8 from a spell that RAW says does
+        // nothing to it was the whole of the difference.
+        if HorridWilting::is_bone_dry(encounter, target_id) {
+            let name = encounter.actor_name(target_id);
+            encounter.log(format!("  blight: {} has nothing living to wither", name));
+            return Vec::new();
+        }
+        let plant = Self::is_plant(encounter, target_id);
+        // RAW's plant clause, both halves. The save is rolled at
+        // disadvantage through the same caster-aware entry point every
+        // other spell-supplied notch uses, and the pool is taken at its
+        // maximum rather than rolled — which is what "the spell deals
+        // maximum damage to it" says, and which still halves on a
+        // successful save the way any other save-for-half does.
+        let raw = if plant {
+            let name = encounter.actor_name(target_id);
+            encounter.log(format!(
+                "  blight: {} is a plant — disadvantage, and every die lands",
+                name
+            ));
+            Self::DICE.max_roll()
+        } else {
+            encounter.roll_empowered_sum(caster_id, Self::DICE.count, Self::DICE.faces)
+        };
+        let mode = if plant {
+            crate::engine::dice::RollMode::Disadvantage
+        } else {
+            crate::engine::dice::RollMode::Normal
+        };
+        let save = encounter.roll_save_against_caster_at(
             target_id,
             AbilityScoreType::Constitution,
             dc,
-            Dice::new(8, 8),
-            DamageType::Necrotic,
-            "blight",
+            caster_id,
+            mode,
         );
+        let dmg = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  blight: {}({}) = {} Necrotic ({})",
+            Self::DICE,
+            raw,
+            dmg,
+            if save.passed() { "save (half)" } else { "fail (full)" },
+        ));
         if dmg == 0 {
             return Vec::new();
         }
@@ -30867,6 +30956,14 @@ impl HorridWilting {
 
     /// True if `id` has no moisture in it to draw out — RAW's construct
     /// and undead exclusion.
+    ///
+    /// Shared with **Blight**, which writes the same exclusion in the
+    /// same two words ("this spell has no effect on undead or
+    /// constructs") and has no business disagreeing with this one about
+    /// which creatures they are. It lives here rather than on a neutral
+    /// helper because this is where it was written first and the
+    /// wording is identical; if a third necromancy clause ever wants it,
+    /// that is the point at which it stops belonging to a spell.
     fn is_bone_dry(encounter: &EncounterInstance, id: usize) -> bool {
         encounter.actors.get(&id).is_some_and(|a| {
             matches!(

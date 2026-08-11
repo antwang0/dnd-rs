@@ -36556,6 +36556,94 @@ fn blight_lands_necrotic_on_failed_save() {
     assert!(damaged, "Blight should land 8d8 necrotic across seeds");
 }
 
+/// Blight's three creature-type clauses, which is most of what the
+/// spell actually says: *"This spell has no effect on undead or
+/// constructs. If you target a plant creature or a magical plant, it
+/// makes the saving throw with disadvantage, and the spell deals
+/// maximum damage to it."*
+///
+/// Three targets, and each one pins a different sentence. The iron
+/// golem is the construct — and it is deliberately a *construct* rather
+/// than an undead, because the collapse this replaces ("undead and
+/// constructs shrug it off via the necrotic immunity table") was true
+/// of most undead and false of it. The vine blight is the plant. The
+/// ogre is the control that proves the other two are not just "Blight
+/// does nothing".
+#[test]
+fn blight_withers_a_plant_and_leaves_the_golem_alone() {
+    use crate::actions::spells::BLIGHT;
+    use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::treants::TREANT_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // 8d8 taken at its maximum, which is what RAW's "maximum damage"
+    // means and what a saving plant still halves.
+    const MAX_POOL: u32 = 64;
+
+    let mut ever_full = false;
+    let mut ever_halved = false;
+    for seed in 0..24u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let golem = e
+            .instantiate_creature(&IRON_GOLEM_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        // A treant rather than a vine blight, for the dullest of
+        // reasons: 8d8 at its maximum is 64 and a vine blight has 26 hit
+        // points, so every reading would have been clipped by the corpse
+        // rather than by the rule under test.
+        let plant = e
+            .instantiate_creature(&TREANT_TEMPLATE, Coordinate::new(9, 5), 1, 1)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 5), 1, 2)
+            .unwrap();
+
+        // The construct: RAW says no effect, so no damage and no roll.
+        let golem_hp = e.actors[&golem].hitpoints();
+        let effects = BLIGHT.side_effects(&mut e, wiz, Some(&vec![golem]), None, None);
+        assert!(
+            effects.is_empty(),
+            "a construct is not a thing that withers"
+        );
+        assert_eq!(e.actors[&golem].hitpoints(), golem_hp);
+
+        // The plant: every die lands, so the damage is one of exactly
+        // two numbers and neither of them depends on the seed.
+        let plant_hp = e.actors[&plant].hitpoints();
+        for ef in BLIGHT.side_effects(&mut e, wiz, Some(&vec![plant]), None, None) {
+            ef.apply(&mut e);
+        }
+        let dealt = plant_hp - e.actors.get(&plant).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            dealt == MAX_POOL || dealt == MAX_POOL / 2,
+            "a plant takes maximum damage, halved only by its save: {} is neither {} nor {}",
+            dealt,
+            MAX_POOL,
+            MAX_POOL / 2
+        );
+        ever_full |= dealt == MAX_POOL;
+        ever_halved |= dealt == MAX_POOL / 2;
+
+        // The control: an ogre is neither, so its damage is a roll and
+        // can land anywhere in the pool's range.
+        let ogre_hp = e.actors[&ogre].hitpoints();
+        for ef in BLIGHT.side_effects(&mut e, wiz, Some(&vec![ogre]), None, None) {
+            ef.apply(&mut e);
+        }
+        let ogre_dealt = ogre_hp - e.actors.get(&ogre).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(ogre_dealt > 0, "the spell still works on an ordinary target");
+    }
+    // Both sides of the plant's save appear across the sweep, which is
+    // what proves the maximum is the *pool* and not a bypass of the
+    // save-for-half.
+    assert!(ever_full, "no seed failed the plant's save");
+    assert!(ever_halved, "no seed passed it — is the disadvantage total?");
+}
+
 /// Harm: lv6 necromancy, single-target CON-save-for-half necrotic
 /// (14d6) with max-HP reduction equal to damage dealt on a failed
 /// save. Verifies the lv6 slot cost, damage lands, and max HP is
