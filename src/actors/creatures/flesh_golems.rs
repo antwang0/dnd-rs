@@ -24,12 +24,15 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 9 (no natural armor — soft patchwork flesh),
 /// 93 HP (11d8+44). The standard construct envelope plus the **flesh
-/// golem signature**: lightning immunity (it's powered by lightning —
-/// RAW "Lightning Absorption" heals from lightning damage; we collapse
-/// to flat immunity since the engine doesn't yet model damage-to-heal
-/// conversion, mirroring how Iron Golem handles its Fire Absorption).
-/// Poison immunity (no metabolism), non-magical BPS resistance (the
-/// stitched-together hide shrugs off mundane blades).
+/// golem signature**: RAW's **Lightning Absorption** — "whenever the
+/// golem is subjected to Lightning damage, it regains a number of Hit
+/// Points equal to the Lightning damage dealt". It is powered by
+/// lightning, and a party that reaches for the obvious answer to a
+/// construct puts it back on its feet. Carried as
+/// `DamageModifier::Absorption`, which zeroes the damage exactly the
+/// way the immunity RAW also prints does, and pays out the heal at the
+/// damage chokepoint. Poison immunity (no metabolism), non-magical BPS
+/// resistance (the stitched-together hide shrugs off mundane blades).
 ///
 /// Magic Resistance is **off** RAW — RAW doesn't give the flesh golem
 /// the construct-tier anti-caster envelope (that's reserved for stone +
@@ -85,12 +88,11 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Construct,
         actions,
         // Construct envelope: non-magical BPS resistance + poison
-        // immunity from the shared helper, plus lightning immunity
-        // (RAW Lightning Absorption — heals from lightning, collapsed
-        // to flat immunity since the engine doesn't model damage-to-
-        // heal conversion).
+        // immunity from the shared helper, plus RAW's Lightning
+        // Absorption — zero damage taken and an equal number of hit
+        // points back.
         damage_modifiers: damage_modifiers_from([
-            (DamageType::Lightning, DamageModifier::Immunity),
+            (DamageType::Lightning, DamageModifier::Absorption),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         // Standard construct condition envelope: no mind, no joints, no
@@ -143,11 +145,12 @@ mod tests {
             0,
         )
         .unwrap();
-        // Lightning + poison immune (the golem's life-spark is
-        // lightning), non-magical BPS resistant.
+        // Lightning absorbed (the golem's life-spark is lightning, and
+        // RAW hands it back as hit points), poison immune, non-magical
+        // BPS resistant.
         assert_eq!(
             a.damage_modifier(DamageType::Lightning),
-            Some(DamageModifier::Immunity)
+            Some(DamageModifier::Absorption)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Poison),

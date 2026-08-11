@@ -733,26 +733,55 @@ impl ApplicableSideEffect for DealDamage {
         };
 
         // Apply per-creature damage modifier (resistance / immunity /
-        // vulnerability) before HP is touched. Logging the adjustment
-        // makes it obvious why a hit did half / no damage.
+        // absorption / vulnerability) before HP is touched. Logging the
+        // adjustment makes it obvious why a hit did half / no damage.
         let modifier = actor.damage_modifier(self.damage_type);
         let scaled = actor.effective_damage(raw_amount, self.damage_type);
+        // 5e's four Absorption traits, measured on the number *dealt* —
+        // before the sheet's own scaling, which for these creatures is
+        // an immunity that would leave nothing to heal from. This is the
+        // last site that still holds it, which is why the trait is paid
+        // out here rather than inside `take_typed_damage`: the scaling
+        // returns zero and the pipeline short-circuits below.
+        let absorbed = actor.absorbed_healing(raw_amount, self.damage_type);
         let was_concentrating = actor.is_concentrating();
         let temp_before = actor.temp_hp();
+        // Paid out before the modifier line is written so both land in
+        // the log in the order they read: "drinks Fire (24 → 0)" and
+        // then what the pool actually took. Routed through `heal` rather
+        // than written onto the pool, so an absorbing creature obeys the
+        // same cap and the same can't-regain gate as every other heal in
+        // the engine — a golem at full HP drinks nothing.
+        let absorb_gain = if absorbed > 0 {
+            let before = actor.hitpoints();
+            actor.heal(absorbed);
+            (actor.hitpoints().saturating_sub(before), actor.hitpoints())
+        } else {
+            (0, 0)
+        };
         if let Some(m) = modifier {
             let label = match m {
                 DamageModifier::Resistance => "resists",
                 DamageModifier::Immunity => "is immune to",
                 DamageModifier::Vulnerability => "is vulnerable to",
+                DamageModifier::Absorption => "drinks",
             };
             ei.log(format!(
                 "  {} {} {:?} ({} \u{2192} {})",
                 name, label, self.damage_type, raw_amount, scaled
             ));
         }
+        let (gained, now) = absorb_gain;
+        if gained > 0 {
+            ei.log(format!(
+                "  {} regains {} HP from it ({} HP)",
+                name, gained, now
+            ));
+        }
         if scaled == 0 {
-            // Immunity (or zeroed scaling): no further effects — no HP
-            // delta, no concentration save, no transition to dying.
+            // Immunity, absorption, or zeroed scaling: no further effects
+            // — no HP delta, no concentration save, no transition to
+            // dying.
             return;
         }
 

@@ -3966,6 +3966,125 @@ fn immunity_zeros_damage() {
     assert_eq!(e.actors[&id].hitpoints(), max);
 }
 
+/// Absorption is immunity plus a heal, and the heal is measured on the
+/// number that was thrown rather than on what survived the sheet.
+///
+/// The distinction is the whole implementation. Every absorbing
+/// creature in RAW is *also* printed as immune to the type it absorbs,
+/// so by the time the ordinary damage pipeline has finished scaling
+/// there is nothing left to heal from — which is why the trait is paid
+/// out at the chokepoint that still holds the pre-scaling amount, and
+/// why a version that healed by `effective_damage` would silently heal
+/// nobody for anything.
+#[test]
+fn an_absorbing_creature_regains_what_was_thrown_at_it() {
+    use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::{DamageModifier, DamageType};
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&IRON_GOLEM_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.actors[&id].damage_modifier(DamageType::Fire),
+        Some(DamageModifier::Absorption)
+    );
+    let max = e.actors[&id].max_hitpoints();
+    // Wound it first: the heal caps at the maximum like every other, so
+    // a golem at full HP proves nothing either way.
+    DealDamage {
+        actor_id: id,
+        amount: 60,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    let wounded = e.actors[&id].hitpoints();
+    assert!(wounded < max, "the force should have landed");
+
+    DealDamage {
+        actor_id: id,
+        amount: 33,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&id].hitpoints(),
+        (wounded + 33).min(max),
+        "the fireball tops the golem up by exactly what it rolled"
+    );
+}
+
+/// The heal obeys the hit-point maximum, so an unwounded absorber banks
+/// nothing — and takes nothing either.
+#[test]
+fn absorption_does_not_push_a_healthy_creature_past_its_maximum() {
+    use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&SHAMBLING_MOUND_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let max = e.actors[&id].max_hitpoints();
+    DealDamage {
+        actor_id: id,
+        amount: 40,
+        damage_type: DamageType::Lightning,
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&id].hitpoints(), max);
+}
+
+/// The picker rates an absorbed element as the worst matchup there is —
+/// worse than a resisted one, and not merely as bad as an immune one.
+///
+/// The three rungs are genuinely different decisions. Against
+/// resistance the swing is worth half; against immunity it is worth
+/// nothing; against absorption it is worth *less* than nothing, because
+/// the thing it hits stands back up. A caster whose only two options
+/// are a Fireball and a Magic Missile should reach for the missile
+/// against an Iron Golem, and it is this ranking that makes it.
+#[test]
+fn the_picker_ranks_a_drunk_element_below_a_merely_resisted_one() {
+    use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::ai::simple::matchup_penalty_vs_magic;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(14, 14, &[]);
+    let golem = e
+        .instantiate_creature(&IRON_GOLEM_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+        .unwrap();
+
+    let fire = matchup_penalty_vs_magic(&e, golem, &[DamageType::Fire]);
+    let force = matchup_penalty_vs_magic(&e, golem, &[DamageType::Force]);
+    assert!(
+        fire > force,
+        "fire against a fire-drinker should rank worse than force: {} vs {}",
+        fire,
+        force
+    );
+    // And a source that deals both is judged on the absorbed half — a
+    // flaming sword still lands its slashing, but the fire on it is a
+    // gift, and the picker has an unenchanted blade on the same list.
+    assert_eq!(
+        matchup_penalty_vs_magic(&e, golem, &[DamageType::Slashing, DamageType::Fire]),
+        fire,
+        "one absorbed type is enough to condemn the whole swing"
+    );
+    // The ranking is about the target, not about fire: the same element
+    // against somebody who merely burns is unremarkable.
+    assert!(
+        matchup_penalty_vs_magic(&e, wizard, &[DamageType::Fire]) < fire,
+        "a wizard is a perfectly good thing to aim fire at"
+    );
+}
+
 #[test]
 fn slime_resists_piercing_from_a_mundane_attack_and_nothing_else() {
     use crate::engine::side_effects::DealDamage;

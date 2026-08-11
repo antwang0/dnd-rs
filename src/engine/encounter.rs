@@ -10288,6 +10288,13 @@ impl EncounterInstance {
             &crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE,
             &crate::actors::creatures::solars::SOLAR_TEMPLATE,
             &crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE,
+            // Clay Golem (CR 9) — the rung between the flesh golem (CR
+            // 5) and the stone one (CR 10), and the widest gap the
+            // golem ladder had. Carries the roster's only acid
+            // absorption and the only unconditional hit-point-maximum
+            // drain, which is a different kind of pressure from anything
+            // else at its CR: a party that out-heals it still loses.
+            &crate::actors::creatures::clay_golems::CLAY_GOLEM_TEMPLATE,
             &crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE,
             // The SRD's NPC appendix, which the pool had never carried
             // a single entry of. Every other family in this list is a
@@ -12318,8 +12325,9 @@ impl EncounterInstance {
                         vuln = Some(dt);
                     }
                 }
-                Some(DamageModifier::Immunity) => {
-                    // Skip — never pick an immune type.
+                Some(DamageModifier::Immunity) | Some(DamageModifier::Absorption) => {
+                    // Skip — never pick a type the target takes nothing
+                    // from, and least of all one it drinks.
                 }
                 Some(DamageModifier::Resistance) => {
                     if resisted.is_none() {

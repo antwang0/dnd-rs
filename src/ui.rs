@@ -13,18 +13,24 @@ use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
 use crate::engine::util::get_colored_span;
 
-/// Render the actor's damage modifier table as up to four colored
-/// lines — Resistant / Immune / Vulnerable, plus the source-qualified
-/// "Resistant vs mundane" row. Each line is suppressed if the
-/// corresponding bucket is empty so PCs without any modifiers don't
-/// show empty rows. Damage types are sorted alphabetically so the
+/// Render the actor's damage modifier table as up to five colored
+/// lines — Resistant / Immune / Vulnerable / Healed by, plus the
+/// source-qualified "Resistant vs mundane" row. Each line is suppressed
+/// if the corresponding bucket is empty so PCs without any modifiers
+/// don't show empty rows. Damage types are sorted alphabetically so the
 /// output is stable across runs.
+///
+/// "Healed by" gets its own row rather than sharing "Immune" for the
+/// same reason "Resistant vs mundane" does: it is the difference
+/// between a wasted Fireball and one that undoes the party's last two
+/// rounds, and a player reading "Immune: Fire" off an Iron Golem would
+/// have no way to know which they were looking at.
 fn push_damage_modifier_line(
     stats_lines: &mut Vec<Line<'static>>,
     actor: &crate::actors::actor_template::ActorInstance,
 ) {
     use crate::engine::types::{DamageModifier, DamageType};
-    let mut buckets: [Vec<String>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut buckets: [Vec<String>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     // `DamageType::ALL` rather than a copy of the enum: this panel's
     // whole job is to be exhaustive, and a hand-written list is
     // exhaustive only until somebody adds a fourteenth damage type and
@@ -35,6 +41,7 @@ fn push_damage_modifier_line(
             Some(DamageModifier::Resistance) => buckets[0].push(format!("{:?}", dt)),
             Some(DamageModifier::Immunity) => buckets[1].push(format!("{:?}", dt)),
             Some(DamageModifier::Vulnerability) => buckets[2].push(format!("{:?}", dt)),
+            Some(DamageModifier::Absorption) => buckets[3].push(format!("{:?}", dt)),
             None => {}
         }
     }
@@ -42,6 +49,7 @@ fn push_damage_modifier_line(
         ("Resistant", Color::Cyan),
         ("Immune", Color::Green),
         ("Vulnerable", Color::Red),
+        ("Healed by", Color::Magenta),
     ];
     for (i, (label, color)) in labeled.iter().enumerate() {
         if buckets[i].is_empty() {

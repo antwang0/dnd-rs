@@ -173,8 +173,9 @@ impl fmt::Display for DamageType {
 }
 
 /// 5e damage modifier categories for a creature against a damage type.
-/// Resistance halves incoming damage, immunity nullifies it, vulnerability
-/// doubles it. A creature can declare any subset across damage types via
+/// Resistance halves incoming damage, immunity nullifies it, absorption
+/// nullifies it and heals, vulnerability doubles it. A creature can
+/// declare any subset across damage types via
 /// `CreatureTemplate.damage_modifiers`. Stacking rules (5e):
 /// - Immunity wins over everything else.
 /// - Resistance and vulnerability of the same type cancel (we follow this
@@ -184,15 +185,41 @@ pub enum DamageModifier {
     Resistance,
     Immunity,
     Vulnerability,
+    /// 5e's four **Absorption** traits — the Clay Golem's acid, the
+    /// Flesh Golem's and Shambling Mound's lightning, the Iron Golem's
+    /// fire. "Whenever the golem is subjected to Fire damage, it regains
+    /// a number of Hit Points equal to the Fire damage dealt."
+    ///
+    /// Immunity plus a heal, and the sheet says so: every creature that
+    /// carries one is *also* printed as immune to the type it absorbs,
+    /// so `apply` zeroing the damage is not an approximation of the
+    /// trait — it is the other half of the same stat line. The heal is
+    /// applied by the damage chokepoint in `side_effects::DealDamage`,
+    /// which is the only place that still holds the pre-modifier number
+    /// the trait is measured in.
+    ///
+    /// Three of the four shipped as bare `Immunity` with a comment
+    /// saying the heal had been collapsed away and a note about where a
+    /// future hook would go. This is that hook.
+    Absorption,
 }
 
 impl DamageModifier {
     pub fn apply(self, raw: u32) -> u32 {
         match self {
             DamageModifier::Resistance => raw / 2,
-            DamageModifier::Immunity => 0,
+            DamageModifier::Immunity | DamageModifier::Absorption => 0,
             DamageModifier::Vulnerability => raw.saturating_mul(2),
         }
+    }
+
+    /// True for the modifiers that leave the target taking nothing —
+    /// immunity and its healing sibling. The question every "is this
+    /// damage type worth aiming at this creature?" gate is really
+    /// asking, and the reason absorption reads as immunity everywhere
+    /// except the one site that pays out the heal.
+    pub fn zeroes_damage(self) -> bool {
+        matches!(self, DamageModifier::Immunity | DamageModifier::Absorption)
     }
 }
 
@@ -202,6 +229,7 @@ impl fmt::Display for DamageModifier {
             DamageModifier::Resistance => write!(f, "resistant"),
             DamageModifier::Immunity => write!(f, "immune"),
             DamageModifier::Vulnerability => write!(f, "vulnerable"),
+            DamageModifier::Absorption => write!(f, "healed"),
         }
     }
 }

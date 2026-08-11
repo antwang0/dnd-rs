@@ -31,14 +31,15 @@ use std::sync::LazyLock;
 ///   the dragon breath cone but at a smaller burst radius — matches the
 ///   RAW "15 ft cone, 10d8 poison" stat block.
 ///
-/// Damage envelope: nonmagical B/P/S resistance plus immunity to fire,
-/// poison, and psychic damage. The RAW **Fire Absorption** clause (fire
-/// damage heals the golem instead of harming it) collapses to flat fire
-/// immunity here — the engine doesn't yet model damage-type-to-heal
-/// conversion. The lossy approximation is a small overshoot in the
-/// golem's favor (RAW: the golem benefits from fire; here: it just shrugs
-/// it off). Documented at the top so a future Fire Absorption hook lands
-/// cleanly without surprising callers.
+/// Damage envelope: nonmagical B/P/S resistance, immunity to poison and
+/// psychic, and RAW's **Fire Absorption** on the fire lane — "whenever
+/// the golem is subjected to Fire damage, it regains a number of Hit
+/// Points equal to the Fire damage dealt". The clause used to be
+/// collapsed to flat fire immunity with a note about where a future
+/// hook would land; the hook is `DamageModifier::Absorption`, and the
+/// difference it makes is the whole character of the fight — a CR-16
+/// construct with 210 HP that a Fireball *tops up* is a different
+/// problem from one that merely ignores it.
 ///
 /// **Immutable Form** RAW makes the golem immune to any spell or effect
 /// that would alter its form (Polymorph, Petrification, Flesh to Stone,
@@ -85,12 +86,11 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Construct,
         actions,
-        // Construct damage envelope: nonmagical B/P/S resistance plus
-        // immunity to fire, poison, and psychic. Fire immunity is the
-        // approximation of RAW's Fire Absorption (heals from fire) —
-        // the engine doesn't yet model damage-to-heal conversion.
+        // Construct damage envelope: nonmagical B/P/S resistance,
+        // immunity to poison and psychic, and RAW's Fire Absorption —
+        // zero damage taken and an equal number of hit points back.
         damage_modifiers: damage_modifiers_from([
-            (DamageType::Fire, DamageModifier::Immunity),
+            (DamageType::Fire, DamageModifier::Absorption),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
@@ -141,10 +141,11 @@ mod tests {
             0,
         )
         .unwrap();
-        // Fire / poison / psychic immunity plus physical resistance.
+        // Fire absorbed (RAW's Fire Absorption), poison / psychic
+        // immunity, plus physical resistance.
         assert_eq!(
             a.damage_modifier(DamageType::Fire),
-            Some(DamageModifier::Immunity)
+            Some(DamageModifier::Absorption)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Poison),

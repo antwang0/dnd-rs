@@ -19416,13 +19416,17 @@ fn pick_damage_type_against_target(
     let Some(target) = encounter.actors.get(&target_id) else {
         return candidates[0];
     };
-    // Score: vuln = 2, none = 1, resist = 0, immune = -1. Higher wins.
+    // Score: vuln = 2, none = 1, resist = 0, immune = -1, absorbed = -2.
+    // Higher wins. Absorption sits below immunity rather than beside it
+    // because the two are not equally bad to pick: an immune type wastes
+    // the orb, and an absorbed one hands the target hit points.
     let score = |dt: &&DamageType| -> i32 {
         match target.damage_modifier(**dt) {
             Some(DamageModifier::Vulnerability) => 2,
             None => 1,
             Some(DamageModifier::Resistance) => 0,
             Some(DamageModifier::Immunity) => -1,
+            Some(DamageModifier::Absorption) => -2,
         }
     };
     candidates

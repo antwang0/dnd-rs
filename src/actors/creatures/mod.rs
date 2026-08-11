@@ -22,6 +22,7 @@ pub mod bugbears;
 pub mod bullettes;
 pub mod chimeras;
 pub mod chuuls;
+pub mod clay_golems;
 pub mod clerics;
 pub mod aasimars;
 pub mod cloakers;

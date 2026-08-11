@@ -3409,7 +3409,12 @@ fn try_transmuted_spell(
         let mut has_weak = false;
         for &dt in TRANSMUTABLE_DAMAGE_TYPES.iter() {
             match other.damage_modifier(dt) {
-                Some(DamageModifier::Resistance) | Some(DamageModifier::Immunity) => {
+                // Absorption belongs on the strong side for the same
+                // reason immunity does, and more so: it is the element
+                // the prime most wants to move a spell *off* of.
+                Some(DamageModifier::Resistance)
+                | Some(DamageModifier::Immunity)
+                | Some(DamageModifier::Absorption) => {
                     has_strong = true;
                 }
                 Some(DamageModifier::Vulnerability) | None => {
@@ -8141,6 +8146,7 @@ fn matchup_penalty(
     let mut all_immune = true;
     let mut has_vuln = false;
     let mut has_resist = false;
+    let mut has_absorbed = false;
     for dt in damage_types {
         // The target's source-qualified rows are the whole reason a
         // wraith is a bad target for a mundane sword and a fine one for
@@ -8157,6 +8163,7 @@ fn matchup_penalty(
         });
         match modifier {
             Some(DamageModifier::Immunity) => {}
+            Some(DamageModifier::Absorption) => has_absorbed = true,
             Some(DamageModifier::Vulnerability) => {
                 all_immune = false;
                 has_vuln = true;
@@ -8170,7 +8177,13 @@ fn matchup_penalty(
             }
         }
     }
-    if all_immune {
+    // An absorbed type is the one matchup that is worse than useless —
+    // the swing heals what it hits — so it takes the worst rung
+    // outright rather than being averaged against the source's other
+    // types. A flaming longsword against an Iron Golem still lands its
+    // slashing, but the fire on it is a gift, and the AI has an
+    // unenchanted blade on the same list.
+    if has_absorbed || all_immune {
         3
     } else if has_vuln {
         0

@@ -218,6 +218,7 @@ fn templates_with_magical_weapon_attacks() -> Vec<&'static crate::actors::actor_
         &couatls::COUATL_TEMPLATE,
         &devas::DEVA_TEMPLATE,
         &erinyes::ERINYES_TEMPLATE,
+        &clay_golems::CLAY_GOLEM_TEMPLATE,
         &horned_devils::HORNED_DEVIL_TEMPLATE,
         &iron_golems::IRON_GOLEM_TEMPLATE,
         &mariliths::MARILITH_TEMPLATE,

@@ -43,11 +43,11 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Large,
         creature_type: CreatureType::Plant,
         actions,
-        // RAW: Lightning Absorption (lightning damage heals); we collapse
-        // to immunity since the engine doesn't yet model damage-to-heal.
-        // Cold + fire resistance is the standard plant envelope per MM.
+        // RAW: Lightning Absorption — lightning damage deals nothing and
+        // heals the mound for the same number. Cold + fire resistance is
+        // the standard plant envelope per MM.
         damage_modifiers: HashMap::from([
-            (DamageType::Lightning, DamageModifier::Immunity),
+            (DamageType::Lightning, DamageModifier::Absorption),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
         ]),
@@ -89,7 +89,11 @@ mod tests {
             .instantiate_creature(&SHAMBLING_MOUND_TEMPLATE, Coordinate::new(5, 5), 1, 0)
             .unwrap();
         let m = &e.actors[&id];
-        assert!(m.is_immune_to(DamageType::Lightning));
+        assert_eq!(
+            m.damage_modifier(DamageType::Lightning),
+            Some(DamageModifier::Absorption),
+            "RAW's Lightning Absorption, not the flat immunity it used to be"
+        );
         assert!(m.is_resistant_to(DamageType::Cold));
         assert!(m.is_resistant_to(DamageType::Fire));
         assert!(m.find_action("shambling slam").is_some());

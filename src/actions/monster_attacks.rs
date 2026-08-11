@@ -11263,6 +11263,306 @@ pub static MUMMY_LORD_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     ],
 });
 
+// ─── Clay Golem ──────────────────────────────────────────────────────
+
+/// Once-per-turn ledger key for the Clay Golem's **Hasten**, read by
+/// `CLAY_GOLEM_MULTI` to decide whether this turn's multiattack is two
+/// slams or three. Shares the actor's `once_per_turn_marks` ledger with
+/// the charge and weapon-mastery clauses, so `reset_for_new_round`
+/// clears it and a golem that hastened last turn does not collect the
+/// third swing this one.
+pub const CLAY_GOLEM_HASTEN_TAG: &str = "clay golem: hasten";
+
+/// Clay Golem **Slam** (RAW): "Melee Attack Roll: +9, reach 5 ft. Hit:
+/// 10 (1d10 + 5) Bludgeoning damage plus 6 (1d12) Acid damage, and the
+/// target's Hit Point maximum decreases by an amount equal to the Acid
+/// damage taken."
+///
+/// Two damage instances and a drain sized off the second of them, which
+/// is why this is a bespoke `Action` rather than a `WeaponWithRider`
+/// row: the chassis can lay a second typed die on a hit, but nothing on
+/// it can then measure a third effect against that die's result.
+///
+/// The drain reads *taken*, not *dealt* — so it is sized off what the
+/// acid actually does to this target, after their resistances. RAW's
+/// wording differs from the Wraith's Life Drain a few hundred lines up
+/// ("equal to the necrotic damage dealt"), and the two implementations
+/// differ with it: an acid-resistant target loses half as much of its
+/// ceiling here, and a target immune to acid loses none. That is a
+/// meaningfully different rule from the one the wraith applies, and the
+/// stat blocks are the reason to keep both.
+///
+/// No save. The wraith's drain hangs off a CON save because RAW gives it
+/// one; the golem's does not, which is a large part of why a clay golem
+/// is a CR-9 problem that a party cannot simply out-heal — every slam
+/// permanently lowers the ceiling the healing is aiming at.
+pub struct ClayGolemSlam {}
+
+impl Action for ClayGolemSlam {
+    fn name(&self) -> &str {
+        "clay slam"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cslam", "clay-slam"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Acid]
+    }
+    /// The bludgeoning half through the shared weapon estimator, plus
+    /// the acid die on top. The acid is a flat addition rather than a
+    /// second estimator call because it is one die with no ability
+    /// modifier and no Extra Attack multiplier of its own — it rides the
+    /// swing the estimator already counted.
+    ///
+    /// The ceiling drain is deliberately left out. It is not damage: it
+    /// takes nothing off the target's current hit points, and folding it
+    /// in here would have the picker rate the slam as roughly half again
+    /// as lethal as it is, against a `Multiattack` estimate that is
+    /// measuring real hit points.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let bludgeon = crate::actions::action_template::weapon_expected_damage_named(
+            encounter,
+            caster_id,
+            "clay slam",
+            Dice::new(1, 10),
+            Some(AbilityScoreType::Strength),
+            Resource::Action,
+            0,
+        )?;
+        Some(bludgeon + Dice::new(1, 12).average_roll())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustMaxHp;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
+        let attack_mod = str_mod + caster.proficiency_bonus();
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "clay slam",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(1, 10),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        // A miss deals no acid and drains nothing — both clauses of the
+        // Hit line hang off the same hit.
+        if damage == 0 {
+            return effects;
+        }
+        let acid = encounter.roll(&Dice::new(1, 12));
+        // What the target *takes*, which is the number the drain is
+        // measured in. Asked of the target rather than assumed, so an
+        // acid-resistant creature loses half the ceiling and an
+        // acid-immune one loses none — and so a clay golem swinging at
+        // its own kind achieves nothing at all.
+        let taken = encounter
+            .actors
+            .get(&target_id)
+            .map_or(0, |t| t.effective_damage(acid, DamageType::Acid));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: acid,
+            damage_type: DamageType::Acid,
+        }));
+        if taken > 0 {
+            encounter.log(format!(
+                "  clay slam: {} acid sears the target's ceiling by {}",
+                acid, taken
+            ));
+            effects.push(Box::new(AdjustMaxHp {
+                actor_id: target_id,
+                delta: -(taken as i32),
+            }));
+        }
+        effects
+    }
+}
+
+pub static CLAY_GOLEM_SLAM: LazyLock<ClayGolemSlam> = LazyLock::new(|| ClayGolemSlam {});
+
+/// Clay Golem **Multiattack** (RAW): "The golem makes two Slam attacks,
+/// or it makes three Slam attacks if it used Hasten this turn."
+///
+/// A count that depends on what the creature already did this turn,
+/// which the shared `Multiattack` chassis cannot express — its `count`
+/// is a constant, and rightly so for the forty-odd rows that use it.
+/// The dependency is real and worth honouring: Hasten costs a bonus
+/// action and a recharge, and the third slam is most of what it buys.
+pub struct ClayGolemMulti {}
+
+impl Action for ClayGolemMulti {
+    fn name(&self) -> &str {
+        "clay golem multiattack"
+    }
+    fn chains_multiple_attacks(&self) -> bool {
+        true
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["multi", "ma"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        CLAY_GOLEM_SLAM.damage_types()
+    }
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let per_swing = CLAY_GOLEM_SLAM.expected_damage(encounter, caster_id)?;
+        Some(per_swing * clay_golem_slam_count(encounter, caster_id) as f32)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let swings = clay_golem_slam_count(encounter, caster_id);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // The depth counter is what stops the sub-attack from collecting
+        // an Extra Attack chain of its own — same guard every other
+        // multiattack wrapper in this file uses.
+        encounter.enter_multiattack();
+        for _ in 0..swings {
+            effects.extend(CLAY_GOLEM_SLAM.side_effects(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            ));
+        }
+        encounter.exit_multiattack();
+        effects
+    }
+}
+
+/// Two slams, or three off a Hasten already spent this turn. The one
+/// place the ledger key is read, so the resolver and the AI's damage
+/// estimate cannot disagree about how big this action is.
+fn clay_golem_slam_count(encounter: &EncounterInstance, caster_id: usize) -> u32 {
+    let hastened = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.once_per_turn_used(CLAY_GOLEM_HASTEN_TAG));
+    if hastened { 3 } else { 2 }
+}
+
+pub static CLAY_GOLEM_MULTI: LazyLock<ClayGolemMulti> = LazyLock::new(|| ClayGolemMulti {});
+
+/// Clay Golem **Hasten** (RAW, Recharge 5–6, bonus action): "The golem
+/// takes the Dash and Disengage actions."
+///
+/// Both halves reuse the default actions' own side effects rather than
+/// restating them — a Dash is `GiveResource(Movement(travel_speed))` and
+/// a Disengage is `SetDisengaging`, and a copy of either here would be
+/// a copy that stops tracking the original. (The Dash half in particular:
+/// `travel_speed` is the mount's speed for a mounted creature, and a
+/// clay golem is a plausible thing to be riding.)
+///
+/// It also marks the once-per-turn ledger key the multiattack reads, so
+/// the third slam is a consequence of having hastened rather than a
+/// separate roll of the same dice.
+pub struct ClayGolemHasten {}
+
+impl Action for ClayGolemHasten {
+    fn name(&self) -> &str {
+        "hasten"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hst", "clay-hasten"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        actor_has_recharge(encounter, caster_id, "clay_golem_hasten")
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(golem) = encounter.actors.get_mut(&caster_id) else {
+            return Vec::new();
+        };
+        golem.spend_recharge("clay_golem_hasten");
+        golem.mark_once_per_turn_used(CLAY_GOLEM_HASTEN_TAG);
+        encounter.log("  hasten: the clay quickens — dash and disengage");
+        let mut effects = crate::actions::default_actions::DASH.side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        );
+        effects.extend(crate::actions::default_actions::DISENGAGE.side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        ));
+        effects
+    }
+}
+
+pub static CLAY_GOLEM_HASTEN: LazyLock<ClayGolemHasten> = LazyLock::new(|| ClayGolemHasten {});
+
 // ─── Iron Golem ──────────────────────────────────────────────────────
 
 /// Iron Golem Slam — STR-based 3d8+STR bludgeoning melee. The golem's

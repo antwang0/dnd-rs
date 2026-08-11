@@ -6483,14 +6483,46 @@ impl ActorInstance {
     /// its top-of-pipeline immunity short-circuit) and any external
     /// rider that needs a single "is this actor zero-taking this type?"
     /// check. Sibling to `has_own_typed_reduction` (broader — includes
-    /// resistance / vulnerability) but narrower — immunity only.
+    /// resistance / vulnerability) but narrower — the zero-taking
+    /// modifiers only.
+    ///
+    /// `Absorption` counts, because it is immunity with a rider: RAW
+    /// prints every absorbing creature as immune to the type it absorbs,
+    /// and the heal is paid out by the damage chokepoint rather than by
+    /// the scaling. A gate here that admitted absorption would be asking
+    /// the engine to apply a halving to a number already destined for
+    /// zero, and would let a burst target-filter aim a Fireball at an
+    /// Iron Golem in the belief it was doing something.
     pub fn is_immune_to_damage_type(&self, dt: DamageType) -> bool {
-        matches!(
-            self.damage_modifiers.get(&dt),
-            Some(DamageModifier::Immunity)
-        ) || self.has_condition_immunity(dt)
+        self.damage_modifiers
+            .get(&dt)
+            .is_some_and(|m| m.zeroes_damage())
+            || self.has_condition_immunity(dt)
             || self.item_immunity_to_damage(dt)
             || self.has_passive_typed_immunity(dt)
+    }
+
+    /// The number of hit points this actor regains when `raw` damage of
+    /// type `dt` is aimed at it, or 0 for the overwhelmingly common case
+    /// of a creature that merely takes it.
+    ///
+    /// RAW's four Absorption traits are all worded "regains a number of
+    /// Hit Points equal to the \[type\] damage dealt", and *dealt* is the
+    /// number before the sheet touches it — which is why this takes the
+    /// raw amount and why it is asked at the one site that still has it.
+    /// The actual heal routes through `heal`, so a creature that can't
+    /// regain hit points (a Chill Touch mark, an undead under Harm)
+    /// absorbs nothing, which is the same answer every other healing
+    /// source in the engine gives.
+    pub fn absorbed_healing(&self, raw: u32, dt: DamageType) -> u32 {
+        if matches!(
+            self.damage_modifiers.get(&dt),
+            Some(DamageModifier::Absorption)
+        ) {
+            raw
+        } else {
+            0
+        }
     }
 
     /// True iff the actor holds any passive-feature-driven typed
@@ -6683,11 +6715,15 @@ impl ActorInstance {
         )
     }
 
+    /// True when the actor's own *template* zeroes damage of type `dt` —
+    /// through immunity or through absorption, which prints as immunity
+    /// on every stat block that has it. Narrower than
+    /// `is_immune_to_damage_type`, which also walks the condition, item
+    /// and passive-feature lanes; this one asks only about the sheet.
     pub fn is_immune_to(&self, dt: DamageType) -> bool {
-        matches!(
-            self.damage_modifiers.get(&dt),
-            Some(DamageModifier::Immunity)
-        )
+        self.damage_modifiers
+            .get(&dt)
+            .is_some_and(|m| m.zeroes_damage())
     }
 
     pub fn cr(&self) -> f32 {
