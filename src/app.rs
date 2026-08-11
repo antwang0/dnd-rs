@@ -42,6 +42,18 @@ pub struct App {
     map_height: u16,
     input_str: String,
     tmp_message: String,
+    /// Why the last "R: long rest & continue" press did nothing, or
+    /// `None` if it hasn't failed.
+    ///
+    /// The keypress used to discard `start_next_encounter`'s return
+    /// value, so a generation failure left the victory banner up, the
+    /// board unchanged and the player pressing R at a screen that
+    /// silently refused. Generation *can* fail — the difficulty ramp is
+    /// unbounded and the map is a fixed size, so a deep enough run
+    /// eventually asks for more creatures than the board has anchors
+    /// for — and "nothing happened, with no explanation" is the worst
+    /// available way to say so.
+    continue_error: Option<String>,
     selected_action_idx: usize,
     /// Index into the cached `valid_targets` list. Only meaningful when the
     /// selected action's schema is `SingleActor`.
@@ -72,6 +84,7 @@ impl App {
             map_height: u16::try_from(map_height).unwrap_or(u16::MAX),
             input_str: String::new(),
             tmp_message: String::new(),
+            continue_error: None,
             selected_action_idx: 0,
             selected_target_idx: 0,
             valid_targets: Vec::new(),
@@ -100,6 +113,12 @@ impl App {
     /// generated map alongside new enemies. Resets per-encounter UI state.
     /// Returns false if no team-0 survivors exist (game over) or generation
     /// fails — in either case the existing encounter is left untouched.
+    ///
+    /// The two false cases are not the same thing and no longer read the
+    /// same. A generation failure records its reason in `continue_error`,
+    /// which the banner prints, so the player is told the board could
+    /// not be built rather than being left to conclude the key is
+    /// broken.
     pub fn start_next_encounter(&mut self) -> bool {
         let pcs: Vec<ActorInstance> = self
             .encounter
@@ -138,9 +157,13 @@ impl App {
                 self.valid_targets.clear();
                 self.last_actor_id = None;
                 self.last_action_idx = None;
+                self.continue_error = None;
                 true
             }
-            Err(_) => false,
+            Err(err) => {
+                self.continue_error = Some(err.to_string());
+                false
+            }
         }
     }
 
@@ -464,6 +487,24 @@ impl App {
     /// The player did not lose — nobody did — and the alternative is
     /// making them quit over a fight the engine called off.
     fn completion_banner(&self) -> Option<String> {
+        let banner = self.completion_verdict()?;
+        // A failed continue is appended rather than replacing the
+        // verdict: the fight is still over and still won, and the player
+        // needs both facts to decide whether to press R again or quit.
+        match &self.continue_error {
+            Some(err) => Some(format!(
+                "{} [could not build the next encounter: {}]",
+                banner, err
+            )),
+            None => Some(banner),
+        }
+    }
+
+    /// The verdict half of the banner — who won, and what the player may
+    /// do about it. Split from `completion_banner` so the failed-continue
+    /// note has something to hang off without every arm below having to
+    /// know about it.
+    fn completion_verdict(&self) -> Option<String> {
         if !self.encounter.is_complete() {
             return None;
         }
@@ -833,6 +874,63 @@ mod tests {
             app.player_may_continue(),
             "a player who walked out of a draw has no more reason to be sent \
              to the quit prompt than one who won"
+        );
+    }
+
+    /// A continue that cannot build a board says so, instead of doing
+    /// nothing and leaving the player to press R at a screen that
+    /// refuses without explaining.
+    ///
+    /// The keypress discarded `start_next_encounter`'s return value, so
+    /// the two ways it can answer false — everybody is dead, and the
+    /// generator could not place anybody — were indistinguishable from
+    /// the outside and one of them was invisible. The failure is forced
+    /// here with a map too small to hold what the budget asks for,
+    /// which is the same shape the real one takes: an unbounded
+    /// difficulty ramp against a fixed-size board.
+    #[test]
+    fn a_continue_that_cannot_build_a_board_says_so() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        // A one-room map barely wider than the fighter standing in it,
+        // asked for a fight it has no anchors left to hold.
+        let terrain_params = TerrainGenParams {
+            width: 6,
+            height: 6,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let actor_params = ActorGenParams {
+            cr_target: 40.0,
+            n_teams: 2,
+            pc_template: Some(&FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+        // Build the app around a board the generator *can* make (the
+        // player alone), then ask it for the impossible next one.
+        let mut solo = actor_params.clone();
+        solo.n_teams = 1;
+        let encounter = EncounterInstance::from_params(&terrain_params, &solo, Some(3))
+            .expect("one fighter fits on any board");
+        let mut app = App::new(encounter, terrain_params, actor_params);
+        assert!(app.encounter.is_complete(), "one team left is a win");
+        assert!(app.player_may_continue());
+
+        let advanced = app.start_next_encounter();
+        assert!(!advanced, "the board cannot hold that fight");
+        assert_eq!(
+            app.encounter_number, 1,
+            "a failed continue must not advance the counter"
+        );
+        let banner = app
+            .completion_banner()
+            .expect("the fight is still over and still won");
+        assert!(
+            banner.contains("cleared"),
+            "the verdict survives the failure: {banner}"
+        );
+        assert!(
+            banner.contains("could not build the next encounter"),
+            "and the failure is named: {banner}"
         );
     }
 }

@@ -803,6 +803,36 @@ impl ApplicableSideEffect for DealDamage {
         if landed > 0 {
             actor.note_regen_damage(self.damage_type);
         }
+        // 5e's damage-triggered flinches — the Flesh Golem recoiling
+        // from fire, the Water Elemental stiffening in the cold. See
+        // `CreatureTemplate::flinches`.
+        //
+        // Gated on `landed > 0` alongside the suppressor above it, and
+        // for the same reason: RAW's trigger is "takes damage", so a
+        // creature whose resistances swallowed the blow entirely never
+        // felt it. Installed through `add_condition`, which honours
+        // immunity — a construct's flinch is not a poisoning and nothing
+        // on the roster is immune to either of these two, but the gate
+        // is the engine's and it costs nothing to keep going through it.
+        //
+        // Read into owned triples before installing anything: the rows
+        // are borrowed from the actor and the install needs it mutably.
+        let rows: Vec<(Condition, ConditionTimer, &'static str)> = if landed > 0 {
+            actor
+                .flinches_for(self.damage_type)
+                .into_iter()
+                .map(|f| (f.condition, f.timer, f.label))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut flinched: Vec<(Condition, &'static str)> = Vec::new();
+        for (condition, timer, label) in rows {
+            actor.add_condition(condition, timer);
+            if actor.has_condition(condition) {
+                flinched.push((condition, label));
+            }
+        }
         // 5e Sleep: any damage wakes the target. Strip the Asleep
         // condition silently — the engine logs the damage line right
         // below, so we don't need a separate wake-up log.
@@ -854,6 +884,9 @@ impl ApplicableSideEffect for DealDamage {
             "  {} takes {} {:?} damage",
             name, landed, self.damage_type
         ));
+        for (condition, label) in flinched {
+            ei.log(format!("  {}: {} is {}", label, name, condition.name()));
+        }
 
         match outcome {
             DamageOutcome::Downed => {

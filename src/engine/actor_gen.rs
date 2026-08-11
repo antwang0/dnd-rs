@@ -2,7 +2,8 @@ use std::error::Error;
 
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::errors::RngTryError;
+use crate::engine::errors::{NoLegalPosition, RngTryError};
+use crate::engine::util::get_tiles_from_size;
 
 const MAX_TRIES: usize = 512;
 
@@ -86,6 +87,30 @@ pub fn generate_actors(
     template_pool: &[&'static CreatureTemplate],
 ) -> Result<(), Box<dyn Error>> {
     let mut id_by_template: Vec<usize> = vec![0; template_pool.len()];
+    // Footprint widths the board has been *proven* to have no room for.
+    //
+    // `get_random_spawn` is an exhaustive scan of a shuffled coordinate
+    // list, so an `Err` from it is not bad luck — it is a proof that no
+    // anchor anywhere on the map can hold a creature of that size. The
+    // loop below used to answer that proof by drawing again from the
+    // same pool, which could only re-ask a settled question: on a board
+    // with no room left for anything Large, every Large draw failed
+    // identically and the budget of tries drained into a random walk
+    // whose large steps could never land.
+    //
+    // Remembering the answer turns that walk into a monotone narrowing.
+    // The board only ever gets fuller inside this function, so a width
+    // that did not fit cannot start fitting, and there are six widths —
+    // so the loop either places something or permanently removes a size
+    // class on every iteration.
+    //
+    // Widths rather than `Size`, and `>=` rather than `==`, because the
+    // proof generalizes upward: a Huge anchor needs a 3×3 of spawnable
+    // tiles, which contains a 2×2, so "no room for a Large" already
+    // establishes "no room for a Huge" without spending a draw finding
+    // out.
+    let mut full_widths: Vec<usize> = Vec::new();
+    let width_is_full = |full: &[usize], size| full.iter().any(|&w| get_tiles_from_size(size) >= w);
     for team_id in params.start_team..params.n_teams {
         // Team 0 uses the fixed PC template if provided; else fall
         // through to the random CR-target generator.
@@ -106,8 +131,20 @@ pub fn generate_actors(
                 return Err(Box::new(RngTryError));
             }
             tries += 1;
-            let affordable = affordable_templates(template_pool, params.cr_target - cr_total);
-            let idx = affordable[ei.rng().usize(0..affordable.len())];
+            let affordable: Vec<usize> =
+                affordable_templates(template_pool, params.cr_target - cr_total)
+                    .into_iter()
+                    .filter(|&i| !width_is_full(&full_widths, template_pool[i].size))
+                    .collect();
+            // Everything the budget could still buy is too big for what
+            // is left of the map. That is a board that has run out of
+            // room, not an unlucky roll, and it is worth saying so:
+            // spinning out the remaining tries would report it as
+            // "exceeded max tries for rng", which names neither the
+            // cause nor anything the caller could act on.
+            let Some(&idx) = affordable.get(ei.rng().usize(0..affordable.len().max(1))) else {
+                return Err(Box::new(NoLegalPosition));
+            };
             let creature_template = &template_pool[idx];
             let location_result = ei.get_random_spawn(creature_template.size);
             let instance_n = id_by_template[idx];
@@ -117,7 +154,10 @@ pub fn generate_actors(
                     id_by_template[idx] += 1;
                     cr_total += creature_template.cr;
                 }
-                Err(_) => continue,
+                Err(_) => {
+                    full_widths.push(get_tiles_from_size(creature_template.size));
+                    continue;
+                }
             }
         }
     }
@@ -237,6 +277,89 @@ mod tests {
             assert!(
                 enemy_cr < 3.0,
                 "seed {} generated {} CR of enemies against a budget of 1.0",
+                seed,
+                enemy_cr
+            );
+        }
+    }
+
+    /// A board with no room left fails as a board with no room left,
+    /// and fails at once.
+    ///
+    /// `get_random_spawn` is an exhaustive scan, so its `Err` proves no
+    /// anchor on the map fits that footprint — a proof the loop used to
+    /// answer by drawing again from the same pool and re-asking. The
+    /// symptom was an encounter that spent all 512 tries re-failing and
+    /// then reported "exceeded max tries for rng", which names the
+    /// budget it ran out of rather than the wall it ran into. Neither
+    /// half of that is something a caller can act on.
+    ///
+    /// The assertion is on the message rather than on a type, because
+    /// the error is boxed by the time it leaves the generator and the
+    /// message is what any caller — including the banner the player
+    /// reads — actually gets.
+    #[test]
+    fn a_board_with_no_room_left_says_that_and_not_something_about_the_rng() {
+        let tp = TerrainGenParams {
+            width: 6,
+            height: 6,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 60.0,
+            n_teams: 2,
+            pc_template: Some(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+        let err = EncounterInstance::from_params(&tp, &ap, Some(1))
+            .err()
+            .expect("a six-by-six room cannot hold sixty CR of monsters");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("legal position"),
+            "the generator should name the wall it hit, got: {msg}"
+        );
+        assert!(
+            !msg.contains("max tries"),
+            "and should not blame the dice for it: {msg}"
+        );
+    }
+
+    /// The narrowing is monotone: once a footprint is known not to fit,
+    /// every footprint at least that wide is dropped from the draw
+    /// without spending a try proving it separately.
+    ///
+    /// Asserted through the outcome rather than by inspecting the memo,
+    /// since the memo is a local: a board that admits Medium creatures
+    /// and nothing larger still fills to its budget, which it could only
+    /// do by giving up on the bigger draws rather than re-rolling them.
+    #[test]
+    fn a_cramped_board_still_fills_its_budget_with_what_fits() {
+        let tp = TerrainGenParams {
+            width: 14,
+            height: 14,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        for seed in 0..25u64 {
+            let ap = ActorGenParams {
+                cr_target: 4.0,
+                n_teams: 2,
+                pc_template: Some(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE),
+                start_team: 0,
+            };
+            let e = EncounterInstance::from_params(&tp, &ap, Some(seed))
+                .unwrap_or_else(|err| panic!("seed {seed}: {err}"));
+            let enemy_cr: f32 = e
+                .actors
+                .values()
+                .filter(|a| a.team() != 0)
+                .map(|a| a.cr())
+                .sum();
+            assert!(
+                enemy_cr >= 4.0,
+                "seed {} closed out at {} CR against a budget of 4.0",
                 seed,
                 enemy_cr
             );

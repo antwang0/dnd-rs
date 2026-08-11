@@ -4088,8 +4088,19 @@ pub fn try_fire_charge_follow_up(
     // Fire the attack's `side_effects` directly, the same chokepoint the
     // opportunity-attack, Riposte and Voice of Authority dispatchers use,
     // so the limb's own riders fold in without a bespoke roll pipeline.
+    //
+    // Inside the multiattack depth counter, which is what every wrapper
+    // with a fixed swing count uses to stop `maybe_chain_extra_attack`
+    // from doubling it. RAW grants "one bite attack", and this side of
+    // the fence is not a place the reader would think to look for the
+    // guard: none of the seven creatures carrying the clause has Extra
+    // Attack today, so its absence would cost nothing until the day
+    // somebody gave a saber-toothed tiger a second swing and quietly got
+    // a fourth.
     let target_vec = vec![target_id];
+    encounter.enter_multiattack();
     let effects = attack.side_effects(encounter, attacker_id, Some(&target_vec), None, None);
+    encounter.exit_multiattack();
     for e in effects {
         e.apply(encounter);
     }

@@ -1105,9 +1105,9 @@ impl crate::engine::attack::ActionOnHitRider for BloodiedBite {
             return 0;
         }
         // Strictly below half, so a barbarian at exactly half is not yet
-        // hurt enough. `* 2` rather than `/ 2` keeps the odd-max case
-        // honest: 25 of 51 is below half, 26 is not.
-        if barbarian.hitpoints() * 2 >= barbarian.max_hitpoints() {
+        // hurt enough — RAW's wording here is "fewer than half", not the
+        // Bloodied line.
+        if !barbarian.is_below_half_hitpoints() {
             return 0;
         }
         let heal = barbarian.proficiency_bonus().max(0) as u32;

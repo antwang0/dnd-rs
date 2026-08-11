@@ -17252,8 +17252,9 @@ impl Action for TurnTheTide {
                     caster_loc,
                     caster_size,
                 );
-                // RAW: "at or below half its hit point maximum".
-                dist <= 12 && a.hitpoints() * 2 <= a.max_hitpoints()
+                // RAW: "at or below half its hit point maximum" — the
+                // Bloodied line, asked by name.
+                dist <= 12 && a.is_bloodied()
             })
             .map(|(id, _)| *id)
             .collect();

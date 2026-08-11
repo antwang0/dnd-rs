@@ -1631,6 +1631,14 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
         flag: |a| a.has_condition(Condition::Hobbled),
         bonus_ft: -10.0,
     },
+    // 5e Water Elemental **Freeze**: "its Speed decreases by 20 feet
+    // until the end of its next turn." The deepest cut on the cohort,
+    // and the only one installed by taking damage rather than by being
+    // hit with something — see `CreatureTemplate::flinches`.
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::Chilled),
+        bonus_ft: -20.0,
+    },
 ];
 
 /// One row in a **boolean cohort** — a single source of some yes/no
@@ -2717,6 +2725,32 @@ pub struct CreatureTemplate {
     /// lands, `regen_suppressed` flips on the instance; `round_end`
     /// clears it after skipping that round's heal.
     pub regen_suppressors: HashSet<DamageType>,
+    /// 5e's **damage-triggered flinch** traits: taking damage of a
+    /// listed type installs a condition on the creature that took it.
+    ///
+    /// Two stat blocks carry one — the Flesh Golem's *Aversion to Fire*
+    /// ("if the golem takes Fire damage, it has Disadvantage on attack
+    /// rolls and ability checks until the end of its next turn") and the
+    /// Water Elemental's *Freeze* ("if the elemental takes Cold damage,
+    /// its Speed decreases by 20 feet until the end of its next turn").
+    /// Both shipped unimplemented, and the flesh golem's docstring said
+    /// why: "the engine doesn't yet have a damage-type-triggered debuff
+    /// hook".
+    ///
+    /// Declared on the sheet rather than wired at the two creatures for
+    /// the reason the sheet exists — it is a property of the creature,
+    /// like `regen_suppressors` directly above, whose shape this
+    /// deliberately mirrors. That neighbour is the same idea one step
+    /// less general: a fixed set of damage types that changes something
+    /// about the creature when one of them lands. The difference is
+    /// that a suppressor's effect is hardcoded and a flinch names its
+    /// own, which is what lets one field serve two creatures whose
+    /// reactions have nothing in common.
+    ///
+    /// Paid out at the damage chokepoint in
+    /// `side_effects::DealDamage`, and only when damage actually landed
+    /// — a golem that shrugged the fire off entirely never felt it.
+    pub flinches: Vec<DamageFlinch>,
     /// 5e Legendary Resistance — number of times per long rest the creature
     /// can choose to succeed on a save it just failed. Read by
     /// `EncounterInstance::roll_save`: when a failed save would land and
@@ -3806,6 +3840,7 @@ impl CreatureTemplate {
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
+            flinches: Vec::new(),
             legendary_resistances: 0,
             arcane_ward_base: 0,
             portent_dice: 0,
@@ -3885,6 +3920,32 @@ impl CreatureTemplate {
 /// templates that pair an unqualified overlay list with
 /// `resistant_to_nonmagical_physical` do not each have to import
 /// `HashMap` to say "no overlays".
+/// One 5e **damage-triggered flinch** — a damage type (or a few) that,
+/// on landing, leaves the creature that took it holding `condition`.
+///
+/// Carried in `CreatureTemplate::flinches`; see that field for why the
+/// rule lives on the sheet.
+///
+/// `timer` is stated per row rather than fixed, because RAW's two rows
+/// happen to agree ("until the end of its next turn") and there is no
+/// reason to assume the third will. Both use `Rounds(2)`, which is the
+/// engine's established reading of that phrase — timers tick at round
+/// end, so `Rounds(1)` would expire before the creature's next turn
+/// whenever the damage arrived after it in the order, and covering the
+/// next turn is the load-bearing half of the clause.
+#[derive(Clone, Debug)]
+pub struct DamageFlinch {
+    /// The damage types that trigger it. A slice rather than a single
+    /// type because nothing about the rule is singular — RAW's two rows
+    /// each name one element, and a stat block naming two would be
+    /// unremarkable.
+    pub types: &'static [DamageType],
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    /// What the log calls it — "aversion to fire", "freeze".
+    pub label: &'static str,
+}
+
 pub fn damage_modifiers_from(
     entries: impl IntoIterator<Item = (DamageType, DamageModifier)>,
 ) -> HashMap<DamageType, DamageModifier> {
@@ -4408,6 +4469,7 @@ pub struct ActorInstance {
     /// heal is skipped.
     regen_per_round: u32,
     regen_suppressors: HashSet<DamageType>,
+    flinches: Vec<DamageFlinch>,
     regen_suppressed: bool,
     /// Remaining 5e Mirror Image decoys. Each incoming attack rolls
     /// against the decoy pool first; a hit pops one decoy and misses the
@@ -4794,6 +4856,7 @@ impl ActorInstance {
             help_grants: HashMap::new(),
             regen_per_round: ct.regen_per_round,
             regen_suppressors: ct.regen_suppressors.clone(),
+            flinches: ct.flinches.clone(),
             regen_suppressed: false,
             mirror_images: 0,
             condition_links: HashMap::new(),
@@ -5056,7 +5119,7 @@ impl ActorInstance {
     /// `heal` refuses them, but the predicate stays honest about what it
     /// measures rather than latching.
     pub fn is_thinned_swarm(&self) -> bool {
-        self.is_swarm && self.hitpoints * 2 <= self.max_hitpoints()
+        self.is_swarm && self.is_bloodied()
     }
 
     pub fn has_magic_resistance(&self) -> bool {
@@ -5793,6 +5856,17 @@ impl ActorInstance {
     /// Flag the actor's regeneration as suppressed for this round if `dt`
     /// is one of the configured suppressor types. No-op for non-regen
     /// actors (whose `regen_suppressors` set is empty).
+    /// Every flinch on this creature's sheet triggered by damage of
+    /// type `dt`. Empty for the overwhelmingly common case of a
+    /// creature with no such clause, which is what keeps the damage
+    /// chokepoint's cost to one `is_empty` on the hot path.
+    pub fn flinches_for(&self, dt: DamageType) -> Vec<&DamageFlinch> {
+        self.flinches
+            .iter()
+            .filter(|f| f.types.contains(&dt))
+            .collect()
+    }
+
     pub fn note_regen_damage(&mut self, dt: DamageType) {
         if self.regen_suppressors.contains(&dt) {
             self.regen_suppressed = true;
@@ -7708,11 +7782,45 @@ impl ActorInstance {
     /// True if the actor has taken any damage relative to their full HP
     /// pool. Centralizes the recurring `hitpoints() < max_hitpoints()`
     /// check so wounded-creature riders (Sahuagin Blood Frenzy advantage,
-    /// future "bloodied" predicates) read from one chokepoint and a
-    /// future redefinition of "wounded" (e.g. half-HP threshold) lands
-    /// in one place instead of being scattered across call sites.
+    /// Hunter Shark's advantage on a hurt target) read from one
+    /// chokepoint. The loosest of the three HP thresholds the rules use
+    /// — see `is_bloodied` for the half-HP one.
     pub fn is_wounded(&self) -> bool {
         self.hitpoints() < self.max_hitpoints()
+    }
+
+    /// 5e (SRD 5.2) **Bloodied**: "a creature is Bloodied while it has
+    /// half its Hit Points or fewer." A defined game term rather than a
+    /// description, which is why it is a named predicate — 5.2 hangs
+    /// stat-block triggers off it by name (the Clay and Flesh Golems'
+    /// Berserk, several recharge clauses), and each of those wants to
+    /// ask the question rather than restate the arithmetic.
+    ///
+    /// **At or below half**, per the definition. Its strict sibling is
+    /// `is_below_half_hitpoints`, and the distinction is not
+    /// hair-splitting: 5e has clauses written both ways and they part
+    /// company on exactly the tick a creature is knocked to half.
+    ///
+    /// Spelled `hp * 2 <= max` rather than `hp <= max / 2`, because the
+    /// two disagree on every odd maximum — at 51 max, half is 25.5, and
+    /// integer division would put the line at 25 instead of 26. Three
+    /// call sites had each worked that out separately, two of them with
+    /// a comment explaining it.
+    pub fn is_bloodied(&self) -> bool {
+        self.hitpoints() * 2 <= self.max_hitpoints()
+    }
+
+    /// The strict half-HP threshold — 5e's "fewer than half your hit
+    /// points remaining" wording, as distinct from `is_bloodied`'s "half
+    /// or fewer".
+    ///
+    /// Two features on the roster are written this way (the Paladin's
+    /// Protective Spirit and the Barbarian's Form of the Beast bite),
+    /// and for both of them the strictness is the point: a creature
+    /// sitting on exactly half has not yet crossed the line, which is
+    /// what keeps the feature from firing on a scratch.
+    pub fn is_below_half_hitpoints(&self) -> bool {
+        self.hitpoints() * 2 < self.max_hitpoints()
     }
 
     /// Permanently bump the actor's max HP by `delta`. Current HP rises
@@ -8540,7 +8648,7 @@ impl ActorInstance {
         // doesn't auto-resurrect; Survivor is stabilization, not revival.
         if matches!(self.hp_state, HpState::Active)
             && self.hitpoints > 0
-            && self.hitpoints * 2 <= self.max_hitpoints()
+            && self.is_bloodied()
             && self.has_passive_feature(crate::actions::class_features::SURVIVOR_TAG)
         {
             let con_mod = modifier_from_score(self.constitution);

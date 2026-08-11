@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FLESH_GOLEM_MULTI, FLESH_GOLEM_SLAM};
-use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
-use crate::conditions::Condition;
+use crate::actors::actor_template::{CreatureTemplate, DamageFlinch, damage_modifiers_from};
+use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -52,11 +52,13 @@ use std::sync::LazyLock;
 /// the template lane. Future polish bucket if a "berserk_threshold"
 /// chassis lands.
 ///
-/// **Aversion of Fire** (disadvantage on attacks and ability checks
-/// after taking fire damage on the previous turn) — also omitted since
-/// the engine doesn't yet have a "damage-type-triggered debuff" hook;
-/// the headline combat clause is the slam multi + lightning immunity
-/// envelope, both of which we model directly.
+/// **Aversion to Fire** (RAW: "if the golem takes Fire damage, it has
+/// Disadvantage on attack rolls and ability checks until the end of its
+/// next turn") is the other half of the golem's elemental character and
+/// the exact mirror of the absorption above it — lightning feeds it,
+/// fire makes it recoil. It used to be omitted because "the engine
+/// doesn't yet have a 'damage-type-triggered debuff' hook"; the hook is
+/// `CreatureTemplate::flinches`, and this is one of its two rows.
 ///
 /// Stat shape: AC 9, ~93 HP (11d8+44), STR 19, DEX 9, CON 18, INT 6,
 /// WIS 10, CHA 5. Speed 30 (slow lurching shamble). Senses: Darkvision
@@ -95,6 +97,14 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Lightning, DamageModifier::Absorption),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
+        // RAW **Aversion to Fire**. `Rounds(2)` is the engine's reading
+        // of "until the end of its next turn" — see `DamageFlinch`.
+        flinches: vec![DamageFlinch {
+            types: &[DamageType::Fire],
+            condition: Condition::Flinching,
+            timer: ConditionTimer::Rounds(2),
+            label: "aversion to fire",
+        }],
         // Standard construct condition envelope: no mind, no joints, no
         // metabolism, no pulse. Petrified joins the set as the standard
         // proxy for the "Immutable Form" clause (RAW: immune to any

@@ -4015,6 +4015,94 @@ fn an_absorbing_creature_regains_what_was_thrown_at_it() {
     );
 }
 
+/// A flesh golem that takes fire flinches from it, on both the clauses
+/// RAW names — and a golem that takes no fire does not.
+///
+/// The negative half is the one worth asserting. RAW's trigger is
+/// "takes Fire damage", so the clause hangs off damage actually landing
+/// rather than off being aimed at: a golem whose resistances swallowed
+/// the blow never felt it, which is the same gate the regeneration
+/// suppressor beside it uses.
+#[test]
+fn a_flesh_golem_flinches_from_fire_and_from_nothing_else() {
+    use crate::actors::creatures::flesh_golems::FLESH_GOLEM_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::dice::RollMode;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::{AbilityScoreType, DamageType};
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&FLESH_GOLEM_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // Its own lightning is absorbed, so it is not damage and cannot be
+    // a trigger for anything.
+    DealDamage {
+        actor_id: id,
+        amount: 20,
+        damage_type: DamageType::Lightning,
+    }
+    .apply(&mut e);
+    assert!(!e.actors[&id].has_condition(Condition::Flinching));
+    DealDamage {
+        actor_id: id,
+        amount: 20,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&id].has_condition(Condition::Flinching),
+        "the clause names fire, not damage"
+    );
+
+    DealDamage {
+        actor_id: id,
+        amount: 12,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&id].has_condition(Condition::Flinching));
+    // Both of RAW's clauses, asked the way the engine asks them.
+    assert_eq!(
+        e.compute_check_mode(id, AbilityScoreType::Strength),
+        RollMode::Disadvantage,
+        "\"Disadvantage on ... ability checks\""
+    );
+    assert!(
+        Condition::Flinching.imposes_attacker_disadvantage(),
+        "\"Disadvantage on attack rolls ...\""
+    );
+}
+
+/// A water elemental that takes cold slows down, and the cut is the
+/// twenty feet RAW asks for rather than the ten every other speed
+/// condition on the cohort takes.
+#[test]
+fn a_water_elemental_stiffens_in_the_cold() {
+    use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let full_speed = e.actors[&id].speed();
+    DealDamage {
+        actor_id: id,
+        amount: 15,
+        damage_type: DamageType::Cold,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&id].has_condition(Condition::Chilled));
+    assert_eq!(
+        e.actors[&id].speed(),
+        full_speed - 20.0,
+        "RAW's Freeze takes twenty feet, not the cohort's usual ten"
+    );
+}
+
 /// The heal obeys the hit-point maximum, so an unwounded absorber banks
 /// nothing — and takes nothing either.
 #[test]

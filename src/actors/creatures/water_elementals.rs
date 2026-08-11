@@ -3,11 +3,14 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     WATER_ELEMENTAL_MULTI, WATER_ELEMENTAL_SLAM, WATER_ELEMENTAL_WHELM,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, DamageFlinch};
 use crate::actors::creatures::fire_elementals::{
     ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
 };
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::conditions::{Condition, ConditionTimer};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -20,6 +23,13 @@ use std::sync::LazyLock;
 /// targets Prone. Completes the elemental quartet — the random
 /// encounter pool now has all four primordial flavors available at
 /// CR 5.
+///
+/// **Freeze** (RAW: "if the elemental takes Cold damage, its Speed
+/// decreases by 20 feet until the end of its next turn") rides
+/// `CreatureTemplate::flinches`. Twenty feet is the deepest speed cut
+/// on the roster, and against a creature whose whole tactical identity
+/// is closing fast enough to Whelm somebody it is the answer a party
+/// with any cold damage at all is holding.
 pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&WATER_ELEMENTAL_SLAM);
@@ -58,6 +68,19 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             DamageModifier::Resistance,
         )]),
         condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
+        // RAW **Freeze**: "if the elemental takes Cold damage, its Speed
+        // decreases by 20 feet until the end of its next turn." The one
+        // clause on this stat block that gives a party an answer to a
+        // creature otherwise faster than most of them — and the reason
+        // the elemental quartet is four fights rather than one recolored
+        // four times. `Rounds(2)` is the engine's reading of "until the
+        // end of its next turn"; see `DamageFlinch`.
+        flinches: vec![DamageFlinch {
+            types: &[DamageType::Cold],
+            condition: Condition::Chilled,
+            timer: ConditionTimer::Rounds(2),
+            label: "freeze",
+        }],
         // `WATER_ELEMENTAL_WHELM` reads this slot via the shared recharge
         // table; the engine's start-of-turn d6 flips it back on 4+.
         recharge_abilities: vec![("whelm", 4)],

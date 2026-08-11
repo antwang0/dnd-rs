@@ -847,6 +847,10 @@ const BLANKET_CHECK_DISADVANTAGE_CONDITIONS: &[Condition] = &[
     // track LOS-to-the-fear-source, so the clause is unconditional —
     // the same simplification the attack lane already makes.
     Condition::Frightened,
+    // 5e Flesh Golem Aversion to Fire: "Disadvantage on attack rolls
+    // and ability checks until the end of its next turn." The other
+    // clause rides `imposes_attacker_disadvantage`.
+    Condition::Flinching,
     // 5e Feeblemind: INT and CHA drop to 1. The save lane scopes the
     // penalty to the three mental abilities; a check is asked for by
     // ability here too, so the scoping lives in `compute_check_mode`
@@ -10895,11 +10899,10 @@ impl EncounterInstance {
             a.has_passive_feature(PROTECTIVE_SPIRIT_TAG)
                 && a.is_combat_active()
                 && !a.is_incapacitated()
-                // RAW's "fewer than half of your hit points remaining".
-                // Strict, so a paladin sitting on exactly half gets
-                // nothing — which is the reading that keeps the feature
-                // from firing on a scratch.
-                && a.hitpoints() * 2 < a.max_hitpoints()
+                // RAW's "fewer than half of your hit points remaining"
+                // — the strict rung, not the Bloodied one, so a paladin
+                // sitting on exactly half gets nothing.
+                && a.is_below_half_hitpoints()
         });
         if !eligible {
             return;

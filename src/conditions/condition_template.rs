@@ -2269,6 +2269,42 @@ pub enum Condition {
     /// different rule that would have been silently widened by sharing
     /// a flag.
     Hobbled,
+    /// 5e Flesh Golem **Aversion to Fire**: *"if the golem takes Fire
+    /// damage, it has Disadvantage on attack rolls and ability checks
+    /// until the end of its next turn."*
+    ///
+    /// One of the two conditions installed by the damage-triggered
+    /// `FLINCHES` lane — see `CreatureTemplate::flinches` for why a
+    /// creature's reaction to a damage type is declared on the sheet
+    /// rather than hand-wired at the golem.
+    ///
+    /// Sits on `imposes_attacker_disadvantage` and
+    /// `BLANKET_CHECK_DISADVANTAGE_CONDITIONS`, which between them are
+    /// the two clauses RAW names, and on nothing else — the golem is
+    /// recoiling from the flame, not poisoned by it, and every other
+    /// rule that reads `Poisoned` (the condition with the identical
+    /// two-clause effect) would have been silently widened by borrowing
+    /// it. Constructs are immune to `Poisoned` anyway, so borrowing it
+    /// would not merely have been imprecise: it would have done
+    /// nothing at all.
+    Flinching,
+    /// 5e Water Elemental **Freeze**: *"if the elemental takes Cold
+    /// damage, its Speed decreases by 20 feet until the end of its next
+    /// turn."*
+    ///
+    /// The other row on the `FLINCHES` lane, and the deepest single
+    /// speed cut on `CONDITION_SPEED_BONUSES` — which is the whole
+    /// implementation, exactly as it is for `Hobbled` and `Coiled`
+    /// above it. Twenty feet off a thirty-foot walk is most of it; the
+    /// elemental's ninety-foot swim is untouched, because the cohort
+    /// bumps the walking speed and RAW's clause reads "its Speed" on a
+    /// creature whose speed line prints both.
+    ///
+    /// Named for what happens to the target rather than after the trait
+    /// ("Freeze"), for the same reason `Hobbled` is not called `Slow`:
+    /// the effect is a speed cut a second source could plausibly want,
+    /// and the trait name would have tied it to one stat block.
+    Chilled,
     /// 5e **Vex** weapon mastery: *"if you hit a creature with this
     /// weapon and deal damage to it, you have Advantage on your next
     /// attack roll against that creature."*
@@ -2549,6 +2585,8 @@ impl Condition {
             Condition::HexbladeCursed => "cursed by a hexblade",
             Condition::Sapped => "sapped",
             Condition::Hobbled => "hobbled",
+            Condition::Flinching => "flinching",
+            Condition::Chilled => "chilled",
             Condition::Vexed => "vexed",
             Condition::Surprised => "surprised",
             Condition::Banished => "banished",
@@ -2965,6 +3003,10 @@ impl Condition {
                 // cohort — see `CONSUMED_ON_ATTACK`, which spends it on
                 // the swing it penalises.
                 | Condition::Sapped
+                // 5e Flesh Golem Aversion to Fire — half of RAW's two
+                // clauses; the ability-check half rides
+                // `BLANKET_CHECK_DISADVANTAGE_CONDITIONS`.
+                | Condition::Flinching
         )
     }
 

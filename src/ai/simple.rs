@@ -5985,9 +5985,9 @@ fn try_beast_bite_when_bloodied(
     {
         return None;
     }
-    // Strictly below half — the same threshold the rider itself checks,
+    // Strictly below half — the same predicate the rider itself checks,
     // so the rung never reaches for a bite that would heal nothing.
-    if actor.hitpoints() * 2 >= actor.max_hitpoints() {
+    if !actor.is_below_half_hitpoints() {
         return None;
     }
     let bite = actor.find_action("bite")?;
