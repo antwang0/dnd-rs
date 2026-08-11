@@ -772,6 +772,32 @@ pub fn render_sideinfo(
             },
             Style::default().fg(Color::LightBlue),
         )));
+    } else if curr_actor.base_fly_speed() > 0.0 {
+        // A creature with wings that is not using them. The line exists
+        // because the Movement number one row up has quietly changed
+        // meaning: a wyvern in the air is moving 80 and the same wyvern
+        // on the floor is moving 20, and without this the panel offers
+        // no account of the difference.
+        //
+        // Which of the two rules put it there is worth naming, because
+        // the counterplay differs. `Earthbound` is somebody's
+        // concentration and ends when that does; the general flying rule
+        // is the creature's own condition and ends when it stands up.
+        // Nothing is rendered for a creature that simply has no wings,
+        // which is almost everything almost always.
+        let reason = if curr_actor.has_condition(crate::conditions::Condition::Earthbound) {
+            "earthbound"
+        } else {
+            "cannot fly while downed"
+        };
+        stats_lines.push(Line::from(Span::styled(
+            format!(
+                "Grounded: fly {:.0} ft suppressed ({})",
+                curr_actor.base_fly_speed(),
+                reason
+            ),
+            Style::default().fg(Color::LightBlue),
+        )));
     }
     // Concentration target — the spell name is enough; full effect tree
     // already lives in the log.
@@ -1205,6 +1231,88 @@ mod tests {
             panel.contains("feather fall") && !panel.contains("3d6"),
             "a feathered flier owes nothing:\n{}",
             panel
+        );
+    }
+
+    /// A flier that has been put on the floor says so, and says which of
+    /// the two rules did it.
+    ///
+    /// The line exists because the Movement row above it changes meaning
+    /// without changing shape: a wyvern in the air moves 80 and the same
+    /// wyvern on the floor moves 20, and a panel that showed only the
+    /// smaller number would leave the player with no account of where
+    /// the other sixty feet went.
+    ///
+    /// Naming the cause is the second half. The two groundings end
+    /// differently — Earthbind is somebody's concentration and the
+    /// general flying rule is the creature's own condition — so the
+    /// counterplay differs and the panel should not make the reader
+    /// guess which one they are looking at.
+    #[test]
+    fn a_grounded_flier_is_told_what_it_is_missing() {
+        use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = encounter_with(&[(&WYVERN_TEMPLATE, 0), (&WYVERN_TEMPLATE, 1)]);
+        e.process_stack();
+        e.reconcile_altitudes();
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("Airborne") && !panel.contains("Grounded"),
+            "a wyvern starts in the air:\n{}",
+            panel
+        );
+
+        // The general flying rule: knocked out of the sky by a condition
+        // it holds itself.
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("Grounded: fly 80 ft suppressed (cannot fly while downed)"),
+            "a downed wyvern should be told which sixty feet it lost:\n{}",
+            panel
+        );
+
+        // Earthbind: the same suppression, a different owner, a
+        // different line.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .remove_condition(Condition::Incapacitated);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Earthbound, ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("Grounded: fly 80 ft suppressed (earthbound)"),
+            "and a spell-grounded one should name the spell:\n{}",
+            panel
+        );
+
+        // Nothing at all for a creature that never had wings — the line
+        // is not a permanent fixture of the panel.
+        let spawn = e
+            .get_random_spawn(crate::engine::types::Size::Large)
+            .expect("a floor tile");
+        let walker = e
+            .instantiate_creature(
+                &crate::actors::creatures::ogres::OGRE_TEMPLATE,
+                spawn,
+                1,
+                9,
+            )
+            .unwrap();
+        assert_eq!(
+            e.actors[&walker].base_fly_speed(),
+            0.0,
+            "an ogre is the control: no wings, and so no line to print"
         );
     }
 
