@@ -99,6 +99,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2c. Reel in the catch. A Bonus Action, so it competes with
+        //     nothing else on the turn, and it is what turns the
+        //     Action that follows from a fourth tendril into a bite.
+        //     Above the support lane because it is free; its own gate
+        //     is "is anything held by me", so a roper with an empty
+        //     line falls straight through. See `try_reel`.
+        if let Some(aei) = try_reel(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -1505,6 +1515,16 @@ impl Controller for SimpleAi {
         //     movement is zero and they can't kite. Only fires when
         //     the target has a ranged attack and isn't already grappled.
         if let Some(aei) = try_grapple(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5d'. Damage-free grabs — the roper's tendril and whatever
+        //      joins it. Next to the Grapple rung because it is the
+        //      same idea at fifty feet, and above focus-fire because
+        //      focus-fire cannot see these actions at all: it skips
+        //      anything that declares it deals no damage. See
+        //      `try_damage_free_grab`.
+        if let Some(aei) = try_damage_free_grab(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -6144,6 +6164,102 @@ fn try_grapple(
     best.map(|(_, aei)| aei)
 }
 
+/// Throw a **damage-free grab** — a single-target weapon attack whose
+/// entire payload is a hold rather than a hit point.
+///
+/// The cohort is `is_weapon_attack() && !deals_damage()` on the
+/// `SingleActor` schema, which is a precise description of exactly one
+/// thing: an attack roll that catches somebody. The roper's tendril is
+/// its only member today; a net, a lasso or a second monster's snare
+/// lands as a declaration rather than an edit here.
+///
+/// It needs a rung of its own because the two that look like they
+/// should cover it don't. `best_attack_against` skips every action that
+/// declares `deals_damage() == false`, deliberately — focus-fire is for
+/// whittling hit points and a Shove is not — so the tendril was
+/// invisible to it. And `try_grapple` is a melee-reach rung with a
+/// "only bother if the target shoots" gate, both of which are wrong
+/// here: a grab thrown fifty feet is the whole of the roper's offence,
+/// and it wants the target *closer*, not pinned where it stands.
+///
+/// Targets already Grappled or Restrained are skipped: those are the
+/// two conditions this cohort installs, and re-catching a creature that
+/// is already caught spends the Action for a timer refresh. Among the
+/// rest the biggest hit point bar wins, which is the same "grab the
+/// worst threat" rule `try_shove` and `try_grapple` use.
+fn try_damage_free_grab(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    let my_team = actor.team();
+    let grabs: Vec<&'static (dyn Action + Send + Sync)> = actor
+        .actions
+        .iter()
+        .filter(|a| {
+            a.is_harmful()
+                && a.is_weapon_attack()
+                && !a.deals_damage()
+                && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+        })
+        .copied()
+        .collect();
+    if grabs.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if t.has_condition(Condition::Grappled) || t.has_condition(Condition::Restrained) {
+            continue;
+        }
+        for action in &grabs {
+            let aei = ActionExecutionInfo::new(*action, actor_id, Some(vec![tid]), None, None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+            let hp = t.hitpoints();
+            if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+                best = Some((hp, aei));
+            }
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Haul in whatever the actor has caught — the roper's Reel.
+///
+/// Found by name, the way `try_grapple` finds the Shove-and-Grapple
+/// pair, because the action's own `custom_validate_input` already asks
+/// the only question that matters ("is anything actually held by me?")
+/// and there is nothing left for a cohort filter to add. A rung that
+/// re-derived the answer here would be asking it twice and could get a
+/// different one.
+///
+/// Sits high in the ladder, above the attack lanes, for two reasons
+/// that both come down to it being a Bonus Action: it does not compete
+/// with the turn's Action, so firing it early costs the roper nothing;
+/// and dragging the catch ten tiles closer is what makes the Action
+/// that follows a bite instead of another tendril.
+fn try_reel(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    let action = actor.find_action("reel")?;
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
 /// Sort key for advantage-aware target selection — lower wins.
 fn mode_priority(mode: RollMode) -> u8 {
     match mode {
@@ -7823,21 +7939,28 @@ fn try_stand_for_rider(
 /// action that costs nothing but the turn, harms nobody, and hands a
 /// buff to the teammates standing near the actor.
 ///
-/// One creature has such an action today and it has no others: the
-/// Artillerist's Protector cannon, whose whole turn is `1d8 + INT`
-/// temporary hit points over every ally within ten feet. Nothing else on
-/// the ladder could reach it. `try_support_heal` walks `SingleActor`
-/// heals and hands them to a chosen ally; `try_self_heal` walks `NoArgs`
-/// heals but only fires when the *actor* is below half, which a turret
-/// standing behind the line never is. So the cannon that never attacks
-/// also never did anything else.
+/// The rung was written for one action and has two now, and the pair is
+/// what fixed its membership test:
+///
+///   - The Artillerist's **Protector cannon**, whose whole turn is
+///     `1d8 + INT` temporary hit points over every ally within ten feet.
+///     Nothing else on the ladder could reach it. `try_support_heal`
+///     walks `SingleActor` heals and hands them to a chosen ally;
+///     `try_self_heal` walks `NoArgs` heals but only fires when the
+///     *actor* is below half, which a turret standing behind the line
+///     never is. So the cannon that never attacks also never did
+///     anything else.
+///   - The Bard's **Countercharm**, which restores nothing at all — and
+///     is why the filter reads `pulses_ally_buff` rather than `is_heal`.
+///     The old test was a proxy that held only while the cohort had one
+///     member.
 ///
 /// The gate is deliberately thin — is there an ally in range at all —
 /// because for this cohort the answer to "is it worth a turn" is always
-/// yes: the action is free, repeatable, and the alternative is the
-/// turret standing still. A future entry that costs a slot or a charge
-/// would need a real gate, and would belong on a different rung for
-/// exactly that reason.
+/// yes: the action is free, repeatable, self-limiting, and the
+/// alternative is the turret standing still. A future entry that costs a
+/// slot or a charge would need a real gate, and would belong on a
+/// different rung for exactly that reason.
 ///
 /// Slotted directly below the heal rung: a bleeding ally wants the heal
 /// first, and everyone wants the shield before the shooting starts.
@@ -7850,8 +7973,13 @@ fn try_ally_support_pulse(
         return None;
     }
     for action in actor.actions.iter() {
+        // `pulses_ally_buff`, not `is_heal`. The rung was written when
+        // every member of the cohort restored hit points and the two
+        // questions had the same answer; Countercharm restores nothing
+        // and belongs here anyway. See `Action::pulses_ally_buff` for
+        // why declaring it a heal to get in would have been worse.
         if action.is_harmful()
-            || !action.is_heal()
+            || !action.pulses_ally_buff()
             || !matches!(action.targeting_schema(), TargetingSchema::NoArgs)
         {
             continue;

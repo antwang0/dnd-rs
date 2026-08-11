@@ -1,17 +1,21 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::UMBER_CLAW;
+use crate::actions::monster_attacks::{UMBER_CLAW, UMBER_HULK_CONFUSING_GAZE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Umber Hulk — CR 5 monstrosity. Heavily armoured burrowing predator
-/// with massive claws and confusing gaze (gaze not yet modelled).
+/// Umber Hulk — CR 5 monstrosity. Heavily armoured burrowing predator.
 /// High AC (18) from its thick carapace, strong STR-based claw attacks.
-/// Darkvision 120ft and Tremorsense 60ft make it a subterranean ambusher.
+/// Darkvision 120ft and Tremorsense 60ft make it a subterranean
+/// ambusher, and **Confusing Gaze** is what it does once it has
+/// ambushed — see `monster_attacks::UMBER_HULK_CONFUSING_GAZE` for how
+/// RAW's start-of-turn trigger becomes an Action-cost stare and why the
+/// d8 chaos table collapses to `Confused`.
 pub static UMBER_HULK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&UMBER_CLAW);
+    actions.push(&*UMBER_HULK_CONFUSING_GAZE);
     CreatureTemplate {
         name: "Umber Hulk",
         glyph: 'U',

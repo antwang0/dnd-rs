@@ -5948,6 +5948,125 @@ impl Action for BardicInspiration {
 
 pub static BARDIC_INSPIRATION: LazyLock<BardicInspiration> = LazyLock::new(|| BardicInspiration {});
 
+/// Passive tag marking a bard who knows **Countercharm** (PHB lv6). No
+/// charges — RAW spends the bard's Action and nothing else, so the tag
+/// is a pure "can this actor take this action" gate rather than a
+/// `FEATURE_CHARGES` entry, and sits on the same lane as Purity of Body
+/// and Aspect of the Moon.
+pub const COUNTERCHARM_TAG: &str = "bard.countercharm";
+
+/// 30 ft of RAW on the 2.5 ft grid. The bard has to be able to be heard,
+/// and this is the envelope RAW gives that.
+const COUNTERCHARM_RADIUS: isize = 12;
+
+/// Countercharm — Bard Action, self-centered ally burst. "You can use
+/// your action to start a performance that lasts until the end of your
+/// next turn. During that time, you and any friendly creatures within
+/// 30 feet of you have advantage on saving throws against being
+/// frightened or charmed."
+///
+/// The engine could not hold this feature until now, and it is worth
+/// being precise about why: the advantage RAW grants is scoped to *two
+/// named conditions*, and until `roll_save_vs_condition` existed a save
+/// knew its ability and its DC and nothing about what failing it would
+/// do. The only expressible approximations were the two the rest of the
+/// codebase had already been forced into — blanket immunity to Charmed
+/// and Frightened (a level-6 bard out-warding an Ancients Paladin's
+/// level-15 capstone, on an Action, every round, for the whole team) or
+/// blanket advantage on WIS and CHA saves (which would also cover the
+/// team's saves against Hold Person, Banishment and Feeblemind). Both
+/// are worse than not shipping it. The condition-scoped cohort is the
+/// first shape that is simply correct.
+///
+/// No charge and no concentration: the cost is the bard's Action, and
+/// they pay it again every round they want the performance to continue.
+/// That is what makes the 2-round timer right rather than stingy — the
+/// buff is meant to lapse the moment the bard stops singing.
+///
+/// RAW's "friendly creatures that can hear you" narrows to allies in
+/// range here; the engine has no hearing model, and `Deafened` in this
+/// engine is documented as having no combat surface of its own, so
+/// gating on it would be a rule enforced against one condition and
+/// nothing else.
+pub struct Countercharm {}
+
+impl Action for Countercharm {
+    fn name(&self) -> &str {
+        "countercharm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cc", "counter"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    /// Declared so the AI's support rung can ask who is standing in the
+    /// performance's envelope rather than guessing — same reason
+    /// `AtWillAllyTempHpPulse` declares one, and harmless on a `NoArgs`
+    /// action for the same reason.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(COUNTERCHARM_RADIUS)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    /// Free, repeatable and self-limiting — the three things the AI's
+    /// ally-pulse rung needs to be true before it fires something every
+    /// turn. The self-limiting half is the `Countercharmed` check in
+    /// `custom_validate_input` below.
+    fn pulses_ally_buff(&self) -> bool {
+        true
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        // Re-singing over a performance already in effect would spend
+        // the bard's Action to refresh a timer that has not run out.
+        // The AI re-ranks its whole ladder every turn and would
+        // otherwise sit here forever; a human typing `cc` twice gets
+        // the same answer for the same reason.
+        actor.has_passive_feature(COUNTERCHARM_TAG)
+            && !actor.has_condition(Condition::Countercharmed)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        install_ally_burst_condition(
+            encounter,
+            caster_id,
+            COUNTERCHARM_RADIUS,
+            // RAW caps by range, not by headcount — the whole party
+            // inside 30 ft is protected. `usize::MAX` says "no cap"
+            // through the shared helper's `truncate`.
+            usize::MAX,
+            Condition::Countercharmed,
+            // "Until the end of your next turn" — see the condition's
+            // docstring for why the short window is load-bearing.
+            ConditionTimer::Rounds(2),
+            "countercharm",
+            "steadied by the bard's song",
+        )
+    }
+}
+
+pub static COUNTERCHARM: LazyLock<Countercharm> = LazyLock::new(|| Countercharm {});
+
 /// Class-feature tag for Cleric Channel Divinity: Turn Undead.
 pub const TURN_UNDEAD_TAG: &str = "cleric.turn_undead";
 
@@ -12576,20 +12695,60 @@ fn spend_feature_and_install_ally_burst(
     timer: ConditionTimer,
     label: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
-        return Vec::new();
-    };
     if let Some(actor) = encounter.actors.get_mut(&caster_id) {
         actor.spend_feature(feature_tag);
     }
+    install_ally_burst_condition(
+        encounter,
+        caster_id,
+        radius,
+        max_targets,
+        condition,
+        timer,
+        label,
+        "rallied with resolve",
+    )
+}
+
+/// The charge-free core of `spend_feature_and_install_ally_burst`:
+/// sweep combat-active allies within `radius` of the caster (the caster
+/// included), cap the sweep at `max_targets`, and hand each of them
+/// `condition` for `timer`.
+///
+/// Split out from its charging sibling when Countercharm arrived,
+/// because Countercharm is the same burst with no charge to spend: RAW
+/// costs the bard their Action and nothing else, every round, for as
+/// long as they are willing to keep singing. Threading a sentinel
+/// "spend nothing" tag through the existing helper would have made the
+/// charge lane a special case of itself; this way the charge is one
+/// line that happens before a shared body, which is what it is.
+///
+/// `verb` is the tail of the log line — the two callers rally allies
+/// and steady them respectively, and the difference is worth a reader's
+/// eye in the transcript.
+#[allow(clippy::too_many_arguments)]
+fn install_ally_burst_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    radius: isize,
+    max_targets: usize,
+    condition: Condition,
+    timer: ConditionTimer,
+    label: &'static str,
+    verb: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+        return Vec::new();
+    };
     let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, radius);
     targets.truncate(max_targets);
     let n = targets.len();
     encounter.log(format!(
-        "  {}: {} {} rallied with resolve.",
+        "  {}: {} {} {}.",
         label,
         n,
-        if n == 1 { "ally" } else { "allies" }
+        if n == 1 { "ally" } else { "allies" },
+        verb
     ));
     targets
         .into_iter()
@@ -17985,6 +18144,12 @@ impl Action for AtWillAllyTempHpPulse {
         false
     }
     fn is_heal(&self) -> bool {
+        true
+    }
+    /// The cohort's founding member, and now says so explicitly rather
+    /// than being recognised by its `is_heal` flag — see
+    /// `Action::pulses_ally_buff`.
+    fn pulses_ally_buff(&self) -> bool {
         true
     }
     fn side_effects(

@@ -5052,6 +5052,60 @@ impl EncounterInstance {
         self.roll_save_with_extra_mode(actor_id, ability, dc, RollModeTally::NONE)
     }
 
+    /// `roll_save`, told what failing it would cost.
+    ///
+    /// The engine's saves used to be anonymous: an ability, a DC, and a
+    /// d20. That is enough to resolve the roll and not enough to resolve
+    /// the *features*, because 5e writes a whole family of them as
+    /// "advantage on saving throws against being frightened" — against a
+    /// condition, not against an ability. Every such feature therefore
+    /// had to be rounded to something a save could see, and
+    /// `CONDITION_SAVE_ADVANTAGES` is the docstring on what that cost.
+    ///
+    /// Call this instead of `roll_save` wherever the failure branch is
+    /// an `ApplyCondition`, which the shared condition-install
+    /// chokepoints now all do. An untagged site still works — it simply
+    /// rolls without the cohort, which under-grants rather than
+    /// over-grants (see the cohort docstring's "fails open" note).
+    pub fn roll_save_vs_condition(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        against: crate::conditions::Condition,
+    ) -> crate::engine::saves::SaveOutcome {
+        let extra = self.condition_save_tally(actor_id, Some(against));
+        self.roll_save_with_extra_mode(actor_id, ability, dc, extra)
+    }
+
+    /// The `CONDITION_SAVE_ADVANTAGES` contribution to one save, as a
+    /// tally rather than a mode — same reason `save_mode_tally` is one:
+    /// this is merged with the caster-rider cohort and the target's own
+    /// conditions before anything resolves, and folding it early would
+    /// lose whether an advantage had been contributed at all.
+    ///
+    /// `None` — an untagged save — contributes nothing, which is what
+    /// makes routing a site through the tagged lane a strict
+    /// improvement rather than a behaviour swap.
+    fn condition_save_tally(
+        &self,
+        actor_id: usize,
+        against: Option<crate::conditions::Condition>,
+    ) -> RollModeTally {
+        let mut tally = RollModeTally::NONE;
+        let Some(against) = against else {
+            return tally;
+        };
+        if self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_save_advantage_against(against))
+        {
+            tally.add(RollMode::Advantage);
+        }
+        tally
+    }
+
     /// Roll a save with extra advantage / disadvantage sources counted
     /// alongside the actor's condition-derived ones. Used by callers
     /// that have out-of-band reasons to skew the roll (Heightened Spell
@@ -5656,7 +5710,51 @@ impl EncounterInstance {
         caster_id: usize,
         spell_mode: RollMode,
     ) -> crate::engine::saves::SaveOutcome {
-        let mut extra = RollModeTally::NONE;
+        self.roll_save_against_caster_tagged(target_id, ability, dc, caster_id, spell_mode, None)
+    }
+
+    /// `roll_save_against_caster`, told what failing it would cost — the
+    /// caster-aware twin of `roll_save_vs_condition`, and the entry
+    /// point the spell-side condition installers use.
+    ///
+    /// It has to be its own call rather than a `roll_save_vs_condition`
+    /// wrapped around `roll_save_against_caster` because both cohorts
+    /// contribute to the *same* tally: a Heightened Spell's
+    /// disadvantage and a countercharmed listener's advantage cancel to
+    /// one straight roll, per RAW, and two nested calls would resolve
+    /// each to a mode separately and roll twice.
+    pub fn roll_save_against_caster_vs_condition(
+        &mut self,
+        target_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        caster_id: usize,
+        against: crate::conditions::Condition,
+    ) -> crate::engine::saves::SaveOutcome {
+        self.roll_save_against_caster_tagged(
+            target_id,
+            ability,
+            dc,
+            caster_id,
+            RollMode::Normal,
+            Some(against),
+        )
+    }
+
+    /// Shared body of the caster-aware save lane: the spell's own notch,
+    /// the `CASTER_SAVE_MODE_RIDERS` cohort, and the
+    /// `CONDITION_SAVE_ADVANTAGES` cohort all folded into one tally
+    /// before a single die is rolled.
+    fn roll_save_against_caster_tagged(
+        &mut self,
+        target_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        caster_id: usize,
+        spell_mode: RollMode,
+        against: Option<crate::conditions::Condition>,
+    ) -> crate::engine::saves::SaveOutcome {
+        let mut extra = self.condition_save_tally(target_id, against);
         extra.add(spell_mode);
         for rider in CASTER_SAVE_MODE_RIDERS {
             if !(rider.applies)(self, caster_id, target_id) {

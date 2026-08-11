@@ -1,7 +1,7 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, CUTTING_WORDS, CUTTING_WORDS_TAG,
-    FONT_OF_INSPIRATION_TAG, PSYCHIC_BLADES_TAG,
+    BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, COUNTERCHARM, COUNTERCHARM_TAG, CUTTING_WORDS,
+    CUTTING_WORDS_TAG, FONT_OF_INSPIRATION_TAG, PSYCHIC_BLADES_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
@@ -134,6 +134,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // invisibility on its list at all. See `spells::MISLEAD`.
     actions.push(&*crate::actions::spells::MISLEAD);
     actions.push(&*BARDIC_INSPIRATION);
+    // Countercharm — the bard's Action-cost performance that hands the
+    // whole party advantage on saves against being charmed or
+    // frightened. See `class_features::COUNTERCHARM`; it is the first
+    // feature in the engine written against the condition-scoped
+    // save-advantage cohort rather than rounded to an immunity.
+    actions.push(&*COUNTERCHARM);
     actions.push(&*CURE_WOUNDS);
     actions.push(&HEALING_WORD);
     actions.push(&*HEROISM);
@@ -267,6 +273,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // (already once-per-short-rest) so both bard per-rest
             // charges refresh together.
             FONT_OF_INSPIRATION_TAG,
+            // 5e Bard **Countercharm** (RAW lv6). Ships on the CR-2
+            // (level-7) baseline for the same reason Font of
+            // Inspiration does — the template targets a balanced
+            // playable level rather than lockstep PHB progression, and
+            // level 7 is past the gate anyway.
+            COUNTERCHARM_TAG,
         ]),
         skills: HashSet::from([Skill::Acrobatics, Skill::Perception]),
         ..CreatureTemplate::defaults()

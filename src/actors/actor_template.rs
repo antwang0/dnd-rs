@@ -1345,6 +1345,93 @@ const FLAG_DRIVEN_SAVE_ADVANTAGES: &[FlagDrivenSaveAdvantage] = &[
     },
 ];
 
+/// One row in the `CONDITION_SAVE_ADVANTAGES` cohort — a feature that
+/// grants advantage on saving throws made *against a named condition*,
+/// whatever ability those saves happen to roll off of.
+///
+/// The axis `FLAG_DRIVEN_SAVE_ADVANTAGES` could not express. That
+/// cohort keys on `(actor, ability)`, because that is everything a save
+/// knew about itself: a save was a d20 against a DC on one of six
+/// abilities, and nothing carried *what failing it would do to you*.
+/// Every 5e feature worded "advantage on saving throws against being
+/// frightened" therefore had to be rounded to the nearest expressible
+/// thing, and the two available roundings were both wrong in the same
+/// direction — up. Halfling Brave, Fey Ancestry and Psychic Defenses
+/// were collapsed to flat condition *immunity*; Dwarven Resilience and
+/// Gnome Cunning were widened to every save on their abilities. Five
+/// docstrings say so, each apologising for the same missing column.
+///
+/// `EncounterInstance::roll_save_vs_condition` is that column, and this
+/// is the cohort that reads it. A row fires only on a save whose
+/// failure would install one of `against`, so the Ettin's two heads
+/// help it shake off a hold and do nothing at all for its dodge against
+/// a fireball — which is what RAW says and what neither rounding could.
+///
+/// `flag` is a bare `fn(&ActorInstance) -> bool` rather than the
+/// `(actor, ability)` pair its sibling takes, because the ability is
+/// not the gate here: the condition is. That also lets a row read a
+/// *condition* as its source (Bard Countercharm's `Countercharmed`)
+/// exactly as easily as a template flag (the Ettin's `has_two_heads`),
+/// the same way `FLAG_DRIVEN_IMMUNITIES` rows already compose
+/// `has_passive_feature` with `has_condition`.
+///
+/// **Fails open, never closed.** A save site that has not been told
+/// which condition it defends against rolls through the untagged
+/// `roll_save` path and no row here fires. That costs a holder an
+/// advantage they were owed; it can never cost them one they already
+/// had, because nothing on this cohort takes anything away. That is why
+/// the collapsed-to-immunity rows on `FLAG_DRIVEN_IMMUNITIES` stay
+/// where they are for now: moving them onto this axis would be
+/// RAW-exact at the tagged sites and a silent *loss* of protection at
+/// every site still untagged. The tagged set is the shared chokepoints
+/// — `save_or_condition_rider`, `save_or_charmed_by_caster`,
+/// `install_condition_on_failed_saves`, and the two spell-side
+/// condition installers — which is most content and not yet all of it.
+struct ConditionSaveAdvantage {
+    flag: fn(&ActorInstance) -> bool,
+    against: &'static [Condition],
+}
+
+/// Condition-scoped save-advantage cohort read by
+/// `ActorInstance::has_save_advantage_against`. Rows are OR'd: any hit
+/// contributes one `RollMode::Advantage` to the save's tally, which
+/// then cancels against disadvantage exactly like every other source
+/// (5e never stacks either way).
+///
+/// Entries (in order):
+///   - **Two Heads** (Ettin, MM p.132): "The ettin has advantage on
+///     Wisdom (Perception) checks and on saving throws against being
+///     blinded, charmed, deafened, frightened, stunned, and knocked
+///     unconscious." Six conditions off one trait, which is precisely
+///     the shape that could not be rounded: as immunity it would hand a
+///     CR-4 giant a defensive envelope a Solar doesn't have, and as
+///     ability-scoped advantage it would cover the ettin's CON saves
+///     against poison and its DEX saves against fire. The Perception
+///     half is not modeled (the engine has no contested-Perception
+///     surface); the save half is now RAW-exact.
+///   - **Countercharm** (Bard, PHB lv6): "you and any friendly
+///     creatures within 30 feet of you have advantage on saving throws
+///     against being frightened or charmed." Installed as the
+///     `Countercharmed` condition by the action of the same name, so
+///     the row reads a held condition rather than a template flag.
+const CONDITION_SAVE_ADVANTAGES: &[ConditionSaveAdvantage] = &[
+    ConditionSaveAdvantage {
+        flag: |a| a.has_two_heads(),
+        against: &[
+            Condition::Blinded,
+            Condition::Charmed,
+            Condition::Deafened,
+            Condition::Frightened,
+            Condition::Stunned,
+            Condition::Unconscious,
+        ],
+    },
+    ConditionSaveAdvantage {
+        flag: |a| a.has_condition(Condition::Countercharmed),
+        against: &[Condition::Charmed, Condition::Frightened],
+    },
+];
+
 /// One row in the `PASSIVE_FEATURE_SPEED_BONUSES` cohort — a single
 /// passive-feature-driven speed bump. `flag` is any predicate on the
 /// actor (currently: `has_passive_feature(TAG)` for always-on passives,
@@ -2874,6 +2961,15 @@ pub struct CreatureTemplate {
     /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
     /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
     pub has_pack_tactics: bool,
+    /// 5e **Two Heads** (Ettin): "advantage on Wisdom (Perception)
+    /// checks and on saving throws against being blinded, charmed,
+    /// deafened, frightened, stunned, and knocked unconscious." The
+    /// save half rides the `CONDITION_SAVE_ADVANTAGES` cohort, which is
+    /// the axis that lets six named conditions be six named conditions
+    /// rather than six blanket immunities or two whole abilities' worth
+    /// of advantage. The Perception half is not modeled — the engine
+    /// has no contested-Perception surface for it to bite on.
+    pub has_two_heads: bool,
     /// 5e **Sunlight Sensitivity** / **Sunlight Weakness** / **Sunlight
     /// Hypersensitivity** — the kobold-and-drow, shadow, and vampire
     /// tiers of "this creature does not belong outdoors". `None` for
@@ -3854,6 +3950,7 @@ impl CreatureTemplate {
             has_displacement: false,
             has_danger_sense: false,
             has_pack_tactics: false,
+            has_two_heads: false,
             sunlight_frailty: None,
             is_swarm: false,
             has_magic_resistance: false,
@@ -4577,6 +4674,7 @@ pub struct ActorInstance {
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
+    has_two_heads: bool,
     sunlight_frailty: Option<SunlightFrailty>,
     is_swarm: bool,
     has_magic_resistance: bool,
@@ -4885,6 +4983,7 @@ impl ActorInstance {
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
+            has_two_heads: ct.has_two_heads,
             sunlight_frailty: ct.sunlight_frailty,
             is_swarm: ct.is_swarm,
             has_magic_resistance: ct.has_magic_resistance,
@@ -5080,6 +5179,13 @@ impl ActorInstance {
 
     pub fn has_pack_tactics(&self) -> bool {
         self.has_pack_tactics
+    }
+
+    /// True if this actor carries the Ettin's **Two Heads** trait. Read
+    /// only through the `CONDITION_SAVE_ADVANTAGES` cohort — see the
+    /// template field for which half of the trait that covers.
+    pub fn has_two_heads(&self) -> bool {
+        self.has_two_heads
     }
 
     /// True if this actor is a 5e **swarm** — see the template field for
@@ -6875,6 +6981,25 @@ impl ActorInstance {
         FLAG_DRIVEN_SAVE_ADVANTAGES
             .iter()
             .any(|entry| (entry.flag)(self, ability))
+    }
+
+    /// True if any row of `CONDITION_SAVE_ADVANTAGES` grants this actor
+    /// advantage on a saving throw whose failure would install
+    /// `against`. Read by `EncounterInstance::roll_save_vs_condition`,
+    /// which is the only save entry point that knows the answer to
+    /// "against what?" — see the cohort docstring for why that column
+    /// had to exist and what it fixes.
+    ///
+    /// Sibling to `has_flag_driven_save_advantage` on the "single
+    /// accessor that walks a save-advantage cohort" pattern; the two
+    /// differ only in what the row is allowed to gate on (ability vs.
+    /// condition) and compose additively at the tally, so a Magic
+    /// Resistant ettin saving against a Hold Person contributes two
+    /// advantages and rolls, per RAW, at one notch.
+    pub fn has_save_advantage_against(&self, against: Condition) -> bool {
+        CONDITION_SAVE_ADVANTAGES
+            .iter()
+            .any(|entry| entry.against.contains(&against) && (entry.flag)(self))
     }
 
     /// True if this actor is proficient in the given skill (i.e. adds

@@ -407,6 +407,32 @@ pub enum Condition {
     /// Concentration-free; the timer caps unused inspiration at 10
     /// rounds (1 minute RAW).
     Inspired,
+    /// Hearing a bard's **Countercharm** (5e Bard, PHB lv6): "you can
+    /// use your action to start a performance that lasts until the end
+    /// of your next turn. During that time, you and any friendly
+    /// creatures within 30 feet of you have advantage on saving throws
+    /// against being frightened or charmed."
+    ///
+    /// Held by the *listeners*, including the bard, rather than by the
+    /// performance — one condition per protected creature is what makes
+    /// the advantage readable at the die without a per-save sweep for
+    /// nearby bards. The bard's own copy is what makes them a listener
+    /// too, per RAW's "you and any friendly creatures".
+    ///
+    /// The advantage itself is a row on `CONDITION_SAVE_ADVANTAGES`,
+    /// which is the only cohort that can express it: RAW names two
+    /// conditions, not an ability, and the saves that install Charmed
+    /// and Frightened in this engine are rolled on WIS, CHA and INT
+    /// depending on who is casting what. Nothing else reads the
+    /// condition — it is a marker, and the whole of its effect is that
+    /// one row.
+    ///
+    /// Timer is `Rounds(2)`, which is RAW's "until the end of your next
+    /// turn" measured the way every other short bard buff in the engine
+    /// measures itself. It is deliberately short: Countercharm costs
+    /// the bard their Action every round they want it, and a buff that
+    /// outlived the performance would make that price a one-time one.
+    Countercharmed,
     /// Exhausted — the flag half of 5e's six-rung exhaustion ladder.
     /// Present exactly when `ActorInstance::exhaustion_level()` is
     /// non-zero; the tier itself is the number, and the two are held in
@@ -2450,6 +2476,7 @@ impl Condition {
             Condition::HeatMetaled => "burning from heat metal",
             Condition::StunningStrike => "primed to stun",
             Condition::Inspired => "inspired",
+            Condition::Countercharmed => "steadied by countercharm",
             Condition::Exhausted => "exhausted",
             Condition::SpiritShrouded => "wreathed in spirits",
             Condition::SymbioticEntity => "bonded to a spore symbiote",

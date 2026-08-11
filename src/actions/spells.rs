@@ -1315,7 +1315,13 @@ fn save_or_concentration_condition(
     pass_log: &str,
     fail_log: &str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
+    let save = encounter.roll_save_against_caster_vs_condition(
+        target_id,
+        save_ability,
+        dc,
+        caster_id,
+        condition,
+    );
     if save.passed() {
         if !pass_log.is_empty() {
             encounter.log(pass_log.to_string());
@@ -1442,7 +1448,13 @@ fn concentration_burst_condition_only(
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     let mut conditions: Vec<(usize, Condition)> = Vec::new();
     for tid in encounter.enemy_burst_targets(caster_id, point, radius) {
-        let save = encounter.roll_save_against_caster(tid, save_ability, dc, caster_id);
+        let save = encounter.roll_save_against_caster_vs_condition(
+            tid,
+            save_ability,
+            dc,
+            caster_id,
+            rider,
+        );
         if save.passed() {
             encounter.log(format!("  {}: target shrugs off the effect.", action_name));
             continue;

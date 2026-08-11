@@ -226,7 +226,7 @@ pub fn save_or_condition_rider(
     rider_name: &str,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
 ) -> crate::engine::saves::SaveOutcome {
-    let save = encounter.roll_save(target_id, save_ability, dc);
+    let save = encounter.roll_save_vs_condition(target_id, save_ability, dc, condition);
     if !save.passed() {
         encounter.log(format!("  {}: target fails the save", rider_name));
         // Through the linked installer, so a rider whose condition
@@ -274,7 +274,7 @@ pub fn save_or_charmed_by_caster(
         encounter.log(format!("  {}: target's mind is shielded", rider_name));
         return Vec::new();
     }
-    let save = encounter.roll_save(target_id, save_ability, dc);
+    let save = encounter.roll_save_vs_condition(target_id, save_ability, dc, Condition::Charmed);
     if save.passed() {
         encounter.log(format!("  {}: target resists the enchantment", rider_name));
         return Vec::new();
@@ -17411,3 +17411,471 @@ pub static GIANT_WEASEL_BITE: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 4),
     DamageType::Piercing,
 );
+
+// ─── Umber Hulk ─────────────────────────────────────────────────────
+
+/// Umber Hulk Confusing Gaze — the trait the stat block is named for and
+/// the one the bestiary shipped without.
+///
+/// RAW (MM p.292) is a start-of-turn trigger: "When a creature starts
+/// its turn within 30 feet of the umber hulk and is able to see the
+/// umber hulk's eyes, the umber hulk can magically force it to make a
+/// DC 15 Charisma saving throw… On a failed save, the creature can't
+/// take reactions until the start of its next turn and rolls a d8 to
+/// determine what it does during that turn."
+///
+/// Rendered here as an Action-cost gaze rather than a per-target
+/// turn-start hook, which is the same shape every other stare in the
+/// bestiary already uses — the Mummy's Dreadful Glare, the Medusa's
+/// Petrifying Gaze, the Sea Hag's Death Glare. The engine has no
+/// "when a creature starts its turn near X" hook to hang the RAW
+/// wording on, and inventing one for a single monster would buy a
+/// worse version of what `resolve_los_glare_condition` already does:
+/// sweep the enemies that can actually see the hulk, roll one save
+/// each, and install on the failures.
+///
+/// The d8 chaos table collapses to `Confused`, which is where this
+/// engine already puts Confusion's table — disadvantage on attack rolls
+/// and no reactions. RAW's own "can't take reactions" clause is
+/// therefore modeled exactly and the movement half of the table is the
+/// part that rounds off.
+///
+/// Radius 12 tiles is RAW's 30 ft. The LOS filter is not decoration
+/// here: "able to see the umber hulk's eyes" is the whole of the
+/// trait's counterplay, and a hulk burrowing up behind a wall should
+/// get nothing for it.
+pub struct UmberHulkConfusingGaze {}
+
+impl Action for UmberHulkConfusingGaze {
+    fn name(&self) -> &str {
+        "confusing gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cg", "gaze", "confusing-gaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_los_glare_condition;
+        // 30 ft RAW on the 2.5 ft grid.
+        const RADIUS: isize = 12;
+        const DC: i32 = 15;
+        encounter.log("  confusing gaze: the hulk's compound eyes swivel and scatter the mind");
+        resolve_los_glare_condition(
+            encounter,
+            caster_id,
+            RADIUS,
+            AbilityScoreType::Charisma,
+            DC,
+            Condition::Confused,
+            // RAW's window is "during that turn" — one round, which is
+            // exactly as long as it takes the victim to waste it.
+            ConditionTimer::Rounds(1),
+            // No creature-type exemption: RAW's only gate is sight, and
+            // the LOS filter above is it.
+            None,
+        )
+    }
+}
+
+pub static UMBER_HULK_CONFUSING_GAZE: LazyLock<UmberHulkConfusingGaze> =
+    LazyLock::new(|| UmberHulkConfusingGaze {});
+
+// ─── Roper ──────────────────────────────────────────────────────────
+
+/// Roper Bite — STR-based 4d6+STR piercing melee. RAW: "Bite. Melee
+/// Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 22 (4d6 + 4)
+/// piercing damage." The payoff at the end of the roper's whole
+/// sequence: the tendrils catch, the reel drags the catch into reach,
+/// and this is what waits there.
+pub static ROPER_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "roper bite",
+    &["rp-bite", "roper-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 6),
+    DamageType::Piercing,
+);
+
+/// Roper Tendril — the reach-50-ft grab that makes a roper a roper.
+///
+/// RAW: "Tendril. Melee Weapon Attack: +7 to hit, reach 50 ft., one
+/// creature. Hit: The target is grappled (escape DC 15). Until the
+/// grapple ends, the target is restrained and has disadvantage on
+/// Strength checks and Strength saving throws, and the roper can't use
+/// the same tendril on another target."
+///
+/// Damage-free by design — the tendril's entire output is the hold, and
+/// that is why this is a bespoke action rather than a
+/// `WeaponWithCondition` declaration. That chassis installs exactly one
+/// condition and rolls damage dice to decide whether it landed; the
+/// tendril installs *two* (the `Grappled` that Reel reads the back-link
+/// off, and the `Restrained` that carries RAW's disadvantage clauses)
+/// and has no damage to gate on. The hit/miss question is therefore
+/// asked directly of `resolve_attack_outcome`, with a 0d0 pool, and
+/// answered by whether the swing produced any effects at all — the same
+/// gate the rider chassis use one layer up.
+///
+/// The `Grappled` install goes through `install_condition_with_link`,
+/// which is not optional: without the back-link a Reel would find
+/// nobody, and the roper's own docstring used to say so — "a roper's
+/// tendril that grapples nobody in particular is a hold nothing can
+/// end."
+///
+/// RAW's per-tendril bookkeeping (six tendrils, one target each) is not
+/// modeled. The engine has no per-limb state, and the multiattack below
+/// is capped at four swings, so the only thing the rule would change is
+/// whether all four can land on one already-held victim — which the
+/// `Grappled` re-install would swallow anyway.
+pub struct RoperTendril {}
+
+impl Action for RoperTendril {
+    fn name(&self) -> &str {
+        "tendril"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tendril", "rp-tendril"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 50 ft RAW = 20 tiles on the 2.5 ft grid.
+        Some(20)
+    }
+    /// A swing, not a shot — RAW says "Melee Weapon Attack: … reach 50
+    /// ft.", and the kraken's six-tile tentacle already established
+    /// that reach is not what decides this. Getting it wrong the other
+    /// way costs more than it looks: a ranged tendril would take
+    /// disadvantage for every hostile in the roper's own reach, would
+    /// need a normal range for the falloff and underwater rules to
+    /// read, and would make `has_ranged_attack` call a creature with a
+    /// 10 ft walk speed a kiter.
+    fn is_melee_attack(&self) -> bool {
+        true
+    }
+    /// Declared against the melee default, because at twenty tiles the
+    /// clause the default encodes stops being true. `requires_los` is
+    /// false for melee on the argument that contact does not need
+    /// sight; a strand thrown the length of a cavern is not contact,
+    /// and without this a roper would fish through walls.
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let swing = simple_weapon_attack_ranged(
+            encounter,
+            caster_id,
+            target_ids,
+            "tendril",
+            AbilityScoreType::Strength,
+            // No damage ability, and a 0d0 pool: RAW's tendril line
+            // has no damage entry at all, and routing through the
+            // ranged helper is what lets the STR modifier be left off
+            // the damage side while still being on the attack side.
+            None,
+            Dice::new(0, 0),
+            DamageType::Bludgeoning,
+            // Melee, per RAW and per `is_melee_attack` above — the die
+            // and the picker have to agree about this or the roper
+            // swings under one rule and is ranked under another.
+            true,
+            None,
+            None,
+        );
+        // The helper returns an empty vec on a miss and a `DealDamage`
+        // on a hit — a zero one here, which is why the vec is read as a
+        // hit flag and then dropped rather than returned. That is the
+        // same gate every rider chassis reads one layer up.
+        if swing.is_empty() {
+            encounter.log("  tendril: the strand whips past");
+            return Vec::new();
+        }
+        encounter.log("  tendril: the strand wraps tight and holds");
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
+        effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Restrained,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects
+    }
+}
+
+pub static ROPER_TENDRIL: LazyLock<RoperTendril> = LazyLock::new(|| RoperTendril {});
+
+/// Roper Multiattack — four tendrils per Action, per RAW's "The roper
+/// makes four attacks with its tendrils, uses Reel, and makes one attack
+/// with its bite."
+///
+/// Split from the reel and the bite rather than compounded with them,
+/// because the three parts want different turns. A roper that has
+/// nobody held should be throwing tendrils; one that has somebody held
+/// forty feet away should be reeling; one with a victim in its mouth
+/// should be biting. Folding all three into one `CompoundAttack` would
+/// make every roper turn identical and mostly wasted — four tendrils at
+/// a target already wrapped, a reel of nobody, a bite at empty air.
+/// The AI picks between them; see `ai::simple::try_reel`.
+pub static ROPER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "tendril flurry",
+    sub_attack: &*ROPER_TENDRIL,
+    count: 4,
+});
+
+/// Roper Reel — "The roper pulls each creature grappled by it up to 25
+/// feet straight toward it."
+///
+/// The other half of the tendril, and the reason the tendril bothers to
+/// link its `Grappled` install: this walks every actor whose hold traces
+/// back to *this* roper and drags them ten tiles closer. Nothing else
+/// in the engine reads a grapple back-link to decide who moves, which
+/// is why this is a bespoke action and not a chassis — one caller, one
+/// shape, and a second one would be a different monster's rules.
+///
+/// Free of cost by RAW's reading (the reel is part of the multiattack,
+/// not a separate action), but priced here as a Bonus Action so the
+/// roper can throw tendrils *and* reel on the same turn, which is what
+/// the RAW sequence amounts to. Charging it a full Action would make
+/// the roper choose between catching and pulling, and a roper that
+/// never pulls is a roper with a slightly long bite.
+///
+/// `PullActor` carries the movement, so the drag stops at walls and
+/// occupied tiles and fires no opportunity attacks — 5e treats forced
+/// movement as not a willing move, and this is the engine's one place
+/// that rule is written down.
+pub struct RoperReel {}
+
+impl RoperReel {
+    /// Every combat-active actor currently grappled *by* `roper_id`, in
+    /// ascending id order so the drag sequence is deterministic across
+    /// a seed sweep.
+    ///
+    /// `linked_by` folds the "is it held at all" check into the link
+    /// read, so a stale id whose grapple already lapsed can't be
+    /// reeled — see `ActorInstance::linked_by` for why that pairing is
+    /// the only read path onto the links.
+    fn caught_by(encounter: &EncounterInstance, roper_id: usize) -> Vec<usize> {
+        encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|&id| {
+                encounter.actors.get(&id).is_some_and(|a| {
+                    a.is_combat_active() && a.linked_by(Condition::Grappled) == Some(roper_id)
+                })
+            })
+            .collect()
+    }
+}
+
+impl Action for RoperReel {
+    fn name(&self) -> &str {
+        "reel"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["reel", "rp-reel"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        !Self::caught_by(encounter, caster_id).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(anchor) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let caught = Self::caught_by(encounter, caster_id);
+        if caught.is_empty() {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  reel: the roper hauls in {} caught {}",
+            caught.len(),
+            if caught.len() == 1 {
+                "creature"
+            } else {
+                "creatures"
+            }
+        ));
+        caught
+            .into_iter()
+            .map(|id| {
+                Box::new(crate::engine::side_effects::PullActor {
+                    actor_id: id,
+                    toward: anchor,
+                    // 25 ft RAW = 10 tiles.
+                    max_tiles: 10,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static ROPER_REEL: LazyLock<RoperReel> = LazyLock::new(|| RoperReel {});
+
+// ─── Cloaker ────────────────────────────────────────────────────────
+
+/// Cloaker Moan — "the cloaker emits a terrifying moan. Each creature
+/// within 60 feet of the cloaker that can hear the moan and that isn't
+/// an aberration must succeed on a DC 13 Wisdom saving throw or become
+/// frightened until the end of the cloaker's next turn."
+///
+/// The half of the cloaker's stat block that made it worth a CR 8 slot
+/// and that the bestiary shipped without — a cloaker with only its tail
+/// is a slow Large creature with 78 hit points and a 10 ft walk.
+///
+/// Routed through `resolve_los_glare_condition` even though RAW's gate
+/// is hearing rather than sight. The engine has no hearing model, and
+/// the glare helper is the only sweep that carries the "skip creatures
+/// immune to a damage type" filter the aberration exemption needs. The
+/// LOS clause it adds on top is a narrowing RAW does not ask for; it
+/// costs the cloaker its moan around a corner, which is a smaller error
+/// than moaning through a mountain.
+///
+/// The aberration exemption is proxied by psychic immunity, which is
+/// this engine's standing shorthand for "mind like the cloaker's" the
+/// same way necrotic immunity stands in for undead on the Mummy's
+/// glare. It is a proxy and not the rule: it exempts a few non-
+/// aberrations that happen to be psychically immune, and it catches
+/// every aberration that matters here.
+pub struct CloakerMoan {}
+
+impl Action for CloakerMoan {
+    fn name(&self) -> &str {
+        "moan"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["moan", "cl-moan"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_los_glare_condition;
+        // 60 ft RAW on the 2.5 ft grid.
+        const RADIUS: isize = 24;
+        const DC: i32 = 13;
+        encounter.log("  moan: a subsonic wail rolls out of the dark");
+        resolve_los_glare_condition(
+            encounter,
+            caster_id,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Frightened,
+            // "Until the end of the cloaker's next turn" — two rounds
+            // on the engine's clock, the same window every other
+            // short monster fear uses.
+            ConditionTimer::Rounds(2),
+            Some(DamageType::Psychic),
+        )
+    }
+}
+
+pub static CLOAKER_MOAN: LazyLock<CloakerMoan> = LazyLock::new(|| CloakerMoan {});
+
+/// Cloaker Bite — STR-based 2d6+STR piercing melee. RAW: "Bite. Melee
+/// Weapon Attack: +6 to hit, reach 5 ft., one creature. Hit: 10 (2d6 +
+/// 3) piercing damage, and the cloaker attaches to the target."
+///
+/// The attach clause is not modeled — the engine has no "riding on a
+/// creature's back" state, and the closest available shape (`Adhered`,
+/// the mimic's glue) says the *target* is stuck rather than that the
+/// cloaker is. The bite is the half that lands, and it is what turns the
+/// cloaker's multiattack into something other than a tail swipe.
+pub static CLOAKER_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "cloaker bite",
+    &["cl-bite", "cloaker-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Cloaker Multiattack — "The cloaker makes two attacks: one with its
+/// bite and one with its tail." Heterogeneous, so `CompoundAttack`
+/// rather than the homogeneous chassis.
+pub static CLOAKER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "cloaker multiattack",
+    parts: vec![(&CLOAKER_BITE, 1), (&CLOAKER_TAIL, 1)],
+});

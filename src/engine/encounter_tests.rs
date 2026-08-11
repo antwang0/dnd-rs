@@ -80581,3 +80581,603 @@ fn a_fight_nobody_is_steering_still_brings_somebody_down() {
         "sixteen fights with a caster holding itself aloft and the ground never collected once"
     );
 }
+
+// ─── Condition-tagged saving throws ──────────────────────────────────
+
+/// The axis itself: a save that knows what failing it would install
+/// reads the `CONDITION_SAVE_ADVANTAGES` cohort, and a save that
+/// doesn't reads nothing.
+///
+/// Pinned on the ettin, which is the cohort's first flag-driven row.
+/// Both directions matter and the second is the point of the whole
+/// design: the trait names six conditions, and a seventh — or a save
+/// against no condition at all — must come back untouched. An
+/// approximation that widened this to "advantage on WIS saves" would
+/// pass the first assertion and fail the second.
+#[test]
+fn two_heads_answers_only_for_the_conditions_it_names() {
+    use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let ettin = e
+        .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let a = e.actors.get(&ettin).unwrap();
+    for named in [
+        Condition::Blinded,
+        Condition::Charmed,
+        Condition::Deafened,
+        Condition::Frightened,
+        Condition::Stunned,
+        Condition::Unconscious,
+    ] {
+        assert!(
+            a.has_save_advantage_against(named),
+            "two heads covers {:?}",
+            named
+        );
+    }
+    for unnamed in [
+        Condition::Poisoned,
+        Condition::Restrained,
+        Condition::Paralyzed,
+        Condition::Petrified,
+    ] {
+        assert!(
+            !a.has_save_advantage_against(unnamed),
+            "two heads does not cover {:?} — the whole point of the axis \
+             is that it can say so",
+            unnamed
+        );
+    }
+}
+
+/// The advantage reaches the die, not just the accessor.
+///
+/// Rolled as a seed sweep rather than a single throw, because a d20 is
+/// a d20: what advantage changes is the shape of the distribution, and
+/// the assertion has to be about that. Same DC, same seeds, same
+/// creature — the only difference is whether the save was told what it
+/// was defending against.
+#[test]
+fn a_tagged_save_beats_an_untagged_one_over_a_seed_sweep() {
+    use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::types::AbilityScoreType;
+
+    // The ettin's WIS is 10, so a DC 14 save lands squarely in the
+    // band where a second die is worth something.
+    const DC: i32 = 14;
+    let mut untagged = 0;
+    let mut tagged = 0;
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let ettin = e
+            .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        if e.roll_save(ettin, AbilityScoreType::Wisdom, DC).passed() {
+            untagged += 1;
+        }
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let ettin = e
+            .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        if e.roll_save_vs_condition(ettin, AbilityScoreType::Wisdom, DC, Condition::Frightened)
+            .passed()
+        {
+            tagged += 1;
+        }
+    }
+    assert!(
+        tagged > untagged,
+        "advantage on the fear save should show up as more passes \
+         ({} tagged vs {} untagged over 80 seeds)",
+        tagged,
+        untagged
+    );
+}
+
+/// An untagged save is not a save with the cohort turned off — it is
+/// the same roll it always was. The regression this guards is the one
+/// that would make routing a call site through the tagged lane unsafe:
+/// if `condition_save_tally` ever contributed something on `None`, every
+/// site that had *not* been converted would silently start behaving
+/// differently from every site that had.
+#[test]
+fn an_untagged_save_is_byte_for_byte_the_old_roll() {
+    use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::types::AbilityScoreType;
+
+    for seed in 0..40u64 {
+        let mut plain = ei_with_terrain_seeded(15, 15, &[], seed);
+        let a = plain
+            .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let mut tagged = ei_with_terrain_seeded(15, 15, &[], seed);
+        let b = tagged
+            .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Poisoned is a condition the ettin's trait does not name, so
+        // the tagged roll must land on exactly the untagged answer.
+        assert_eq!(
+            plain.roll_save(a, AbilityScoreType::Wisdom, 14).passed(),
+            tagged
+                .roll_save_vs_condition(b, AbilityScoreType::Wisdom, 14, Condition::Poisoned)
+                .passed(),
+            "seed {} diverged on a condition the cohort does not cover",
+            seed
+        );
+    }
+}
+
+/// The shared condition-install chokepoint actually carries the tag.
+///
+/// Asserted through `save_or_condition_rider`, which is the helper every
+/// save-gated weapon rider in the bestiary routes through: an ettin on
+/// the receiving end of a fear rider must be rolling the advantage its
+/// trait grants. Without the tag threaded to this call site the cohort
+/// would be a correct table nothing consulted.
+#[test]
+fn the_shared_rider_chokepoint_passes_the_condition_to_the_die() {
+    use crate::actions::monster_attacks::save_or_condition_rider;
+    use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::side_effects::ApplicableSideEffect;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut frightened = 0;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ettin = e
+            .instantiate_creature(&ETTIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        save_or_condition_rider(
+            &mut e,
+            goblin,
+            ettin,
+            AbilityScoreType::Wisdom,
+            14,
+            Condition::Frightened,
+            ConditionTimer::Rounds(3),
+            "test fear",
+            &mut effects,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        if e.actors[&ettin].has_condition(Condition::Frightened) {
+            frightened += 1;
+        }
+    }
+    // Two heads is not immunity, so some of these land — but a DC 14
+    // WIS save at advantage on a +0 modifier fails about a third of the
+    // time, and the straight roll fails about two thirds. Anything at
+    // or above the straight-roll rate means the tag never reached the
+    // die.
+    assert!(
+        frightened < 40,
+        "an ettin rolling at advantage should shrug off most of 60 fear \
+         riders, not {} of them",
+        frightened
+    );
+}
+
+// ─── Bard: Countercharm ──────────────────────────────────────────────
+
+/// Countercharm hands the condition to the bard and to every ally in
+/// the performance's envelope, and the condition is worth exactly the
+/// two save-advantages RAW names.
+#[test]
+fn countercharm_steadies_the_band_against_fear_and_charm() {
+    use crate::actions::class_features::COUNTERCHARM;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(11, 5), 0, 0)
+        .unwrap();
+    // Well outside the 12-tile (30 ft) envelope.
+    let far = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(30, 5), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+
+    for ef in COUNTERCHARM.side_effects(&mut e, bard, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&bard].has_condition(Condition::Countercharmed),
+        "RAW says 'you and any friendly creatures' — the bard is a listener too"
+    );
+    assert!(e.actors[&near].has_condition(Condition::Countercharmed));
+    assert!(
+        !e.actors[&far].has_condition(Condition::Countercharmed),
+        "thirty feet is a range, not a suggestion"
+    );
+    assert!(
+        !e.actors[&foe].has_condition(Condition::Countercharmed),
+        "the enemy standing between them is not a friendly creature"
+    );
+
+    let a = e.actors.get(&near).unwrap();
+    assert!(a.has_save_advantage_against(Condition::Charmed));
+    assert!(a.has_save_advantage_against(Condition::Frightened));
+    assert!(
+        !a.has_save_advantage_against(Condition::Stunned),
+        "Countercharm is two conditions wide, not a blanket ward"
+    );
+}
+
+/// The bard does not spend their Action re-starting a performance that
+/// is already running. Without the gate the AI's ally-pulse rung, which
+/// fires whenever a teammate is in range, would sing on every turn of
+/// the encounter and never cast anything else.
+#[test]
+fn countercharm_declines_to_restart_a_performance_already_running() {
+    use crate::actions::class_features::COUNTERCHARM;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(11, 5), 0, 0)
+        .unwrap();
+    let first = ActionExecutionInfo::new(&*COUNTERCHARM, bard, None, None, None);
+    assert!(first.validate(&e), "an unsung bard can sing");
+    for ef in COUNTERCHARM.side_effects(&mut e, bard, None, None, None) {
+        ef.apply(&mut e);
+    }
+    let second = ActionExecutionInfo::new(&*COUNTERCHARM, bard, None, None, None);
+    assert!(
+        !second.validate(&e),
+        "a bard already mid-performance has better things to do with the Action"
+    );
+}
+
+/// A countercharmed creature really does roll the save at advantage —
+/// the accessor test above proves the cohort row, this proves the die.
+#[test]
+fn a_countercharmed_ally_shrugs_off_more_fear_than_a_lone_one() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::types::AbilityScoreType;
+
+    const DC: i32 = 15;
+    let (mut alone, mut steadied) = (0, 0);
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        if e.roll_save_vs_condition(f, AbilityScoreType::Wisdom, DC, Condition::Frightened)
+            .passed()
+        {
+            alone += 1;
+        }
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Countercharmed, ConditionTimer::Rounds(2));
+        if e.roll_save_vs_condition(f, AbilityScoreType::Wisdom, DC, Condition::Frightened)
+            .passed()
+        {
+            steadied += 1;
+        }
+    }
+    assert!(
+        steadied > alone,
+        "the song is supposed to be worth something ({} vs {})",
+        steadied,
+        alone
+    );
+}
+
+/// The AI reaches Countercharm through the ally-pulse rung — the rung
+/// whose membership test had to stop being `is_heal` for this to be
+/// possible. Asserted as "the bard picks it on the opening turn",
+/// because that is the turn the rung sits above every casting lane.
+#[test]
+fn the_ai_starts_the_performance_when_the_party_is_in_earshot() {
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::ai::Controller as _;
+    use crate::ai::{ControllerDecision, SimpleAi};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    e.start_turn_for(bard);
+    match SimpleAi.decide(&e, bard) {
+        ControllerDecision::Act(aei) => assert_eq!(
+            aei.action().name(),
+            "countercharm",
+            "the ally-pulse rung sits above the casting lanes"
+        ),
+        ControllerDecision::AwaitInput => panic!("the bard stalled on its own turn"),
+    }
+}
+
+// ─── Umber Hulk: Confusing Gaze ──────────────────────────────────────
+
+/// The gaze scrambles what it can see.
+#[test]
+fn the_confusing_gaze_scatters_a_mind_it_can_see() {
+    use crate::actions::monster_attacks::UMBER_HULK_CONFUSING_GAZE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
+    use crate::conditions::Condition;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let hulk = e
+            .instantiate_creature(&UMBER_HULK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        for ef in UMBER_HULK_CONFUSING_GAZE.side_effects(&mut e, hulk, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&goblin].has_condition(Condition::Confused) {
+            return;
+        }
+    }
+    panic!("expected the gaze to land on a DC 15 CHA save across 40 seeds");
+}
+
+/// And nothing it cannot. RAW's gate is "able to see the umber hulk's
+/// eyes", which is the whole counterplay to a DC 15 save with no damage
+/// attached — a hulk that could stare through the cavern wall it just
+/// burrowed out of would have no counterplay at all.
+#[test]
+fn the_confusing_gaze_does_not_bend_around_a_wall() {
+    use crate::actions::monster_attacks::UMBER_HULK_CONFUSING_GAZE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
+    use crate::conditions::Condition;
+
+    // A full-height wall column between the two, so no ray gets through.
+    // The gap either side of it is wide enough that neither creature's
+    // footprint straddles the wall — a Large hulk covers four tiles on
+    // this 2.5-ft grid, and one standing *in* the column would be
+    // looking out of it.
+    let walls: Vec<(isize, isize)> = (0..20).map(|y| (10, y)).collect();
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &walls, seed);
+        let hulk = e
+            .instantiate_creature(&UMBER_HULK_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .unwrap();
+        for ef in UMBER_HULK_CONFUSING_GAZE.side_effects(&mut e, hulk, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Confused),
+            "seed {}: the gaze reached through a solid wall",
+            seed
+        );
+    }
+}
+
+// ─── Roper: tendril and reel ─────────────────────────────────────────
+
+/// A landed tendril installs both halves of RAW's clause — the
+/// `Grappled` that carries the back-link and the `Restrained` that
+/// carries the penalties — and the link points at the roper that threw
+/// it, which is what Reel reads.
+#[test]
+fn a_landed_tendril_holds_and_names_its_holder() {
+    use crate::actions::monster_attacks::ROPER_TENDRIL;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let roper = e
+            .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // AC 10 and no armor: the tendril lands most of the time, so
+        // the sweep converges fast.
+        let prey = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+            .unwrap();
+        for ef in ROPER_TENDRIL.side_effects(&mut e, roper, Some(&vec![prey]), None, None) {
+            ef.apply(&mut e);
+        }
+        let held = e.actors.get(&prey).unwrap();
+        if held.has_condition(Condition::Grappled) {
+            assert!(
+                held.has_condition(Condition::Restrained),
+                "RAW: 'until the grapple ends, the target is restrained'"
+            );
+            assert_eq!(
+                held.linked_by(Condition::Grappled),
+                Some(roper),
+                "a hold that names nobody is a hold nothing can reel"
+            );
+            return;
+        }
+    }
+    panic!("expected a tendril to land on an AC-10 commoner across 40 seeds");
+}
+
+/// Reel drags the catch toward the roper and leaves everyone else where
+/// they were. The distance check is the assertion: a roper with a 10 ft
+/// walk cannot close, so if the reel does not move the victim the whole
+/// stat block is a bite nobody ever walks into.
+#[test]
+fn reel_hauls_in_what_the_tendrils_caught_and_nothing_else() {
+    use crate::actions::monster_attacks::ROPER_REEL;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let roper = e
+        .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let caught = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 8), 1, 0)
+        .unwrap();
+    // Held by the roper, the way a landed tendril leaves things.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        caught,
+        roper,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    let before = e.actors[&caught].location();
+    let bystander_before = e.actors[&bystander].location();
+
+    for ef in ROPER_REEL.side_effects(&mut e, roper, None, None, None) {
+        ef.apply(&mut e);
+    }
+    let after = e.actors[&caught].location();
+    let anchor = e.actors[&roper].location();
+    assert!(
+        after.chebyshev_to(anchor) < before.chebyshev_to(anchor),
+        "the catch should end the reel closer than it started ({} -> {})",
+        before,
+        after
+    );
+    assert_eq!(
+        e.actors[&bystander].location(),
+        bystander_before,
+        "nobody who wasn't on a strand should have moved"
+    );
+}
+
+/// A roper with an empty line has nothing to reel, and says so before
+/// the Bonus Action is spent rather than after.
+#[test]
+fn reel_declines_when_the_line_is_empty() {
+    use crate::actions::monster_attacks::ROPER_REEL;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let roper = e
+        .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+        .unwrap();
+    let aei = ActionExecutionInfo::new(&*ROPER_REEL, roper, None, None, None);
+    assert!(!aei.validate(&e), "nothing is caught, so there is no reel");
+}
+
+/// The AI's two new rungs, in the order the roper needs them: throw the
+/// grab at range, then haul the catch in on the Bonus Action.
+///
+/// The grab half is the load-bearing assertion. `best_attack_against`
+/// skips any action declaring `deals_damage() == false`, so before the
+/// damage-free-grab rung existed the AI's only reachable roper action
+/// was a 5 ft bite on a creature with a 10 ft walking speed — which is
+/// to say, nothing.
+#[test]
+fn the_ai_throws_a_tendril_and_then_reels() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::ai::Controller as _;
+    use crate::ai::{ControllerDecision, SimpleAi};
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let roper = e
+        .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let prey = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(16, 4), 1, 0)
+        .unwrap();
+    e.start_turn_for(roper);
+    match SimpleAi.decide(&e, roper) {
+        ControllerDecision::Act(aei) => assert!(
+            aei.action().name().contains("tendril"),
+            "a roper forty feet from its prey should be throwing strands, not {}",
+            aei.action().name()
+        ),
+        ControllerDecision::AwaitInput => panic!("the roper stalled on its own turn"),
+    }
+
+    // Now give it a catch and check the Bonus Action rung takes over.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        prey,
+        roper,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    match SimpleAi.decide(&e, roper) {
+        ControllerDecision::Act(aei) => assert_eq!(
+            aei.action().name(),
+            "reel",
+            "with something on the line the free action comes first"
+        ),
+        ControllerDecision::AwaitInput => panic!("the roper stalled on its own turn"),
+    }
+}
+
+// ─── Cloaker: Moan ───────────────────────────────────────────────────
+
+/// The moan frightens the living and leaves the psychically-shielded
+/// alone — RAW's aberration exemption, proxied the way the Mummy's
+/// glare proxies undead.
+#[test]
+fn the_cloakers_moan_frightens_what_can_hear_it() {
+    use crate::actions::monster_attacks::CLOAKER_MOAN;
+    use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let cloaker = e
+            .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        for ef in CLOAKER_MOAN.side_effects(&mut e, cloaker, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&victim].has_condition(Condition::Frightened) {
+            return;
+        }
+    }
+    panic!("expected the moan to land a DC 13 WIS save across 40 seeds");
+}
+

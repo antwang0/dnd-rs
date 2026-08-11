@@ -353,7 +353,10 @@ fn install_condition_on_failed_saves(
     use crate::engine::side_effects::ApplyCondition;
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     for &tid in target_ids {
-        if encounter.roll_save(tid, save_ability, dc).passed() {
+        if encounter
+            .roll_save_vs_condition(tid, save_ability, dc, condition)
+            .passed()
+        {
             continue;
         }
         effects.push(Box::new(ApplyCondition {
@@ -1059,6 +1062,32 @@ pub trait Action {
     /// True if this action restores HP / temp HP on its target.
     /// Used by the AI's support pipeline (heal-the-lowest target).
     fn is_heal(&self) -> bool {
+        false
+    }
+
+    /// True if this action's whole effect is a buff spread over the
+    /// allies standing near the actor — the Artillerist Protector
+    /// cannon's temp-HP pulse, the Bard's Countercharm.
+    ///
+    /// Read by `ai::simple::try_ally_support_pulse`, which is the rung
+    /// for actions like this and was gated on `is_heal` because for a
+    /// while every member of the cohort was one. Countercharm is not:
+    /// it restores nothing, and declaring it a heal to reach the rung
+    /// would have made it one everywhere else too — including in
+    /// `try_self_heal`, where a bard below half hit points would have
+    /// "healed" by singing.
+    ///
+    /// So the rung's real question gets its own method. A declaration
+    /// rather than a name list for the reason `summons_allies` gives
+    /// one screen down: the next ally pulse should be picked up by
+    /// saying what it is.
+    ///
+    /// Deliberately narrower than "a buff": the rung fires unconditionally
+    /// whenever a teammate is in range, which is only safe for effects
+    /// that are free, repeatable and self-limiting. An action that costs
+    /// a slot or a charge is a decision and belongs somewhere that can
+    /// make one.
+    fn pulses_ally_buff(&self) -> bool {
         false
     }
 
