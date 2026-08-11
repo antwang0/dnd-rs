@@ -5188,6 +5188,29 @@ impl ActorInstance {
         self.has_two_heads
     }
 
+    /// True if this actor can hear — which is to say, is not
+    /// `Deafened`.
+    ///
+    /// The condition's first mechanical surface. It shipped with a
+    /// docstring saying so ("the in-combat impact is mostly cosmetic —
+    /// but the flag is here for spells like Blindness/Deafness so they
+    /// can apply something"), and the reason it stayed that way is that
+    /// nothing in the engine had ever asked the question RAW asks
+    /// about it.
+    ///
+    /// Five effects do ask it, and every one of them was written with
+    /// the clause in its RAW quote and dropped from its
+    /// implementation: the banshee's wail ("that can hear it"), the
+    /// androsphinx's roar, the harpy's luring song, the cloaker's moan,
+    /// and the bard's Countercharm ("any friendly creatures within 30
+    /// feet of you that can hear you"). A deafened creature is now
+    /// simply not in any of those five target sets, which is both the
+    /// rule and the first reason a player has ever had to want
+    /// Blindness/Deafness's second half.
+    pub fn can_hear(&self) -> bool {
+        !self.has_condition(Condition::Deafened)
+    }
+
     /// True if this actor is a 5e **swarm** — see the template field for
     /// the two clauses the flag carries and the ones it doesn't.
     pub fn is_swarm(&self) -> bool {

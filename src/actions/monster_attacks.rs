@@ -4244,7 +4244,11 @@ impl Action for LuringSong {
             if target.team() == caster_team || !target.is_combat_active() {
                 continue;
             }
-            if target.effectively_immune_to_condition(Condition::Charmed) {
+            // A song is heard or it is nothing — RAW charms "each
+            // humanoid and giant that can hear the song". The clause
+            // was in the quote and not in the code until `can_hear`
+            // gave it something to read.
+            if target.effectively_immune_to_condition(Condition::Charmed) || !target.can_hear() {
                 continue;
             }
             let dist = crate::engine::util::footprint_chebyshev(
@@ -4725,7 +4729,13 @@ impl Action for BansheeWail {
             // Undead are immune to the wail (RAW: "any creature that
             // is not undead"). We proxy by checking for necrotic
             // immunity — matches the wraith / specter / wight pool.
-            if t.is_immune_to(DamageType::Necrotic) {
+            //
+            // And RAW's other clause, which had no engine to enforce it
+            // until `can_hear` existed: "each creature within 30 feet
+            // of it *that can hear it*". A deafened creature is out of
+            // the target set before it touches the dice, so the seeded
+            // log shows no save it never made.
+            if t.is_immune_to(DamageType::Necrotic) || !t.can_hear() {
                 continue;
             }
             let save = encounter.roll_save(tid, AbilityScoreType::Constitution, DC);
@@ -12176,7 +12186,12 @@ impl Action for AndrosphinxRoar {
             "  roar: 50ft burst (DC {} WIS, frightened on fail)",
             DC
         ));
-        crate::actions::action_template::resolve_los_glare_condition(
+        // A roar, not a stare: RAW's clause is "each creature within
+        // 500 feet of it that can hear the roar", which asks for an ear
+        // and says nothing about sight. It had been routed through the
+        // gaze helper, which asks the opposite question and let a
+        // sphinx be out-roared by a pillar.
+        crate::actions::action_template::resolve_audible_burst_condition(
             encounter,
             caster_id,
             RADIUS,
@@ -17917,13 +17932,13 @@ pub static ROPER_REEL: LazyLock<RoperReel> = LazyLock::new(|| RoperReel {});
 /// and that the bestiary shipped without — a cloaker with only its tail
 /// is a slow Large creature with 78 hit points and a 10 ft walk.
 ///
-/// Routed through `resolve_los_glare_condition` even though RAW's gate
-/// is hearing rather than sight. The engine has no hearing model, and
-/// the glare helper is the only sweep that carries the "skip creatures
-/// immune to a damage type" filter the aberration exemption needs. The
-/// LOS clause it adds on top is a narrowing RAW does not ask for; it
-/// costs the cloaker its moan around a corner, which is a smaller error
-/// than moaning through a mountain.
+/// Routed through `resolve_audible_burst_condition`, which is RAW's own
+/// gate: a moan is sound, so it does not need line of sight and does
+/// need an ear. The engine had no hearing model when the cloaker
+/// arrived, so this used the gaze helper and paid for it with the one
+/// clause a gaze carries and a moan does not — a cloaker behind a
+/// corner got nothing. `ActorInstance::can_hear` is what made the
+/// honest version available.
 ///
 /// The aberration exemption is proxied by psychic immunity, which is
 /// this engine's standing shorthand for "mind like the cloaker's" the
@@ -17957,12 +17972,12 @@ impl Action for CloakerMoan {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_los_glare_condition;
+        use crate::actions::action_template::resolve_audible_burst_condition;
         // 60 ft RAW on the 2.5 ft grid.
         const RADIUS: isize = 24;
         const DC: i32 = 13;
         encounter.log("  moan: a subsonic wail rolls out of the dark");
-        resolve_los_glare_condition(
+        resolve_audible_burst_condition(
             encounter,
             caster_id,
             RADIUS,

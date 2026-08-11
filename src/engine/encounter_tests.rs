@@ -81501,3 +81501,114 @@ fn a_compound_is_looked_up_underwater_by_the_swing_the_water_taxes() {
         multi.underwater_weapon_name()
     );
 }
+
+// ─── What a deafened creature misses ─────────────────────────────────
+
+/// The five effects RAW gates on hearing now gate on hearing.
+///
+/// `Deafened` shipped as a flag with nowhere to bite — its own
+/// docstring said the in-combat impact was "mostly cosmetic" — while
+/// five abilities carried "that can hear it" in their RAW quotes and
+/// dropped the clause in code. This drives the two the engine can put
+/// on one board cheaply: the cloaker's moan (an enemy sweep) and the
+/// bard's Countercharm (an ally sweep). A deafened creature is out of
+/// both target sets, and its hearing neighbour is in.
+#[test]
+fn a_deafened_creature_is_outside_every_sound_in_the_engine() {
+    use crate::actions::class_features::COUNTERCHARM;
+    use crate::actions::monster_attacks::CLOAKER_MOAN;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    // Ally sweep: the deafened fighter hears no song.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let deaf = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 0, 0)
+        .unwrap();
+    let hearing = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(11, 4), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&deaf)
+        .unwrap()
+        .add_condition(Condition::Deafened, ConditionTimer::Rounds(10));
+    for ef in COUNTERCHARM.side_effects(&mut e, bard, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&deaf].has_condition(Condition::Countercharmed),
+        "a performance is the one buff a deafened ally genuinely misses"
+    );
+    assert!(e.actors[&hearing].has_condition(Condition::Countercharmed));
+
+    // Enemy sweep: the deafened commoner never rolls against the moan.
+    // Swept over seeds because the save is a save; the assertion is
+    // that the deafened one is never frightened while the other one
+    // sometimes is.
+    let mut ever_frightened = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let cloaker = e
+            .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let deaf = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 4), 1, 0)
+            .unwrap();
+        let hearing = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(13, 4), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&deaf)
+            .unwrap()
+            .add_condition(Condition::Deafened, ConditionTimer::Rounds(10));
+        for ef in CLOAKER_MOAN.side_effects(&mut e, cloaker, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&deaf].has_condition(Condition::Frightened),
+            "seed {}: a moan reached somebody who cannot hear",
+            seed
+        );
+        ever_frightened |= e.actors[&hearing].has_condition(Condition::Frightened);
+    }
+    assert!(
+        ever_frightened,
+        "the moan should have landed on the creature with ears at least once"
+    );
+}
+
+/// A moan is not a gaze: it goes round the corner the cloaker is hiding
+/// behind, which is the clause the sound sweep drops and the gaze sweep
+/// keeps. The cloaker had been routed through the gaze helper for want
+/// of a hearing model, and paid for it with the one rule a moan does
+/// not have.
+#[test]
+fn a_moan_carries_through_a_wall_where_a_gaze_would_not() {
+    use crate::actions::monster_attacks::CLOAKER_MOAN;
+    use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let walls: Vec<(isize, isize)> = (0..20).map(|y| (10, y)).collect();
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &walls, seed);
+        let cloaker = e
+            .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .unwrap();
+        for ef in CLOAKER_MOAN.side_effects(&mut e, cloaker, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&victim].has_condition(Condition::Frightened) {
+            return;
+        }
+    }
+    panic!("expected the moan through the wall to land across 40 seeds");
+}

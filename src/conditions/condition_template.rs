@@ -124,10 +124,24 @@ pub enum Condition {
     /// Symmetric counterpart to `Blessed`. Tracked as a condition so it
     /// ticks down with the spell timer and clears on concentration drop.
     Baned,
-    /// Cannot hear; auto-fail any check requiring hearing. We don't yet
-    /// model verbal-component spell failure or audio-based perception, so
-    /// the in-combat impact is mostly cosmetic — but the flag is here for
-    /// spells like Blindness/Deafness so they can apply something.
+    /// Cannot hear.
+    ///
+    /// Read through `ActorInstance::can_hear`, which five effects
+    /// consult — the banshee's wail, the androsphinx's roar, the
+    /// harpy's luring song, the cloaker's moan, and the bard's
+    /// Countercharm. Every one of those carries a "that can hear it"
+    /// clause in RAW, and a deafened creature is simply not in their
+    /// target sets: no save rolled, no charm, no fear, and no share of
+    /// the song.
+    ///
+    /// That is the whole of it, and it is a real whole rather than the
+    /// note this docstring used to carry ("the in-combat impact is
+    /// mostly cosmetic — but the flag is here for spells like
+    /// Blindness/Deafness so they can apply something"). What is still
+    /// not modeled is verbal-component spell failure, which is a rule
+    /// about the *caster's* hearing that 5e does not actually have, and
+    /// audio-based perception, which needs a Perception surface the
+    /// engine does not have either.
     Deafened,
     /// Marked by Hunter's Mark — the marker (concentrating caster) deals
     /// an extra 1d6 weapon damage to this target. Tracked as a condition

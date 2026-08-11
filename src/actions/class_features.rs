@@ -5983,11 +5983,10 @@ const COUNTERCHARM_RADIUS: isize = 12;
 /// That is what makes the 2-round timer right rather than stingy — the
 /// buff is meant to lapse the moment the bard stops singing.
 ///
-/// RAW's "friendly creatures that can hear you" narrows to allies in
-/// range here; the engine has no hearing model, and `Deafened` in this
-/// engine is documented as having no combat surface of its own, so
-/// gating on it would be a rule enforced against one condition and
-/// nothing else.
+/// RAW's "friendly creatures that can hear you" is enforced: a deafened
+/// ally is not in the target set. That clause is what finally gave
+/// `Deafened` a mechanical surface — see `ActorInstance::can_hear`,
+/// which four monster abilities read for the same reason.
 pub struct Countercharm {}
 
 impl Action for Countercharm {
@@ -6061,6 +6060,8 @@ impl Action for Countercharm {
             ConditionTimer::Rounds(2),
             "countercharm",
             "steadied by the bard's song",
+            // "…that can hear you." See `ActorInstance::can_hear`.
+            true,
         )
     }
 }
@@ -12707,6 +12708,9 @@ fn spend_feature_and_install_ally_burst(
         timer,
         label,
         "rallied with resolve",
+        // Zealous Presence is a shout in RAW's flavour and a burst in
+        // its rules text — no hearing clause — so the gate stays open.
+        false,
     )
 }
 
@@ -12726,6 +12730,12 @@ fn spend_feature_and_install_ally_burst(
 /// `verb` is the tail of the log line — the two callers rally allies
 /// and steady them respectively, and the difference is worth a reader's
 /// eye in the transcript.
+///
+/// `audible` drops allies who cannot hear the caster. Countercharm's
+/// RAW clause is "any friendly creatures within 30 feet of you that can
+/// hear you", and a performance is the one kind of buff a deafened ally
+/// genuinely misses; see `ActorInstance::can_hear` for the other four
+/// effects on that lane.
 #[allow(clippy::too_many_arguments)]
 fn install_ally_burst_condition(
     encounter: &mut EncounterInstance,
@@ -12736,11 +12746,15 @@ fn install_ally_burst_condition(
     timer: ConditionTimer,
     label: &'static str,
     verb: &'static str,
+    audible: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
         return Vec::new();
     };
     let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, radius);
+    if audible {
+        targets.retain(|id| encounter.actors.get(id).is_some_and(|a| a.can_hear()));
+    }
     targets.truncate(max_targets);
     let n = targets.len();
     encounter.log(format!(

@@ -414,6 +414,54 @@ pub fn resolve_los_glare_condition(
     install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
 }
 
+/// The hearing-gated sibling of `resolve_los_glare_condition`, for the
+/// effects RAW words as sound rather than sight: every combat-active
+/// enemy within `radius` that can hear rolls `save_ability` vs `dc`,
+/// and the failures pick up `condition` for `timer`.
+///
+/// The two helpers differ in exactly one filter and that difference is
+/// the point. A gaze cannot bend around a corner, so the glare variant
+/// drops anything without line of sight; a moan travels perfectly well
+/// through a wall, so this one does not ask. What it asks instead is
+/// whether the target can hear at all — the clause every one of these
+/// effects carries in its RAW quote and none of them carried in code,
+/// because until `ActorInstance::can_hear` existed there was nothing to
+/// ask. See that method for the five effects this closes.
+///
+/// `skip_immune_to_damage` is the same creature-cohort proxy the glare
+/// variant takes: necrotic immunity stands in for undead on the
+/// banshee's wail, psychic immunity for aberrations on the cloaker's
+/// moan. It is a proxy and not the rule, and it is stated as one at
+/// each call site.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_audible_burst_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+    skip_immune_to_damage: Option<DamageType>,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+        return Vec::new();
+    };
+    // Both filters run before any save is rolled, for the same reason
+    // the glare variant's do: a target the sound never reaches must not
+    // touch the dice, or the seeded log fills with saves nobody made.
+    let target_ids: Vec<usize> = encounter
+        .enemy_burst_targets(caster_id, caster_loc, radius)
+        .into_iter()
+        .filter(|&tid| {
+            encounter.actors.get(&tid).is_some_and(|a| {
+                a.can_hear() && !skip_immune_to_damage.is_some_and(|dt| a.is_immune_to(dt))
+            })
+        })
+        .collect();
+    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
+}
+
 /// Sweep targets in a `radius` burst centered on `point` and return their
 /// ids in ascending current-HP order — a target whose current HP exceeds
 /// the running pool stops the sweep (5e Sleep / Color Spray semantics).
