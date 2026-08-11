@@ -1476,6 +1476,23 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a⁵. Earthbind — the dispel's complement, for the flier whose
+        //      flight is a column on its stat block and so has nothing
+        //      a dispel could take. Directly below the dispel because
+        //      the two never want the same target and the dispel is the
+        //      cheaper answer where both apply: it keeps its
+        //      concentration and charges the way down.
+        //
+        //      Above the damage lanes for the reason the dispel is:
+        //      grounding is worth more the earlier it lands. A wyvern
+        //      put on the floor on round one crawls at a quarter speed
+        //      through terrain it used to be above for the whole rest
+        //      of the fight; one put there on round four has already
+        //      chosen every engagement it wanted.
+        if let Some(aei) = try_earthbind(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — a point with no friendly fire that catches two
         //    enemies, or one when the cast spends neither the Action nor
         //    a slot (see `best_burst_placement`'s floor).
@@ -2228,12 +2245,22 @@ fn try_concentration_mark(
 ///
 /// The target ranking is three tiers, and the top one is new:
 ///
-///   - **Airborne** (`altitude_ft > 0`). Ending a flier's spell is the
-///     only play on the board that both takes the effect away *and*
-///     charges for the way down — 3d6 and prone, courtesy of the
-///     altitude sweep. It also happens to be the case a damage-shaped
-///     picker is least able to see, because the payoff lands on a
-///     different lane entirely.
+///   - **Airborne on a spell the dispel can actually take.** Ending a
+///     flier's *Fly* is the only play on the board that both takes the
+///     effect away *and* charges for the way down — 3d6 and prone,
+///     courtesy of the altitude sweep. It also happens to be the case a
+///     damage-shaped picker is least able to see, because the payoff
+///     lands on a different lane entirely.
+///
+///     Both halves of that sentence are load-bearing and neither is
+///     `altitude_ft > 0`, which is what this tier used to read. A wyvern
+///     is thirty feet up because it is a wyvern; Dispel Magic has
+///     nothing to strip and the wyvern does not come down, so ranking it
+///     top would have spent the party's best answer to a Haste on a
+///     creature it cannot affect at all. A natural flier *also* riding a
+///     Fly is the same story one step in: the buff comes off and the
+///     wings do not, so there is no fall to charge for and the target
+///     drops to whatever tier its other buffs earn it.
 ///   - **Concentrating.** RAW's headline use, and the one that scales:
 ///     dropping a concentration ends the whole spell on every target it
 ///     touched, so one action can undo a Web that pinned three allies.
@@ -2266,7 +2293,7 @@ fn try_dispel_magic(
         if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
             continue;
         }
-        let tier = if target.altitude_ft() > 0 {
+        let tier = if target.has_magical_flight() && !target.has_innate_flight() {
             3
         } else if target.is_concentrating() {
             2
@@ -2293,8 +2320,74 @@ fn try_dispel_magic(
     best.map(|(_, aei)| aei)
 }
 
-
-
+/// Earthbind — take the enemy's wings off, on the half of the roster
+/// where the wings are the stat block rather than a spell.
+///
+/// The complement of `try_dispel_magic`'s top tier and deliberately
+/// disjoint from it. A dispel answers a flier whose flight is a buff and
+/// can do nothing at all to a wyvern; Earthbind is the other way round.
+/// It works on both, but it is only *worth* a 2nd-level slot and a
+/// concentration against a natural flier, because against a buffed one
+/// the party's dispel does the same job, keeps its concentration, and
+/// charges 3d6 on the way down.
+///
+/// What a grounding is worth, on a board with no third dimension:
+///
+///   - **The speed.** This is the payoff, and it is the one that only
+///     exists now that a stat block carries two numbers. A wyvern grounded
+///     is a 20-foot creature that was an 80-foot one; a roc goes from 120
+///     to 20. The flier's whole advantage is choosing the engagement, and
+///     the spell takes it.
+///   - **The terrain.** A grounded flier pays the difficult-terrain and
+///     water surcharges everything else pays, so the rubble and the lake
+///     the party is standing behind start meaning something.
+///   - **The tremorsense.** A creature on the floor is a creature the
+///     burrowers can feel.
+///
+/// Ranked by flying speed lost — `base_fly_speed` and not `speed()`,
+/// because the question is how much of the target's mobility this spell
+/// is about to remove and a Slow already halving it does not make the
+/// wyvern a less urgent problem. Ties break to the lowest actor id, the
+/// same reproducible-from-the-seed tiebreak the dispel picker uses.
+///
+/// Silent on a target that is already `Earthbound` — RAW would let the
+/// spell land again, but a second concentration spent holding down a
+/// creature that is already on the floor is the caster's whole turn for
+/// nothing.
+fn try_earthbind(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Concentration-bound, and the caster has exactly one. Anything they
+    // are already holding was picked by a higher rung than this one.
+    if actor.is_concentrating() {
+        return None;
+    }
+    let action = actor.find_action("earthbind")?;
+    let my_team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        if !target.has_innate_flight() {
+            continue;
+        }
+        let worth = target.base_fly_speed() as u32;
+        if best.as_ref().is_some_and(|(best_worth, _)| worth <= *best_worth) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+        if aei.validate(encounter) {
+            best = Some((worth, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
 
 /// Cast Bless if we have it, aren't already concentrating, and there's at
 /// least one combat-active ally (otherwise the buff is wasted on solo).
@@ -12008,6 +12101,47 @@ mod tests {
         let pick = try_dispel_magic(&e, wizard).expect("one legal target");
         assert_eq!(pick.target_ids(), Some(&[buffed][..]));
 
+        // A wyvern is thirty feet up and is not a dispel target: there
+        // is no spell holding it there. The tier used to read
+        // `altitude_ft > 0`, which would have ranked it above all three
+        // goblins and spent the party's best answer to a Haste on a
+        // creature Dispel Magic cannot touch.
+        let wyvern = e
+            .instantiate_creature(
+                &crate::actors::creatures::wyverns::WYVERN_TEMPLATE,
+                Coordinate::new(12, 4),
+                1,
+                3,
+            )
+            .unwrap();
+        e.reconcile_altitudes();
+        assert!(e.actors[&wyvern].altitude_ft() > 0, "the wyvern is aloft");
+        let pick = try_dispel_magic(&e, wizard).expect("the buffed goblin is still there");
+        assert_eq!(
+            pick.target_ids(),
+            Some(&[buffed][..]),
+            "a creature that flies because it is a wyvern has nothing to dispel"
+        );
+
+        // And a wyvern that *is* also riding a Fly stays out of the top
+        // tier for the second half of the same reason: the buff comes
+        // off, the wings do not, and there is no fall to charge for.
+        e.actors
+            .get_mut(&wyvern)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        let pick = try_dispel_magic(&e, wizard).expect("still the goblin");
+        assert_eq!(
+            pick.target_ids(),
+            Some(&[buffed][..]),
+            "stripping a natural flier's Fly does not ground it"
+        );
+        e.actors
+            .get_mut(&wyvern)
+            .unwrap()
+            .remove_condition(Condition::Flying);
+        e.despawn_actor(wyvern, "flies off");
+
         // A board with no magic on it at all is a board the rung
         // declines, rather than one where it burns a 3rd-level slot on
         // a goblin with nothing to strip.
@@ -12018,6 +12152,93 @@ mod tests {
         assert!(
             try_dispel_magic(&e, wizard).is_none(),
             "nothing to end means nothing to cast"
+        );
+    }
+
+    /// The Earthbind rung is the dispel's complement: it goes for the
+    /// flier a dispel cannot touch, it prefers the fastest one, and it
+    /// does not fire on a board with nothing in the air.
+    ///
+    /// The ranking is the half worth pinning. A roc and a stirge are
+    /// both natural fliers and both legal targets; grounding the roc
+    /// takes 120 feet of movement off the board and grounding the stirge
+    /// takes 40, and the spell can only hold one of them. A picker that
+    /// took the nearest body or the lowest id would take the stirge, so
+    /// the two are placed with the stirge first on both counts.
+    #[test]
+    fn the_earthbind_rung_grounds_the_fastest_thing_in_the_sky() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rocs::ROC_TEMPLATE;
+        use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .unwrap();
+        // Nothing airborne yet: a goblin on the floor is not a reason to
+        // spend a slot and a concentration.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+            .unwrap();
+        assert!(
+            try_earthbind(&e, wizard).is_none(),
+            "an empty sky is not a target"
+        );
+
+        // Lower id, nearer, slower — every tiebreak that is not the
+        // flying speed points at the stirge.
+        let stirge = e
+            .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(9, 4), 1, 1)
+            .unwrap();
+        let roc = e
+            .instantiate_creature(&ROC_TEMPLATE, Coordinate::new(11, 4), 1, 2)
+            .unwrap();
+        e.reconcile_altitudes();
+
+        let pick = try_earthbind(&e, wizard).expect("two fliers in the sky");
+        assert_eq!(pick.action().name(), "earthbind");
+        assert_eq!(
+            pick.target_ids(),
+            Some(&[roc][..]),
+            "120 ft of flying speed is worth more than 40"
+        );
+
+        // Take the roc off the board and the stirge inherits the pick —
+        // the rung ranks, it does not only ever fire on one creature.
+        e.despawn_actor(roc, "flies off");
+        let pick = try_earthbind(&e, wizard).expect("one flier left");
+        assert_eq!(pick.target_ids(), Some(&[stirge][..]));
+
+        // A caster already holding something has no concentration to
+        // spend, whatever is in the sky.
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .start_concentration(crate::actors::actor_template::ConcentrationData::new("web"));
+        assert!(
+            try_earthbind(&e, wizard).is_none(),
+            "the caster is already holding a spell"
+        );
+        e.actors.get_mut(&wizard).unwrap().end_concentration();
+
+        // And a goblin that is airborne on a *spell* is the dispel's
+        // problem, not this rung's: the two pickers partition the sky.
+        e.despawn_actor(stirge, "flies off");
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Flying, crate::conditions::ConditionTimer::Rounds(10));
+        e.reconcile_altitudes();
+        assert!(e.actors[&goblin].altitude_ft() > 0, "the goblin is aloft");
+        assert!(
+            try_earthbind(&e, wizard).is_none(),
+            "a buffed flier belongs to the dispel rung above"
         );
     }
 
