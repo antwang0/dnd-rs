@@ -503,6 +503,7 @@ pub const BOAR_CHARGE: ChargeRider = ChargeRider {
     label: "boar charge",
     knockdown_label: "boar charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Giant Boar **Charge** (RAW): extra 7 (2d6) slashing, DC 13 Strength
@@ -516,6 +517,7 @@ pub const GIANT_BOAR_CHARGE: ChargeRider = ChargeRider {
     label: "giant boar charge",
     knockdown_label: "giant boar charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Elk **Charge** (RAW): extra 7 (2d6) bludgeoning, DC 13 Strength or
@@ -529,6 +531,7 @@ pub const ELK_CHARGE: ChargeRider = ChargeRider {
     label: "elk charge",
     knockdown_label: "elk charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Goat **Charge** (RAW): extra 2 (1d4) bludgeoning, DC 10 Strength or
@@ -542,6 +545,7 @@ pub const GOAT_CHARGE: ChargeRider = ChargeRider {
     label: "goat charge",
     knockdown_label: "goat charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Giant Goat **Charge** (RAW): extra 5 (2d4) bludgeoning, DC 13
@@ -555,6 +559,7 @@ pub const GIANT_GOAT_CHARGE: ChargeRider = ChargeRider {
     label: "giant goat charge",
     knockdown_label: "giant goat charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Unicorn **Charge** (RAW): extra 9 (2d8) piercing, DC 15 Strength or
@@ -569,6 +574,7 @@ pub const UNICORN_CHARGE: ChargeRider = ChargeRider {
     label: "unicorn charge",
     knockdown_label: "unicorn charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Centaur **Charge** (RAW): "If the centaur moves at least 30 feet
@@ -584,13 +590,19 @@ pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
     label: "centaur charge",
     knockdown_label: "",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Triceratops **Trampling Charge** (RAW): no extra damage, "that target
-/// must succeed on a DC 13 Strength saving throw or be knocked prone."
-/// The bonus stomp against a target it flattens is the unmodeled half —
-/// a mid-resolution action-economy grant the damage path has no hook
-/// for.
+/// must succeed on a DC 13 Strength saving throw or be knocked prone. If
+/// the target is prone, the triceratops can make one stomp attack
+/// against it as a bonus action."
+///
+/// Both halves now. The stomp is reach 1 against a gore that reaches 2,
+/// so a triceratops that flattened somebody at the far edge of its horns
+/// gets the knockdown and not the stamp — `try_fire_charge_follow_up`
+/// measures the follow-up limb's own reach rather than assuming the
+/// charge's.
 pub const TRICERATOPS_CHARGE: ChargeRider = ChargeRider {
     weapon: Some("gore"),
     dice: Dice::new(0, 0),
@@ -600,11 +612,17 @@ pub const TRICERATOPS_CHARGE: ChargeRider = ChargeRider {
     label: "trampling charge",
     knockdown_label: "trampling charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("stomp"),
 };
 
-/// Warhorse **Trampling Charge** (RAW): DC 14 Strength or prone, then a
-/// bonus hoof attack against a target it knocks down. Same unmodeled
-/// second half as the triceratops.
+/// Warhorse **Trampling Charge** (RAW): DC 14 Strength or prone, "and if
+/// that target is prone, the horse can make another attack with its
+/// hooves against it as a bonus action."
+///
+/// The one clause in the bestiary whose follow-up is the same limb the
+/// charge rides, which makes it the one that could re-enter the charge
+/// path. It terminates on the bonus action rather than on a flag — see
+/// `try_fire_charge_follow_up`.
 pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
     weapon: Some("warhorse hooves"),
     dice: Dice::new(0, 0),
@@ -614,13 +632,18 @@ pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
     label: "warhorse trampling charge",
     knockdown_label: "warhorse trampling charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("warhorse hooves"),
 };
 
 /// Tiger **Pounce** (RAW): "If the tiger moves at least 20 feet straight
 /// toward a creature and then hits it with a claw attack on the same
 /// turn, that target must succeed on a DC 13 Strength saving throw or be
-/// knocked prone." The free bite against a flattened target is the
-/// unmodeled half.
+/// knocked prone. If the target is prone, the tiger can make one bite
+/// attack against it as a bonus action."
+///
+/// The cats are the reason `prone_follow_up` names its limb instead of
+/// reusing the charge's: the pounce rides the claws and pays out in the
+/// bite, which is a strictly bigger die on every one of them.
 pub const TIGER_POUNCE: ChargeRider = ChargeRider {
     weapon: Some("claws"),
     dice: Dice::new(0, 0),
@@ -630,12 +653,14 @@ pub const TIGER_POUNCE: ChargeRider = ChargeRider {
     label: "tiger pounce",
     knockdown_label: "tiger pounce knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("bite"),
 };
 
 /// Lion **Pounce** (RAW): identical to the tiger's, on the lion's own
-/// claw. Two constants rather than one shared `POUNCE` because the log
-/// line names the cat, and because the two stat blocks are free to drift
-/// apart the way the boar and the giant boar already have.
+/// claw, down to the bite it pays out in. Two constants rather than one
+/// shared `POUNCE` because the log line names the cat, and because the
+/// two stat blocks are free to drift apart the way the boar and the
+/// giant boar already have.
 pub const LION_POUNCE: ChargeRider = ChargeRider {
     weapon: Some("claws"),
     dice: Dice::new(0, 0),
@@ -645,6 +670,7 @@ pub const LION_POUNCE: ChargeRider = ChargeRider {
     label: "lion pounce",
     knockdown_label: "lion pounce knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("bite"),
 };
 
 /// Minotaur **Charge** (RAW): "If the minotaur moves at least 10 feet
@@ -667,6 +693,7 @@ pub const MINOTAUR_CHARGE: ChargeRider = ChargeRider {
     label: "minotaur charge",
     knockdown_label: "minotaur charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Wereboar **Charge** (RAW): fifteen feet, extra 7 (2d6) slashing, DC
@@ -682,11 +709,15 @@ pub const WEREBOAR_CHARGE: ChargeRider = ChargeRider {
     label: "wereboar charge",
     knockdown_label: "wereboar charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: None,
 };
 
 /// Saber-toothed Tiger **Pounce** (RAW): twenty feet, claw attack, DC 14
-/// Strength or prone. The same clause the ordinary tiger and the lion
-/// carry, on a much heavier cat.
+/// Strength or prone, then one bite as a bonus action against a target
+/// it flattens. The same clause the ordinary tiger and the lion carry,
+/// on a much heavier cat — and the reason the follow-up is named per row
+/// rather than shared: this cat's limbs are `"saber claws"` and
+/// `"saber bite"`, not the plain pair its smaller cousins swing.
 pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
     weapon: Some("saber claws"),
     dice: Dice::new(0, 0),
@@ -696,12 +727,19 @@ pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
     label: "saber-toothed pounce",
     knockdown_label: "saber-toothed pounce knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("saber bite"),
 };
 
 /// Mammoth **Trampling Charge** (RAW): twenty feet, gore attack, DC 18
 /// Strength or prone — and then a bonus stomp against a target it
-/// flattens, which is the unmodeled half here as it is on the
-/// triceratops and the warhorse.
+/// flattens, the same second half the triceratops and the warhorse
+/// carry.
+///
+/// The mammoth's stomp is the one follow-up that is *also* prone-gated
+/// on its own account (`MammothStomp::custom_validate_input`), which is
+/// what forced the follow-up to be queued behind the knockdown rather
+/// than swung beside it: fired inline it would have found an upright
+/// target and declined.
 ///
 /// This one replaced a bespoke `Action`. The mammoth used to carry a
 /// second, near-duplicate gore called "trampling charge" — same 4d8, a
@@ -721,6 +759,7 @@ pub const MAMMOTH_CHARGE: ChargeRider = ChargeRider {
     label: "trampling charge",
     knockdown_label: "trampling charge knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("mammoth stomp"),
 };
 
 /// A vanilla weapon attack: roll d20 + ability mod vs AC, on hit roll
@@ -9108,8 +9147,8 @@ pub static TIGER_BITE: SimpleWeapon = SimpleWeapon::melee(
 /// Tiger claws — STR 1d8+5 slashing. The lighter half of the multi
 /// pair; the rake after the bite lands. Carries RAW's **Pounce** — a
 /// STR save vs Prone when the cat reaches the target across a
-/// straight-line run — through `CHARGE_RIDERS`. The free bite RAW
-/// grants against a target it flattens is the unmodeled half.
+/// straight-line run, and the free bite against the target it
+/// flattens — through `TIGER_POUNCE`.
 pub static TIGER_CLAWS: SimpleWeapon = SimpleWeapon::melee(
     "claws",
     &["c", "rake"],
@@ -9607,10 +9646,9 @@ pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
 /// Triceratops Gore — STR-based 4d8+STR piercing, reach 2 (10 ft). The
 /// huge ceratopsian's signature charge: high single-die damage that
 /// rewards reach over multi-strike spam. RAW's **Trampling Charge** —
-/// Prone on a failed STR save after a straight-line move-then-hit —
-/// rides this weapon through `CHARGE_RIDERS` in `engine::attack`. The
-/// bonus stomp against a target it knocks down is the half that stays
-/// unmodeled.
+/// Prone on a failed STR save after a straight-line move-then-hit, then
+/// a bonus-action stomp on the target it flattens — rides this weapon
+/// through `TRICERATOPS_CHARGE` in `engine::attack`.
 pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
     "gore",
     &["gr", "horn-charge"],
@@ -9621,9 +9659,10 @@ pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
 );
 
 /// Triceratops Stomp — STR-based 3d10+STR bludgeoning, reach 1. RAW
-/// only triggers vs Prone targets; we expose it as a vanilla swing the
-/// AI can pick when the gore is out of reach (the Triceratops's full
-/// envelope: gore at reach 2 OR stomp at reach 1, never both per turn).
+/// reaches for it in two places: as the bonus-action follow-up a
+/// Trampling Charge earns against the target it flattened (wired by
+/// `TRICERATOPS_CHARGE::prone_follow_up`), and — as we expose it — as a
+/// vanilla swing the AI can pick when the gore is out of reach.
 pub static TRICERATOPS_STOMP: SimpleWeapon = SimpleWeapon::melee(
     "stomp",
     &["st", "trample"],
@@ -16818,13 +16857,13 @@ pub static PANTHER_CLAW: SimpleWeapon = SimpleWeapon::melee(
 /// Panther **Pounce** (RAW): "If the panther moves at least 20 feet
 /// straight toward a creature and then hits it with a claw attack on
 /// the same turn, that target must succeed on a DC 12 Strength saving
-/// throw or be knocked prone."
+/// throw or be knocked prone. If the target is prone, the panther can
+/// make one bite attack against it as a bonus action."
 ///
-/// Damage-free — the whole clause is the knockdown, which is what
-/// separates a pounce from the boar's charge. RAW's follow-up bonus-
-/// action bite against a prone target is dropped: the engine has no
-/// conditional bonus-action grant, and the panther already gets the
-/// prone target's advantage on every swing after the first.
+/// Damage-free — the whole clause is the knockdown and the bite it
+/// buys, which is what separates a pounce from the boar's charge. The
+/// engine does have the conditional bonus-action grant this row's
+/// docstring used to say it lacked; see `ChargeRider::prone_follow_up`.
 pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
     weapon: Some("panther claw"),
     dice: Dice::new(0, 0),
@@ -16834,6 +16873,7 @@ pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
     label: "panther pounce",
     knockdown_label: "panther pounce knockdown",
     once_per_turn_tag: None,
+    prone_follow_up: Some("panther bite"),
 };
 
 // ─── Remorhaz ───────────────────────────────────────────────────────

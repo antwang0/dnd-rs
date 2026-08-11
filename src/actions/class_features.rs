@@ -3561,6 +3561,7 @@ pub const FEROCIOUS_CHARGER: crate::engine::attack::ChargeRider =
         label: "ferocious charger",
         knockdown_label: "ferocious charger knockdown",
         once_per_turn_tag: Some(FEROCIOUS_CHARGER_TAG),
+        prone_follow_up: None,
     };
 
 /// 5e Fighter **Cavalier** subclass — **Warding Maneuver** (level 7,

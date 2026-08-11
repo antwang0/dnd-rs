@@ -73230,6 +73230,298 @@ fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
     );
 }
 
+/// Run a `caster` swing named `action_name` at `target` with a hit
+/// guaranteed by a +20 to-hit, applying whatever it queues. The shared
+/// tail of every charge-clause test below: they differ in who is
+/// swinging and how far they ran first, never in how the swing lands.
+fn swing_guaranteed_hit(
+    e: &mut EncounterInstance,
+    caster: usize,
+    target: usize,
+    action_name: &'static str,
+    damage_dice: Dice,
+    damage_type: DamageType,
+) {
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    let effects = resolve_attack(
+        e,
+        AttackParams {
+            caster_id: caster,
+            target_id: target,
+            action_name,
+            attack_bonus: 20,
+            damage_dice,
+            damage_bonus: 0,
+            damage_type,
+            is_melee: true,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    );
+    for ef in effects {
+        ef.apply(e);
+    }
+}
+
+/// A pounce that flattens its target buys the cat a bite, and one that
+/// doesn't buys nothing.
+///
+/// RAW's clause is two sentences and the engine used to stop after the
+/// first: "that target must succeed on a DC 13 Strength saving throw or
+/// be knocked prone. **If the target is prone, the tiger can make one
+/// bite attack against it as a bonus action.**" Six stat blocks carry
+/// the second sentence and every one of their docstrings apologised for
+/// dropping it.
+///
+/// The assertion is the biconditional rather than either half on its
+/// own, because the two failure modes point opposite ways: a follow-up
+/// that fires without the knockdown is a free attack RAW never granted,
+/// and one that doesn't fire after it is the bug that was already here.
+/// Seeded across a range wide enough that both outcomes show up, which
+/// is also what proves the save is being rolled at all.
+#[test]
+fn a_pounce_that_flattens_its_target_buys_the_cat_a_bite() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::tigers::TIGER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut knocked = 0;
+    let mut saved = 0;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(30, 12, &[], seed);
+        let tiger = e
+            .instantiate_creature(&TIGER_TEMPLATE, Coordinate::new(3, 6), 1, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 6), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&tiger).unwrap().reset_for_new_round();
+        assert_eq!(
+            e.actors[&tiger].bonus_action_slots(),
+            1,
+            "the cat starts its turn with a bonus action to spend"
+        );
+        walk_straight(&mut e, tiger, 1, 0, 9);
+
+        let log_before = e.messages().len();
+        swing_guaranteed_hit(
+            &mut e,
+            tiger,
+            ogre,
+            "claws",
+            Dice::new(1, 8),
+            DamageType::Slashing,
+        );
+
+        let prone = e.actors[&ogre].has_condition(Condition::Prone);
+        let bit = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("[bonus]") && m.contains("tiger pounce"));
+        assert_eq!(
+            prone, bit,
+            "the bonus bite is exactly as available as the knockdown that buys it (seed {})",
+            seed
+        );
+        assert_eq!(
+            e.actors[&tiger].can_consume_resource(Resource::BonusAction),
+            !prone,
+            "and it is paid for out of the bonus action (seed {})",
+            seed
+        );
+        if prone { knocked += 1 } else { saved += 1 }
+    }
+    assert!(
+        knocked > 0 && saved > 0,
+        "forty seeds should show the ogre both failing and making the save: \
+         {} knocked down, {} still standing",
+        knocked,
+        saved
+    );
+}
+
+/// The follow-up is measured at its own limb's reach, not the charge's.
+///
+/// The triceratops is the stat block that makes the distinction visible:
+/// its gore reaches ten feet and the stomp that follows it reaches five,
+/// so a target flattened at the far end of the horns is one the animal
+/// cannot then stand on. Assuming the charge's reach would have handed
+/// out a free swing from outside the follow-up's range on the one
+/// creature in the bestiary where the two differ.
+#[test]
+fn a_charge_follow_up_cannot_reach_further_than_its_own_limb() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    // Far enough out that the gore (reach 2) connects and the stomp
+    // (reach 1) does not. Seeded across a range so the run includes
+    // knockdowns — a test that never flattened anybody would pass on the
+    // wrong reason.
+    let mut knocked = 0;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(40, 12, &[], seed);
+        let trike = e
+            .instantiate_creature(&TRICERATOPS_TEMPLATE, Coordinate::new(3, 6), 1, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 6), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&trike).unwrap().reset_for_new_round();
+        walk_straight(&mut e, trike, 1, 0, 9);
+        let gap = e
+            .footprint_distance(trike, ogre)
+            .expect("both are on the board");
+        assert_eq!(gap, 2, "the gore reaches, the stomp does not");
+
+        let log_before = e.messages().len();
+        swing_guaranteed_hit(
+            &mut e,
+            trike,
+            ogre,
+            "gore",
+            Dice::new(4, 8),
+            DamageType::Piercing,
+        );
+        if e.actors[&ogre].has_condition(Condition::Prone) {
+            knocked += 1;
+        }
+        assert!(
+            !e.messages()[log_before..].iter().any(|m| m.contains("[bonus]")),
+            "nothing should be stamped on from ten feet away (seed {})",
+            seed
+        );
+        assert!(
+            e.actors[&trike].can_consume_resource(Resource::BonusAction),
+            "and the bonus action stays unspent (seed {})",
+            seed
+        );
+    }
+    assert!(
+        knocked > 0,
+        "the run has to have flattened somebody for the reach gate to be what stopped the stomp"
+    );
+}
+
+/// The one clause whose follow-up is the limb it rides terminates after
+/// one swing.
+///
+/// A warhorse's Trampling Charge fires off its hooves and pays out in
+/// *another* hoof attack, so the follow-up re-enters the charge path:
+/// hit, knockdown, "if the target is prone…", and around again. What
+/// stops it is that the bonus action is spent before the swing rather
+/// than after it, so the second pass finds nothing to pay with. Worth a
+/// test of its own because the bound is a consequence of statement
+/// order, and statement order is the kind of thing a later edit tidies.
+#[test]
+fn a_warhorses_hooves_follow_themselves_exactly_once() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+
+    let mut followed = 0;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(30, 12, &[], seed);
+        let horse = e
+            .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(3, 6), 1, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 6), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&horse).unwrap().reset_for_new_round();
+        walk_straight(&mut e, horse, 1, 0, 9);
+
+        let log_before = e.messages().len();
+        swing_guaranteed_hit(
+            &mut e,
+            horse,
+            ogre,
+            "warhorse hooves",
+            Dice::new(2, 6),
+            DamageType::Bludgeoning,
+        );
+        let bonus_swings = e.messages()[log_before..]
+            .iter()
+            .filter(|m| m.contains("[bonus]"))
+            .count();
+        assert!(
+            bonus_swings <= 1,
+            "the hooves must not chain into themselves: {} bonus swings on seed {}",
+            bonus_swings,
+            seed
+        );
+        followed += bonus_swings;
+    }
+    assert!(
+        followed > 0,
+        "across forty seeds the horse should have trampled somebody at least once"
+    );
+}
+
+/// Every charge follow-up names an attack its creature actually has.
+///
+/// `prone_follow_up` is a string matched against the creature's own
+/// action list, which fails closed: a typo, a renamed limb or a stat
+/// block that lost the attack all read as "this creature has no
+/// follow-up" and cost nothing but the clause. That is the right failure
+/// mode at runtime and the wrong one to find out about in a fight, so
+/// the wiring is checked here instead — once over the templates the
+/// generator can put on a board, and once over the seven that carry the
+/// clause today, three of which reach the board only as mounts or
+/// conjurations and so aren't in the pool.
+#[test]
+fn every_charge_follow_up_names_an_attack_its_creature_has() {
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::actors::creatures::{
+        lions::LION_TEMPLATE, mammoths::MAMMOTH_TEMPLATE, panthers::PANTHER_TEMPLATE,
+        saber_toothed_tigers::SABER_TOOTHED_TIGER_TEMPLATE, tigers::TIGER_TEMPLATE,
+        triceratopses::TRICERATOPS_TEMPLATE, warhorses::WARHORSE_TEMPLATE,
+    };
+
+    let named: Vec<&'static CreatureTemplate> = vec![
+        &TIGER_TEMPLATE,
+        &LION_TEMPLATE,
+        &SABER_TOOTHED_TIGER_TEMPLATE,
+        &PANTHER_TEMPLATE,
+        &TRICERATOPS_TEMPLATE,
+        &MAMMOTH_TEMPLATE,
+        &WARHORSE_TEMPLATE,
+    ];
+    for t in &named {
+        let clause = t
+            .charge
+            .unwrap_or_else(|| panic!("{} should carry a charge clause", t.name));
+        assert!(
+            clause.prone_follow_up.is_some(),
+            "{} carries RAW's bonus-action follow-up",
+            t.name
+        );
+    }
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let mut checked = 0;
+    for t in EncounterInstance::template_pool().into_iter().chain(named) {
+        let Some(follow_up) = t.charge.and_then(|c| c.prone_follow_up) else {
+            continue;
+        };
+        let id = e
+            .instantiate_creature(t, Coordinate::new(2, 2), 0, checked)
+            .unwrap_or_else(|_| panic!("{} should instantiate", t.name));
+        assert!(
+            e.actors[&id].find_action(follow_up).is_some(),
+            "{}'s charge follows up with {:?}, which is not on its action list",
+            t.name,
+            follow_up
+        );
+        e.remove_actor(id);
+        checked += 1;
+    }
+    assert!(
+        checked >= 7,
+        "the sweep should have found every clause that carries a follow-up, found {}",
+        checked
+    );
+}
+
 /// A War Cleric has two Channel Divinity presses between Turn Undead,
 /// Preserve Life and Guided Strike — not one each.
 ///

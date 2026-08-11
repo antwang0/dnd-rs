@@ -1068,6 +1068,38 @@ impl ApplicableSideEffect for DirectedAttack {
     }
 }
 
+/// Make `attacker_id` spend their bonus action on the extra swing a
+/// trampling charge / pounce earns against the target it knocked prone —
+/// a side-effect wrapper around `attack::try_fire_charge_follow_up`.
+///
+/// A wrapper for the same ordering reason `DirectedAttack` is one, one
+/// step earlier in the pipeline. The charge rider runs while the swing's
+/// own effects are still a list of unapplied boxes, and the knockdown
+/// this follow-up is conditional on is one of them; swinging inline
+/// would find the target upright. Queued behind the `ApplyCondition`
+/// that flattens them, it finds them down.
+pub struct ChargeFollowUpAttack {
+    pub attacker_id: usize,
+    pub target_id: usize,
+    /// `Action::name()` of the limb RAW names — "bite", "mammoth stomp".
+    pub attack_name: &'static str,
+    /// The charge clause's own log tag ("tiger pounce"), so the bonus
+    /// swing names what bought it.
+    pub label: &'static str,
+}
+
+impl ApplicableSideEffect for ChargeFollowUpAttack {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        crate::engine::attack::try_fire_charge_follow_up(
+            ei,
+            self.attacker_id,
+            self.target_id,
+            self.attack_name,
+            self.label,
+        );
+    }
+}
+
 /// Install concentration on an actor. If they were already concentrating
 /// on something else, the prior concentration is dropped first (its
 /// applied conditions cleared). Use this from concentration spells'

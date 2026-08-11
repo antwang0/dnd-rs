@@ -4,7 +4,7 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, RollMode};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
+    ApplicableSideEffect, ApplyCondition, ChargeFollowUpAttack, DealDamage, PushActor, Resource,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
 use crate::engine::underwater::UnderwaterVerdict;
@@ -3816,6 +3816,31 @@ pub struct ChargeRider {
     /// damage riders on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, cleared at
     /// turn start by `reset_for_new_round`.
     pub once_per_turn_tag: Option<&'static str>,
+    /// `Action::name()` of the attack RAW lets the charger make against
+    /// a target its charge just flattened — "if the target is prone, the
+    /// mammoth can make one stomp attack against it as a bonus action" —
+    /// or `None` for the clauses that stop at the knockdown.
+    ///
+    /// Six stat blocks carry the clause (triceratops, mammoth and
+    /// warhorse trample; tiger, lion, saber-toothed tiger and panther
+    /// pounce), and it was the "unmodeled half" every one of their
+    /// docstrings used to apologise for. What it needed was a
+    /// bonus-action grant landing *after* the knockdown it is
+    /// conditional on, which is a thing the rider path could not do
+    /// while it resolved inline: the Prone is a queued `ApplyCondition`,
+    /// so at rider time the target is not prone yet. Queuing the swing
+    /// as its own side-effect behind the knockdown solves the ordering —
+    /// see `ChargeFollowUpAttack`.
+    ///
+    /// Named rather than "whatever melee swing the creature has first"
+    /// because RAW names it, and because for four of the six the named
+    /// limb is *not* the one the charge rides: the cats charge on claws
+    /// and follow up with the bite, the triceratops gores and then
+    /// stomps. Matched with `ActorInstance::find_action`, so the string
+    /// is the attack's `name()` — `"bite"`, `"mammoth stomp"` — and a
+    /// typo fails closed as "this creature has no such attack" rather
+    /// than swinging the wrong limb.
+    pub prone_follow_up: Option<&'static str>,
 }
 
 /// A charge clause's run-up, converted from the feet the stat block
@@ -3949,7 +3974,7 @@ fn push_charge_rider(
         0
     };
     if rider.knocks_prone {
-        apply_smite_follow_up(
+        let knocked_down = apply_smite_follow_up(
             encounter,
             effects,
             p.caster_id,
@@ -3957,8 +3982,119 @@ fn push_charge_rider(
             charge_knockdown(rider.knockdown_label),
             rolled,
         );
+        // "If the target is prone, the mammoth can make one stomp attack
+        // against it as a bonus action." Queued rather than swung here,
+        // because the knockdown it is conditional on is itself still an
+        // unapplied `ApplyCondition` sitting in `effects` — swinging now
+        // would find the target upright and, for the stat blocks whose
+        // follow-up is prone-gated in its own right (the mammoth's
+        // stomp), would refuse to validate at all.
+        if knocked_down
+            && let Some(attack_name) = rider.prone_follow_up
+        {
+            effects.push(Box::new(ChargeFollowUpAttack {
+                attacker_id: p.caster_id,
+                target_id: p.target_id,
+                attack_name,
+                label: rider.label,
+            }));
+        }
     }
     rolled
+}
+
+/// Swing the bonus-action follow-up a trampling charge / pounce earns
+/// against the target it flattened. Driven from the
+/// `ChargeFollowUpAttack` side-effect so it lands after the knockdown —
+/// see `ChargeRider::prone_follow_up` for why the ordering matters.
+///
+/// Every gate here is one RAW states or the engine already enforces
+/// elsewhere, checked in cheapest-first order:
+///   - both parties are still standing. The charge's own damage is
+///     applied by the time this runs, so a target the gore killed gets
+///     no stomp and the bonus action stays unspent.
+///   - the target is actually prone. The save is rolled at rider time,
+///     but a `Push`-style rider or a reaction resolving in between could
+///     in principle have changed the answer, and the mammoth's stomp
+///     refuses to validate against an upright target anyway.
+///   - the charger has a bonus action left, and the named attack is on
+///     its sheet.
+///   - the target is inside the follow-up limb's reach. The charge rides
+///     the reach-2 gore; the stomp that follows it is reach 1, and a
+///     triceratops that gored somebody at ten feet cannot stamp on them
+///     where they lie.
+///
+/// The bonus action is spent *before* the swing, which is also what
+/// stops the one clause that could otherwise recurse: the warhorse
+/// follows up with the very hooves its charge rides, so a follow-up that
+/// knocks the target down again re-enters this path — and finds the
+/// bonus action gone. Depth is bounded at one without a bespoke
+/// re-entrancy flag.
+///
+/// Returns whether the swing happened, for tests and for symmetry with
+/// `try_fire_directed_attack`.
+pub fn try_fire_charge_follow_up(
+    encounter: &mut EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    attack_name: &str,
+    label: &str,
+) -> bool {
+    use crate::actions::action_template::MELEE_REACH;
+
+    let (Some(attacker), Some(target)) = (
+        encounter.actors.get(&attacker_id),
+        encounter.actors.get(&target_id),
+    ) else {
+        return false;
+    };
+    if !attacker.is_combat_active() || !target.is_combat_active() {
+        return false;
+    }
+    if !target.has_condition(Condition::Prone) {
+        return false;
+    }
+    let Some(attack) = attacker.find_action(attack_name) else {
+        return false;
+    };
+    let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
+    let Some(dist) = encounter.footprint_distance(attacker_id, target_id) else {
+        return false;
+    };
+    if dist > reach {
+        return false;
+    }
+    // Spend first, swing second — see the recursion note above.
+    // `consume_resource` re-checks affordability and reports it, so the
+    // bonus-action gate and the spend are one call rather than a
+    // can-I / do-it pair that could disagree.
+    if !encounter
+        .actors
+        .get_mut(&attacker_id)
+        .is_some_and(|a| a.consume_resource(Resource::BonusAction))
+    {
+        return false;
+    }
+
+    let attacker_name = encounter.actor_name(attacker_id);
+    let target_name = encounter.actor_name(target_id);
+    encounter.log(format!(
+        "[bonus] {} follows the {} with {} against the prone {}",
+        attacker_name,
+        label,
+        attack.name(),
+        target_name
+    ));
+    // Fire the attack's `side_effects` directly, the same chokepoint the
+    // opportunity-attack, Riposte and Voice of Authority dispatchers use,
+    // so the limb's own riders fold in without a bespoke roll pipeline.
+    let target_vec = vec![target_id];
+    let effects = attack.side_effects(encounter, attacker_id, Some(&target_vec), None, None);
+    for e in effects {
+        e.apply(encounter);
+    }
+    encounter.cleanup_dead_actors();
+    true
 }
 
 /// Caster-side per-swing damage *penalties*, the negative image of
@@ -5149,6 +5285,14 @@ fn attacker_link_side_effect(
 /// used to predict the target's post-damage HP for `hp_threshold` gates
 /// (Banishing Smite RAW: banishes "if this damage reduces the target to
 /// 50 hp or fewer"). `0` is fine for follow-ups with no threshold set.
+///
+/// Returns whether the follow-up's effect was actually queued — false
+/// for every way it can decline (missing actor, threshold unmet, save
+/// made). Callers that stack a *second* clause on top of the first need
+/// the answer: a trampling charge's bonus stomp is RAW-gated on "if the
+/// target is prone", and the only thing that knows whether the
+/// knockdown landed is the save rolled in here. Most callers ignore it,
+/// which is why it isn't `#[must_use]`.
 fn apply_smite_follow_up(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
@@ -5156,14 +5300,14 @@ fn apply_smite_follow_up(
     target_id: usize,
     follow: SmiteFollowUp,
     total_damage: u32,
-) {
+) -> bool {
     // HP-threshold gate (Banishing Smite). Predict post-damage HP as
     // `current_hp - total_damage` and bail if the target would still be
     // above the threshold. Saturating-sub keeps the math clean when the
     // hit would drop them past zero (the threshold still triggers).
     if let Some(threshold) = follow.hp_threshold {
         let Some(target) = encounter.actors.get(&target_id) else {
-            return;
+            return false;
         };
         let predicted = target.hitpoints().saturating_sub(total_damage);
         if predicted > threshold {
@@ -5171,7 +5315,7 @@ fn apply_smite_follow_up(
                 "  {}: target stays above {} HP threshold (predicted {} HP)",
                 follow.label, threshold, predicted
             ));
-            return;
+            return false;
         }
     }
     let Some(save_ability) = follow.save_ability else {
@@ -5184,16 +5328,16 @@ fn apply_smite_follow_up(
             follow.effect,
             follow.label,
         );
-        return;
+        return true;
     };
     let Some(caster) = encounter.actors.get(&caster_id) else {
-        return;
+        return false;
     };
     let dc = caster.spell_save_dc(follow.dc_ability);
     let save = encounter.roll_save(target_id, save_ability, dc);
     if save.passed() {
         encounter.log(format!("  {}: target saves", follow.label));
-        return;
+        return false;
     }
     encounter.log(format!("  {}: target fails save", follow.label));
     push_follow_up_effect(
@@ -5204,6 +5348,7 @@ fn apply_smite_follow_up(
         follow.effect,
         follow.label,
     );
+    true
 }
 
 /// Materialize a `FollowUpEffect` into the side-effect queue. Splits the
