@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GALEB_DUHR_MULTI, GALEB_DUHR_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 16 (natural armor — granite skin), 85 HP
 /// (9d8+45). Non-magical BPS resistance + Poison immunity via the
-/// shared `elemental_damage_modifiers` baseline; Magic Resistance is
+/// shared `elemental_defaults` baseline; Magic Resistance is
 /// the variant-specific overlay (advantage on saves vs spells / magical
 /// effects, the canonical caster-disruption lane). Full elemental
 /// condition envelope (Charmed / Frightened / Paralyzed / Petrified /
@@ -90,13 +90,11 @@ pub static GALEB_DUHR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // BPS resistance); no signature overlay — the duhr is a stone
         // elemental that DOESN'T have an elemental damage type-affinity
         // (unlike the fire / water / earth-elemental's thunder rider).
-        damage_modifiers: elemental_damage_modifiers([]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // 5e Magic Resistance — advantage on saves vs spells / magical
         // effects. The duhr's variant-specific defensive lane that
         // distinguishes it from the vanilla Earth Elemental.
         has_magic_resistance: true,
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([])
     }
 });
 
@@ -147,7 +145,7 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         // Condition envelope inherited from the elemental constant.

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{AIR_ELEMENTAL_MULTI, AIR_ELEMENTAL_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -42,13 +42,11 @@ pub static AIR_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_damage_modifiers`; lightning + thunder resistance
+        // `elemental_defaults`; lightning + thunder resistance
         // are the air variant's signature overlays.
-        damage_modifiers: elemental_damage_modifiers([
+        ..elemental_defaults([
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Thunder, DamageModifier::Resistance),
-        ]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
-        ..CreatureTemplate::defaults()
+        ])
     }
 });

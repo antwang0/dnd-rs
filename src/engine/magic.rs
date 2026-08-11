@@ -496,6 +496,125 @@ mod tests {
         }
     }
 
+    /// 5e's single most common defensive clause is *"resistance to
+    /// bludgeoning, piercing, and slashing damage from **nonmagical
+    /// attacks**"*, and the qualifier is the whole of what makes a +1
+    /// sword worth carrying. A stat block that writes the triplet into
+    /// the *unqualified* table has quietly deleted that: the magic
+    /// weapon, the Divine Smite, the Ki-Empowered fist and the silvered
+    /// blade all stop being answers, and nothing about it reads as a bug
+    /// from any other angle — the creature simply resists everything a
+    /// little, forever, and every test of it still passes.
+    ///
+    /// It is a mistake with a history here. The elemental chassis
+    /// carried the unqualified triplet across seventeen stat blocks
+    /// whose own docstrings all said "non-magical physical", the deva
+    /// carried it with a comment apologising for the collapse, and both
+    /// were written back when the engine genuinely had no magic axis to
+    /// write against. The concessions outlived the gap. This sweep is so
+    /// that the next one cannot.
+    ///
+    /// The allowlist is short and none of it is about magic at all.
+    /// A swarm resists physical damage because it is a cloud of
+    /// individually-tiny things and a blade passes between them; RAW
+    /// writes that clause *without* the qualifier, and a magic blade
+    /// passes between them just as uselessly. The treant is the same
+    /// shape for a different reason — it is a tree, and enchanting the
+    /// axe does not make the trunk thinner — and RAW writes its
+    /// "bludgeoning, piercing" unqualified too. Note that the treant's
+    /// pair is only two types deep: the sweep is per-type rather than
+    /// all-or-nothing precisely so that a stat block cannot hide a
+    /// blanket resistance by carrying only two thirds of the triplet.
+    #[test]
+    fn a_physical_resistance_that_magic_cannot_answer_is_a_swarm_or_a_bug() {
+        use crate::engine::types::{DamageModifier, DamageType};
+
+        const PHYSICAL: [DamageType; 3] = [
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ];
+        // RAW's own unqualified physical resistance, and the only one.
+        let unqualified_in_raw = [
+            // A cloud of individually-tiny things: the blade passes
+            // between them, and enchanting it does not make it wider.
+            "Swarm of Bats",
+            "Swarm of Insects",
+            "Swarm of Quippers",
+            "Swarm of Poisonous Snakes",
+            // Wood. Enchanting the axe does not thin the trunk.
+            "Treant",
+            "Awakened Tree",
+            "Awakened Shrub",
+            // A body with no soft parts to run through — the 2024
+            // skeleton's Piercing row and the flameskull's.
+            "Skeleton",
+            "Flameskull",
+            // An ooze: cutting it in half produces two of it. RAW gives
+            // both of these Slashing and neither of them a qualifier.
+            "Black Pudding",
+            "Ochre Jelly",
+        ];
+
+        // Collected rather than asserted one at a time: the first run of
+        // this sweep had eight distinct answers in it, and a fail-fast
+        // version would have surfaced them one `cargo test` at a time.
+        let mut offenders: Vec<String> = Vec::new();
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            crate::actors::creatures::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            let unqualified: Vec<DamageType> = PHYSICAL
+                .into_iter()
+                .filter(|dt| {
+                    matches!(
+                        t.damage_modifiers.get(dt),
+                        Some(DamageModifier::Resistance | DamageModifier::Immunity)
+                    )
+                })
+                .collect();
+            if unqualified.is_empty() || unqualified_in_raw.contains(&t.name) {
+                continue;
+            }
+            offenders.push(format!("{} ({:?})", t.name, unqualified));
+        }
+        assert!(
+            offenders.is_empty(),
+            "these stat blocks resist physical damage from every source, magical or not — if \
+             that is RAW the name belongs on the allowlist here, and if it is not the rows \
+             belong in nonmagical_damage_modifiers: {}",
+            offenders.join(", ")
+        );
+    }
+
+    /// The other direction, and the reason the pair is worth having:
+    /// a template must not carry the *same* physical type in both
+    /// tables. `nonmagical_damage_modifier` resolves that collision by
+    /// returning `None` — the unqualified row wins and the qualified one
+    /// silently does nothing — so a stat block written that way would
+    /// have a resistance clause in its source that the engine never
+    /// reads, which is worse than either honest answer.
+    #[test]
+    fn no_stat_block_writes_the_same_type_into_both_damage_tables() {
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            crate::actors::creatures::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            for dt in t.nonmagical_damage_modifiers.keys() {
+                assert!(
+                    !t.damage_modifiers.contains_key(dt),
+                    "{} carries {:?} in both tables; the qualified row is dead code",
+                    t.name,
+                    dt
+                );
+            }
+        }
+    }
+
     /// The monk's answer to the clause reaches an instantiated monk.
     /// Worth pinning separately from the tag itself: Ki-Empowered
     /// Strikes is the *only* way a character with no loot and no

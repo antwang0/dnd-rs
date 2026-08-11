@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DeathBurst, MAGMIN_TOUCH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::dice::Dice;
 use crate::engine::types::{
@@ -44,7 +44,7 @@ pub static MAGMIN_DEATH_BURST: DeathBurst = DeathBurst {
 /// rock crust), 9 HP (2d6+2). Fire immunity (the magmin IS fire — its
 /// own touch would self-incinerate without the immunity). Poison
 /// immunity + non-magical BPS resistance via the shared
-/// `elemental_damage_modifiers` baseline; the magmin inherits the
+/// `elemental_defaults` baseline; the magmin inherits the
 /// canonical elemental envelope (the engine collapses all elementals
 /// to the same defensive shape for uniformity, even though MM RAW
 /// gives the magmin a smaller condition / resistance set than the
@@ -104,26 +104,24 @@ pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Elemental,
         actions,
         // The magmin IS fire — its own touch would self-incinerate
-        // without the fire immunity. The `elemental_damage_modifiers`
+        // without the fire immunity. The `elemental_defaults`
         // baseline (poison immunity + non-magical BPS resistance) is
         // shared across every elemental in the codebase; fire immunity
         // is the variant-specific overlay.
-        damage_modifiers: elemental_damage_modifiers([(
-            DamageType::Fire,
-            DamageModifier::Immunity,
-        )]),
         // Shared elemental condition envelope (Charmed / Frightened /
         // Paralyzed / Petrified / Poisoned / Asleep / Prone / Grappled
         // / Restrained). The magmin has no metabolism / joints / mind
         // to coerce.
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // RAW Death Burst — 2d6 fire DC 11 DEX 10-ft radius. Fires at
         // the engine's `cleanup_dead_actors` chokepoint before the
         // corpse is removed; the magmin's own fire immunity protects
         // it from any partial double-tap and same-typed allies
         // (other magmins, fire elementals) shrug off the burst entirely.
         death_burst: Some(&MAGMIN_DEATH_BURST),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )])
     }
 });
 
@@ -258,7 +256,7 @@ mod tests {
         // the magmin's smoldering crust shrugs off a CR-½ party's
         // mundane weapons.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
     }

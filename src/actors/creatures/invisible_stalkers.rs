@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{INVISIBLE_STALKER_MULTI, INVISIBLE_STALKER_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
@@ -99,8 +99,6 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // RAW gives the stalker no thematic energy resistance beyond
         // the BPS triplet, since its identity is "hidden hunter" not
         // "storm avatar."
-        damage_modifiers: elemental_damage_modifiers([]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // The headline trait: the stalker is born invisible. Routes
         // through the new `innate_conditions` template lane — applied
         // once at instantiation via `add_condition`. RAW: the
@@ -110,7 +108,7 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // Hidden / Helped / Inspired one-shot cohort, never plain
         // Invisible).
         innate_conditions: vec![(Condition::Invisible, ConditionTimer::Permanent)],
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([])
     }
 });
 
@@ -174,15 +172,15 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // No thunder / lightning bias — distinct from the Air Elemental,

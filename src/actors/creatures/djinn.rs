@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DJINNI_MULTI, DJINNI_SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -82,16 +82,14 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // air genie's signature elemental affinity. Mirrors the Air
         // Elemental's overlay shape but lifted from "lightning only" to
         // the broader "thunder + lightning" pair.
-        damage_modifiers: elemental_damage_modifiers([
-            (DamageType::Thunder, DamageModifier::Resistance),
-            (DamageType::Lightning, DamageModifier::Resistance),
-        ]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // Magic Resistance: advantage on saves vs spells / magical
         // effects. Standard upper-tier genie / fey / fiend trait.
         has_magic_resistance: true,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([
+            (DamageType::Thunder, DamageModifier::Resistance),
+            (DamageType::Lightning, DamageModifier::Resistance),
+        ])
     }
 });
 
@@ -146,7 +144,7 @@ mod tests {
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert!(a.has_magic_resistance());

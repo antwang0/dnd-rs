@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{EFREETI_HURL_FLAME, EFREETI_MULTI, EFREETI_SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -87,14 +87,12 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Standard elemental damage envelope (poison immune + BPS
         // resistance) overlaid with fire immunity — the efreeti's
         // signature elemental affinity.
-        damage_modifiers: elemental_damage_modifiers([(
-            DamageType::Fire,
-            DamageModifier::Immunity,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         has_magic_resistance: true,
         has_extra_attack: true,
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )])
     }
 });
 
@@ -147,7 +145,7 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         assert!(a.has_magic_resistance());

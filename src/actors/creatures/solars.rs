@@ -61,8 +61,14 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // / Heal for emergencies.
         spell_slots_by_level: vec![0, 0, 0, 0, 4, 2, 2, 2, 1],
         // Solar resistances per MM: immune to fire / poison / radiant,
-        // plus resistant to non-magical physical (we don't model the
-        // magical-vs-mundane split, so flat resistance).
+        // plus RAW's "bludgeoning, piercing, and slashing from
+        // nonmagical attacks" — which the previous docstring claimed and
+        // the map did not carry at all. The concession it was written
+        // for ("we don't model the magical-vs-mundane split") had
+        // already stopped being true, and what the stat block was left
+        // with was a CR 21 celestial that a hireling with a club hurt
+        // exactly as much as a paladin with a holy avenger. The
+        // qualified triplet is in the `..` tail below.
         damage_modifiers: HashMap::from([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
@@ -93,7 +99,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_actions: crate::engine::legendary_actions::SOLAR_LEGENDARY,
         // 5e **Angelic Weapons**: "the solar's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 

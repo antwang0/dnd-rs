@@ -3,7 +3,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SimpleWeapon;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::dice::Dice;
 use crate::engine::types::{
@@ -58,7 +58,7 @@ pub static FLAME_SEED: SimpleWeapon = SimpleWeapon::ranged(
 /// board for. Nothing on the spirit reads it.
 ///
 /// Defensive envelope is the shared elemental one — poison immunity
-/// and non-magical physical resistance from `elemental_damage_modifiers`,
+/// and non-magical physical resistance from `elemental_defaults`,
 /// the nine-condition `ELEMENTAL_CONDITION_IMMUNITIES` set, and fire
 /// immunity on top, the same overlay the Magmin and Fire Elemental
 /// carry. A wildfire spirit standing inside its druid's Wall of Fire
@@ -101,16 +101,14 @@ pub static WILDFIRE_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Small,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: elemental_damage_modifiers([(
-            DamageType::Fire,
-            DamageModifier::Immunity,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // The marker the druid's Enhanced Bond looks for. Carried by
         // the spirit rather than back-linked from the druid — see
         // `WILDFIRE_SPIRIT_TAG`.
         features: HashSet::from([WILDFIRE_SPIRIT_TAG]),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )])
     }
 });
 

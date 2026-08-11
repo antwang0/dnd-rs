@@ -38,9 +38,15 @@ use std::sync::LazyLock;
 ///
 /// Defensive identity: AC 18 (natural armor — the infernal hide), 178
 /// HP (17d10+85). The standard mid-tier devil envelope: resistant to
-/// cold (devil family) + non-magical BPS (RAW "from nonmagical attacks";
-/// we collapse to flat resistance since the engine doesn't tag magical/
-/// mundane weapons). Immune to fire + poison (the canonical hellish
+/// cold (devil family) + RAW's "bludgeoning, piercing, and slashing
+/// from nonmagical attacks", genuinely qualified now that there is a
+/// magic axis for it to be written against. RAW's devil clause also
+/// says "that aren't silvered" and this stat block deliberately does
+/// not: silver is scoped to the lycanthropes in this engine, swept for
+/// in both directions by
+/// `magic::tests::the_silver_exemption_belongs_to_exactly_the_lycanthropes`,
+/// and widening it to the devil family would make the cheapest item in
+/// the loot pool the answer to half of hell. Immune to fire + poison (the canonical hellish
 /// damage envelope). Immune to Poisoned (the devil's mind-and-body
 /// envelope).
 ///
@@ -91,9 +97,6 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // hellish envelope.
         damage_modifiers: HashMap::from([
             (DamageType::Cold, DamageModifier::Resistance),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
@@ -116,7 +119,7 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
             // are magical."
             crate::actions::class_features::MAGICAL_ATTACKS_TAG,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -173,10 +176,13 @@ mod tests {
             a.damage_modifier(DamageType::Cold),
             Some(DamageModifier::Resistance)
         );
+        // Cold is unqualified and the physical triplet is not — the
+        // devil takes half from a club and full from a +1 mace.
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
+        assert_eq!(a.damage_modifier(DamageType::Bludgeoning), None);
         assert!(a.has_magic_resistance());
         assert!(a.effectively_immune_to_condition(Condition::Poisoned));
     }

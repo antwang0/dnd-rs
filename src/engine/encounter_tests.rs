@@ -18813,9 +18813,13 @@ fn fire_elemental_immunities_and_resistances() {
     let actor = e.actors.get_mut(&el).unwrap();
     assert!(actor.is_immune_to(DamageType::Fire));
     assert!(actor.is_immune_to(DamageType::Poison));
-    assert!(actor.is_resistant_to(DamageType::Bludgeoning));
-    assert!(actor.is_resistant_to(DamageType::Piercing));
-    assert!(actor.is_resistant_to(DamageType::Slashing));
+    // RAW's clause is "from nonmagical attacks", so a +1 sword gets
+    // through where a mundane one is halved. The unqualified table must
+    // stay empty of the triplet for that to hold.
+    for dt in [DamageType::Bludgeoning, DamageType::Piercing, DamageType::Slashing] {
+        assert!(actor.resists_nonmagical(dt), "{:?} from a mundane weapon", dt);
+        assert!(!actor.is_resistant_to(dt), "{:?} from a magical one", dt);
+    }
 }
 
 /// Fire Elemental Touch: on hit, applies Burning unless the target is
@@ -32560,7 +32564,7 @@ fn earth_elemental_template_is_vulnerable_to_thunder() {
     let ee = &e.actors[&id];
     assert!(ee.is_vulnerable_to(DamageType::Thunder));
     assert!(ee.is_immune_to(DamageType::Poison));
-    assert!(ee.is_resistant_to(DamageType::Bludgeoning));
+    assert!(ee.resists_nonmagical(DamageType::Bludgeoning));
     assert_eq!(ee.effective_damage(10, DamageType::Thunder), 20);
     assert!(ee.find_action("earth elemental multiattack").is_some());
 }
@@ -50324,15 +50328,17 @@ fn water_elemental_inherits_elemental_damage_base() {
     let actor = e.actors.get_mut(&el).unwrap();
     // Overlay: water-specific acid resistance.
     assert!(actor.is_resistant_to(DamageType::Acid));
-    // Inherited from the elemental base.
+    // Inherited from the elemental base — and qualified to nonmagical
+    // attacks, which is the half of RAW's clause the base used to drop.
     assert!(actor.is_immune_to(DamageType::Poison));
-    assert!(actor.is_resistant_to(DamageType::Bludgeoning));
-    assert!(actor.is_resistant_to(DamageType::Piercing));
-    assert!(actor.is_resistant_to(DamageType::Slashing));
+    for dt in [DamageType::Bludgeoning, DamageType::Piercing, DamageType::Slashing] {
+        assert!(actor.resists_nonmagical(dt));
+        assert!(!actor.is_resistant_to(dt));
+    }
 }
 
 /// Earth Elemental's thunder vulnerability must survive the
-/// `elemental_damage_modifiers` refactor — its overlay extends the
+/// `elemental_defaults` refactor — its overlay extends the
 /// shared base without dropping the signature weakness.
 #[test]
 fn earth_elemental_retains_thunder_vulnerability_after_refactor() {
@@ -50345,7 +50351,7 @@ fn earth_elemental_retains_thunder_vulnerability_after_refactor() {
     let actor = e.actors.get_mut(&el).unwrap();
     assert!(actor.is_vulnerable_to(DamageType::Thunder));
     assert!(actor.is_immune_to(DamageType::Poison));
-    assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+    assert!(actor.resists_nonmagical(DamageType::Bludgeoning));
 }
 
 /// Green Hag carries the Magic Resistance flag — advantage on every

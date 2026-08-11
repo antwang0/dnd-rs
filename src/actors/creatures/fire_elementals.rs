@@ -26,34 +26,57 @@ pub static ELEMENTAL_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> = LazyLo
     ])
 });
 
-/// Damage-modifier baseline every elemental in this engine shares:
-/// poison immunity (elementals don't have biology to poison) plus
-/// resistance to bludgeoning / piercing / slashing (the magical-vs-
-/// non-magical split is collapsed since the engine doesn't track
-/// weapon magicality). Each elemental template starts from this base
-/// via `elemental_damage_modifiers([...])` and overlays its own
-/// signature entries (Fire / Cold / Lightning / Acid immunity or
-/// resistance, Earth's thunder vulnerability, etc.).
+/// Defence baseline every elemental in this engine shares, as a whole
+/// `CreatureTemplate` for the `..` tail of a template literal:
 ///
-/// Replaces five hand-copied `(BPS triplet + Poison)` literals — the
-/// four existing elementals plus future ones — with a single source
-/// of truth. A new resistance / immunity added to the base lands
-/// uniformly across every elemental.
-pub fn elemental_damage_modifiers(
+///   - **Poison immunity** — elementals have no biology to poison.
+///   - **Resistance to bludgeoning / piercing / slashing from
+///     nonmagical attacks** — 5e's standard elemental clause, and
+///     genuinely qualified. Seventeen stat blocks route through here and
+///     every one of their docstrings already said "non-magical
+///     physical"; the map they were handed said something else.
+///   - **The elemental condition envelope** —
+///     `ELEMENTAL_CONDITION_IMMUNITIES`.
+///
+/// Each template overlays its own signature entries (Fire / Cold /
+/// Lightning / Acid immunity or resistance, Earth's thunder
+/// vulnerability) through `overlays`.
+///
+/// # Why a template tail and not a map
+///
+/// The predecessor returned a bare `HashMap` for the `damage_modifiers`
+/// field, and dropped the BPS triplet into it *unqualified* with a
+/// docstring conceding "the magical-vs-non-magical split is collapsed
+/// since the engine doesn't track weapon magicality". The engine now
+/// does — see `crate::engine::magic` — and the qualification is exactly
+/// the kind of thing a bare map cannot express, because it lives in a
+/// second field. `CreatureTemplate::resistant_to_nonmagical_physical`
+/// is the constructor that owns that pairing, and this one is built on
+/// it for the reason its own docstring gives: a qualified resistance is
+/// only correct alongside the absence of an unqualified one, and the
+/// `..` tail is the one position a template cannot get that wrong.
+///
+/// Folding the condition immunities in at the same time is not scope
+/// creep but the same fact: every one of the seventeen call sites wrote
+/// `condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone()` on
+/// the line after the damage modifiers, because being an elemental is
+/// one property and not two.
+///
+/// Overlays land in the *unqualified* table, so an overlay for a
+/// physical type still wins outright: `nonmagical_damage_modifier`
+/// returns `None` for any type the unqualified map already carries, so
+/// a magmin promoted to full bludgeoning immunity would take the
+/// immunity and not a second halving underneath it.
+pub fn elemental_defaults(
     overlays: impl IntoIterator<Item = (DamageType, DamageModifier)>,
-) -> HashMap<DamageType, DamageModifier> {
-    let mut m = HashMap::from([
-        (DamageType::Poison, DamageModifier::Immunity),
-        (DamageType::Bludgeoning, DamageModifier::Resistance),
-        (DamageType::Piercing, DamageModifier::Resistance),
-        (DamageType::Slashing, DamageModifier::Resistance),
-    ]);
-    // Overlays win on collision — an Earth Elemental's
-    // (Thunder, Vulnerability) doesn't conflict with the base; an
-    // overlay that promotes BPS to Immunity (e.g. a future creature
-    // built on the elemental chassis) replaces the base resistance.
-    m.extend(overlays);
-    m
+) -> CreatureTemplate {
+    let mut damage_modifiers = HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]);
+    damage_modifiers.extend(overlays);
+    CreatureTemplate {
+        damage_modifiers,
+        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
+    }
 }
 
 /// Fire Elemental — CR 5 elemental. Walking inferno: fire-touch melee
@@ -92,13 +115,11 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_damage_modifiers`; this overlay just adds the fire
+        // `elemental_defaults`; this overlay just adds the fire
         // immunity that distinguishes the variant.
-        damage_modifiers: elemental_damage_modifiers([(
+        ..elemental_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
-        ..CreatureTemplate::defaults()
+        )])
     }
 });

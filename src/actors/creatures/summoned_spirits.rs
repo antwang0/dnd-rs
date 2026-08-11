@@ -47,7 +47,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
@@ -434,12 +434,10 @@ pub static ELEMENTAL_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: elemental_damage_modifiers([(
+        ..elemental_defaults([(
             DamageType::Lightning,
             DamageModifier::Immunity,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
-        ..CreatureTemplate::defaults()
+        )])
     }
 });
 

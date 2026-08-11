@@ -15,9 +15,12 @@ use std::sync::LazyLock;
 /// - **Multiattack** — all seven swings on one Action.
 ///
 /// Slots between the Glabrezu (CR 9 mid-tier demon, 4-swing multi) and
-/// the Balor (CR 19 apex). Magic-resistant in RAW but we don't model
-/// that yet; the seven-swing volume + standard demon envelope already
-/// makes her a meaningful escalation tier. No Legendary Resistance —
+/// the Balor (CR 19 apex). Magic Resistance is **on** — RAW gives it
+/// and the template sets it. (This docstring spent some time saying
+/// "magic-resistant in RAW but we don't model that yet", which was true
+/// when it was written and had been false since `has_magic_resistance`
+/// arrived; the flag two lines of code away was already set.) No
+/// Legendary Resistance —
 /// RAW: marilith doesn't have LR (that's reserved for the Balor / pit
 /// fiend / Demon Lord tier in our pool).
 pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -47,8 +50,14 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Fiend,
         actions,
         // Standard demon envelope: immune to poison; resistant to cold +
-        // fire + lightning + mundane B/P/S. Mirrors the Glabrezu / Balor
-        // damage profile so radiant / force land cleanly on her.
+        // fire + lightning. Mirrors the Glabrezu / Balor damage profile
+        // so radiant / force land cleanly on her.
+        //
+        // RAW's mundane B/P/S resistance is deliberately *not* in this
+        // list: it is qualified to nonmagical attacks and so lives in
+        // the `..CreatureTemplate::resistant_to_nonmagical_physical()`
+        // tail, where the constructor's docstring explains why the
+        // pairing has to be written in one place.
         damage_modifiers: damage_modifiers_from([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),

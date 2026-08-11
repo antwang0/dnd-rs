@@ -96,17 +96,13 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        // Deva resistances per MM: radiant immunity, plus non-magical
-        // physical resistance (we don't model the magical-vs-mundane
-        // split, so we apply flat resistance to BPS — matches the
-        // dominant party loadout where most damage is non-magical at
-        // CR 10).
-        damage_modifiers: HashMap::from([
-            (DamageType::Radiant, DamageModifier::Immunity),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        // Deva resistances per MM: radiant immunity, plus RAW's
+        // "bludgeoning, piercing, and slashing from nonmagical attacks"
+        // — genuinely qualified, via the constructor in the `..` tail
+        // below. The unqualified overlay here is the radiant immunity
+        // and nothing else, which is what makes a +1 mace an answer to
+        // a deva and a club not.
+        damage_modifiers: HashMap::from([(DamageType::Radiant, DamageModifier::Immunity)]),
         // Deva condition immunities per MM: Charmed, Exhausted,
         // Frightened. The celestial purity envelope — can't be
         // compelled, fatigued, or fear-locked by mortal magic.
@@ -128,7 +124,7 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         recharge_abilities: vec![("healing_touch", 4)],
         // 5e **Angelic Weapons**: "the deva's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 
@@ -169,19 +165,21 @@ mod tests {
             a.damage_modifier(DamageType::Radiant),
             Some(DamageModifier::Immunity)
         );
-        // Non-magical physical resistance.
-        assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
-            Some(DamageModifier::Resistance)
-        );
-        assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
-            Some(DamageModifier::Resistance)
-        );
-        assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
-            Some(DamageModifier::Resistance)
-        );
+        // RAW's "from nonmagical attacks", and asserted in both
+        // directions: a resistance that had leaked into the unqualified
+        // table would halve a Divine Smite, which is the one thing the
+        // qualification exists to stop.
+        for dt in [
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ] {
+            assert_eq!(
+                a.nonmagical_damage_modifier(dt),
+                Some(DamageModifier::Resistance)
+            );
+            assert_eq!(a.damage_modifier(dt), None);
+        }
         // Condition immunities: Charmed, Exhausted, Frightened.
         assert!(a.effectively_immune_to_condition(Condition::Charmed));
         assert!(a.effectively_immune_to_condition(Condition::Exhausted));

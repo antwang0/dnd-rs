@@ -3,7 +3,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MARID_MULTI, MARID_TRIDENT, MARID_WATER_JET};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -98,11 +98,6 @@ pub static MARID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // tolerates cold better than fire / lightning). Mirrors the
         // djinni's elemental-overlay shape (thunder + lightning
         // resistance) but on the water-genie pairing.
-        damage_modifiers: elemental_damage_modifiers([
-            (DamageType::Acid, DamageModifier::Immunity),
-            (DamageType::Cold, DamageModifier::Resistance),
-        ]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // Magic Resistance: advantage on saves vs spells / magical
         // effects. Standard upper-tier genie trait.
         has_magic_resistance: true,
@@ -114,7 +109,10 @@ pub static MARID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG]),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([
+            (DamageType::Acid, DamageModifier::Immunity),
+            (DamageType::Cold, DamageModifier::Resistance),
+        ])
     }
 });
 
@@ -172,7 +170,7 @@ mod tests {
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         assert!(a.has_magic_resistance());

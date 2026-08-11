@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{EARTH_ELEMENTAL_MULTI, EARTH_ELEMENTAL_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -41,14 +41,12 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_damage_modifiers`; thunder vulnerability is the
+        // `elemental_defaults`; thunder vulnerability is the
         // earth variant's signature overlay (5e RAW: cracks like stone
         // under sonic strikes).
-        damage_modifiers: elemental_damage_modifiers([(
+        ..elemental_defaults([(
             DamageType::Thunder,
             DamageModifier::Vulnerability,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
-        ..CreatureTemplate::defaults()
+        )])
     }
 });

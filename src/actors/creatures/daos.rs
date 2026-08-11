@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DAO_MAUL, DAO_MULTI, DAO_STONE_SNARE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{
     AbilityScoreType, CreatureType, Language, Size, SpecialSense,
@@ -107,8 +107,6 @@ pub static DAO_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and marid (acid immunity + cold resistance) — the dao's
         // defensive envelope is "just the elemental baseline" with
         // signature offensive output on the maul rider instead.
-        damage_modifiers: elemental_damage_modifiers([]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         // Magic Resistance: advantage on saves vs spells / magical
         // effects. Standard upper-tier genie trait — every member of
         // the genie family carries this.
@@ -121,7 +119,7 @@ pub static DAO_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // — the stone snare hits harder (4d8 + Restrained vs 6d6 +
         // push) so it recharges less often.
         recharge_abilities: vec![("stone_snare", 5)],
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([])
     }
 });
 
@@ -171,15 +169,15 @@ mod tests {
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Bludgeoning),
+            a.nonmagical_damage_modifier(DamageType::Bludgeoning),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Piercing),
+            a.nonmagical_damage_modifier(DamageType::Piercing),
             Some(DamageModifier::Resistance)
         );
         assert_eq!(
-            a.damage_modifier(DamageType::Slashing),
+            a.nonmagical_damage_modifier(DamageType::Slashing),
             Some(DamageModifier::Resistance)
         );
         // No special thunder defensive bias (the dao deals thunder; it

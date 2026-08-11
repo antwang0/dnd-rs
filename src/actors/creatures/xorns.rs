@@ -17,8 +17,9 @@ use std::sync::LazyLock;
 /// envelope.
 ///
 /// Damage envelope: resistant to non-magical bludgeoning / piercing /
-/// slashing (flat B/P/S resistance — same shape as other elementals),
-/// immune to poison (rock body), immune to the Poisoned / Paralyzed /
+/// slashing from nonmagical attacks (RAW qualifies the clause and the
+/// engine now can too — a mundane pick bounces off a xorn and an
+/// enchanted one does not), immune to poison (rock body), immune to the Poisoned / Paralyzed /
 /// Petrified / Unconscious conditions (elemental physiology).
 ///
 /// Stats track MM Xorn at CR 5 — high STR for the heavy claw + bite
@@ -53,19 +54,14 @@ pub static XORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
         condition_immunities: HashSet::from([
             crate::conditions::Condition::Poisoned,
             crate::conditions::Condition::Paralyzed,
             crate::conditions::Condition::Petrified,
             crate::conditions::Condition::Unconscious,
         ]),
-        ..CreatureTemplate::defaults()
+        ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
 

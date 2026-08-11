@@ -7,7 +7,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+    elemental_defaults,
 };
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 /// Defensive identity: AC 11, ~21 HP (6d6). Cold immunity (the mephit
 /// IS ice — its own breath self-freezes without it). Fire vulnerability
 /// (RAW — its frozen body melts under flame). Poison immunity + non-
-/// magical BPS resistance from the shared `elemental_damage_modifiers`
+/// magical BPS resistance from the shared `elemental_defaults`
 /// baseline. Standard 9-condition elemental immunity envelope.
 ///
 /// Stat shape: AC 11, ~21 HP (6d6), STR 7, DEX 13, CON 10, INT 9,
@@ -76,14 +76,12 @@ pub static ICE_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Cold immunity (the mephit IS ice), fire vulnerability (its
         // frozen body melts), poison immunity + non-magical BPS
         // resistance from the shared elemental baseline.
-        damage_modifiers: elemental_damage_modifiers([
-            (DamageType::Cold, DamageModifier::Immunity),
-            (DamageType::Fire, DamageModifier::Vulnerability),
-        ]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&ICE_MEPHIT_DEATH_BURST),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([
+            (DamageType::Cold, DamageModifier::Immunity),
+            (DamageType::Fire, DamageModifier::Vulnerability),
+        ])
     }
 });
 
@@ -139,14 +137,12 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Small,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: elemental_damage_modifiers([(
-            DamageType::Fire,
-            DamageModifier::Immunity,
-        )]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&STEAM_MEPHIT_DEATH_BURST),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )])
     }
 });
 
@@ -203,14 +199,12 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Small,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: elemental_damage_modifiers([
-            (DamageType::Fire, DamageModifier::Immunity),
-            (DamageType::Cold, DamageModifier::Vulnerability),
-        ]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&MAGMA_MEPHIT_DEATH_BURST),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([
+            (DamageType::Fire, DamageModifier::Immunity),
+            (DamageType::Cold, DamageModifier::Vulnerability),
+        ])
     }
 });
 
@@ -275,11 +269,9 @@ pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // No fire / cold vulnerability — RAW. The dust mephit is a
         // grit-imp without a paired elemental opposite.
-        damage_modifiers: elemental_damage_modifiers([]),
-        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&DUST_MEPHIT_DEATH_BURST),
-        ..CreatureTemplate::defaults()
+        ..elemental_defaults([])
     }
 });
 
