@@ -20120,6 +20120,77 @@ fn polar_bear_lion_fire_giant_cyclops_roc_templates_instantiate() {
     assert!((e.actors[&roc].cr() - 11.0).abs() < f32::EPSILON);
 }
 
+/// A rider goes up with their flying mount and comes down with it —
+/// RAW's *"if you and your mount fall, you take falling damage"*.
+///
+/// The case exists at all because a mount can now fly under its own
+/// power: the pegasus, the griffon and the hippogriff are all mountable
+/// and all have a flying speed on their stat block. Before
+/// `supported_altitude_for` applied the rider redirect, a paladin would
+/// ride a pegasus to cruising altitude while standing, as far as the
+/// altitude sweep was concerned, on the floor — and would step off onto
+/// thin air owing nothing when the pegasus came down.
+///
+/// Both of them are charged, separately, because they are two creatures
+/// with two hit point pools. The pegasus is grounded by the general
+/// flying rule rather than by Earthbind, so that this is a *fall* and
+/// not a landing.
+#[test]
+fn a_rider_falls_with_the_pegasus_they_are_sitting_on() {
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+    use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pegasus = e
+        .instantiate_creature(&PEGASUS_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+        .unwrap();
+    e.mount(paladin, pegasus).expect("a pegasus is mountable");
+    e.reconcile_altitudes();
+
+    assert_eq!(
+        e.actors[&pegasus].altitude_ft(),
+        FLIGHT_ALTITUDE_FT,
+        "the pegasus flies"
+    );
+    assert_eq!(
+        e.actors[&paladin].altitude_ft(),
+        FLIGHT_ALTITUDE_FT,
+        "and the rider is wherever the pegasus is"
+    );
+    assert!(
+        !e.actors[&paladin].has_innate_flight(),
+        "the paladin has no wings of their own — the height is borrowed"
+    );
+
+    let peg_hp = e.actors[&pegasus].hitpoints();
+    let pal_hp = e.actors[&paladin].hitpoints();
+    // The general flying rule, not Earthbind: a creature deprived of the
+    // ability to move falls, and a pegasus does not hover.
+    e.actors
+        .get_mut(&pegasus)
+        .unwrap()
+        .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+
+    let pool = fall_damage_dice(FLIGHT_ALTITUDE_FT);
+    for (id, before, who) in [
+        (pegasus, peg_hp, "the pegasus"),
+        (paladin, pal_hp, "the rider"),
+    ] {
+        let after = &e.actors[&id];
+        assert_eq!(after.altitude_ft(), 0, "{who} should be on the floor");
+        let lost = before - after.hitpoints();
+        assert!(
+            (pool.count..=pool.max_roll()).contains(&lost),
+            "{who} should be charged for a {FLIGHT_ALTITUDE_FT} ft drop, not {lost}"
+        );
+    }
+}
+
 /// Pegasus / Winter Wolf / Triceratops / T-Rex / Carrion Crawler: each
 /// instantiates cleanly from its template and surfaces the marquee
 /// marker field (Celestial type on Pegasus, cold immunity on Winter

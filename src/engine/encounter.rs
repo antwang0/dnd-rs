@@ -7274,7 +7274,56 @@ impl EncounterInstance {
     ///
     /// Ordered by actor id so a round in which two fliers drop together
     /// is reproducible from the seed.
+    ///
+    /// # Riders
+    ///
+    /// A rider's supported altitude is their **mount's** — the same
+    /// redirect `movement_body` performs for every other question about
+    /// where a mounted creature is, and for the same reason: the pegasus
+    /// owns the tiles and the wings, and the paladin on it is wherever
+    /// the pegasus is. RAW says so outright ("if you and your mount
+    /// fall, you take falling damage"), and the two of them are charged
+    /// separately because they are two creatures with two hit point
+    /// pools and two sets of resistances.
+    ///
+    /// This is a real case rather than a hypothetical one, and it became
+    /// real the moment a mount could fly under its own power: the
+    /// pegasus, the griffon and the hippogriff are all mountable and all
+    /// have a flying speed. Without the redirect a paladin would ride a
+    /// pegasus thirty feet up, watch it get Earthbound out from under
+    /// them, and step off onto thin air at altitude zero having never
+    /// been in the sky at all.
+    /// The altitude `actor_id`'s current state holds it at, with the
+    /// rider redirect applied — the encounter-level counterpart of
+    /// `ActorInstance::supported_altitude_ft`, which can only see one
+    /// creature and so cannot know about the horse.
+    ///
+    /// A rider borrows their mount's answer outright rather than taking
+    /// the maximum of the two. A paladin under *Fly* on a grounded
+    /// pegasus is sitting on a pegasus: they cannot be at cruising
+    /// altitude while the thing they are strapped to is on the floor.
+    /// Should they want the height, RAW's answer is to dismount, and the
+    /// engine's is the same.
+    ///
+    /// Reads through `movement_body`, which is the same redirect
+    /// `is_immersed` and the pathing geometry use, so "where is this
+    /// creature" has one answer across the engine rather than one per
+    /// question.
+    fn supported_altitude_for(&self, actor_id: usize) -> u32 {
+        self.actors
+            .get(&self.movement_body(actor_id))
+            .map(|a| a.supported_altitude_ft())
+            .unwrap_or(0)
+    }
+
     pub fn reconcile_altitudes(&mut self) {
+        // Resolved before the walk because the closure below cannot
+        // borrow `self.actors` again to look a mount up.
+        let supported: HashMap<usize, u32> = self
+            .actors
+            .keys()
+            .map(|&id| (id, self.supported_altitude_for(id)))
+            .collect();
         let mut pending: Vec<(usize, u32)> = self
             .actors
             .iter()
@@ -7287,7 +7336,7 @@ impl EncounterInstance {
                 // guard ever ran and underflow on every single one of
                 // them.
                 a.altitude_ft()
-                    .checked_sub(a.supported_altitude_ft())
+                    .checked_sub(supported[id])
                     .filter(|&drop| drop > 0)
                     .map(|drop| (*id, drop))
             })
@@ -7299,10 +7348,10 @@ impl EncounterInstance {
         // disjoint by construction (an actor is either above or below
         // where its state puts it), so the order is a matter of clarity
         // rather than correctness.
-        for actor in self.actors.values_mut() {
-            let supported = actor.supported_altitude_ft();
-            if supported > actor.altitude_ft() {
-                actor.set_altitude_ft(supported);
+        for (id, actor) in self.actors.iter_mut() {
+            let target = supported[id];
+            if target > actor.altitude_ft() {
+                actor.set_altitude_ft(target);
             }
         }
         if pending.is_empty() {
