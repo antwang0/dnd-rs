@@ -30,10 +30,13 @@ use std::sync::LazyLock;
 /// advantage). Size Medium. CR ¼.
 ///
 /// Flyby (RAW: opportunity attacks don't trigger when the pteranodon
-/// flies out of an enemy's reach) is omitted as a deliberate scope cut
-/// — the engine has no per-trait "ignore opportunity attacks on
-/// movement" hook for non-disengaging actors, and the load-bearing
-/// combat clause for a CR-¼ swarmer is the high speed + cheap bite.
+/// flies out of an enemy's reach) is on, via `FLYBY_TAG`. It was cut
+/// on the grounds that "the engine has no per-trait 'ignore opportunity
+/// attacks on movement' hook for non-disengaging actors"; there is one
+/// now, in the mover-side lane of `dispatch_opportunity_attacks`. On a
+/// CR-¼ swarmer it compounds with the fly speed rather than replacing
+/// it — the reason to have 60 feet of movement is being able to spend
+/// all of it and leave.
 pub static PTERANODON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PTERANODON_BITE);
@@ -63,6 +66,11 @@ pub static PTERANODON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Beast,
         actions,
+        // 5e **Flyby**: "doesn't provoke an opportunity attack when it
+        // flies out of an enemy's reach." Read by the mover-side
+        // suppression lane in `dispatch_opportunity_attacks`, and gated
+        // there on the creature actually being airborne.
+        features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -2,6 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_VULTURE_MULTI;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Vulture — CR 1 large beast. The "carrion-bird scavenger" tier:
@@ -21,9 +22,11 @@ use std::sync::LazyLock;
 /// **Keen Sight & Smell** (RAW: advantage on Perception checks using
 /// sight or smell) is flavor-only — the engine doesn't surface skill
 /// checks through combat. **Flyby** (RAW: doesn't provoke opportunity
-/// attacks when it flies out of an enemy's reach) is omitted as a
-/// scope cut — the engine doesn't yet model fly-by-attack movement
-/// patterns separately from walking opportunity-attack tracking.
+/// attacks when it flies out of an enemy's reach) is on, via
+/// `FLYBY_TAG` — and the "walking opportunity-attack tracking" the
+/// scope cut pointed at is exactly where it lives, as a mover-side
+/// suppression beside Disengage. A vulture on the ground still
+/// provokes, because RAW's clause says "when it flies".
 ///
 /// Defensive identity: AC 10 (large + no DEX bonus, no natural armor),
 /// 22 HP (5d10-5). Vanilla beast envelope — no resistances or condition
@@ -77,6 +80,11 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // crit chance. Routes through the same chokepoint as the Wolf /
         // Kobold / Giant Rat pack lanes.
         has_pack_tactics: true,
+        // 5e **Flyby**: "doesn't provoke an opportunity attack when it
+        // flies out of an enemy's reach." Read by the mover-side
+        // suppression lane in `dispatch_opportunity_attacks`, and gated
+        // there on the creature actually being airborne.
+        features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

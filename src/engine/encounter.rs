@@ -7956,6 +7956,25 @@ impl EncounterInstance {
         let (mover_team, mover_size, mover_fancy_footwork_targets) =
             match self.actors.get(&mover_id) {
                 Some(a) if a.is_disengaging() => return,
+                // 5e monster trait **Flyby**: "the creature doesn't
+                // provoke an opportunity attack when it flies out of an
+                // enemy's reach." The same blanket suppression Disengage
+                // buys with a whole action, granted free and permanently
+                // to the aerial harassers — which is the trait.
+                //
+                // The `is_airborne` half is RAW's "when it flies" and is
+                // load-bearing rather than decorative: a pteranodon that
+                // the general flying rule has put on the floor is
+                // walking, and walking out of a halberd's reach provokes
+                // like anything else. It is also the reason this clause
+                // could not exist before a creature could be said to be
+                // flying at all.
+                Some(a)
+                    if a.has_passive_feature(crate::actions::class_features::FLYBY_TAG)
+                        && a.is_airborne() =>
+                {
+                    return;
+                }
                 Some(a) => {
                     let footwork_targets = if a.has_fancy_footwork() {
                         Some(a.melee_attack_targets_this_turn_snapshot())

@@ -15973,11 +15973,13 @@ pub static GIANT_BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
 /// Giant Goat Ram — STR-based 2d4+STR bludgeoning melee. RAW: "+5 to
 /// hit, reach 5 ft, one target. Hit: 8 (2d4+3) bludgeoning damage."
 /// The CR-½ mountain goat's headbutt. RAW's Charge rider (extra 2d4 +
-/// DC-13 STR save vs Prone after a 20 ft straight-line dash) and
-/// Sure-Footed trait (advantage on STR/DEX saves vs prone) are omitted
-/// for the same straight-line scope reasons that hollow out the Boar's
-/// Charge — the engine doesn't model "this turn's move was straight"
-/// at attack time. The plain ram swing keeps the goat anchored at the
+/// DC-13 STR save vs Prone after a 20 ft straight-line dash) is *not*
+/// omitted and has not been for some time: it ships as
+/// `GIANT_GOAT_CHARGE` on the stat block, priced off
+/// `ActorInstance::straight_run_tiles`, which is the "this turn's move
+/// was straight" the scope cut said the engine lacked. Only the
+/// Sure-Footed trait (advantage on STR/DEX saves vs prone) is still
+/// dropped. The plain ram swing keeps the goat anchored at the
 /// "fast hooved chunky-die melee" silhouette.
 pub static GIANT_GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
     "giant goat ram",
@@ -15993,10 +15995,11 @@ pub static GIANT_GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
 /// hit, reach 5 ft, one creature. Hit: 8 (2d6+1) slashing damage." The
 /// CR-¼ aerial scout's only swing — chunky dice on a fragile 19-HP
 /// large frame. RAW's Flyby trait (don't provoke OAs when leaving an
-/// enemy's reach) and Keen Hearing and Sight (advantage on hearing /
-/// sight Perception) are flavor-only at the engine scale: the engine
-/// doesn't surface OAs on Disengage-equivalent moves and skill checks
-/// don't route through combat. The plain talons swing pinned to the
+/// enemy's reach) rides `FLYBY_TAG` on the stat block rather than
+/// anything here — it is a property of the owl's movement, not of its
+/// swing. Keen Hearing and Sight (advantage on hearing / sight
+/// Perception) stays flavor-only: skill checks don't route through
+/// combat. The plain talons swing pinned to the
 /// fly-60 speed keeps the giant owl at the "fast aerial harasser"
 /// silhouette.
 pub static GIANT_OWL_TALONS: SimpleWeapon = SimpleWeapon::melee(

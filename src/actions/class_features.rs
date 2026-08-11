@@ -12914,6 +12914,34 @@ pub const SWIM_SPEED_TAG: &str = "shared.swim_speed";
 /// predicate shape as the rest of the cohort.
 pub const MAGICAL_ATTACKS_TAG: &str = "shared.magical_attacks";
 
+/// Monster trait **Flyby**: *"the creature doesn't provoke an
+/// opportunity attack when it flies out of an enemy's reach."*
+///
+/// The aerial harasser's whole shtick, and until natural flight existed
+/// there was nothing for it to be about. Three stat blocks carry the
+/// trait — the giant owl, the giant vulture, the pteranodon — and all
+/// three docstrings recorded it as dropped, in the same words and for
+/// the same reason: "the engine doesn't surface OAs on
+/// Disengage-equivalent moves". It does; what it did not have was a
+/// creature that could be said to be flying.
+///
+/// Gated on `is_airborne` at the point of use rather than baked in here,
+/// because RAW's clause says *"when it flies"*. A pteranodon that has
+/// been knocked out of the sky by the general flying rule is walking,
+/// and walking away from a halberd provokes like anything else does.
+///
+/// Read by `EncounterInstance::dispatch_opportunity_attacks`, in the
+/// mover-side suppression lane beside Disengage. Deliberately the
+/// blanket lane and not the Swashbuckler's surgical one: Disengage and
+/// Flyby both say "nobody gets to swing", where Fancy Footwork picks
+/// out particular reactors.
+///
+/// Always-on passive; no per-rest charge and no action cost. This is
+/// what separates it from Disengage, which is the same effect for a
+/// whole action — the owl gets it for free, every turn, forever, and
+/// that is the trait.
+pub const FLYBY_TAG: &str = "shared.flyby";
+
 /// 5e Monk **Ki-Empowered Strikes** (class level 6): "your unarmed
 /// strikes count as magical for the purpose of overcoming resistance
 /// and immunity to nonmagical attacks."

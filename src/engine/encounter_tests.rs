@@ -262,6 +262,79 @@ fn opportunity_attack_fires_when_leaving_reach() {
     }
 }
 
+/// 5e **Flyby**: *"the creature doesn't provoke an opportunity attack
+/// when it flies out of an enemy's reach."*
+///
+/// Three moves, same board, same pair of tiles. A giant owl in the air
+/// leaves for free; a giant owl the general flying rule has grounded
+/// pays like anything else; and an ordinary flier without the trait pays
+/// too. The last two are what make this a test of the *trait* rather
+/// than of flight — a build that suppressed opportunity attacks for
+/// everything airborne would pass the first assertion alone.
+#[test]
+fn a_flyby_creature_leaves_for_free_and_only_while_it_is_flying() {
+    use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+    // Fly out of a zombie's reach and report whether the zombie got to
+    // swing for it. `grounded` installs the condition that takes the
+    // mover out of the sky by the general flying rule.
+    fn provoked(template: &'static CreatureTemplate, grounded: bool) -> bool {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        if grounded {
+            e.actors
+                .get_mut(&mover)
+                .unwrap()
+                .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(10));
+        }
+        e.reconcile_altitudes();
+        assert_eq!(
+            e.actors[&mover].is_airborne(),
+            !grounded,
+            "{} should be {} at the moment it moves",
+            template.name,
+            if grounded { "on the floor" } else { "in the air" }
+        );
+        assert!(e.actors[&reactor].can_consume_resource(Resource::Reaction));
+        MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        e.actors
+            .get(&reactor)
+            .is_none_or(|a| !a.can_consume_resource(Resource::Reaction))
+    }
+
+    assert!(
+        GIANT_OWL_TEMPLATE.features.contains(crate::actions::class_features::FLYBY_TAG),
+        "the owl is the one that carries the trait"
+    );
+    assert!(
+        !provoked(&GIANT_OWL_TEMPLATE, false),
+        "an owl in the air flies out of reach for free"
+    );
+    assert!(
+        provoked(&GIANT_OWL_TEMPLATE, true),
+        "RAW says \"when it flies\" — a grounded owl is walking"
+    );
+    assert!(
+        !STIRGE_TEMPLATE.features.contains(crate::actions::class_features::FLYBY_TAG),
+        "the stirge is the control: it flies and does not have Flyby"
+    );
+    assert!(
+        provoked(&STIRGE_TEMPLATE, false),
+        "flying is not itself a licence to leave"
+    );
+}
+
 #[test]
 fn opportunity_attack_does_not_fire_when_staying_in_reach() {
     use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};

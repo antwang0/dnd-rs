@@ -20,12 +20,14 @@ use std::sync::LazyLock;
 ///   Vulture / Giant Bat aerial-beast envelope at the same CR tier.
 ///
 /// **Flyby** (RAW: doesn't provoke OAs when leaving an enemy's reach)
-/// and **Keen Hearing and Sight** (advantage on Perception checks
-/// using hearing or sight) are flavor-only at the engine scale: the
-/// engine doesn't surface OAs on Disengage-equivalent moves and skill
-/// checks don't route through combat. The plain talons swing pinned
-/// to the fly-60 speed keeps the giant owl at the "fast aerial
-/// harasser" silhouette.
+/// is on, via `FLYBY_TAG`, and it is what the "fast aerial harasser"
+/// silhouette was always describing: the owl swoops in, takes its
+/// talons swing, and leaves without paying the halberd. Free every
+/// turn, where a Disengage costs an action.
+///
+/// **Keen Hearing and Sight** (advantage on Perception checks using
+/// hearing or sight) stays flavor-only — skill checks don't route
+/// through combat.
 ///
 /// Defensive identity: AC 12 (light + agile), 19 HP (3d10+3). Vanilla
 /// beast envelope — no resistances or condition immunities. The owl
@@ -87,6 +89,11 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Beast,
         actions,
+        // 5e **Flyby**: "doesn't provoke an opportunity attack when it
+        // flies out of an enemy's reach." Read by the mover-side
+        // suppression lane in `dispatch_opportunity_attacks`, and gated
+        // there on the creature actually being airborne.
+        features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
