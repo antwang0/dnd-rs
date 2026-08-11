@@ -1125,12 +1125,18 @@ pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
 /// contested by the grappler's Strength (Athletics) check."
 ///
 /// Two shapes, picked by whether the hold names a grappler. A `Grappled`
-/// installed by the Grapple action carries a back-link, so the escape is
-/// the RAW contest against that creature. Everything else that pins a
-/// target — the Roper's tendril, Evard's Black Tentacles, Maximilian's
-/// Earthen Grasp, an ooze's Adhered — installs the flag with nobody on
-/// the other end of it, and those keep the flat DC: there is no
-/// grappler's Athletics to roll.
+/// installed by the Grapple action or by a creature's own grab — the
+/// Roper's tendril — carries a back-link, so the escape is the RAW
+/// contest against that creature. Everything else that pins a target —
+/// Evard's Black Tentacles, Maximilian's Earthen Grasp, an ooze's
+/// Adhered — installs the flag with nobody on the other end of it, and
+/// those keep the flat DC: there is no grappler's Athletics to roll.
+///
+/// A successful escape also ends the *restraint the hold was imposing*,
+/// where there is one. Several 5e holds word the restraint as a
+/// consequence of the grapple rather than as a second effect, and the
+/// engine tells those apart by the `Restrained` back-link naming the
+/// same holder — see the removal branch below.
 pub struct GrappleEscape {}
 
 impl Action for GrappleEscape {
@@ -1230,6 +1236,29 @@ impl Action for GrappleEscape {
                 effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
                     actor_id: caster_id,
                     condition,
+                }));
+            }
+            // …and the restraint that hold was imposing, if it was
+            // imposing one. RAW words the clause as a consequence —
+            // "until the grapple ends, the target is restrained" — so
+            // breaking the grapple has to end it, and a captive who won
+            // the contest and stayed at zero movement would have gained
+            // nothing from winning.
+            //
+            // Gated on the two links naming the *same* holder, which is
+            // the whole reason `Restrained` carries one. A creature who
+            // breaks a roper's tendril while also standing in somebody
+            // else's Web is still in the web.
+            if let Some(holder) = grappler
+                && encounter
+                    .actors
+                    .get(&caster_id)
+                    .and_then(|a| a.linked_by(Condition::Restrained))
+                    == Some(holder)
+            {
+                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                    actor_id: caster_id,
+                    condition: Condition::Restrained,
                 }));
             }
             effects

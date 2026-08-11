@@ -17631,11 +17631,17 @@ impl Action for RoperTendril {
             caster_id,
             ConditionTimer::Rounds(10),
         ));
-        effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Restrained,
-            timer: ConditionTimer::Rounds(10),
-        }));
+        // Linked too, and for the same reason the `Grappled` is: RAW
+        // makes the restraint a *consequence* of the hold ("until the
+        // grapple ends, the target is restrained"), so it has to name
+        // the same holder or it will outlive the strand it came from.
+        // See `GrappleEscape`, which reads both links.
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Restrained,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
         effects
     }
 }

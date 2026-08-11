@@ -81181,3 +81181,108 @@ fn the_cloakers_moan_frightens_what_can_hear_it() {
     panic!("expected the moan to land a DC 13 WIS save across 40 seeds");
 }
 
+
+/// Winning the escape contest against a roper ends the restraint the
+/// tendril was imposing, not just the grapple.
+///
+/// RAW words the restraint as a consequence — "until the grapple ends,
+/// the target is restrained" — and the engine has no notion of a derived
+/// condition, so without the paired back-link the captive shed the hold
+/// and stood there at zero movement for the rest of a ten-round timer.
+/// Winning would have bought them nothing.
+#[test]
+fn breaking_a_ropers_hold_also_ends_the_restraint_it_imposed() {
+    use crate::actions::default_actions::GRAPPLE_ESCAPE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let roper = e
+            .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let caught = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+            .unwrap();
+        for c in [Condition::Grappled, Condition::Restrained] {
+            for ef in crate::engine::side_effects::install_condition_with_link(
+                c,
+                caught,
+                roper,
+                ConditionTimer::Rounds(10),
+            ) {
+                ef.apply(&mut e);
+            }
+        }
+        for ef in GRAPPLE_ESCAPE.side_effects(&mut e, caught, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let a = e.actors.get(&caught).unwrap();
+        if !a.has_condition(Condition::Grappled) {
+            assert!(
+                !a.has_condition(Condition::Restrained),
+                "seed {}: broke the grapple and stayed restrained by it",
+                seed
+            );
+            return;
+        }
+    }
+    panic!("expected a fighter to win at least one escape contest across 40 seeds");
+}
+
+/// …and only that one. A captive standing in somebody else's web when
+/// they break a roper's strand is still in the web — the gate is the two
+/// links naming the same holder, which is the whole reason `Restrained`
+/// carries one.
+#[test]
+fn breaking_one_hold_leaves_another_creatures_restraint_alone() {
+    use crate::actions::default_actions::GRAPPLE_ESCAPE;
+    use crate::actors::creatures::ettercaps::ETTERCAP_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let roper = e
+            .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let ettercap = e
+            .instantiate_creature(&ETTERCAP_TEMPLATE, Coordinate::new(4, 12), 0, 0)
+            .unwrap();
+        let caught = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+            .unwrap();
+        for ef in crate::engine::side_effects::install_condition_with_link(
+            Condition::Grappled,
+            caught,
+            roper,
+            ConditionTimer::Rounds(10),
+        ) {
+            ef.apply(&mut e);
+        }
+        // The webbing is somebody else's entirely.
+        for ef in crate::engine::side_effects::install_condition_with_link(
+            Condition::Restrained,
+            caught,
+            ettercap,
+            ConditionTimer::Rounds(10),
+        ) {
+            ef.apply(&mut e);
+        }
+        for ef in GRAPPLE_ESCAPE.side_effects(&mut e, caught, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let a = e.actors.get(&caught).unwrap();
+        if !a.has_condition(Condition::Grappled) {
+            assert!(
+                a.has_condition(Condition::Restrained),
+                "seed {}: shrugging off the roper should not clear the ettercap's web",
+                seed
+            );
+            return;
+        }
+    }
+    panic!("expected a fighter to win at least one escape contest across 40 seeds");
+}

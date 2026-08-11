@@ -1880,11 +1880,36 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "hold monster", condition: Some(Condition::Stunned) },
     LockdownPick { name: "otto's irresistible dance", condition: Some(Condition::Dancing) },
     LockdownPick { name: "flesh to stone", condition: Some(Condition::Petrified) },
+    // The medusa's gaze is Flesh to Stone for free, and it sits beside
+    // the spell rather than at the head of the tier for the reason the
+    // note above gives about Petrified: the condition slows the kill
+    // clock, so being cheap does not make it the better pick. It was
+    // unreachable — a control action that correctly declares it deals
+    // no damage is skipped by focus-fire, which is exactly what that
+    // declaration is for, and nothing else walked it. The medusa's own
+    // docstring records the bug the declaration fixed (re-gazing an
+    // already-petrified succubus four hundred times); what it left
+    // behind was a medusa that never gazed at all.
+    LockdownPick { name: "petrifying gaze", condition: Some(Condition::Petrified) },
     LockdownPick { name: "forcecage", condition: Some(Condition::Caged) },
     LockdownPick { name: "maze", condition: Some(Condition::Mazed) },
     LockdownPick { name: "power word stun", condition: Some(Condition::Stunned) },
     LockdownPick { name: "feeblemind", condition: Some(Condition::Feebled) },
     // --- Tier 2: the target acts, but not against us. ---
+    //
+    // The four monster charms lead the tier for the reason Sleep Gaze
+    // leads tier 1: they cost no slot at all, so a caster holding one
+    // and a Suggestion should always spend the free one. All four were
+    // unreachable before this — a SingleActor action that deals no
+    // damage is skipped by `best_attack_against` on purpose, and no
+    // other rung walks monster actions — so a vampire, a dryad, a
+    // succubus and a lamia each had their signature ability sitting on
+    // the sheet for the whole encounter, unused, on every AI-driven
+    // roster in the engine.
+    LockdownPick { name: "charming gaze", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "fey charm", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "succubus charm", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "intoxicating touch", condition: Some(Condition::Charmed) },
     LockdownPick { name: "crown of madness", condition: Some(Condition::Charmed) },
     LockdownPick { name: "suggestion", condition: Some(Condition::Charmed) },
     LockdownPick { name: "charm monster", condition: Some(Condition::Charmed) },
@@ -2019,6 +2044,29 @@ const ATTRITION: &[LockdownPick] = &[
     // Level 3, concentration: Confused, which in this engine costs the
     // holder its reactions as well as its aim.
     LockdownPick { name: "enemies abound", condition: Some(Condition::Confused) },
+    // The free monster rows. All three fail the lockdown cohort's
+    // membership test in the same way the three spells above it do —
+    // the target keeps acting — and all three were unreachable for the
+    // same reason the monster charms were, so they land here rather
+    // than nowhere.
+    //
+    // They sit below the spells despite costing nothing, which inverts
+    // the "cheapest first" rule the lockdown tiers use, and
+    // deliberately: this rung's order is by *effect*, since a creature
+    // carrying one of these carries no slots to conserve and there is
+    // nothing for cheapness to trade against. A stone snare that pins a
+    // target in place beats a Frightened that only makes it worse.
+    //
+    //   - **Stone Snare** (Dao): `EarthenGrasped`, which is zero
+    //     movement and an escape check to shed.
+    //   - **Ettercap Web**: `Restrained` — zero movement, the target
+    //     swings at disadvantage, and everyone swinging back has
+    //     advantage. Recharge-gated, so the row goes quiet on its own.
+    //   - **Scare** (Quasit): `Frightened`, the mildest of the three
+    //     and the last row for it.
+    LockdownPick { name: "stone snare", condition: Some(Condition::EarthenGrasped) },
+    LockdownPick { name: "ettercap web", condition: Some(Condition::Restrained) },
+    LockdownPick { name: "scare", condition: Some(Condition::Frightened) },
 ];
 
 /// Make the toughest enemy worse at fighting, once the bursts have
@@ -16464,5 +16512,159 @@ mod tests {
             "the encounter never left round one — the surprised actor stalled the queue"
         );
         let _ = zombie;
+    }
+
+    /// Every single-target monster control ability on the roster is
+    /// reachable by some rung of the ladder.
+    ///
+    /// The failure this guards is silent by construction and the engine
+    /// has now hit it twice. An action that declares `deals_damage() ==
+    /// false` is skipped by `best_attack_against` on purpose — focus
+    /// fire is for whittling hit points — and the two cohort rungs that
+    /// pick control effects are name lists. So a monster ability that is
+    /// neither damage nor a listed name is not *rejected* anywhere; it
+    /// is simply never considered, on any board, by any creature that
+    /// carries it, and every mechanical test for it still passes because
+    /// the ability works fine when something asks for it.
+    ///
+    /// Seven were sitting in that gap when this sweep was written: the
+    /// vampire's charming gaze, the dryad's fey charm, the succubus's
+    /// charm, the lamia's intoxicating touch, the dao's stone snare, the
+    /// ettercap's web and the quasit's scare. The roper's tendril was an
+    /// eighth and got a rung of its own instead, because a grab is an
+    /// attack roll rather than a save.
+    ///
+    /// Swept over templates rather than over statics: an unused static
+    /// is nobody's bug, and the thing that goes wrong is a *template*
+    /// shipping an ability nothing will ever select. Spells are excluded
+    /// — they have their own lanes and their own registries, and the
+    /// `school()` tag is how the engine already tells them apart.
+    #[test]
+    fn every_monster_control_ability_on_the_roster_has_a_rung() {
+        use crate::engine::encounter::EncounterInstance;
+
+        // The rungs that can select a SingleActor action which deals no
+        // damage. Anything a template carries has to be reachable
+        // through one of them.
+        let named: std::collections::HashSet<&str> = LOCKDOWNS
+            .iter()
+            .chain(ATTRITION.iter())
+            .map(|r| r.name)
+            .collect();
+
+        // The universal actions every creature carries. Both have rungs
+        // of their own (`try_shove`, `try_grapple`) and neither is a
+        // monster ability.
+        let universal: std::collections::HashSet<&str> =
+            crate::actions::default_actions::DEFAULT_ACTIONS
+                .iter()
+                .map(|a| a.name())
+                .collect();
+
+        // A bare board, only so the `cost` query below has an
+        // encounter to read. No actor id is valid on it, which every
+        // `cost` impl in the engine tolerates — the ones that vary by
+        // caster read a resource pool they cannot find and fall back to
+        // their declared cost.
+        let probe = empty_arena();
+
+        let mut checked = 0;
+        let mut orphans: Vec<String> = Vec::new();
+        for t in EncounterInstance::template_pool() {
+            for action in &t.actions {
+                if !matches!(action.targeting_schema(), TargetingSchema::SingleActor)
+                    || !action.is_harmful()
+                    || action.deals_damage()
+                    || universal.contains(action.name())
+                {
+                    continue;
+                }
+                // Spells are out of scope: they have their own lanes,
+                // their own registries, and a documented list of rows
+                // that were tried on the control cohorts and removed
+                // for being too expensive for the rung. A monster
+                // ability has none of that — it is free, it is the
+                // creature's whole identity, and nothing else will ever
+                // reach it.
+                if action
+                    .cost(&probe, usize::MAX, None, None, None)
+                    .iter()
+                    .any(|c| matches!(c, crate::engine::side_effects::Resource::SpellSlot(_)))
+                {
+                    continue;
+                }
+                checked += 1;
+                // Three ways to be reachable: a row on either cohort, an
+                // attack roll (the damage-free grab rung), or a rung
+                // that names the action itself.
+                // Four ways to be reachable: a row on either cohort, an
+                // attack roll (the damage-free grab rung), or a rung
+                // that names the action itself.
+                //
+                // The one exemption is True Strike, which is reachable
+                // by nothing and should be. It spends the caster's
+                // whole Action to buy advantage on one attack made
+                // later, which is a losing trade for anything that
+                // attacks every turn — and the AI does. A rung for it
+                // would be a rung that makes the caster worse.
+                let reachable = named.contains(action.name())
+                    || action.is_weapon_attack()
+                    || matches!(
+                        action.name(),
+                        "hypnotic gaze" | "escape grapple" | "telekinetic" | "true strike"
+                    );
+                if !reachable {
+                    orphans.push(format!("{} carries {}", t.name, action.name()));
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "the sweep found monster control abilities to check"
+        );
+        assert!(
+            orphans.is_empty(),
+            "these abilities can never be selected by any rung: {:?}",
+            orphans
+        );
+    }
+
+    /// The newly-reachable monster control abilities are actually picked
+    /// up, not merely listed. Pinned on two of the seven — a medusa's
+    /// gaze from tier 1 and a vampire's from tier 2 — because the rung
+    /// they share is the same walk and the rows differ only in text.
+    #[test]
+    fn a_medusa_gazes_and_a_vampire_charms_instead_of_swinging() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
+        use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        for (template, expected) in [
+            (&*MEDUSA_TEMPLATE, "petrifying gaze"),
+            (&*VAMPIRE_TEMPLATE, "charming gaze"),
+        ] {
+            let mut e = empty_arena();
+            let monster = e
+                .instantiate_creature(template, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&monster)
+                .unwrap()
+                .give_resource(crate::engine::side_effects::Resource::Action);
+            match SimpleAi.decide(&e, monster) {
+                ControllerDecision::Act(aei) => assert_eq!(
+                    aei.action().name(),
+                    expected,
+                    "{} should open with its signature ability",
+                    template.name
+                ),
+                ControllerDecision::AwaitInput => {
+                    panic!("{} stalled on its own turn", template.name)
+                }
+            }
+        }
     }
 }

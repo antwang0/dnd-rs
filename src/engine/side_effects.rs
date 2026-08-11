@@ -1982,6 +1982,19 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     crate::conditions::Condition::AncestrallyHaunted,
     crate::conditions::Condition::Inspired,
     crate::conditions::Condition::Grappled,
+    // 5e's holds that *also* restrain: the roper's tendril ("until the
+    // grapple ends, the target is restrained"), the ettercap's web, the
+    // giant spider's. The link is who is holding the strand, and it is
+    // what lets the Restrained end when the hold does.
+    //
+    // Without it the derived half outlives the thing it was derived
+    // from. A captive who wins the escape contest sheds the `Grappled`
+    // and stands there restrained for the rest of the timer — free of a
+    // grapple that no longer exists, and still at zero movement and
+    // disadvantage because of it. `GrappleEscape` reads the link to
+    // tell a Restrained that came off the same hold from one that came
+    // off a Web spell across the room, and strips only the former.
+    crate::conditions::Condition::Restrained,
     // 5e Sanctuary. The link is the ward's caster, and it is what lets
     // the attacker's save be rolled against that caster's own spell save
     // DC rather than against a fixed number standing in for one. A
