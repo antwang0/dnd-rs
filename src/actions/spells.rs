@@ -5020,10 +5020,16 @@ pub static ELDRITCH_BLAST: LazyLock<EldritchBlast> = LazyLock::new(|| EldritchBl
 
 /// Protection from Evil and Good — level-1 abjuration, concentration.
 /// Target gains the Warded condition: aberrations, celestials, elementals,
-/// fey, fiends, and undead have disadvantage on attacks against them. We
-/// approximate the creature-type gate via the target's necrotic/poison
-/// immunity profile (a rough but reliable proxy for undead / fiend status
-/// in our pool). The condition is read by `compute_attack_mode`.
+/// fey, fiends, and undead have disadvantage on attacks against them.
+/// The condition is read by `compute_attack_mode`, which gates it on
+/// `CreatureType::affected_by_protection` — RAW's six types, exactly.
+///
+/// This docstring spent some time claiming the gate was approximated
+/// "via the target's necrotic/poison immunity profile (a rough but
+/// reliable proxy for undead / fiend status in our pool)". It was rough
+/// and it was not reliable — a construct is poison-immune and is not on
+/// RAW's list, a fey generally is not and is — and it had also stopped
+/// being what the code does.
 pub struct ProtectionFromEvilAndGood {}
 
 impl Action for ProtectionFromEvilAndGood {
@@ -8961,9 +8967,45 @@ pub static MASS_SUGGESTION: LazyLock<MassSuggestion> = LazyLock::new(|| MassSugg
 /// brilliant sunlight (we cap the radius at 12 tile-gap for engine
 /// sanity). Every creature in the area makes a CON save vs the caster's
 /// spell DC: 12d6 radiant on fail, half on success. Failures are also
-/// Blinded for 1 minute (10 rounds). Undead and oozes take the burst as
-/// normal; the spell's "bright sunlight" tag isn't engine-modeled.
+/// Blinded for 1 minute (10 rounds).
+///
+/// RAW's one extra sentence — *"undead and oozes have disadvantage on
+/// this saving throw"* — is the spell's whole identity. It is what makes
+/// a level-8 slot the answer to a room full of wights rather than one
+/// more radiant Fireball, and this docstring used to record it as
+/// dropped ("undead and oozes take the burst as normal"). It fires now,
+/// through the same caster-aware save entry point that carries Heightened
+/// Spell and the rest of the notch stack, so a Heightened Sunburst
+/// against a shambling mound does not double-count the disadvantage the
+/// way two independent `RollMode` sites would.
+///
+/// What stays unmodeled is the second half of the *area*: RAW's sunburst
+/// also fills the sphere with bright sunlight for a minute, which is a
+/// light source and a Sunlight Sensitivity trigger rather than a save.
+/// The engine has both of those — `LightSource` and `SunlightFrailty` —
+/// so it is a real omission rather than an impossible one, and it is not
+/// this spell's headline.
 pub struct Sunburst {}
+
+impl Sunburst {
+    /// RAW's "undead and oozes" — the two creature types that flinch
+    /// from daylight as a category rather than by individual trait.
+    ///
+    /// Deliberately the creature type rather than
+    /// `SunlightFrailty`/`Sunlight Sensitivity`, which is the
+    /// neighbouring idea and a different set: the drow and the kobold
+    /// carry the trait and are humanoids, and RAW's Sunburst clause does
+    /// not name them. A drow caught in the blast saves normally.
+    fn flinches_from_daylight(encounter: &EncounterInstance, id: usize) -> bool {
+        encounter.actors.get(&id).is_some_and(|a| {
+            matches!(
+                a.creature_type(),
+                crate::engine::types::CreatureType::Undead
+                    | crate::engine::types::CreatureType::Ooze
+            )
+        })
+    }
+}
 
 impl Action for Sunburst {
     fn school(&self) -> Option<SpellSchool> {
@@ -9042,7 +9084,25 @@ impl Action for Sunburst {
             if dist > RADIUS {
                 continue;
             }
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
+            // RAW: "undead and oozes have disadvantage on this saving
+            // throw." Supplied as a spell-side notch on the shared
+            // caster-aware roll rather than as a second roll here, so it
+            // composes with Heightened Spell and the defender's own
+            // riders instead of racing them.
+            let mode = if Self::flinches_from_daylight(encounter, tid) {
+                let name = encounter.actor_name(tid);
+                encounter.log(format!("  sunburst: {} recoils from the daylight", name));
+                crate::engine::dice::RollMode::Disadvantage
+            } else {
+                crate::engine::dice::RollMode::Normal
+            };
+            let save = encounter.roll_save_against_caster_at(
+                tid,
+                AbilityScoreType::Constitution,
+                dc,
+                caster_id,
+                mode,
+            );
             let dmg = if save.passed() { full / 2 } else { full };
             if dmg > 0 {
                 effects.push(Box::new(DealDamage {

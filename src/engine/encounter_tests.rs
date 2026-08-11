@@ -18218,6 +18218,84 @@ fn sunburst_damages_and_blinds_on_fail() {
     panic!("expected sunburst to blind a goblin across seeds");
 }
 
+/// RAW's one extra sentence on Sunburst: *"undead and oozes have
+/// disadvantage on this saving throw."*
+///
+/// Measured as a total across a seed sweep rather than as a single roll,
+/// because a save at disadvantage is still a save and any one seed
+/// proves nothing. Three creatures with the identical CON modifier (+3)
+/// and no proficiency in the save stand in the same blast across the
+/// same forty seeds: a vampire spawn is RAW's undead, a black pudding is
+/// its ooze, and a minotaur is neither. Everything about the roll is the
+/// same for all three except the clause, so the difference in what they
+/// take *is* the clause.
+///
+/// The minotaur is what makes this a test of the *gate* rather than of
+/// the spell — a build that rolled everybody at disadvantage would pass
+/// every assertion about the other two.
+///
+/// Each target is cushioned with temporary hit points well past the
+/// pool's maximum, so the reading is the damage the spell dealt rather
+/// than the damage the creature had room to take. Without it a 12d6 that
+/// rolls high is clipped by the corpse and the two cohorts converge for
+/// a reason that has nothing to do with saving throws.
+#[test]
+fn undead_and_oozes_flinch_from_a_sunburst_and_nothing_else_does() {
+    use crate::actions::spells::SUNBURST;
+    use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
+    use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
+    use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // 12d6 maxes at 72; anything comfortably above that makes the
+    // cushion, and not the hit point pool, the thing being drained.
+    const CUSHION: u32 = 200;
+    const SEEDS: u64 = 40;
+
+    let mut taken = [0u32; 3];
+    for seed in 0..SEEDS {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let cohort = [
+            e.instantiate_creature(&VAMPIRE_SPAWN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap(),
+            e.instantiate_creature(&BLACK_PUDDING_TEMPLATE, Coordinate::new(9, 8), 1, 1)
+                .unwrap(),
+            e.instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(10, 8), 1, 2)
+                .unwrap(),
+        ];
+        for id in cohort {
+            e.actors.get_mut(&id).unwrap().gain_temp_hp(CUSHION);
+        }
+        for ef in SUNBURST.side_effects(&mut e, wiz, None, Some(&vec![Coordinate::new(9, 8)]), None)
+        {
+            ef.apply(&mut e);
+        }
+        for (slot, id) in cohort.iter().enumerate() {
+            let left = e.actors.get(id).map(|a| a.temp_hp()).unwrap_or(0);
+            taken[slot] += CUSHION - left;
+        }
+    }
+    let [undead, ooze, control] = taken;
+    assert!(control > 0, "the spell should be landing on everybody");
+    assert!(
+        undead > control,
+        "an undead saves at disadvantage and a minotaur does not: {} vs {} over {} casts",
+        undead,
+        control,
+        SEEDS
+    );
+    assert!(
+        ooze > control,
+        "and so does an ooze: {} vs {} over {} casts",
+        ooze,
+        control,
+        SEEDS
+    );
+}
+
 /// Mass Heal: heals up to 700 HP across allies, prioritizing the
 /// most-hurt first. Validate that an injured ally is topped up.
 #[test]
