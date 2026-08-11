@@ -3928,11 +3928,20 @@ impl CreatureTemplate {
 ///
 /// `timer` is stated per row rather than fixed, because RAW's two rows
 /// happen to agree ("until the end of its next turn") and there is no
-/// reason to assume the third will. Both use `Rounds(2)`, which is the
-/// engine's established reading of that phrase — timers tick at round
-/// end, so `Rounds(1)` would expire before the creature's next turn
-/// whenever the damage arrived after it in the order, and covering the
-/// next turn is the load-bearing half of the clause.
+/// reason to assume the third will. Both use `Rounds(2)`.
+///
+/// **Why `Rounds(2)` here and `Rounds(1)` on the mephit breaths**, which
+/// collapse the identical phrase. The engine ticks timers at round end,
+/// so a `Rounds(1)` installed during round N is gone by the end of it.
+/// That is exactly right for the mephit, because a mephit installs its
+/// condition on its own turn and the target's next turn is reliably the
+/// very next one. A flinch has no such guarantee: it is installed by
+/// whoever happened to land the damage, at any point in the order, so
+/// half the time the creature's next turn is in round N+1 and a
+/// one-round timer would expire before the clause ever bit. `Rounds(2)`
+/// covers that turn, at the cost of over-running by one when the damage
+/// arrived early — and covering the turn is the half of the clause that
+/// does anything.
 #[derive(Clone, Debug)]
 pub struct DamageFlinch {
     /// The damage types that trigger it. A slice rather than a single

@@ -9345,33 +9345,64 @@ mod tests {
     /// everyone's reach, ran to round 4261 and would have run forever.
     /// Every actor had a legal action every round. Nobody could win.
     ///
-    /// Deliberately a *small* number of seeds. The sweep that found the
-    /// deadlock ran nine hundred, which takes minutes; the regression
-    /// value is almost all in the first few, because the failure is a
-    /// hang rather than a rare wrong answer, and a hang that survives
-    /// eighteen assorted boards is not seed-specific. The seeds are
-    /// chosen to spread across the parameter space rather than to be
-    /// the ones that once failed.
+    /// A *bounded* number of seeds, chosen to spread across the
+    /// parameter space rather than to be the ones that once failed. The
+    /// sweep that found the deadlock ran nine hundred, which takes
+    /// minutes.
+    ///
+    /// Sixty rather than the eighteen it started at, because eighteen
+    /// turned out to be under the floor. A six-hundred-seed run of this
+    /// same loop surfaced a generator defect nothing in the suite could
+    /// see — see `actor_gen::generate_actors` — and eighteen boards had
+    /// been passing over it for as long as it had been there. Sixty is
+    /// what the suite can afford; the pattern is that turning this
+    /// number up by hand is a productive thing to do periodically, and
+    /// leaving it up is not.
+    ///
+    /// The board is grown to fit what is being asked of it (see
+    /// `MIN_TILES_PER_CR_TEAM`). Before that, the widest configurations
+    /// — four factions at CR 9 on a sixteen-by-ten room — were asking
+    /// the generator for more creatures than the map had anchors to
+    /// hold, and failing for a reason that has nothing to do with what
+    /// this test is about.
     #[test]
     fn generated_encounters_of_every_shape_run_to_completion() {
         use crate::actors::creatures::pc_template_families;
+        /// Board tiles to allow per point of (CR target × faction).
+        /// Empirically ~6 is where a densely-branched map starts
+        /// running out of anchors for its Large and Huge draws; twice
+        /// that leaves the generator room to be unlucky.
+        const MIN_TILES_PER_CR_TEAM: f32 = 12.0;
         let families = pc_template_families();
-        for seed in 0u64..18 {
+        for seed in 0u64..60 {
+            let cr_target = 1.0 + (seed % 9) as f32;
+            let n_teams = 2 + (seed % 3) as usize;
+            let mut width = 16 + (seed % 12) as usize * 2;
+            let mut height = 10 + (seed % 7) as usize;
+            // Grow the room — keeping its aspect — until it can plausibly
+            // hold the fight. A test that spends its seeds on
+            // impossible-to-generate boards is testing the generator's
+            // error path, which has its own tests.
+            let wanted = (cr_target * n_teams as f32 * MIN_TILES_PER_CR_TEAM) as usize;
+            while width * height < wanted {
+                width += 2;
+                height += 1;
+            }
             let tp = TerrainGenParams {
-                width: 16 + (seed % 12) as usize * 2,
-                height: 10 + (seed % 7) as usize,
+                width,
+                height,
                 branch_depth: (seed % 6) as usize,
                 branch_prob: 0.5,
             };
             let fam = &families[(seed as usize) % families.len()].1;
             let pc = fam[(seed as usize) % fam.len()];
             let ap = ActorGenParams {
-                cr_target: 1.0 + (seed % 9) as f32,
+                cr_target,
                 // Two to four factions. More than two is not a
                 // configuration the binary ships, and it is where the
                 // deadlock showed up first — a three-way fight has more
                 // ways to arrive at nobody being able to finish.
-                n_teams: 2 + (seed % 3) as usize,
+                n_teams,
                 pc_template: Some(pc),
                 start_team: 0,
             };
