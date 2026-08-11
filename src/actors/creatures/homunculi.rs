@@ -38,7 +38,9 @@ pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         // 2d4 ≈ 5 average per the SRD (CR 0).
         hitpoints: "2d4".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 20 ft., fly 40 ft.
+        speed: 20.0,
+        fly_speed: 40.0,
         strength: 4,
         dexterity: 15,
         constitution: 11,

@@ -41,7 +41,9 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 16,
         // 13d10+39 = 110 average per MM.
         hitpoints: "13d10+39".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 30 ft.
+        speed: 30.0,
+        fly_speed: 30.0,
         strength: 19,
         intelligence: 14,
         dexterity: 11,

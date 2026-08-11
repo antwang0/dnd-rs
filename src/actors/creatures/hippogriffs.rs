@@ -22,7 +22,9 @@ pub static HIPPOGRIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 11,
         // 3d10+3 = 19 average per MM.
         hitpoints: "3d10+3".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 60 ft.
+        speed: 40.0,
+        fly_speed: 60.0,
         strength: 17,
         dexterity: 13,
         constitution: 13,

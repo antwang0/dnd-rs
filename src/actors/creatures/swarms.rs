@@ -164,31 +164,41 @@ fn swarm_template(
 /// 24 tiles. The wizard's usual two answers to "something is coming for
 /// me" are both off.
 ///
-/// Speed 30 rather than RAW's "0 ft, fly 30 ft": the engine collapses
-/// ground and fly speeds into one number, the same simplification
-/// `BAT_TEMPLATE` documents. It does *not* hold `Condition::Flying`,
-/// so it stays grounded for tremorsense — a swarm at head height is
-/// still shaking the air a burrower can feel, and granting the
-/// condition would also hand it a +60 ft speed bump RAW never gave it.
+/// RAW's "0 ft, fly 30 ft" is now written as the two numbers it is,
+/// and this is the one swarm of the five that leaves the floor. It is
+/// also the only member of the chassis that overrides anything, which
+/// is why the flying speed arrives as a `..swarm_template(…)` spread at
+/// the call site rather than as an eighth parameter four other swarms
+/// would have to pass a zero to.
+///
+/// The consequence worth naming is the walking speed: 0. A swarm of
+/// bats that is knocked out of the air — the general flying rule, via
+/// `flight_is_disabled` — does not crawl to the wizard, it sits on the
+/// floor. That is RAW and it is the counterplay this stat block never
+/// had while its fly speed was spelled "30 ft. walking".
 ///
 /// Glyph 'ß' — a doubled-up 's', for a swarm that is many of one thing.
 /// The five swarms share the mark and differ by name and team colour,
 /// which is the right read: on a board, "that is a swarm" is the fact
 /// that changes your plan, and which vermin it is made of is detail.
 pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    swarm_template(
-        "Swarm of Bats",
-        'ß',
-        12,
-        "5d8",
-        30.,
-        [5, 15, 10, 2, 12, 4],
-        HashSet::from([SpecialSense::Blindsight(60)]),
-        0.25,
-        &SWARM_OF_BATS_BITES,
-        true,
-        HashSet::new(),
-    )
+    CreatureTemplate {
+        // RAW speed line: Speed 0 ft., fly 30 ft.
+        fly_speed: 30.0,
+        ..swarm_template(
+            "Swarm of Bats",
+            'ß',
+            12,
+            "5d8",
+            0.,
+            [5, 15, 10, 2, 12, 4],
+            HashSet::from([SpecialSense::Blindsight(60)]),
+            0.25,
+            &SWARM_OF_BATS_BITES,
+            true,
+            HashSet::new(),
+        )
+    }
 });
 
 /// Swarm of Rats — CR ¼ Medium swarm of Tiny beasts. RAW: AC 10, 24 HP

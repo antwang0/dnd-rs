@@ -74,7 +74,10 @@ pub static ALLIP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         // 9d8 ≈ 40 average per MM (CR 5).
         hitpoints: "9d8".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 0 ft., fly 40 ft. (hover)
+        speed: 0.0,
+        fly_speed: 40.0,
+        hovers: true,
         strength: 6,
         intelligence: 6,
         dexterity: 15,

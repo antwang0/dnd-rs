@@ -48,7 +48,9 @@ pub static WINGED_KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ac: 13,
         // 3d6-3 ≈ 7 average per the SRD (CR ¼).
         hitpoints: "3d6-3".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 30 ft.
+        speed: 30.0,
+        fly_speed: 30.0,
         strength: 7,
         dexterity: 16,
         constitution: 9,

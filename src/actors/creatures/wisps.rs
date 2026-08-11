@@ -21,7 +21,10 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'w',
         ac: 19,
         hitpoints: "9d4".parse().unwrap(),
-        speed: 50.,
+        // RAW speed line: Speed 0 ft., fly 50 ft. (hover)
+        speed: 0.0,
+        fly_speed: 50.0,
+        hovers: true,
         strength: 1,
         dexterity: 28, // ridiculous DEX is the wisp's signature
         constitution: 10,

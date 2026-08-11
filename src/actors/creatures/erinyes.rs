@@ -30,6 +30,9 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 18,
         // 18d8+72 ≈ 153 average per the MM Erinyes stat block.
         hitpoints: "18d8+72".parse().unwrap(),
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         // flying speed 60 RAW — we model as ground speed for grid mobility
         strength: 18,
         dexterity: 16,

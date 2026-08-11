@@ -59,7 +59,9 @@ pub static SPRITE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 1d4 ≈ 2.5 average per MM (CR ¼). The 2-HP shape is the design:
         // a glass-cannon controller.
         hitpoints: "1d4".parse().unwrap(),
-        speed: 10.,
+        // RAW speed line: Speed 10 ft., fly 40 ft.
+        speed: 10.0,
+        fly_speed: 40.0,
         strength: 3,
         intelligence: 14,
         dexterity: 18,

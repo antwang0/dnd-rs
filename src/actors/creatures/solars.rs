@@ -37,6 +37,10 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'O', // 'S' is already Skeleton; 'O' for the angelic Ouranos figure.
         ac: 21,
         hitpoints: "22d10+121".parse().unwrap(),
+        // RAW speed line: Speed 50 ft., fly 150 ft. (hover)
+        speed: 50.0,
+        fly_speed: 150.0,
+        hovers: true,
         strength: 26,
         dexterity: 22,
         constitution: 26,

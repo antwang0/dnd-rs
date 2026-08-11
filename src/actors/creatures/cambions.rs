@@ -33,7 +33,9 @@ pub static CAMBION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'k',
         ac: 19,
         hitpoints: "11d8+33".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         strength: 18,
         intelligence: 14,
         dexterity: 18,

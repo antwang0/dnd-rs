@@ -69,7 +69,10 @@ pub static MARID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 17d10+136 ≈ 229 average per MM (CR 11).
         hitpoints: "17d10+136".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 60 ft. (hover)
+        speed: 30.0,
+        fly_speed: 60.0,
+        hovers: true,
         strength: 18,
         intelligence: 14,
         dexterity: 15,

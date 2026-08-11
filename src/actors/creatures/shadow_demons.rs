@@ -34,7 +34,9 @@ pub static SHADOW_DEMON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         glyph: 'σ',
         ac: 13,
         hitpoints: "11d8+11".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 30 ft.
+        speed: 30.0,
+        fly_speed: 30.0,
         strength: 1,
         intelligence: 14,
         dexterity: 17,

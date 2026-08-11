@@ -30,7 +30,10 @@ pub static GHOST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 11,
         // 10d8 = 45 average per MM.
         hitpoints: "10d8".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 0 ft., fly 40 ft. (hover)
+        speed: 0.0,
+        fly_speed: 40.0,
+        hovers: true,
         strength: 7,
         intelligence: 10,
         dexterity: 13,

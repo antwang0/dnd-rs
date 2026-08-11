@@ -58,7 +58,9 @@ pub static HAWK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fly 60 — the bird's signature mobility. The engine collapses
         // ground + fly to a single per-creature speed; we pin to the
         // fly speed since hawks almost never walk in encounter scope.
-        speed: 60.,
+        // RAW speed line: Speed 10 ft., fly 60 ft.
+        speed: 10.0,
+        fly_speed: 60.0,
         strength: 5,
         intelligence: 2,
         dexterity: 16,

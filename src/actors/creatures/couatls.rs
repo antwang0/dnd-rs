@@ -28,6 +28,9 @@ pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         // 13d10+26 ≈ 97 average per the MM Couatl stat block.
         hitpoints: "13d10+26".parse().unwrap(),
+        // RAW speed line: Speed 30 ft., fly 90 ft.
+        speed: 30.0,
+        fly_speed: 90.0,
         strength: 16,
         dexterity: 20, // primary attack stat (finesse bite)
         constitution: 17,

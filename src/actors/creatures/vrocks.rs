@@ -33,7 +33,9 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 15,
         // 14d10+28 = 104 average per MM (CR 6 demon HP envelope).
         hitpoints: "14d10+28".parse().unwrap(),
-        speed: 40., // walk + fly 60ft RAW; we use the walking value
+        // RAW speed line: Speed 40 ft., fly 60 ft.
+        speed: 40.0,
+        fly_speed: 60.0,
         strength: 17,
         dexterity: 15,
         constitution: 18,

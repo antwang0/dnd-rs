@@ -80209,6 +80209,238 @@ fn the_ground_hits_like_anything_else_that_hits() {
     );
 }
 
+/// A wyvern is in the air because it is a wyvern — no spell, no
+/// condition, nothing to install.
+///
+/// The whole of the natural-flight feature in one board. Every one of
+/// these assertions was false before `CreatureTemplate::fly_speed`
+/// existed: a wyvern spawned on the floor, at a speed that was the
+/// arithmetic mean of two numbers RAW never averaged, wading through
+/// rubble it should have been thirty feet above and shaking the ground
+/// for any tremorsensing burrower in range.
+#[test]
+fn a_wyvern_is_already_in_the_air_when_the_fight_starts() {
+    use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+    use crate::engine::falling::FLIGHT_ALTITUDE_FT;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wyvern = e
+        .instantiate_creature(&WYVERN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.reconcile_altitudes();
+
+    let w = &e.actors[&wyvern];
+    assert!(w.has_innate_flight(), "the stat block has a fly speed");
+    assert!(w.is_airborne(), "and nothing is holding it down");
+    assert!(
+        !w.has_magical_flight(),
+        "no spell is involved — the narrow predicate must still say no"
+    );
+    assert_eq!(
+        w.altitude_ft(),
+        FLIGHT_ALTITUDE_FT,
+        "the sweep puts a natural flier at the same cruising height as a magical one"
+    );
+    assert_eq!(
+        w.speed(),
+        WYVERN_TEMPLATE.fly_speed,
+        "a flying creature moves at its flying speed"
+    );
+    assert!(
+        w.ignores_difficult_terrain() && w.swims_freely(),
+        "nothing thirty feet up is wading or swimming"
+    );
+    assert!(!w.is_grounded(), "and nothing is feeling it through the floor");
+}
+
+/// 5e's general flying rule, both halves at once: *"if a flying
+/// creature is knocked prone, has its speed reduced to 0, or is
+/// otherwise deprived of the ability to move, the creature falls,
+/// unless it has the ability to hover."*
+///
+/// The wyvern is the "unless" failing and the will-o'-wisp is it
+/// holding, and the pair is the point — one assertion on either alone
+/// would pass against a build that had simply wired the rule to
+/// everything or to nothing.
+///
+/// The rung under test is Incapacitated rather than Prone because it is
+/// the one that changes fights: Hold Monster, a Sleep, a Stunning
+/// Strike, and every other body-control effect in the engine routes
+/// through it, and until this rule existed all of them left the wyvern
+/// hanging serenely in the sky.
+#[test]
+fn a_wyvern_put_to_sleep_falls_and_a_will_o_wisp_does_not() {
+    use crate::actors::creatures::wisps::WISP_TEMPLATE;
+    use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+    use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wyvern = e
+        .instantiate_creature(&WYVERN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let wisp = e
+        .instantiate_creature(&WISP_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    e.reconcile_altitudes();
+    assert_eq!(e.actors[&wyvern].altitude_ft(), FLIGHT_ALTITUDE_FT);
+    assert_eq!(e.actors[&wisp].altitude_ft(), FLIGHT_ALTITUDE_FT);
+    let wyvern_hp = e.actors[&wyvern].hitpoints();
+    let wisp_hp = e.actors[&wisp].hitpoints();
+
+    for &id in &[wyvern, wisp] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Rounds(10));
+    }
+    e.reconcile_altitudes();
+
+    let fallen = &e.actors[&wyvern];
+    assert_eq!(fallen.altitude_ft(), 0, "a wyvern that cannot move cannot fly");
+    let lost = wyvern_hp - fallen.hitpoints();
+    let pool = fall_damage_dice(FLIGHT_ALTITUDE_FT);
+    assert!(
+        (pool.count..=pool.max_roll()).contains(&lost),
+        "the ground charges a natural flier exactly what it charges a wizard: {} not in {}..={}",
+        lost,
+        pool.count,
+        pool.max_roll()
+    );
+    assert!(
+        fallen.has_condition(Condition::Prone),
+        "SRD: the creature lands prone unless it avoids the damage"
+    );
+    assert_eq!(
+        fallen.speed(),
+        WYVERN_TEMPLATE.speed,
+        "and on the floor it is a 20-foot creature, which is what the second number was for"
+    );
+
+    let hovering = &e.actors[&wisp];
+    assert!(WISP_TEMPLATE.hovers, "the will-o'-wisp is the control");
+    assert_eq!(
+        hovering.altitude_ft(),
+        FLIGHT_ALTITUDE_FT,
+        "\"unless it has the ability to hover\" is the whole of the annotation"
+    );
+    assert_eq!(hovering.hitpoints(), wisp_hp, "and it owes the ground nothing");
+    assert!(!hovering.has_condition(Condition::Prone));
+}
+
+/// Earthbind against the half of the roster it used to sail straight
+/// past: a creature whose flying speed is a column on its stat block
+/// rather than a buff on its condition list.
+///
+/// Three things are asserted and the third is the one that needed the
+/// suppression-not-erasure design. The wyvern comes down; it comes down
+/// for free, because Earthbind is a landing and not a drop; and when
+/// the caster's concentration breaks it goes straight back up, because
+/// `base_fly_speed` was never touched.
+#[test]
+fn earthbind_grounds_a_creature_that_was_born_flying() {
+    use crate::actions::spells::EARTHBIND;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+    use crate::engine::falling::FLIGHT_ALTITUDE_FT;
+
+    // Earthbind is a STR save and the wyvern's STR is 19, so most seeds
+    // shrug it off. Sweeping for one that fails is how the assertions
+    // get staged without pinning a magic number.
+    let mut ever_grounded = false;
+    for seed in 0..24u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let wyvern = e
+            .instantiate_creature(&WYVERN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.reconcile_altitudes();
+        let hp = e.actors[&wyvern].hitpoints();
+
+        e.push_action(ActionExecutionInfo::new(
+            &*EARTHBIND,
+            caster,
+            Some(vec![wyvern]),
+            None,
+            None,
+        ));
+        e.process_stack();
+
+        if !e.actors[&wyvern].has_condition(Condition::Earthbound) {
+            continue;
+        }
+        ever_grounded = true;
+        let grounded = &e.actors[&wyvern];
+        assert!(
+            !grounded.has_innate_flight(),
+            "RAW: the target's flying speed becomes 0 feet"
+        );
+        assert_eq!(grounded.altitude_ft(), 0, "and it is on the floor");
+        assert_eq!(
+            grounded.hitpoints(),
+            hp,
+            "a controlled descent costs no hit points, wings or no wings"
+        );
+        assert!(
+            !grounded.has_condition(Condition::Prone),
+            "a creature that was set down is not a creature that fell"
+        );
+        assert_eq!(
+            grounded.speed(),
+            WYVERN_TEMPLATE.speed,
+            "grounded, it crawls at its walking speed"
+        );
+
+        // "For the duration" — and no longer. The wings were suppressed,
+        // not amputated.
+        crate::engine::side_effects::RemoveCondition {
+            actor_id: wyvern,
+            condition: Condition::Earthbound,
+        }
+        .apply(&mut e);
+        e.reconcile_altitudes();
+        let freed = &e.actors[&wyvern];
+        assert!(freed.has_innate_flight(), "the stat block still says fly 80");
+        assert_eq!(
+            freed.altitude_ft(),
+            FLIGHT_ALTITUDE_FT,
+            "and it takes off again the moment the spell stops"
+        );
+        break;
+    }
+    assert!(
+        ever_grounded,
+        "no seed in the sweep landed the earthbind — the test proves nothing"
+    );
+}
+
+/// The roster invariant behind `CreatureTemplate::hovers`: the flag is
+/// an annotation *on* a flying speed, so a template that hovers without
+/// flying has mistyped one of the two fields.
+///
+/// `ActorInstance::from_creature_template` `debug_assert`s this, which
+/// catches it only for a template something actually instantiates and
+/// only in a debug build. The sweep catches it for the whole bestiary.
+#[test]
+fn nothing_hovers_without_a_flying_speed() {
+    let pcs = crate::actors::creatures::pc_template_families()
+        .into_iter()
+        .flat_map(|(_, family)| family);
+    for t in EncounterInstance::template_pool().into_iter().chain(pcs) {
+        assert!(
+            !t.hovers || t.fly_speed > 0.0,
+            "{} hovers without a flying speed",
+            t.name
+        );
+        assert!(
+            t.fly_speed >= 0.0 && t.speed >= 0.0,
+            "{} has a negative speed line",
+            t.name
+        );
+    }
+}
+
 /// Earthbind takes a creature out of the air and owes the ground
 /// nothing — RAW's "descends at 60 feet per round until it reaches the
 /// ground" is a landing, not a drop.

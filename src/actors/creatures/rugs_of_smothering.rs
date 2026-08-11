@@ -46,7 +46,10 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ac: 12,
         // 6d10 ≈ 33 average per the SRD (CR 2).
         hitpoints: "6d10".parse().unwrap(),
-        speed: 10.,
+        // RAW speed line: Speed 10 ft., fly 10 ft. (hover)
+        speed: 10.0,
+        fly_speed: 10.0,
+        hovers: true,
         strength: 17,
         dexterity: 14,
         constitution: 10,

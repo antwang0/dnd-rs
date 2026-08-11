@@ -27,7 +27,9 @@ pub static CLOAKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'c',
         ac: 14,
         hitpoints: "12d10+36".parse().unwrap(),
-        speed: 10.,
+        // RAW speed line: Speed 10 ft., fly 40 ft.
+        speed: 10.0,
+        fly_speed: 40.0,
         strength: 17,
         intelligence: 11,
         dexterity: 15,

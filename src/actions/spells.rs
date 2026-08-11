@@ -28460,13 +28460,24 @@ pub static EXPEDITIOUS_RETREAT: LazyLock<ExpeditiousRetreat> =
 /// target's flying speed (if any) becomes 0 for the spell's duration
 /// (concentration, up to 1 minute) and they fall safely to the ground.
 ///
-/// Engine model: since our engine collapses flight into a binary
-/// `Flying` / `InvestedInWind` / `OtherworldlyGuised` condition (each
-/// contributing +60 ft to `condition_speed_bonus`), Earthbind's
-/// load-bearing effect is the strip of those flags from a failed-save
-/// target. If the target wasn't flying at cast time the spell still
+/// Engine model: a failed save does two things, because there are two
+/// ways to be in the air and the spell has to reach both.
+///
+///   - **A spell holding the target up** — `Flying` /
+///     `InvestedInWind` / `OtherworldlyGuised`. These are conditions,
+///     so the answer is to take them away, and `LandSafely` does.
+///   - **Wings the target was born with** — a `fly_speed` on its stat
+///     block. There is no buff to strip off a wyvern, so the answer is
+///     `Condition::Earthbound`, which suppresses the flying speed for
+///     the duration and hands it back intact when concentration drops.
+///     RAW's "(if any)" is doing real work in that sentence and this is
+///     the half it was doing it for.
+///
+/// If the target wasn't flying at cast time the spell still
 /// consumes the slot but produces no observable effect — matching RAW's
-/// "if the target isn't flying, nothing happens" clause.
+/// "if the target isn't flying, nothing happens" clause. (`Earthbound`
+/// still lands on a walking creature, and is still nothing: a flying
+/// speed of zero, zeroed.)
 ///
 /// The strip routes through the `LandSafely` side effect rather than
 /// through one `RemoveCondition` per flight source, and the difference
@@ -28479,14 +28490,22 @@ pub static EXPEDITIOUS_RETREAT: LazyLock<ExpeditiousRetreat> =
 /// catching the target mid-strip (flight still held, altitude already
 /// zero) and hoisting them back up to drop for real on the next effect.
 ///
-/// We don't model the concentration-bound *re-apply-on-flight* behavior
-/// (RAW: the target stays grounded for the duration even if they regain
-/// flight) — the engine's flight conditions don't get reapplied mid-spell
-/// in any current flow, so the simpler "strip on cast" matches observed
-/// behavior. Concentration is still tracked so dropping it logs cleanly.
+/// The condition half *is* the concentration-bound "stays grounded for
+/// the duration" clause, and it holds for exactly the creatures whose
+/// flight is a stat-block column. The gap that remains is narrower than
+/// it was: a target that is re-*buffed* with `Fly` while Earthbind is
+/// still up gets back into the air, because the strip already happened
+/// and there is no re-strip. Closing that would mean a per-round sweep
+/// for one interaction nothing in the engine currently produces.
 pub struct Earthbind {}
 
 impl Action for Earthbind {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn name(&self) -> &str {
         "earthbind"
     }
@@ -28544,20 +28563,37 @@ impl Action for Earthbind {
         if save.passed() {
             return Vec::new();
         }
-        // Strip every flight source on a failed save — RAW's "the
+        // Take away every flight source on a failed save — RAW's "the
         // target's flying speed (if any) becomes 0 feet" only means
         // anything if the spell knows all the ways a flying speed can
-        // have been granted. `LandSafely` walks the shared
-        // `MAGICAL_FLIGHT_CONDITIONS` cohort rather than a list written
-        // out here, which is how Otherworldly Guise came to be missing
-        // from it, and it sets the target down instead of dropping
-        // them. A no-op on a target that wasn't flying, so casting at a
-        // grounded creature consumes the slot but produces no visible
-        // change — matching RAW's "if the target isn't flying, nothing
-        // happens" clause.
-        vec![Box::new(LandSafely {
-            actor_id: target_id,
-        }) as Box<dyn ApplicableSideEffect>]
+        // have been granted. Both shapes go down inside one `apply`:
+        // `LandSafely` walks the shared `MAGICAL_FLIGHT_CONDITIONS`
+        // cohort rather than a list written out here (which is how
+        // Otherworldly Guise came to be missing from it), and
+        // `ground_for` installs the `Earthbound` suppression that is the
+        // only thing that reaches a creature born with wings. Neither
+        // half can be a side effect of its own: the altitude sweep runs
+        // after every applied effect, and would catch the target either
+        // grounded at cruising height (and drop it for 3d6) or airborne
+        // at altitude zero (and hoist it back up). See `LandSafely`.
+        //
+        // A no-op on a target that wasn't flying, so casting at a walking
+        // creature consumes the slot but produces no visible change.
+        vec![
+            Box::new(LandSafely {
+                actor_id: target_id,
+                ground_for: Some(ConditionTimer::Rounds(10)),
+            }) as Box<dyn ApplicableSideEffect>,
+            // Concentration carries the condition, so dropping it hands
+            // the wings back without anything else having to remember.
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Earthbind",
+                    vec![(target_id, Condition::Earthbound)],
+                ),
+            }),
+        ]
     }
 }
 

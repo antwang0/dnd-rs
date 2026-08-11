@@ -21,6 +21,10 @@ pub static SPECTATOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'E',
         ac: 14,
         hitpoints: "6d8+6".parse().unwrap(),
+        // RAW speed line: Speed 0 ft., fly 30 ft. (hover)
+        speed: 0.0,
+        fly_speed: 30.0,
+        hovers: true,
         strength: 8,
         dexterity: 14,
         constitution: 12,

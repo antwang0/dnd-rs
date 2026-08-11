@@ -68,7 +68,9 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW: walking 5 ft, fly 60 ft. The engine doesn't split
         // walking vs flying speeds; we collapse to fly 60 since the
         // owl spends almost every encounter aloft.
-        speed: 60.,
+        // RAW speed line: Speed 5 ft., fly 60 ft.
+        speed: 5.0,
+        fly_speed: 60.0,
         strength: 13,
         intelligence: 8,
         dexterity: 15,

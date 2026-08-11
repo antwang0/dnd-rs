@@ -60,7 +60,10 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 16d10+112 ≈ 200 average per MM (CR 11).
         hitpoints: "16d10+112".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 60 ft. (hover)
+        speed: 40.0,
+        fly_speed: 60.0,
+        hovers: true,
         strength: 22,
         intelligence: 16,
         dexterity: 12,

@@ -56,7 +56,9 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // Eagle. The engine collapses ground + fly to a single per-creature
         // speed; we pin to the fly speed since vultures almost never walk
         // in encounter scope.
-        speed: 60.,
+        // RAW speed line: Speed 10 ft., fly 60 ft.
+        speed: 10.0,
+        fly_speed: 60.0,
         strength: 15,
         intelligence: 6,
         dexterity: 10,

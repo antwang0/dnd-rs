@@ -48,7 +48,9 @@ pub static DARKMANTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "5d8".parse().unwrap(),
         // RAW walks at 10 and flies at 30. The engine has one speed, and
         // the flying one is the one a darkmantle spends its turn using.
-        speed: 30.,
+        // RAW speed line: Speed 10 ft., fly 30 ft.
+        speed: 10.0,
+        fly_speed: 30.0,
         strength: 16,
         dexterity: 12,
         constitution: 13,

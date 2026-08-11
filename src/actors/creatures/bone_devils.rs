@@ -36,7 +36,9 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         // 15d10+60 ≈ 142 average per the MM Bone Devil stat block.
         hitpoints: "15d10+60".parse().unwrap(),
-        speed: 40., // flying speed 40 ft RAW
+        // RAW speed line: Speed 40 ft., fly 40 ft.
+        speed: 40.0,
+        fly_speed: 40.0,
         strength: 18,
         intelligence: 13,
         dexterity: 16,

@@ -20,7 +20,9 @@ pub static FIRE_IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'I',
         ac: 13,
         hitpoints: "2d6+2".parse().unwrap(),
-        speed: 20.,
+        // RAW speed line: Speed 20 ft., fly 40 ft.
+        speed: 20.0,
+        fly_speed: 40.0,
         strength: 6,
         intelligence: 11,
         dexterity: 17,

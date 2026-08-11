@@ -26,7 +26,9 @@ pub static PEGASUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "7d10+14".parse().unwrap(),
         // 60 ft fly RAW. Engine isn't 3D so the fly speed becomes
         // ground speed; pegasus stays the fastest celestial in the pool.
-        speed: 60.,
+        // RAW speed line: Speed 60 ft., fly 90 ft.
+        speed: 60.0,
+        fly_speed: 90.0,
         strength: 18,
         intelligence: 10,
         dexterity: 15,

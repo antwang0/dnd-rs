@@ -52,7 +52,9 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         ac: 19,
         // 19d12+133 = 256 average per MM (CR 17).
         hitpoints: "19d12+133".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 80 ft.
+        speed: 40.0,
+        fly_speed: 80.0,
         strength: 27,
         intelligence: 16,
         dexterity: 10,
@@ -103,7 +105,9 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         ac: 17,
         // 13d10+39 = 110.5 average, but MM rounds to ~133.
         hitpoints: "13d10+39".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 80 ft.
+        speed: 40.0,
+        fly_speed: 80.0,
         strength: 18,
         intelligence: 6,
         dexterity: 10,
@@ -149,7 +153,9 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         ac: 22,
         // 26d20+234 = 507 average per MM (CR 23).
         hitpoints: "26d20+234".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 80 ft.
+        speed: 40.0,
+        fly_speed: 80.0,
         strength: 29,
         intelligence: 18,
         dexterity: 10,
@@ -220,7 +226,9 @@ pub static ADULT_GREEN_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         ac: 19,
         // 17d12+102 = 207 average per MM (CR 15).
         hitpoints: "17d12+102".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 80 ft.
+        speed: 40.0,
+        fly_speed: 80.0,
         strength: 23,
         intelligence: 18,
         dexterity: 12,

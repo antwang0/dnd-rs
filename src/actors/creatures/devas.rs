@@ -70,7 +70,9 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 16d8+64 ≈ 136 average per MM (CR 10).
         hitpoints: "16d8+64".parse().unwrap(),
-        speed: 90.,
+        // RAW speed line: Speed 30 ft., fly 90 ft.
+        speed: 30.0,
+        fly_speed: 90.0,
         strength: 18,
         intelligence: 17,
         dexterity: 18,

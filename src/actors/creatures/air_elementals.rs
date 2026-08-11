@@ -25,7 +25,10 @@ pub static AIR_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ac: 15,
         // 12d10+24 = ~90 average per MM.
         hitpoints: "12d10+24".parse().unwrap(),
-        speed: 90., // flying speed 90ft RAW
+        // RAW speed line: Speed 0 ft., fly 90 ft. (hover)
+        speed: 0.0,
+        fly_speed: 90.0,
+        hovers: true,
         strength: 14,
         intelligence: 6,
         dexterity: 20,

@@ -53,7 +53,10 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 14d10+84 ≈ 161 average per MM (CR 11).
         hitpoints: "14d10+84".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 90 ft. (hover)
+        speed: 30.0,
+        fly_speed: 90.0,
+        hovers: true,
         strength: 21,
         intelligence: 15,
         dexterity: 15,

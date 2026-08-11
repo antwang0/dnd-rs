@@ -6241,7 +6241,9 @@ impl EncounterInstance {
     ///     around.
     ///
     ///   - **Flight lifts you out of it.** A creature aloft over a lake
-    ///     is over it. Deliberately the same `has_magical_flight`
+    ///     is over it, and it makes no difference whether it got there
+    ///     on a spell or on its own wings — a giant eagle is no wetter
+    ///     than a wizard. Deliberately the same `is_airborne`
     ///     predicate `WATER_SURCHARGE_IMMUNITIES` reads, so the two
     ///     lanes cannot disagree about what counts — an actor that
     ///     crossed the water for free is exactly an actor the water has
@@ -6281,7 +6283,7 @@ impl EncounterInstance {
         // which is what makes the spell more than a swimming speed —
         // the surcharge waiver alone would leave them swinging at
         // disadvantage and resisting fire while standing on the water.
-        if actor.has_magical_flight() || actor.has_condition(Condition::WaterWalking) {
+        if actor.is_airborne() || actor.has_condition(Condition::WaterWalking) {
             return false;
         }
         let anchor = actor.location();

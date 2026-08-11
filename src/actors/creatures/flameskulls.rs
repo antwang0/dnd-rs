@@ -24,7 +24,10 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         hitpoints: "5d4+5".parse().unwrap(),
         // Hover 40 ft — modeled as ground speed.
-        speed: 40.,
+        // RAW speed line: Speed 0 ft., fly 40 ft. (hover)
+        speed: 0.0,
+        fly_speed: 40.0,
+        hovers: true,
         strength: 1,
         dexterity: 17,
         constitution: 12,

@@ -76,7 +76,10 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ac: 14,
         // 16d10+16 ≈ 104 average per MM (CR 6).
         hitpoints: "16d10+16".parse().unwrap(),
-        speed: 50.,
+        // RAW speed line: Speed 50 ft., fly 50 ft. (hover)
+        speed: 50.0,
+        fly_speed: 50.0,
+        hovers: true,
         strength: 16,
         intelligence: 10,
         dexterity: 19,

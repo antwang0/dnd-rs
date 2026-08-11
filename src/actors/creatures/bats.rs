@@ -58,7 +58,9 @@ pub static BAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // matching RAW's mundane-bat envelope (the bigger Giant Bat
         // mutates to fly 60). The engine collapses ground + fly to a
         // single per-creature speed.
-        speed: 30.,
+        // RAW speed line: Speed 5 ft., fly 30 ft.
+        speed: 5.0,
+        fly_speed: 30.0,
         strength: 2,
         intelligence: 2,
         dexterity: 15,

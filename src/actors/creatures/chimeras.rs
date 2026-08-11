@@ -22,7 +22,9 @@ pub static CHIMERA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'C',
         ac: 14,
         hitpoints: "12d10+24".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         strength: 19,
         intelligence: 3,
         dexterity: 11,

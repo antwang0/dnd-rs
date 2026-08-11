@@ -1771,13 +1771,12 @@ struct ActorFlagRow {
 ///     condition's other half (dynamic immunity to Paralyzed /
 ///     Restrained / Grappled) sits on `dynamic_immunity_to`; this is
 ///     the movement half.
-///   - **Magical flight** (`Flying` / `InvestedInWind` /
-///     `OtherworldlyGuised`): a creature in the air doesn't wade
-///     through the mud under it. Deliberately the same
-///     `has_magical_flight` predicate the `CONDITION_SPEED_BONUSES`
-///     flight row uses, so the two lanes can never disagree about what
-///     counts as flying — an actor getting the +60 ft flying-speed
-///     bump is exactly an actor that skips the terrain tax.
+///   - **Flight** (`is_airborne`): a creature in the air doesn't wade
+///     through the mud under it, and it does not matter in the least
+///     whether the wings are its own or a spell's. Deliberately the
+///     same `is_airborne` predicate the water surcharge, the
+///     tremorsense gate, and the fall sweep read, so the lanes can
+///     never disagree about what counts as being in the air.
 ///   - **Land's Stride** (`LANDS_STRIDE_TAG`, Ranger lv8 / Land Druid
 ///     lv6): the class-feature row, and the first one that is a build
 ///     choice rather than a spell effect. See the tag's docstring for
@@ -1787,7 +1786,7 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[ActorFlagRow] = &[
         flag: |a| a.has_condition(Condition::Footloose),
     },
     ActorFlagRow {
-        flag: ActorInstance::has_magical_flight,
+        flag: ActorInstance::is_airborne,
     },
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::LANDS_STRIDE_TAG),
@@ -1814,7 +1813,8 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[ActorFlagRow] = &[
 ///     is, because RAW puts it on both: "the target's movement is
 ///     unaffected by difficult terrain… being underwater imposes no
 ///     penalties on the target's movement or attacks."
-///   - **Magical flight** is on both for a reason that is not a rule at
+///   - **Flight** (`is_airborne`, wing or spell) is on both for a
+///     reason that is not a rule at
 ///     all — a creature sixty feet up is not swimming, in the same
 ///     sense and for the same reason it is not wading through the mud.
 ///     It is the one row here that answers "is this actor in the water"
@@ -1836,7 +1836,7 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
         flag: |a| a.has_condition(Condition::Footloose),
     },
     ActorFlagRow {
-        flag: ActorInstance::has_magical_flight,
+        flag: ActorInstance::is_airborne,
     },
     // 5e **Water Walk**: "move across any liquid surface as if it were
     // harmless solid ground." The surcharge half of the spell. Its
@@ -2693,6 +2693,36 @@ pub struct CreatureTemplate {
     pub ac: u32,
     pub hitpoints: DiceExpr,
     pub speed: f32,
+    /// 5e's second speed line — "Speed 20 ft., fly 80 ft." — in feet.
+    ///
+    /// `0.0` means the creature cannot fly under its own power, which is
+    /// the overwhelming majority of the roster and the default.
+    ///
+    /// Kept as a *separate* number from `speed` rather than folded into
+    /// it, which is what forty stat blocks used to do with a comment
+    /// apologising for it ("we don't model flight; treat the fly speed
+    /// as walking"). The two are not interchangeable in either
+    /// direction: a wyvern that walks 20 and flies 80 is neither a
+    /// 20-foot creature nor an 80-foot one, and the difference between
+    /// the two numbers is exactly what Earthbind takes away.
+    ///
+    /// Read through `ActorInstance::base_speed_now`, which picks the
+    /// larger of the two while the creature is airborne and the walking
+    /// one while it is not — so a grounded wyvern really does crawl.
+    pub fly_speed: f32,
+    /// 5e's "(hover)" annotation on a fly speed — the beholder, the
+    /// will-o'-wisp, the mephits, every elemental that is made of air.
+    ///
+    /// The single clause it answers is the general flying rule: *"if a
+    /// flying creature is knocked prone, has its speed reduced to 0, or
+    /// is otherwise deprived of the ability to move, the creature falls,
+    /// unless it has the ability to hover."* A hoverer stays up through
+    /// all of it; everything else pays the ground.
+    ///
+    /// Meaningless without `fly_speed`, and `debug_assert`ed as such in
+    /// `ActorInstance::from_template` — a template that hovers without
+    /// flying is a typo, not a creature.
+    pub hovers: bool,
     pub strength: u32,
     pub intelligence: u32,
     pub dexterity: u32,
@@ -3910,6 +3940,8 @@ impl CreatureTemplate {
             ac: 10,
             hitpoints: "1d8".parse().unwrap(),
             speed: 30.0,
+            fly_speed: 0.0,
+            hovers: false,
             strength: 10,
             intelligence: 10,
             dexterity: 10,
@@ -4303,6 +4335,18 @@ pub struct ActorInstance {
     base_ac: u32,
     base_hitpoints: u32,
     base_speed: f32,
+    /// The creature's own flying speed in feet, copied from
+    /// `CreatureTemplate::fly_speed`. `0.0` for everything that walks.
+    ///
+    /// Immutable for the life of the actor: Earthbind does not zero this
+    /// number, it installs `Condition::Earthbound`, so the flying speed
+    /// is still there to come back when the spell drops. That is RAW's
+    /// "the target's flying speed becomes 0 feet **for the duration**",
+    /// and it is the difference between a spell and an amputation.
+    base_fly_speed: f32,
+    /// Whether this creature's flight is the hovering kind. See
+    /// `CreatureTemplate::hovers`.
+    hovers: bool,
     base_size: Size,
     initiative: Option<i32>,
     strength: u32,
@@ -4876,6 +4920,16 @@ impl ActorInstance {
         // 1 HP, the way RAW intends ("a hawk's hit point maximum
         // can't be less than 1").
         let hp_roll_val: u32 = ct.hitpoints.eval(roller).max(1) as u32;
+        // "(hover)" is an annotation *on* a fly speed, so a template
+        // that hovers without flying has mistyped one of the two
+        // fields. Caught here rather than left to be a creature that
+        // silently ignores half the general flying rule while never
+        // leaving the floor.
+        debug_assert!(
+            !ct.hovers || ct.fly_speed > 0.0,
+            "{} hovers without a flying speed",
+            ct.name
+        );
         let name: String = format!("{} {}", ct.name, instance_n);
         Ok(ActorInstance {
             name,
@@ -4888,6 +4942,8 @@ impl ActorInstance {
             base_ac: ct.ac,
             base_hitpoints: hp_roll_val,
             base_speed: ct.speed,
+            base_fly_speed: ct.fly_speed,
+            hovers: ct.hovers,
             base_size: ct.size,
             initiative: None,
             strength: ct.strength,
@@ -7569,24 +7625,152 @@ impl ActorInstance {
     /// True while this actor is held aloft by magic — the `Fly` /
     /// `Investiture of Wind` / `Otherworldly Guise` cohort.
     ///
-    /// The engine models no natural flight (a creature template's fly
-    /// speed is folded into its single walking speed), so magical
-    /// flight is the only way an actor leaves the floor under its own
-    /// power, and this predicate is the whole of "airborne" on that
-    /// axis. Any one source is sufficient: RAW the three are separate
+    /// The *narrow* flight predicate, and deliberately so: it answers
+    /// "is a spell holding this creature up", not "is this creature in
+    /// the air". The wide question is [`ActorInstance::is_airborne`],
+    /// which unions this with the flying speed a wyvern was born with.
+    ///
+    /// Two lanes want the narrow answer and only those two. The +60 ft
+    /// row in `CONDITION_SPEED_BONUSES` is a *grant* — the spell's own
+    /// "you gain a flying speed of 60 feet" — and stacking it onto a
+    /// roc that already flies 200 would be inventing a number RAW never
+    /// wrote. And `LandSafely` strips conditions, which is all Earthbind
+    /// can do to a spell and exactly the wrong tool for a wing.
+    ///
+    /// Any one source is sufficient: RAW the three are separate
     /// concentration spells one caster can't stack, so they're an OR
     /// rather than a sum.
-    ///
-    /// Named rather than inlined because four separate lanes ask it
-    /// and must never disagree about the answer — the +60 ft speed row
-    /// in `CONDITION_SPEED_BONUSES`, the difficult-terrain waiver in
-    /// `DIFFICULT_TERRAIN_IMMUNITIES`, the ground-contact gate on
-    /// tremorsense (`is_grounded`), and the Earthbind spell, which has
-    /// to strip every one of them.
     pub fn has_magical_flight(&self) -> bool {
         MAGICAL_FLIGHT_CONDITIONS
             .iter()
             .any(|&c| self.has_condition(c))
+    }
+
+    /// This creature's own flying speed in feet — the second number on
+    /// its 5e speed line, `0.0` for everything that walks.
+    ///
+    /// The *unconditional* reading: it does not ask whether the
+    /// creature is currently allowed to use the speed, only whether it
+    /// has one. `has_innate_flight` is the gated question.
+    pub fn base_fly_speed(&self) -> f32 {
+        self.base_fly_speed
+    }
+
+    /// True when this creature can fly under its own power right now —
+    /// it was born with a flying speed and nothing has taken it away.
+    ///
+    /// The one thing that takes it away is `Condition::Earthbound`,
+    /// which is Earthbind's RAW "the target's flying speed (if any)
+    /// becomes 0 feet" reaching the half of the roster the spell used
+    /// to sail straight past. The condition suppresses rather than
+    /// erases: `base_fly_speed` is untouched, so the wings work again
+    /// the moment the concentration drops.
+    pub fn has_innate_flight(&self) -> bool {
+        self.base_fly_speed > 0.0 && !self.has_condition(Condition::Earthbound)
+    }
+
+    /// True when this creature's flight is the hovering kind — 5e's
+    /// "(hover)" annotation. See `CreatureTemplate::hovers`.
+    ///
+    /// Answers `false` for a creature riding a spell: `Fly` grants a
+    /// flying speed and RAW does not annotate it, so a wizard aloft on
+    /// it drops when they are knocked out like everything else.
+    pub fn hovers(&self) -> bool {
+        self.hovers && self.has_innate_flight()
+    }
+
+    /// True while this actor is off the floor under its own power, by
+    /// wing or by spell — the union of `has_magical_flight` and
+    /// `has_innate_flight`, minus whatever the general flying rule has
+    /// knocked out of the sky.
+    ///
+    /// This is the predicate every lane that means *"is this creature in
+    /// the air"* reads, and there are five: the difficult-terrain waiver
+    /// (`DIFFICULT_TERRAIN_IMMUNITIES` — nothing wades through mud it is
+    /// thirty feet above), the water surcharge and the immersion
+    /// question behind it (`WATER_SURCHARGE_IMMUNITIES`,
+    /// `EncounterInstance::is_immersed`), the ground-contact gate on
+    /// tremorsense (`is_grounded`), the altitude the fall sweep
+    /// reconciles toward (`supported_altitude_ft`), and the speed a
+    /// flier actually moves at (`base_speed_now`).
+    ///
+    /// The subtraction is 5e's general flying rule: *"if a flying
+    /// creature is knocked prone, has its speed reduced to 0, or is
+    /// otherwise deprived of the ability to move, the creature falls,
+    /// unless it has the ability to hover."* See `flight_is_disabled`.
+    pub fn is_airborne(&self) -> bool {
+        (self.has_magical_flight() || self.has_innate_flight()) && !self.flight_is_disabled()
+    }
+
+    /// 5e's general flying rule, the falling half: *"if a flying
+    /// creature is knocked prone, has its speed reduced to 0, or is
+    /// otherwise deprived of the ability to move, the creature falls,
+    /// unless it has the ability to hover."*
+    ///
+    /// Three rungs, all of them things the engine already tracks:
+    ///
+    ///   - **Prone.** Named in the rule outright.
+    ///   - **Incapacitated.** RAW's "otherwise deprived of the ability
+    ///     to move" — and the condition every other body-control
+    ///     condition in 5e routes through, so Paralyzed, Stunned,
+    ///     Unconscious, and Petrified all arrive here without needing
+    ///     rows of their own. This is the rung that matters: a downed
+    ///     flier is the counterplay to a flier, and until now a wyvern
+    ///     put to sleep hung in the air.
+    ///   - **Speed reduced to 0.** Named in the rule, and read off the
+    ///     live `speed()` rather than the base, so Aura of Conquest's
+    ///     `Rooted`, a Slow that lands on a creature already crawling,
+    ///     and a grapple all count.
+    ///
+    /// A hoverer is exempt from all three, which is the entire point of
+    /// the annotation.
+    ///
+    /// Note the asymmetry with `has_innate_flight`: this suppresses
+    /// *being in the air*, not *having a flying speed*. Earthbind is the
+    /// other way round. The two really are different — a prone wyvern
+    /// still has wings, and an earthbound one still has legs — and the
+    /// place it shows is `base_speed_now`, where the first still moves
+    /// at 80 and the second is down to 20.
+    pub fn flight_is_disabled(&self) -> bool {
+        if self.hovers() {
+            return false;
+        }
+        self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Incapacitated)
+            // Priced off the *unsuppressed* flying base rather than off
+            // `speed()`, and that is a hard requirement rather than a
+            // preference: `speed()` reads `base_speed_now`, which reads
+            // `is_airborne`, which is this function. Passing the base in
+            // explicitly is what keeps the rule from asking itself
+            // whether it applies. It is also the more correct of the two
+            // readings — "has its speed reduced to 0" is about the speed
+            // the creature would be flying at, so a wyvern whose *walk*
+            // is zeroed while its wings are free has not been deprived
+            // of the ability to move.
+            || self.speed_from_base(self.base_speed.max(self.base_fly_speed)) <= 0.0
+    }
+
+    /// The walking-or-flying speed this actor's movement is priced
+    /// against, before item bonuses, condition bonuses, and the
+    /// Haste / Slow multipliers stack onto it.
+    ///
+    /// A creature in the air moves at the *better* of its two speeds,
+    /// which for every stat block on the roster is the flying one. On
+    /// the floor it moves at its walking speed, and for a wyvern that is
+    /// a quarter of what it had a moment ago — which is what Earthbind
+    /// is *for*, and what forty stat blocks folding one number into the
+    /// other could not express.
+    ///
+    /// `max` rather than an unconditional swap because RAW's speed line
+    /// makes no promise about which number is larger, and a creature
+    /// whose walk beats its flap should not be slowed down by taking
+    /// off.
+    fn base_speed_now(&self) -> f32 {
+        if self.is_airborne() {
+            self.base_speed.max(self.base_fly_speed)
+        } else {
+            self.base_speed
+        }
     }
 
     /// How high off the floor this actor currently is, in feet, and so
@@ -7603,14 +7787,21 @@ impl ActorInstance {
     /// The altitude this actor's *current state* holds it at — the
     /// target `reconcile_altitudes` moves `altitude_ft` toward.
     ///
-    /// `FLIGHT_ALTITUDE_FT` while any source on
-    /// `MAGICAL_FLIGHT_CONDITIONS` is held, 0 otherwise. Deliberately
-    /// the same `has_magical_flight` predicate the +60 ft speed row and
-    /// the difficult-terrain waiver read, so an actor getting the flying
-    /// speed bump is exactly an actor that is in the air and exactly an
-    /// actor that owes the ground something when the spell drops.
+    /// `FLIGHT_ALTITUDE_FT` while the actor is airborne, 0 otherwise.
+    /// Deliberately the same `is_airborne` predicate the
+    /// difficult-terrain waiver and the water surcharge read, so an
+    /// actor that skips the terrain tax is exactly an actor that is in
+    /// the air and exactly an actor that owes the ground something when
+    /// whatever holds it up stops.
+    ///
+    /// Reading the wide predicate rather than `has_magical_flight` is
+    /// what puts the general flying rule's teeth in: a wyvern that is
+    /// knocked prone, an imp put to sleep, a griffon whose speed has
+    /// been zeroed — each one's supported altitude drops to 0 on the
+    /// spot, and `reconcile_altitudes` charges them 3d6 for the trip
+    /// down. A hoverer's does not move.
     pub fn supported_altitude_ft(&self) -> u32 {
-        if self.has_magical_flight() {
+        if self.is_airborne() {
             crate::engine::falling::FLIGHT_ALTITUDE_FT
         } else {
             0
@@ -7634,8 +7825,10 @@ impl ActorInstance {
     ///
     /// Two ways off the floor, and they are the two the engine models:
     ///
-    ///   - **Magical flight** (`has_magical_flight`) — the actor is
-    ///     flying under its own concentration.
+    ///   - **Airborne** (`is_airborne`) — the actor is in the air under
+    ///     its own power, whether that is a spell holding it up or the
+    ///     wings it was born with. A stirge is no easier to feel through
+    ///     the floor than a wizard on *Fly*.
     ///   - **`Lifted`** (Telekinesis) — the actor is suspended in the
     ///     air by someone else's. RAW the spell "moves the creature up
     ///     to 30 feet in any direction, including upward", and the
@@ -7646,9 +7839,12 @@ impl ActorInstance {
     /// Deliberately *not* gated on being Prone, Unconscious, or
     /// Restrained: all three leave the creature very much in contact
     /// with the ground, and a prone target is if anything easier to
-    /// feel.
+    /// feel. Note that for a *flier* the three arrive here anyway, by
+    /// the other road — the general flying rule drops it, and a fallen
+    /// wyvern is on the floor by `is_airborne` rather than by a row
+    /// here.
     pub fn is_grounded(&self) -> bool {
-        !self.has_magical_flight() && !self.has_condition(Condition::Lifted)
+        !self.is_airborne() && !self.has_condition(Condition::Lifted)
     }
 
     pub fn team(&self) -> usize {
@@ -7998,9 +8194,24 @@ impl ActorInstance {
         }
     }
 
+    /// The speed this actor moves at right now, in feet — walking or
+    /// flying, with every bonus and multiplier applied.
+    ///
+    /// A thin wrapper on `speed_from_base` over `base_speed_now`, which
+    /// is what picks between the creature's two speed lines. The split
+    /// exists so 5e's "has its speed reduced to 0" clause can ask the
+    /// question about a base other than the current one without the
+    /// general flying rule recursing into itself; see
+    /// `flight_is_disabled`.
     pub fn speed(&self) -> f32 {
+        self.speed_from_base(self.base_speed_now())
+    }
+
+    /// Everything `speed()` does to a base speed: item bonuses, the two
+    /// flat-bonus cohorts, and the multiplicative factor table.
+    fn speed_from_base(&self, base: f32) -> f32 {
         let bonus = self.total_item_bonuses().speed as f32;
-        let raw = (self.base_speed + bonus + self.condition_speed_bonus()).max(0.0);
+        let raw = (base + bonus + self.condition_speed_bonus()).max(0.0);
         // Multiplicative speed factors (Haste ×2, Slow ×½, Power Word
         // Pain ×½, …) compose via the shared `CONDITION_SPEED_MULTIPLIERS`
         // table so a new speed multiplier lands as a one-line entry.

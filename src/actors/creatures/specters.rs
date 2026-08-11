@@ -20,7 +20,10 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'P',
         ac: 12,
         hitpoints: "5d8".parse().unwrap(),
-        speed: 50.,
+        // RAW speed line: Speed 0 ft., fly 50 ft. (hover)
+        speed: 0.0,
+        fly_speed: 50.0,
+        hovers: true,
         strength: 1,
         intelligence: 10,
         dexterity: 14,

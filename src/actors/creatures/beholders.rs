@@ -27,7 +27,10 @@ pub static BEHOLDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 18,
         // 19d10+76 = 180 average per MM CR 13.
         hitpoints: "19d10+76".parse().unwrap(),
-        speed: 0.,
+        // RAW speed line: Speed 0 ft., fly 20 ft. (hover)
+        speed: 0.0,
+        fly_speed: 20.0,
+        hovers: true,
         strength: 10,
         dexterity: 14,
         constitution: 18,

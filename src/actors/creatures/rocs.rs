@@ -33,7 +33,9 @@ pub static ROC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 15,
         // 14d12+56 ≈ 248 average per MM (CR 11).
         hitpoints: "14d12+56".parse().unwrap(),
-        speed: 20.,
+        // RAW speed line: Speed 20 ft., fly 120 ft.
+        speed: 20.0,
+        fly_speed: 120.0,
         strength: 28,
         intelligence: 3,
         dexterity: 10,

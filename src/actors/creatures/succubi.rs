@@ -42,7 +42,9 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'ς',
         ac: 15,
         hitpoints: "10d8+20".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         strength: 8,
         intelligence: 15,
         dexterity: 17,

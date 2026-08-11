@@ -38,7 +38,9 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         // 20d12+140 ≈ 262 average per MM (CR 19 apex demon).
         hitpoints: "20d12+140".parse().unwrap(),
-        speed: 40., // walking + flying speed 80ft RAW; we use the larger walking value
+        // RAW speed line: Speed 40 ft., fly 80 ft.
+        speed: 40.0,
+        fly_speed: 80.0,
         strength: 26,
         dexterity: 15,
         constitution: 22,

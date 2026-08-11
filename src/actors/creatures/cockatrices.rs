@@ -21,7 +21,9 @@ pub static COCKATRICE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'k',
         ac: 11,
         hitpoints: "5d6".parse().unwrap(),
-        speed: 20., // 5e: 20ft walking + 40ft fly — we model walking only.
+        // RAW speed line: Speed 20 ft., fly 40 ft.
+        speed: 20.0,
+        fly_speed: 40.0,
         strength: 6,
         intelligence: 2,
         dexterity: 12,

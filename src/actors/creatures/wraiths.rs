@@ -24,7 +24,10 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 9d8+27 = 67 average per MM. We approximate with a dice expression
         // that the engine's roller can parse.
         hitpoints: "9d8+27".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 0 ft., fly 60 ft. (hover)
+        speed: 0.0,
+        fly_speed: 60.0,
+        hovers: true,
         strength: 6,
         intelligence: 12,
         dexterity: 16,

@@ -48,7 +48,9 @@ pub static PTERANODON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         // 3d8 ≈ 13 average per MM (CR ¼).
         hitpoints: "3d8".parse().unwrap(),
-        speed: 60.,
+        // RAW speed line: Speed 10 ft., fly 60 ft.
+        speed: 10.0,
+        fly_speed: 60.0,
         strength: 12,
         intelligence: 2,
         dexterity: 15,

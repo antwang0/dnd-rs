@@ -24,7 +24,9 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'N',
         ac: 13,
         hitpoints: "8d10+16".parse().unwrap(),
-        speed: 60.,
+        // RAW speed line: Speed 60 ft., fly 90 ft.
+        speed: 60.0,
+        fly_speed: 90.0,
         strength: 18,
         dexterity: 15,
         constitution: 16,

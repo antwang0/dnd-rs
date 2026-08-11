@@ -32,7 +32,9 @@ pub static HARPY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // only flying charmer the slowest monstrosity on the roster and
         // left its 30 ft song permanently out of range of anything that
         // opened at distance.
-        speed: 40.,
+        // RAW speed line: Speed 20 ft., fly 40 ft.
+        speed: 20.0,
+        fly_speed: 40.0,
         strength: 12,
         dexterity: 13,
         constitution: 12,

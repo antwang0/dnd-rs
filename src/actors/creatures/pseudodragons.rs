@@ -28,7 +28,9 @@ pub static PSEUDODRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // RAW: 15 ft walk, 60 ft fly. The engine collapses to one
         // ground speed so we land at 30 to reflect the airborne tier
         // without overstating the walk.
-        speed: 30.,
+        // RAW speed line: Speed 15 ft., fly 60 ft.
+        speed: 15.0,
+        fly_speed: 60.0,
         strength: 6,
         intelligence: 10,
         dexterity: 15,

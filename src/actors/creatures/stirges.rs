@@ -20,7 +20,9 @@ pub static STIRGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 's',
         ac: 14,
         hitpoints: "2d4".parse().unwrap(),
-        speed: 10., // 5e: 10ft walking, 40ft fly — we model walking only.
+        // RAW speed line: Speed 10 ft., fly 40 ft.
+        speed: 10.0,
+        fly_speed: 40.0,
         strength: 4,
         intelligence: 2,
         dexterity: 16,

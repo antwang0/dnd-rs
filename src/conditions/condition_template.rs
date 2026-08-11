@@ -2408,6 +2408,29 @@ pub enum Condition {
     /// history collapsed to an on-board `Incapacitated` because there
     /// was nowhere else to put the target.
     Banished,
+    /// 5e **Earthbind** — *"the target's flying speed (if any) becomes 0
+    /// feet for the duration."*
+    ///
+    /// The half of the spell the engine could not previously express.
+    /// Earthbind's other half — stripping the *Fly* / *Investiture of
+    /// Wind* / *Otherworldly Guise* cohort and setting the target down
+    /// — is a condition removal, and a condition removal is the entire
+    /// wrong shape for a wyvern: there is no buff on it to take away.
+    /// Its flying speed is a column on its stat block.
+    ///
+    /// So this is the suppression, and it is deliberately a suppression
+    /// rather than an edit to `base_fly_speed`. RAW scopes the clause to
+    /// "for the duration"; a number zeroed in place would have to be
+    /// restored by whatever ended the spell, and the four things that
+    /// can end it (a broken concentration save, a Dispel Magic, a lapsed
+    /// timer, the caster dying) would each have to remember. Read by
+    /// `ActorInstance::has_innate_flight` and by nothing else, which is
+    /// what makes the restore automatic.
+    ///
+    /// Not on `MAGICAL_FLIGHT_CONDITIONS`: this is the opposite of a
+    /// flight source, and a spell that grounds its holder must never be
+    /// mistaken for one that lifts them.
+    Earthbound,
 }
 
 impl Condition {
@@ -2631,6 +2654,7 @@ impl Condition {
             Condition::Vexed => "vexed",
             Condition::Surprised => "surprised",
             Condition::Banished => "banished",
+            Condition::Earthbound => "earthbound",
         }
     }
 
@@ -3309,7 +3333,7 @@ pub const ARCANE_SHOTS: &[Condition] = &[
 /// explicit removal (e.g. Stand-up clears Prone, Lesser Restoration clears
 /// Poisoned). `Rounds(n)` ticks down by 1 every time the initiative queue
 /// wraps; the condition is removed when the timer hits 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConditionTimer {
     Permanent,
     Rounds(u32),

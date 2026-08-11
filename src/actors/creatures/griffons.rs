@@ -58,7 +58,9 @@ pub static GRIFFON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         // 7d10+21 ≈ 59 average per MM (CR 2).
         hitpoints: "7d10+21".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 30 ft., fly 80 ft.
+        speed: 30.0,
+        fly_speed: 80.0,
         strength: 18,
         intelligence: 2,
         dexterity: 15,

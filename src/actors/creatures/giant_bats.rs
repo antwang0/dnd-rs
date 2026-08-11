@@ -58,7 +58,9 @@ pub static GIANT_BAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fly 60 — the bat's signature mobility, mirroring Hawk /
         // Giant Eagle / Pteranodon. Engine collapses ground + fly to
         // a single per-creature speed since the bat almost never walks.
-        speed: 60.,
+        // RAW speed line: Speed 10 ft., fly 60 ft.
+        speed: 10.0,
+        fly_speed: 60.0,
         strength: 15,
         intelligence: 2,
         dexterity: 16,

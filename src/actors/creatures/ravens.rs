@@ -28,7 +28,9 @@ pub static RAVEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 1d4-1 ≈ 1 average per the SRD (CR 0). One hit point is the
         // floor and the die can roll it.
         hitpoints: "1d4-1".parse().unwrap(),
-        speed: 50.,
+        // RAW speed line: Speed 10 ft., fly 50 ft.
+        speed: 10.0,
+        fly_speed: 50.0,
         strength: 2,
         dexterity: 14,
         constitution: 8,

@@ -23,7 +23,9 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'G',
         ac: 15,
         hitpoints: "7d8+21".parse().unwrap(),
-        speed: 30., // We don't model flight; treat the fly speed as walking.
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         strength: 15,
         dexterity: 11,
         constitution: 16,

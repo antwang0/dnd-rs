@@ -58,7 +58,9 @@ pub static GIANT_WASP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (60) but still firmly in the "aerial harasser" envelope.
         // Matches RAW's giant-wasp stat block. The engine collapses
         // ground + fly to a single per-creature speed.
-        speed: 50.,
+        // RAW speed line: Speed 10 ft., fly 50 ft.
+        speed: 10.0,
+        fly_speed: 50.0,
         strength: 10,
         intelligence: 1,
         dexterity: 14,

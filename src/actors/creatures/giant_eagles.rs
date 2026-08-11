@@ -24,7 +24,9 @@ pub static GIANT_EAGLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "4d10+4".parse().unwrap(),
         // Approx 40ft walking; the 80ft fly is the headline but the
         // engine collapses to a single ground speed.
-        speed: 40.,
+        // RAW speed line: Speed 10 ft., fly 80 ft.
+        speed: 10.0,
+        fly_speed: 80.0,
         strength: 16,
         intelligence: 8,
         dexterity: 17,

@@ -25,7 +25,10 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         // 13d8 = 58 average per MM.
         hitpoints: "13d8".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 0 ft., fly 40 ft. (hover)
+        speed: 0.0,
+        fly_speed: 40.0,
+        hovers: true,
         strength: 1,
         intelligence: 12,
         dexterity: 14,

@@ -75,7 +75,9 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 19d10+95 ≈ 199 average per MM (CR 17).
         hitpoints: "19d10+95".parse().unwrap(),
-        speed: 40.,
+        // RAW speed line: Speed 40 ft., fly 60 ft.
+        speed: 40.0,
+        fly_speed: 60.0,
         strength: 22,
         intelligence: 16,
         dexterity: 10,

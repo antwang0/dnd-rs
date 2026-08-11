@@ -1558,9 +1558,9 @@ impl ApplicableSideEffect for RemoveFromEncounter {
     }
 }
 
-/// Bring a flying actor down **under control** — strip every source of
-/// magical flight and set the actor on the floor, with no fall damage
-/// and no Prone.
+/// Bring a flying actor down **under control** — take away every source
+/// of flight and set the actor on the floor, with no fall damage and no
+/// Prone.
 ///
 /// The controlled counterpart to `EncounterInstance::reconcile_altitudes`,
 /// and the reason it exists as one side effect rather than as a handful
@@ -1571,6 +1571,16 @@ impl ApplicableSideEffect for RemoveFromEncounter {
 /// `FLIGHT_ALTITUDE_FT`, only to fall for real when the next
 /// `RemoveCondition` landed. Doing both halves inside one `apply` means
 /// the sweep never sees the inconsistent state at all.
+///
+/// That atomicity is also why `ground_for` is a field here rather than a
+/// second side effect queued next to this one. A creature whose flight
+/// is a column on its stat block has no buff to strip, so grounding it
+/// means installing `Condition::Earthbound` — and an install queued
+/// *before* this one would be observed at full altitude with its flight
+/// already suppressed, which is precisely the fall the whole struct
+/// exists to avoid. Queued *after*, the sweep would see the reverse and
+/// hoist the wyvern back up. There is no ordering of two side effects
+/// that works; there is only one apply.
 ///
 /// The current caller is **Earthbind**, whose RAW is a descent and not a
 /// drop: *"an airborne creature affected by this spell descends at 60
@@ -1584,6 +1594,16 @@ impl ApplicableSideEffect for RemoveFromEncounter {
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub struct LandSafely {
     pub actor_id: usize,
+    /// How long to hold the actor's *own* flying speed at zero, if at
+    /// all — RAW Earthbind's "for the duration". `None` sets a creature
+    /// down without touching its wings, which is the right shape for a
+    /// dismissed spell and the wrong one for a spell that means to keep
+    /// the dragon on the ground.
+    ///
+    /// Installed as `Condition::Earthbound`, which suppresses rather
+    /// than erases `base_fly_speed`; see the condition's docstring for
+    /// why the number is never edited in place.
+    pub ground_for: Option<ConditionTimer>,
 }
 
 impl ApplicableSideEffect for LandSafely {
@@ -1592,7 +1612,10 @@ impl ApplicableSideEffect for LandSafely {
             return;
         };
         let name = actor.name().to_string();
-        let was_airborne = actor.altitude_ft() > 0 || actor.has_magical_flight();
+        // Reads the wide predicate: a wyvern set down by Earthbind is as
+        // much "a flier that has landed" as a wizard whose Fly was
+        // dispelled, and the log line belongs to both.
+        let was_airborne = actor.altitude_ft() > 0 || actor.is_airborne();
         // Driven off the shared cohort rather than a list written here,
         // for the reason the cohort's own docstring gives: a fourth
         // flight source must not be able to survive a landing.
@@ -1601,6 +1624,9 @@ impl ApplicableSideEffect for LandSafely {
             .copied()
             .filter(|&c| actor.remove_condition(c))
             .collect();
+        if let Some(timer) = self.ground_for {
+            actor.add_condition(Condition::Earthbound, timer);
+        }
         actor.set_altitude_ft(0);
         for condition in lifted {
             announce_condition_lifted(ei, self.actor_id, &name, condition);

@@ -32,6 +32,9 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         // 26d10+156 ≈ 300 average per the MM Pit Fiend stat block.
         hitpoints: "26d10+156".parse().unwrap(),
+        // RAW speed line: Speed 30 ft., fly 60 ft.
+        speed: 30.0,
+        fly_speed: 60.0,
         strength: 26,
         dexterity: 14,
         constitution: 24,

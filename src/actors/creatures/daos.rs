@@ -69,7 +69,10 @@ pub static DAO_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 18,
         // 15d10+105 ≈ 187 average per MM (CR 11).
         hitpoints: "15d10+105".parse().unwrap(),
-        speed: 30.,
+        // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
+        speed: 30.0,
+        fly_speed: 30.0,
+        hovers: true,
         strength: 23,
         intelligence: 12,
         dexterity: 12,

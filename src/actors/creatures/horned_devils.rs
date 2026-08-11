@@ -69,7 +69,9 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ac: 18,
         // 17d10+85 ≈ 178 average per MM (CR 11).
         hitpoints: "17d10+85".parse().unwrap(),
-        speed: 20.,
+        // RAW speed line: Speed 20 ft., fly 60 ft.
+        speed: 20.0,
+        fly_speed: 60.0,
         strength: 22,
         intelligence: 12,
         dexterity: 17,

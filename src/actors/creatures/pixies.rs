@@ -53,7 +53,9 @@ pub static PIXIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // lucky roll can give 2-3 HP but the pixie still dies to any
         // glancing blow.
         hitpoints: "1d4-1".parse().unwrap(),
-        speed: 10.,
+        // RAW speed line: Speed 10 ft., fly 30 ft.
+        speed: 10.0,
+        fly_speed: 30.0,
         strength: 2,
         intelligence: 10,
         dexterity: 20,

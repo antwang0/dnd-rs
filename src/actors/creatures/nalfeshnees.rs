@@ -59,7 +59,9 @@ pub static NALFESHNEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 18,
         // 16d10+96 ≈ 184 average per MM (CR 13).
         hitpoints: "16d10+96".parse().unwrap(),
-        speed: 20.,
+        // RAW speed line: Speed 20 ft., fly 30 ft.
+        speed: 20.0,
+        fly_speed: 30.0,
         strength: 21,
         intelligence: 19,
         dexterity: 10,
