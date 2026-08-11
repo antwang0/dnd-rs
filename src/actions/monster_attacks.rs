@@ -3008,6 +3008,10 @@ impl Action for Multiattack {
         self.sub_attack.is_weapon_attack()
     }
 
+    fn underwater_weapon_name(&self) -> &str {
+        self.sub_attack.underwater_weapon_name()
+    }
+
     fn is_melee_attack(&self) -> bool {
         self.sub_attack.is_melee_attack()
     }
@@ -3190,6 +3194,48 @@ impl Action for CompoundAttack {
     /// the trait's default got wrong.
     fn deals_damage(&self) -> bool {
         self.parts.iter().any(|(a, _)| a.deals_damage())
+    }
+
+    /// True only when *every* part is a weapon attack — "all" here
+    /// where `deals_damage` says "any", because the consumers differ.
+    /// That one asks whether the Action is worth pointing at somebody;
+    /// this one is read by rules that will be applied to the whole
+    /// Action, and a rule that should tax two swings out of three
+    /// should not be applied to all three.
+    ///
+    /// Left at the trait default until now, which meant `false`: every
+    /// compound in the bestiary read as a non-weapon attack, so the
+    /// AI's picker predicted the water would leave a bite-and-claws
+    /// alone while the die taxed both swings. Same divergence
+    /// `SimpleWeapon::is_weapon_attack` was declared to close, one
+    /// wrapper up.
+    fn is_weapon_attack(&self) -> bool {
+        !self.parts.is_empty() && self.parts.iter().all(|(a, _)| a.is_weapon_attack())
+    }
+
+    /// The worst-off part's name, which is the honest single answer to
+    /// a question RAW asks per weapon about an Action that swings more
+    /// than one.
+    ///
+    /// 5e's Underwater Combat allowlists are per-weapon, and the die
+    /// applies them per swing — correctly, since each part resolves
+    /// under its own name. The picker holds only the wrapper and gets
+    /// one string, so it gets the name of the first part the water
+    /// actually taxes: a compound of a trident and a bite is a
+    /// compound the water half-taxes, and half-taxed ranks nearer to
+    /// taxed than to free. Falls back to the first part when the water
+    /// taxes none of them, which is the case where every part agrees
+    /// and any of them would do.
+    fn underwater_weapon_name(&self) -> &str {
+        use crate::engine::underwater::melee_keeps_edge;
+        let worst = self
+            .parts
+            .iter()
+            .map(|(a, _)| a.underwater_weapon_name())
+            .find(|name| !melee_keeps_edge(name));
+        worst
+            .or_else(|| self.parts.first().map(|(a, _)| a.underwater_weapon_name()))
+            .unwrap_or_else(|| self.name())
     }
 
     fn damage_types(&self) -> Vec<DamageType> {

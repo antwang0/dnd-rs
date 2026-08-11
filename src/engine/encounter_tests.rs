@@ -81441,3 +81441,63 @@ fn the_light_haters_carry_the_right_tier_of_frailty() {
         "the shadow is the one whose saves the sun reaches"
     );
 }
+
+
+/// The water's rules are a weapon allowlist, and a multiattack's name is
+/// not a weapon's — so the wrapper hands over the name the die will
+/// actually look up.
+///
+/// The marid is the case that makes this concrete. Its Action is three
+/// trident thrusts; a trident is one of RAW's five melee weapons that
+/// keep their edge underwater, and "marid multiattack" is not. The die
+/// resolves each swing under the trident's own name and leaves all
+/// three alone; the AI's picker holds only the wrapper, and before this
+/// it predicted disadvantage on an Action the water does not touch —
+/// the same prediction-versus-resolution divergence
+/// `SimpleWeapon::is_weapon_attack` exists to close, one layer up.
+#[test]
+fn a_multiattack_is_looked_up_underwater_by_the_weapon_it_swings() {
+    use crate::actions::monster_attacks::{MARID_MULTI, MARID_TRIDENT};
+    use crate::engine::underwater::melee_keeps_edge;
+
+    let multi: &dyn Action = &*MARID_MULTI;
+    assert!(
+        multi.is_weapon_attack(),
+        "three tridents is a weapon attack"
+    );
+    assert!(
+        !melee_keeps_edge(multi.name()),
+        "the display name is the trap: nothing called a multiattack is on RAW's list"
+    );
+    assert_eq!(
+        multi.underwater_weapon_name(),
+        MARID_TRIDENT.name(),
+        "so the lookup has to use the weapon, not the wrapper"
+    );
+    assert!(
+        melee_keeps_edge(multi.underwater_weapon_name()),
+        "and a trident keeps its edge in the water"
+    );
+}
+
+/// A compound of differently-taxed swings is looked up by the one the
+/// water actually taxes.
+///
+/// RAW asks the allowlist per weapon and the die answers per swing; the
+/// picker gets one string. Handing it the *worst* part is what keeps a
+/// half-taxed Action ranked nearer to taxed than to free — and it is
+/// the only single answer that doesn't overstate the creature's case.
+#[test]
+fn a_compound_is_looked_up_underwater_by_the_swing_the_water_taxes() {
+    use crate::actions::monster_attacks::MERROW_MULTI;
+    use crate::engine::underwater::melee_keeps_edge;
+
+    let multi: &dyn Action = &*MERROW_MULTI;
+    assert!(multi.is_weapon_attack());
+    assert!(
+        !melee_keeps_edge(multi.underwater_weapon_name()),
+        "the merrow's bite is not on RAW's list even though its harpoon is, \
+         and the harder of the two answers is the one the Action gets: {}",
+        multi.underwater_weapon_name()
+    );
+}

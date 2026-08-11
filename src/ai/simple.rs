@@ -8663,7 +8663,10 @@ fn best_attack_against(
         // at something it cannot reach for the rest of the fight.
         let underwater = encounter.underwater_verdict(
             actor_id,
-            action.name(),
+            // Not `name()`: the water's rules are a weapon allowlist,
+            // and a multiattack's name is not a weapon's. See
+            // `Action::underwater_weapon_name`.
+            action.underwater_weapon_name(),
             action.is_melee_attack(),
             action.is_weapon_attack(),
             action.normal_range().is_some_and(|nr| dist > nr),

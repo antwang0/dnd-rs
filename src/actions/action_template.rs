@@ -951,6 +951,27 @@ pub trait Action {
         false
     }
 
+    /// The name 5e's Underwater Combat rules should be asked about when
+    /// they look this attack up by weapon — defaulting to the action's
+    /// own name, which is right for everything that swings once.
+    ///
+    /// RAW's melee clause is a five-weapon allowlist (dagger, javelin,
+    /// shortsword, spear, trident) and its ranged clause a similar one,
+    /// so `UnderwaterVerdict::for_attack` matches on a string. That
+    /// works until an action's name is not a weapon's name, which is
+    /// exactly what a multiattack's is: the marid's three-trident
+    /// Action is called "marid multiattack", and a trident is on the
+    /// list where a multiattack is not. The die never noticed, because
+    /// down there each swing resolves under its own name; the AI's
+    /// picker holds only the wrapper, so it would have predicted
+    /// disadvantage on three swings the water leaves alone.
+    ///
+    /// Overridden by the multiattack chassis to forward its
+    /// sub-attack's, which is the answer the die will use.
+    fn underwater_weapon_name(&self) -> &str {
+        self.name()
+    }
+
     /// True if this action is a swing with a 5e **light** melee weapon —
     /// the property that opens RAW's two-weapon fighting option:
     /// "when you take the Attack action and attack with a light melee
