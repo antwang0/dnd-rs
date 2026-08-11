@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{UMBER_CLAW, UMBER_HULK_CONFUSING_GAZE};
+use crate::actions::monster_attacks::{
+    UMBER_CLAW, UMBER_HULK_CONFUSING_GAZE, UMBER_HULK_MULTI, UMBER_MANDIBLES,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -15,6 +17,8 @@ use std::sync::LazyLock;
 pub static UMBER_HULK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&UMBER_CLAW);
+    actions.push(&UMBER_MANDIBLES);
+    actions.push(&*UMBER_HULK_MULTI);
     actions.push(&*UMBER_HULK_CONFUSING_GAZE);
     CreatureTemplate {
         name: "Umber Hulk",

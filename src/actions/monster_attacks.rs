@@ -2979,6 +2979,47 @@ impl Action for Multiattack {
         self.sub_attack.damage_types()
     }
 
+    /// The rest of the sub-attack's self-description, forwarded for the
+    /// same reason `reach_tiles` and `requires_los` already are: a
+    /// multiattack *is* its sub-attack, `count` times, and every one of
+    /// these questions is about the swing rather than about the wrapper.
+    ///
+    /// `deals_damage` is the one that was actually wrong. Its trait
+    /// default is `is_harmful()`, which is true for every multiattack
+    /// ever declared — including one whose sub-attack is a damage-free
+    /// grab. The roper is that case, and it went wrong twice over from
+    /// one line: `best_attack_against` ranks reach before damage, so a
+    /// four-tendril flurry claiming to be damage outranked the roper's
+    /// own 4d6 bite nose to nose; and `has_ranged_attack` read the same
+    /// claim at twenty tiles and called a creature with a 10 ft walk
+    /// speed a kiter, so it spent its turns backing away from the thing
+    /// it had just tied itself to.
+    ///
+    /// The other three are the divergence `SimpleWeapon::is_melee_attack`
+    /// documents at length, one layer up. The chassis knew the answers
+    /// and the wrapper was guessing them from a reach band, so every
+    /// multiattack in the bestiary read as a non-weapon attack — and a
+    /// kraken's triple-tentacle, at six tiles, read as a shot.
+    fn deals_damage(&self) -> bool {
+        self.sub_attack.deals_damage()
+    }
+
+    fn is_weapon_attack(&self) -> bool {
+        self.sub_attack.is_weapon_attack()
+    }
+
+    fn is_melee_attack(&self) -> bool {
+        self.sub_attack.is_melee_attack()
+    }
+
+    fn normal_range(&self) -> Option<isize> {
+        self.sub_attack.normal_range()
+    }
+
+    fn min_effective_reach(&self) -> Option<isize> {
+        self.sub_attack.min_effective_reach()
+    }
+
     /// `count` copies of the sub-attack's own estimate.
     ///
     /// Delegating this is not optional the way most trait defaults are.
@@ -3137,6 +3178,18 @@ impl Action for CompoundAttack {
 
     fn requires_los(&self) -> bool {
         self.parts.first().is_some_and(|(a, _)| a.requires_los())
+    }
+
+    /// True when any part of the compound whittles hit points.
+    ///
+    /// "Any" rather than "all", because a compound whose parts are a
+    /// grab and a bite is still worth pointing at a target, and the
+    /// question this answers is whether the AI's focus-fire lane should
+    /// consider it at all. The homogeneous sibling forwards the same
+    /// question to its single sub-attack; see the note there for what
+    /// the trait's default got wrong.
+    fn deals_damage(&self) -> bool {
+        self.parts.iter().any(|(a, _)| a.deals_damage())
     }
 
     fn damage_types(&self) -> Vec<DamageType> {
@@ -8423,6 +8476,26 @@ pub static UMBER_CLAW: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 8),
     DamageType::Slashing,
 );
+
+/// Umber Hulk Mandibles — STR-based 2d8+STR piercing melee. RAW: "Hit:
+/// 14 (2d8 + 5) piercing damage." The heavy half of the hulk's
+/// multiattack, and the reason its claws are only 1d8 apiece.
+pub static UMBER_MANDIBLES: SimpleWeapon = SimpleWeapon::melee(
+    "umber mandibles",
+    &["umandibles", "mandibles"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+);
+
+/// Umber Hulk Multiattack — "The umber hulk makes three attacks: one
+/// with its mandibles and two with its claws." Heterogeneous, so
+/// `CompoundAttack`; without it the hulk swung once a turn for 1d8+5,
+/// which is a CR 2's output on a CR 5 chassis.
+pub static UMBER_HULK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "umber hulk multiattack",
+    parts: vec![(&UMBER_MANDIBLES, 1), (&UMBER_CLAW, 2)],
+});
 
 /// Cloaker tail — STR-based 1d8 slashing melee attack with 10ft reach
 /// (2 tiles). The cloaker whips its barbed tail at nearby prey.

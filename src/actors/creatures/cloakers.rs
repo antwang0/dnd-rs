@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{CLOAKER_BITE, CLOAKER_MOAN, CLOAKER_MULTI, CLOAKER_TAIL};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -38,6 +39,15 @@ pub static CLOAKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Aberration,
         actions,
+        // 5e Cloaker **Light Sensitivity**: "while in bright light, the
+        // cloaker has disadvantage on attack rolls and Wisdom
+        // (Perception) checks." Mapped onto the Sensitivity tier, whose
+        // clauses are exactly these two. RAW's trigger is bright light
+        // rather than sunlight specifically, which is a narrowing the
+        // engine cannot express — `is_sunlit` is the only light-tier
+        // question the frailty lane asks — so a cloaker caught under a
+        // torch gets away with it and one caught outdoors does not.
+        sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         ..CreatureTemplate::defaults()
     }
 });

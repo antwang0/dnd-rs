@@ -2,6 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LIFE_DRAIN;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -36,6 +37,12 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // 5e Wraith **Sunlight Sensitivity** — the same clause the
+        // specter carries, and the specter is its weaker cousin in
+        // every other line of the sheet too. Sensitivity rather than
+        // the shadow's Weakness: a wraith caught in the open swings
+        // badly and saves normally.
+        sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         // 5e wraith: resistant to acid / cold / fire / lightning / thunder
         // and to non-magical bludgeoning / piercing / slashing. The BPS
         // triplet lives in `damage_modifiers_from`; the rest of

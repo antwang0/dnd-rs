@@ -2,6 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LIFE_DRAIN;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
+use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -32,6 +33,13 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // 5e Specter **Sunlight Sensitivity**: "while in sunlight, the
+        // specter has disadvantage on attack rolls, as well as on
+        // Wisdom (Perception) checks that rely on sight." The kobold's
+        // tier, not the shadow's: the specter's saves are untouched.
+        // The Perception half is dropped throughout — the engine rolls
+        // no Perception checks.
+        sunlight_frailty: Some(SunlightFrailty::Sensitivity),
         damage_modifiers: damage_modifiers_from([
             (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),

@@ -81124,10 +81124,10 @@ fn the_ai_throws_a_tendril_and_then_reels() {
         .unwrap();
     e.start_turn_for(roper);
     match SimpleAi.decide(&e, roper) {
-        ControllerDecision::Act(aei) => assert!(
-            aei.action().name().contains("tendril"),
-            "a roper forty feet from its prey should be throwing strands, not {}",
-            aei.action().name()
+        ControllerDecision::Act(aei) => assert_eq!(
+            aei.action().name(),
+            "tendril flurry",
+            "a roper forty feet from its prey should throw every strand it has"
         ),
         ControllerDecision::AwaitInput => panic!("the roper stalled on its own turn"),
     }
@@ -81146,6 +81146,56 @@ fn the_ai_throws_a_tendril_and_then_reels() {
             aei.action().name(),
             "reel",
             "with something on the line the free action comes first"
+        ),
+        ControllerDecision::AwaitInput => panic!("the roper stalled on its own turn"),
+    }
+}
+
+/// And once the catch is in reach, the roper bites it.
+///
+/// The regression this pins is the one the multiattack chassis used to
+/// carry: `Multiattack` inherited the trait's `deals_damage` default —
+/// `is_harmful()`, which is true for everything — so a four-tendril
+/// flurry claimed to be damage, and `best_attack_against` ranks reach
+/// before damage. A twenty-tile grab that deals nothing therefore beat
+/// the roper's own 4d6 bite at every distance, nose to nose included.
+#[test]
+fn a_roper_with_its_prey_in_reach_stops_throwing_strands_and_bites() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::ropers::ROPER_TEMPLATE;
+    use crate::ai::Controller as _;
+    use crate::ai::{ControllerDecision, SimpleAi};
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let roper = e
+        .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    // Large footprint spans four tiles, so this is nose to nose.
+    let prey = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    // Already held, so the grab rung declines and the damage lane has
+    // to make the call on its own merits.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        prey,
+        roper,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    e.start_turn_for(roper);
+    // Burn the Bonus Action so the reel rung isn't the answer.
+    e.actors
+        .get_mut(&roper)
+        .unwrap()
+        .consume_resource(crate::engine::side_effects::Resource::BonusAction);
+    match SimpleAi.decide(&e, roper) {
+        ControllerDecision::Act(aei) => assert_eq!(
+            aei.action().name(),
+            "roper bite",
+            "the thing in its mouth is what the bite is for"
         ),
         ControllerDecision::AwaitInput => panic!("the roper stalled on its own turn"),
     }
@@ -81285,4 +81335,109 @@ fn breaking_one_hold_leaves_another_creatures_restraint_alone() {
         }
     }
     panic!("expected a fighter to win at least one escape contest across 40 seeds");
+}
+
+/// A multiattack answers questions about itself the way its sub-attack
+/// does, because it *is* its sub-attack, `count` times.
+///
+/// The chassis forwarded `targeting_schema`, `reach_tiles`,
+/// `requires_los` and `damage_types` and then stopped, leaving the four
+/// questions below to the trait's defaults — which guess from a reach
+/// band or, in `deals_damage`'s case, from `is_harmful()`. Both guesses
+/// were wrong on the roster:
+///
+///   - **The roper's flurry** claimed to deal damage, which its
+///     damage-free grab does not. That one line put a twenty-tile
+///     zero-damage action above the roper's own 4d6 bite in the
+///     focus-fire ranking at every distance, and told the kiting rung
+///     that a creature with a 10 ft walk speed was a ranged attacker.
+///   - **The kraken's triple-tentacle** read as a non-weapon attack at
+///     six tiles, which is the exact divergence
+///     `SimpleWeapon::is_melee_attack` was declared to close one layer
+///     down — closed for the tentacle, still open for three of them.
+#[test]
+fn a_multiattack_describes_itself_the_way_its_sub_attack_does() {
+    use crate::actions::monster_attacks::{
+        KRAKEN_MULTI, KRAKEN_TENTACLE, ROPER_MULTI, ROPER_TENDRIL,
+    };
+
+    let flurry: &dyn Action = &*ROPER_MULTI;
+    let tendril: &dyn Action = &*ROPER_TENDRIL;
+    assert_eq!(
+        flurry.deals_damage(),
+        tendril.deals_damage(),
+        "four copies of a grab is still not damage"
+    );
+    assert!(!flurry.deals_damage());
+    assert_eq!(flurry.is_melee_attack(), tendril.is_melee_attack());
+    assert_eq!(flurry.is_weapon_attack(), tendril.is_weapon_attack());
+
+    let multi: &dyn Action = &*KRAKEN_MULTI;
+    let tentacle: &dyn Action = &KRAKEN_TENTACLE;
+    assert!(
+        multi.is_melee_attack() && tentacle.is_melee_attack(),
+        "three swings is three swings, however far the arm reaches"
+    );
+    assert_eq!(multi.is_weapon_attack(), tentacle.is_weapon_attack());
+    assert_eq!(multi.normal_range(), tentacle.normal_range());
+    assert_eq!(multi.deals_damage(), tentacle.deals_damage());
+}
+
+/// The umber hulk gets its RAW three swings — mandibles and two claws —
+/// rather than the single 1d8 claw it shipped with, which is a CR 2's
+/// output on a CR 5 chassis.
+#[test]
+fn the_umber_hulk_leads_with_its_mandibles() {
+    use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
+
+    let multi = UMBER_HULK_TEMPLATE
+        .actions
+        .iter()
+        .find(|a| a.name() == "umber hulk multiattack")
+        .expect("the hulk carries its multiattack");
+    assert!(multi.chains_multiple_attacks());
+    assert!(multi.deals_damage());
+    let types = multi.damage_types();
+    assert!(
+        types.contains(&crate::engine::types::DamageType::Piercing)
+            && types.contains(&crate::engine::types::DamageType::Slashing),
+        "mandibles and claws are two different kinds of hurt: {:?}",
+        types
+    );
+}
+
+/// The three creatures whose stat blocks say they hate the light and
+/// whose templates did not.
+///
+/// Swept together rather than one test apiece because the assertion is
+/// the same in all three cases and the interesting part is the tier: a
+/// specter and a wraith swing badly in the sun and save normally
+/// (Sensitivity), where the shadow they are usually shelved next to
+/// fails its saves too (Weakness). Getting that wrong would be a quiet
+/// buff or nerf nobody would notice.
+#[test]
+fn the_light_haters_carry_the_right_tier_of_frailty() {
+    use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+    use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
+    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+    use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+    use crate::engine::lighting::SunlightFrailty;
+
+    for t in [
+        &*SPECTER_TEMPLATE,
+        &*WRAITH_TEMPLATE,
+        &*CLOAKER_TEMPLATE,
+    ] {
+        assert_eq!(
+            t.sunlight_frailty,
+            Some(SunlightFrailty::Sensitivity),
+            "{} should swing badly in the light and save normally",
+            t.name
+        );
+    }
+    assert_eq!(
+        SHADOW_TEMPLATE.sunlight_frailty,
+        Some(SunlightFrailty::Weakness),
+        "the shadow is the one whose saves the sun reaches"
+    );
 }

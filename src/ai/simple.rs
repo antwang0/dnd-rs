@@ -6244,7 +6244,7 @@ fn try_damage_free_grab(
         return None;
     }
     let my_team = actor.team();
-    let grabs: Vec<&'static (dyn Action + Send + Sync)> = actor
+    let mut grabs: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
         .filter(|a| {
@@ -6258,6 +6258,12 @@ fn try_damage_free_grab(
     if grabs.is_empty() {
         return None;
     }
+    // Multiattacks first. A grab either lands or it doesn't, so four
+    // rolls of one are four times the chance of a hold for the same
+    // Action — there is no damage curve here for extra swings to trade
+    // against, which is why `best_attack_against` needs a real
+    // comparison on its lane and this one does not.
+    grabs.sort_by_key(|a| !a.chains_multiple_attacks());
 
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for tid in encounter.sorted_actor_ids() {
@@ -16667,4 +16673,5 @@ mod tests {
             }
         }
     }
+
 }
