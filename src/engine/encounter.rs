@@ -1,4 +1,8 @@
 use crate::engine::side_effects::ApplicableSideEffect;
+use crate::actors::creatures::gray_oozes::GRAY_OOZE_TEMPLATE;
+use crate::actors::creatures::ice_devils::ICE_DEVIL_TEMPLATE;
+use crate::actors::creatures::planetars::PLANETAR_TEMPLATE;
+use crate::actors::creatures::sphinxes_of_wonder::SPHINX_OF_WONDER_TEMPLATE;
 use crate::actors::creatures::allosauruses::ALLOSAURUS_TEMPLATE;
 use crate::actors::creatures::ankylosauruses::ANKYLOSAURUS_TEMPLATE;
 use crate::actors::creatures::apes::APE_TEMPLATE;
@@ -10628,6 +10632,31 @@ impl EncounterInstance {
             &SCORPION_TEMPLATE,
             &SEAHORSE_TEMPLATE,
             &VENOMOUS_SNAKE_TEMPLATE,
+            // The top of two extraplanar ladders and the bottom of two
+            // more, each filling a rung nothing else sits on:
+            //   - Ice Devil (CR 14 large fiend): the hierarchy's
+            //     general, closing the five-point gap between Erinyes
+            //     (CR 12) and Pit Fiend (CR 20). Two ice spears and a
+            //     tail per Action, all four damage lanes cold-tinged,
+            //     behind cold / fire / poison immunity, Magic
+            //     Resistance and blindsight at the board's full width.
+            //   - Planetar (CR 16 large celestial): the missing angel
+            //     between Deva (CR 10) and Solar (CR 21), and the first
+            //     creature in the bestiary whose area damage knows
+            //     whose side it is on — Holy Burst is the roster's only
+            //     `enemies_only` point burst.
+            //   - Sphinx of Wonder (CR 1 tiny celestial): Magic
+            //     Resistance on a 24-hit-point frame, which inverts the
+            //     usual CR-1 profile — it survives spells and dies to
+            //     soldiers.
+            //   - Gray Ooze (CR ½ medium ooze): the bottom of the ooze
+            //     ladder below Ochre Jelly / Gelatinous Cube (CR 2).
+            //     The hardest single hit at its tier off an AC of 9,
+            //     and immune to every condition that would control it.
+            &ICE_DEVIL_TEMPLATE,
+            &PLANETAR_TEMPLATE,
+            &SPHINX_OF_WONDER_TEMPLATE,
+            &GRAY_OOZE_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
         pool

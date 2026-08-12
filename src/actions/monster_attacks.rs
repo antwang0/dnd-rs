@@ -5754,26 +5754,166 @@ impl Action for BreathWeapon {
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
             caster.spend_recharge(self.recharge_key);
         }
-        let raw = encounter.roll(&self.damage_dice);
-        encounter.log(format!(
-            "  {}: {}({}) = {} {} area (DC {} {}, half on save)",
+        resolve_point_burst(
+            encounter,
+            caster_id,
+            point,
             self.display_name,
             self.damage_dice,
-            raw,
-            raw,
             self.damage_type,
-            self.dc,
             self.save_ability,
-        ));
+            self.dc,
+            self.radius,
+            false,
+        )
+    }
+}
+
+/// Roll a point-centred burst once, log it, and resolve every save in
+/// it — the body shared by `BreathWeapon` and `PointBurstSaveDamage`.
+///
+/// The two differ in exactly two things: whether a recharge gates the
+/// action, and whether allies standing in the blast take it. Everything
+/// between "roll the dice" and "hand back the damage effects" is the
+/// same rule, and was written twice for about a day.
+///
+/// Named separately rather than folded into one of them because the
+/// eventual shape is visible from here: `BreathWeapon` is
+/// `RechargingAttack` wrapped around `PointBurstSaveDamage`, and the
+/// only reason it is not spelled that way today is the twenty struct
+/// literals across the dragons, the mephits and the gorgon that would
+/// have to move at once. Extracting the body first is what makes that
+/// migration a rename rather than a rewrite.
+#[allow(clippy::too_many_arguments)]
+fn resolve_point_burst(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    display_name: &str,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    radius: isize,
+    enemies_only: bool,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    // 5e area effects roll damage once and share it across everyone
+    // caught, which is why the roll is here rather than per target.
+    let raw = encounter.roll(&damage_dice);
+    encounter.log(format!(
+        "  {}: {}({}) = {} {} area (DC {} {}, half on save)",
+        display_name, damage_dice, raw, raw, damage_type, dc, save_ability,
+    ));
+    if enemies_only {
+        crate::actions::action_template::resolve_enemy_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            radius,
+            save_ability,
+            dc,
+            raw,
+            damage_type,
+            crate::engine::saves::SaveDamagePolicy::HalfOnSave,
+        )
+    } else {
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
             point,
-            self.radius,
+            radius,
+            save_ability,
+            dc,
+            raw,
+            damage_type,
+        )
+    }
+}
+
+/// A point-centred, save-for-half damage burst that anybody can use on
+/// any turn — `BreathWeapon` with the recharge clause struck out, and
+/// with a switch for whose side of the blast counts.
+///
+/// RAW writes plenty of these: the planetar's Holy Burst is *"each enemy
+/// in a 20-foot-radius Sphere centered on a point the planetar can see
+/// within 120 feet"*, twice per Multiattack and gated on nothing at all.
+/// Until now the engine's only point burst was the breath chassis, so an
+/// at-will one had a choice between a recharge RAW does not give it and
+/// a bespoke `impl Action`.
+///
+/// `enemies_only` is the second difference and the one that is not
+/// cosmetic. A dragon's breath is indiscriminate — RAW says *each
+/// creature in the area* and the engine's neutral resolver agrees — and
+/// an angel's is not. Getting that backwards would either have the
+/// planetar irradiating the party it came to help or the dragon politely
+/// breathing around its own kobolds.
+pub struct PointBurstSaveDamage {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    /// Footprint-gap radius of the blast.
+    pub radius: isize,
+    /// Max distance in tile gaps from the caster's footprint to the
+    /// burst centre.
+    pub range: isize,
+    /// True for the bursts RAW scopes to *enemies* rather than to every
+    /// creature in the area. See the type docs.
+    pub enemies_only: bool,
+}
+
+impl Action for PointBurstSaveDamage {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: self.radius,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.range)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    /// Three quarters of the pool, the same estimate `AtWillEnemyBurst`
+    /// makes and for the same reason: save-for-half against one target
+    /// at even odds averages three quarters, which is the number the
+    /// attack picker wants when ranking this against a swing.
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        Some(self.damage_dice.average_roll() * 0.75)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        resolve_point_burst(
+            encounter,
+            caster_id,
+            point,
+            self.display_name,
+            self.damage_dice,
+            self.damage_type,
             self.save_ability,
             self.dc,
-            raw,
-            self.damage_type,
+            self.radius,
+            self.enemies_only,
         )
     }
 }
@@ -18923,3 +19063,188 @@ pub static ARCHELON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack 
     sub_attack: &ARCHELON_BITE,
     count: 2,
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// The top of the SRD 5.2 extraplanar ladders
+//
+// Four stat blocks that had rungs waiting for them: the ice devil at
+// CR 14 between the erinyes and the pit fiend, the planetar at CR 16
+// between the deva and the solar, the sphinx of wonder at the very
+// bottom of the celestial shelf, and the gray ooze at the bottom of
+// the ooze one.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Sphinx of Wonder ────────────────────────────────────────────────
+
+/// Sphinx of Wonder Rend — DEX-based 1d4+DEX slashing plus a flat 2d6
+/// radiant rider. RAW: "Rend. Melee Attack Roll: +5, reach 5 ft. Hit: 5
+/// (1d4 + 3) Slashing damage plus 7 (2d6) Radiant damage."
+///
+/// The radiant half is more than twice the physical half, which is the
+/// whole joke of the stat block: a house-cat-sized celestial whose
+/// scratch is mostly holy fire.
+pub static SPHINX_OF_WONDER_REND: WeaponWithRider = WeaponWithRider::melee(
+    "sphinx rend",
+    &["rend-sw", "sphinx-rend"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+    Dice::new(2, 6),
+    DamageType::Radiant,
+    "celestial rend",
+);
+
+// ─── Gray Ooze ───────────────────────────────────────────────────────
+
+/// Gray Ooze Pseudopod — STR-based 2d8+STR acid melee. RAW:
+/// "Pseudopod. Melee Attack Roll: +3, reach 5 ft. Hit: 10 (2d8 + 1)
+/// Acid damage."
+///
+/// RAW's second sentence — *"Nonmagical armor worn by the target takes
+/// a −1 penalty to the AC it offers"* — is not modeled, for the reason
+/// the rust monster's corrosive sludge already records one file over:
+/// the engine has no equipment-degradation lane, and an AC penalty that
+/// accumulates across a fight and is cleared by a spell nothing casts
+/// in combat is two systems rather than a rider. Ten average acid on a
+/// CR-½ frame is a real threat without it; the corrosion is what makes
+/// a gray ooze a *problem* rather than a fight, and that half of the
+/// creature lives outside an encounter's scope anyway.
+pub static GRAY_OOZE_PSEUDOPOD: SimpleWeapon = SimpleWeapon::melee(
+    "gray ooze pseudopod",
+    &["pseudopod-g", "gray-ooze"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Acid,
+);
+
+// ─── Ice Devil ───────────────────────────────────────────────────────
+
+/// Ice Devil Ice Spear — STR-based 2d8+STR piercing plus a flat 3d6
+/// cold rider. RAW: "Ice Spear. Melee or Ranged Attack Roll: +10, reach
+/// 5 ft. or range 30/120 ft. Hit: 14 (2d8 + 5) Piercing damage plus 10
+/// (3d6) Cold damage."
+///
+/// Modeled as the melee half only. The spear's ranged mode returns to
+/// the devil's hand on hit or miss, so RAW's two modes are one weapon
+/// used at two distances rather than two weapons — and the engine's
+/// `SimpleWeapon`-family chassis carries a single reach band. A devil
+/// that must close is a materially different creature from one that can
+/// stand off at 120 feet, and the melee reading is the one that keeps
+/// the CR-14 damage profile honest; the alternative reading would have
+/// given a boss with blindsight 120 an unanswerable kite.
+///
+/// RAW's third sentence — the hit costing the target its Bonus Action
+/// and Reaction, ten feet of Speed, and the ability to both move *and*
+/// act — is not modeled. It is four simultaneous debuffs on one rider,
+/// three of which have no condition in this engine that means only that
+/// one thing, and approximating it with the nearest single condition
+/// would have been either far too little (Slowed's speed clause alone)
+/// or far too much.
+pub static ICE_DEVIL_SPEAR: WeaponWithRider = WeaponWithRider::melee(
+    "ice spear",
+    &["spear-id", "ice-spear"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+    Dice::new(3, 6),
+    DamageType::Cold,
+    "ice spear frost",
+);
+
+/// Ice Devil Tail — STR-based 3d6+STR bludgeoning at reach 2 (10 ft)
+/// plus a flat 4d8 cold rider. RAW: "Tail. Melee Attack Roll: +10,
+/// reach 10 ft. Hit: 15 (3d6 + 5) Bludgeoning damage plus 18 (4d8)
+/// Cold damage."
+///
+/// The single hardest limb on the stat block — thirty-three average
+/// against the spear's twenty-four — and the reason the multiattack
+/// below spends one of its three swings on it.
+pub static ICE_DEVIL_TAIL: WeaponWithRider = WeaponWithRider::reach_melee(
+    "ice devil tail",
+    &["tail-id", "devil-tail"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Bludgeoning,
+    2,
+    Dice::new(4, 8),
+    DamageType::Cold,
+    "ice devil frost",
+);
+
+/// Ice Devil Multiattack — RAW: "The devil makes three Ice Spear
+/// attacks. It can replace one attack with a Tail attack."
+///
+/// Resolved as two spears and the tail, which is the substitution taken
+/// rather than declined. RAW leaves the choice to the devil and the tail
+/// is strictly the better swing by nine average damage, so a devil that
+/// never took it would be one the engine had quietly made worse than the
+/// book; the heterogeneous `CompoundAttack` chassis is what lets the
+/// choice be made once, in data, instead of every turn in the AI.
+pub static ICE_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "ice devil multiattack",
+    parts: vec![(&ICE_DEVIL_SPEAR, 2), (&ICE_DEVIL_TAIL, 1)],
+});
+
+// ─── Planetar ────────────────────────────────────────────────────────
+
+/// Planetar Radiant Sword — STR-based 2d6+STR slashing at reach 2
+/// (10 ft) plus a flat 4d8 radiant rider. RAW: "Radiant Sword. Melee
+/// Attack Roll: +12, reach 10 ft. Hit: 14 (2d6 + 7) Slashing damage
+/// plus 18 (4d8) Radiant damage."
+///
+/// Three of these per Action is ninety-six average damage, which is
+/// what a CR-16 angel is for.
+pub static PLANETAR_SWORD: WeaponWithRider = WeaponWithRider::reach_melee(
+    "radiant sword",
+    &["sword-p", "planetar-sword"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    2,
+    Dice::new(4, 8),
+    DamageType::Radiant,
+    "radiant sword flare",
+);
+
+/// Planetar Multiattack — "The planetar makes three Radiant Sword
+/// attacks."
+///
+/// RAW's other half — *"or uses Holy Burst twice"* — is the choice
+/// between the two lanes rather than a third lane, and the engine's
+/// action list already gives the AI that choice: `PLANETAR_HOLY_BURST`
+/// sits beside this wrapper and the picker ranks the two. What is not
+/// modeled is the *doubling* — a planetar that commits to the burst
+/// gets one rather than two, because the multiattack chassis wraps one
+/// sub-action and a second burst centred somewhere else is a second
+/// targeting decision, not a repeat.
+pub static PLANETAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "planetar multiattack",
+    sub_attack: &PLANETAR_SWORD,
+    count: 3,
+});
+
+/// Planetar Holy Burst — RAW: "Dexterity Saving Throw: DC 20, each
+/// enemy in a 20-foot-radius Sphere centered on a point the planetar
+/// can see within 120 feet. Failure: 24 (7d6) Radiant damage. Success:
+/// Half damage."
+///
+/// The roster's first `PointBurstSaveDamage`, and the stat block that
+/// motivated the chassis: an at-will point burst had nowhere to live
+/// while the engine's only one was gated on a recharge. `enemies_only`
+/// is RAW's "each enemy" — an angel's holy fire is the one area effect
+/// in the bestiary that knows whose side it is on.
+///
+/// Ranges converted at 2.5 ft per tile: a 20-foot radius is 8 tile
+/// gaps and 120 feet of range is 48, which on any board this engine
+/// generates means "anywhere the planetar can see".
+pub static PLANETAR_HOLY_BURST: PointBurstSaveDamage = PointBurstSaveDamage {
+    display_name: "holy burst",
+    aliases: &["burst-p", "holy"],
+    damage_dice: Dice::new(7, 6),
+    damage_type: DamageType::Radiant,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 20,
+    radius: tiles_from_feet(20) as isize,
+    range: tiles_from_feet(120) as isize,
+    enemies_only: true,
+};

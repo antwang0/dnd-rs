@@ -220,6 +220,18 @@ fn templates_with_magical_weapon_attacks() -> Vec<&'static crate::actors::actor_
         &erinyes::ERINYES_TEMPLATE,
         &clay_golems::CLAY_GOLEM_TEMPLATE,
         &horned_devils::HORNED_DEVIL_TEMPLATE,
+        // The ice devil and the planetar join by cohort rather than by
+        // stat block, and it is worth saying so out loud: SRD 5.2 prints
+        // no Magic Weapons trait on *either* of them — nor, for that
+        // matter, on the bone devil, the deva, the pit fiend or the
+        // solar already above them. The 2024 revision folded the trait
+        // away and this roster kept the 2014 answer, which is a defensible
+        // choice made once and a mess if it is made per stat block: an
+        // ice devil whose sword a wraith halves, standing beside a bone
+        // devil's whose it doesn't, is the only reading that is wrong
+        // under both editions.
+        &ice_devils::ICE_DEVIL_TEMPLATE,
+        &planetars::PLANETAR_TEMPLATE,
         &iron_golems::IRON_GOLEM_TEMPLATE,
         &mariliths::MARILITH_TEMPLATE,
         &pit_fiends::PIT_FIEND_TEMPLATE,

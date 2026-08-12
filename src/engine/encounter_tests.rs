@@ -82396,3 +82396,71 @@ fn a_deer_leaves_an_enemys_reach_without_being_swung_at() {
         "the control has to provoke, or the deer's silence proves nothing"
     );
 }
+
+/// A planetar's holy burst lands on the enemies inside it and leaves
+/// the allies standing in the same sphere alone.
+///
+/// `PointBurstSaveDamage::enemies_only` is the one thing separating the
+/// chassis from the breath weapon it was extracted beside, and both
+/// settings are wrong for the other creature: a dragon that politely
+/// breathed around its own kobolds would be a dragon RAW does not have,
+/// and an angel that irradiated the party it came to help would be
+/// worse than useless. The control in the same board — a hostile body
+/// in the blast — is what makes the ally's zero mean "spared" rather
+/// than "the burst did nothing".
+#[test]
+fn a_planetars_holy_burst_knows_whose_side_everyone_is_on() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::planetars::PLANETAR_TEMPLATE;
+
+    // Seeded across a range because the sphere's damage is a save away
+    // from being halved rather than zeroed — a single seed could land
+    // on a run where the enemy passed and took half, which is still a
+    // hit and still proves the point, but a run where nothing was in
+    // reach would not.
+    let mut enemy_ever_hit = false;
+    for seed in 0..12 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let planetar = e
+            .instantiate_creature(&PLANETAR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Both bodies inside the same sphere, one on each team.
+        let ally = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 10), 1, 0)
+            .unwrap();
+        let ally_before = e.actors[&ally].hitpoints();
+        let foe_before = e.actors[&foe].hitpoints();
+
+        let burst = e.actors[&planetar]
+            .find_action("holy burst")
+            .expect("the planetar carries its burst");
+        let centre = e.actors[&foe].location();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(
+            burst,
+            planetar,
+            None,
+            Some(vec![centre]),
+            None,
+        ));
+        e.process_stack();
+
+        assert_eq!(
+            e.actors.get(&ally).map(|a| a.hitpoints()),
+            Some(ally_before),
+            "an ally inside the sphere takes nothing from it (seed {})",
+            seed
+        );
+        let foe_after = e.actors.get(&foe).map(|a| a.hitpoints()).unwrap_or(0);
+        if foe_after < foe_before {
+            enemy_ever_hit = true;
+        }
+    }
+    assert!(
+        enemy_ever_hit,
+        "the burst has to have hurt somebody, or the ally's zero proves nothing"
+    );
+}

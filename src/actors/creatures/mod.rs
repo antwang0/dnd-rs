@@ -1,4 +1,8 @@
 pub mod aboleths;
+pub mod gray_oozes;
+pub mod ice_devils;
+pub mod planetars;
+pub mod sphinxes_of_wonder;
 pub mod allosauruses;
 pub mod ankylosauruses;
 pub mod apes;
