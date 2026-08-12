@@ -75,6 +75,7 @@ pub static GRAY_OOZE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Blinded,
             Condition::Charmed,
             Condition::Deafened,
+            Condition::Exhausted,
             Condition::Frightened,
             Condition::Grappled,
             Condition::Prone,
@@ -119,6 +120,7 @@ mod tests {
         for c in [
             Condition::Blinded,
             Condition::Charmed,
+            Condition::Exhausted,
             Condition::Frightened,
             Condition::Grappled,
             Condition::Prone,

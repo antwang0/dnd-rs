@@ -49,7 +49,11 @@ use std::sync::LazyLock;
 /// Stat shape: AC 19, ~262 HP (21d10+147), STR 24, DEX 20, CON 24,
 /// INT 19, WIS 22, CHA 25. Speed 40 walking, fly 120 (hover). Skills
 /// Perception. Saves STR, CON, WIS, CHA. Senses Truesight 120.
-/// Languages Celestial (RAW: all). Size Large. CR 16. XP 15,000 per RAW.
+/// Languages Celestial and Common — RAW says *all*, and the roster
+/// spells "all" this way on the deva and the solar, because the engine
+/// reads languages as a set and a set containing everything is a set
+/// that means nothing to the two lanes that check it. Size Large.
+/// CR 16. XP 15,000 per RAW.
 pub static PLANETAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PLANETAR_SWORD);
@@ -82,7 +86,11 @@ pub static PLANETAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Celestial,
         actions,
         damage_modifiers: HashMap::from([(DamageType::Radiant, DamageModifier::Resistance)]),
-        condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
+        condition_immunities: HashSet::from([
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Frightened,
+        ]),
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,

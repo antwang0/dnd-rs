@@ -5854,10 +5854,14 @@ pub struct PointBurstSaveDamage {
     pub damage_type: DamageType,
     pub save_ability: AbilityScoreType,
     pub dc: i32,
-    /// Footprint-gap radius of the blast.
+    /// Footprint-gap radius of the blast, in the roster's 5-ft grid
+    /// squares rather than in 2.5-ft tiles — Fireball's 20-foot sphere
+    /// is 4 here and Circle of Death's 30-foot one is 6. Not the same
+    /// scale as `range` below; see `PLANETAR_HOLY_BURST` for why both
+    /// conventions are load-bearing and what mixing them costs.
     pub radius: isize,
-    /// Max distance in tile gaps from the caster's footprint to the
-    /// burst centre.
+    /// Max distance in 2.5-ft tiles from the caster's footprint to the
+    /// burst centre — the scale every spell's range line uses.
     pub range: isize,
     /// True for the bursts RAW scopes to *enemies* rather than to every
     /// creature in the area. See the type docs.
@@ -19234,9 +19238,17 @@ pub static PLANETAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack 
 /// is RAW's "each enemy" — an angel's holy fire is the one area effect
 /// in the bestiary that knows whose side it is on.
 ///
-/// Ranges converted at 2.5 ft per tile: a 20-foot radius is 8 tile
-/// gaps and 120 feet of range is 48, which on any board this engine
-/// generates means "anywhere the planetar can see".
+/// The two numbers convert on two different scales, which is a trap
+/// worth naming because both are already established here and neither
+/// is wrong. **Range** is tiles, at 2.5 ft each, so RAW's 120 feet is
+/// `tiles_from_feet(120)` = 48 — the same scale every spell's range
+/// line uses (Fireball's 150 ft is 60). **Radius** is the footprint
+/// *gap* the burst helpers measure, and the roster spells it in 5-ft
+/// grid squares: Fireball's 20-foot sphere is radius 4 and Circle of
+/// Death's 30-foot one is radius 6. Holy Burst is a 20-foot sphere, so
+/// it is radius 4 and not the 8 a naive `tiles_from_feet` would give —
+/// which would have made an angel's burst twice the width of a
+/// fireball and larger than an ancient dragon's breath.
 pub static PLANETAR_HOLY_BURST: PointBurstSaveDamage = PointBurstSaveDamage {
     display_name: "holy burst",
     aliases: &["burst-p", "holy"],
@@ -19244,7 +19256,7 @@ pub static PLANETAR_HOLY_BURST: PointBurstSaveDamage = PointBurstSaveDamage {
     damage_type: DamageType::Radiant,
     save_ability: AbilityScoreType::Dexterity,
     dc: 20,
-    radius: tiles_from_feet(20) as isize,
+    radius: 4,
     range: tiles_from_feet(120) as isize,
     enemies_only: true,
 };
