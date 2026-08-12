@@ -903,6 +903,15 @@ pub struct SimpleWeapon {
     /// closes it against a bloodied one escalates on the second swing,
     /// because RAW asks about the target and not about the turn.
     ///
+    /// Deliberately absent from `expected_damage`, which the AI's attack
+    /// picker ranks on. That estimate is handed a caster and no target,
+    /// so a clause that asks about the target cannot be priced there at
+    /// all — the escalation reads as a pure under-estimate. Harmless
+    /// for the one carrier (the blood hawk has a single attack, so
+    /// there is nothing for the estimate to lose a ranking to), and
+    /// worth writing down before a second carrier arrives with a choice
+    /// to make.
+    ///
     /// Defaulted to `None` by every constructor and set with the
     /// `escalating_vs_bloodied()` builder, for the same reason
     /// `mastery` and `is_light` are.
@@ -3006,6 +3015,114 @@ impl Action for FrightfulHowl {
 }
 pub static FRIGHTFUL_HOWL: LazyLock<FrightfulHowl> = LazyLock::new(|| FrightfulHowl {});
 
+/// Emit the `Action` methods that a single-sub-attack wrapper answers
+/// by asking the thing it wraps.
+///
+/// Three wrappers in this module hold one sub-action and add exactly one
+/// idea to it — `Multiattack` adds a repeat count, `RechargingAttack`
+/// adds a recharge gate, `ProneOnlyAttack` adds a target gate — and all
+/// three have to answer the same ten questions about *shape*: how far it
+/// reaches, what schema it targets on, whether it is a weapon, what
+/// damage it deals. None of those are the wrapper's to answer. A
+/// multiattack is its sub-attack `count` times, a recharging rock is a
+/// rock that is sometimes not there, and neither of them has a reach of
+/// its own.
+///
+/// Written as a macro rather than left to the trait's defaults because
+/// those defaults exist for actions with *no* sub-action to ask, and so
+/// they guess — and both guesses have been wrong in exactly this
+/// position:
+///
+///   - `deals_damage` defaults to `is_harmful()`, which is true of
+///     every wrapper ever declared, including one whose sub-attack is a
+///     damage-free grab. The roper is that case, and it went wrong
+///     twice over from one line: `best_attack_against` ranks reach
+///     before damage, so a four-tendril flurry claiming to be damage
+///     outranked the roper's own 4d6 bite nose to nose; and
+///     `has_ranged_attack` read the same claim at twenty tiles and
+///     called a creature with a 10 ft walk speed a kiter, so it spent
+///     its turns backing away from the thing it had just tied itself to.
+///   - `is_melee_attack` infers melee from a reach band, which is the
+///     divergence `SimpleWeapon::is_melee_attack` documents at length
+///     one layer up: a kraken's triple-tentacle, at six tiles, read as
+///     a shot.
+///
+/// The point of the forwarding is that the wrapper stops guessing —
+/// which is why it has to be uniform, and why a wrapper added later
+/// should not have to remember ten methods to be correct.
+///
+/// The bare form emits the ten shape questions. `transparent` adds the
+/// three the two gate wrappers also pass straight through — aliases,
+/// damage estimate, and resource cost — which `Multiattack` answers for
+/// itself (its own aliases, `count` times the estimate, and a cost with
+/// Movement filtered out).
+macro_rules! forwards_to_sub_attack {
+    ($field:ident) => {
+        fn targeting_schema(&self) -> TargetingSchema {
+            self.$field.targeting_schema()
+        }
+
+        fn reach_tiles(&self) -> Option<isize> {
+            self.$field.reach_tiles()
+        }
+
+        fn min_effective_reach(&self) -> Option<isize> {
+            self.$field.min_effective_reach()
+        }
+
+        fn normal_range(&self) -> Option<isize> {
+            self.$field.normal_range()
+        }
+
+        fn requires_los(&self) -> bool {
+            self.$field.requires_los()
+        }
+
+        fn damage_types(&self) -> Vec<DamageType> {
+            self.$field.damage_types()
+        }
+
+        fn deals_damage(&self) -> bool {
+            self.$field.deals_damage()
+        }
+
+        fn is_weapon_attack(&self) -> bool {
+            self.$field.is_weapon_attack()
+        }
+
+        fn is_melee_attack(&self) -> bool {
+            self.$field.is_melee_attack()
+        }
+
+        fn underwater_weapon_name(&self) -> &str {
+            self.$field.underwater_weapon_name()
+        }
+    };
+    ($field:ident, transparent) => {
+        forwards_to_sub_attack!($field);
+
+        fn aliases(&self) -> Vec<&str> {
+            self.$field.aliases()
+        }
+
+        fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+            self.$field.expected_damage(encounter, caster_id)
+        }
+
+        fn cost(
+            &self,
+            encounter: &EncounterInstance,
+            caster_id: usize,
+            target_ids: Option<&Vec<usize>>,
+            target_locations: Option<&Vec<Coordinate>>,
+            overrides: Option<&HashSet<ActionOverride>>,
+        ) -> Vec<Resource> {
+            self.$field
+                .cost(encounter, caster_id, target_ids, target_locations, overrides)
+        }
+    };
+}
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`
@@ -3030,66 +3147,7 @@ impl Action for Multiattack {
         vec!["multi", "ma"]
     }
 
-    fn targeting_schema(&self) -> TargetingSchema {
-        self.sub_attack.targeting_schema()
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        self.sub_attack.reach_tiles()
-    }
-
-    fn requires_los(&self) -> bool {
-        self.sub_attack.requires_los()
-    }
-
-    fn damage_types(&self) -> Vec<DamageType> {
-        self.sub_attack.damage_types()
-    }
-
-    /// The rest of the sub-attack's self-description, forwarded for the
-    /// same reason `reach_tiles` and `requires_los` already are: a
-    /// multiattack *is* its sub-attack, `count` times, and every one of
-    /// these questions is about the swing rather than about the wrapper.
-    ///
-    /// `deals_damage` is the one that was actually wrong. Its trait
-    /// default is `is_harmful()`, which is true for every multiattack
-    /// ever declared — including one whose sub-attack is a damage-free
-    /// grab. The roper is that case, and it went wrong twice over from
-    /// one line: `best_attack_against` ranks reach before damage, so a
-    /// four-tendril flurry claiming to be damage outranked the roper's
-    /// own 4d6 bite nose to nose; and `has_ranged_attack` read the same
-    /// claim at twenty tiles and called a creature with a 10 ft walk
-    /// speed a kiter, so it spent its turns backing away from the thing
-    /// it had just tied itself to.
-    ///
-    /// The other three are the divergence `SimpleWeapon::is_melee_attack`
-    /// documents at length, one layer up. The chassis knew the answers
-    /// and the wrapper was guessing them from a reach band, so every
-    /// multiattack in the bestiary read as a non-weapon attack — and a
-    /// kraken's triple-tentacle, at six tiles, read as a shot.
-    fn deals_damage(&self) -> bool {
-        self.sub_attack.deals_damage()
-    }
-
-    fn is_weapon_attack(&self) -> bool {
-        self.sub_attack.is_weapon_attack()
-    }
-
-    fn underwater_weapon_name(&self) -> &str {
-        self.sub_attack.underwater_weapon_name()
-    }
-
-    fn is_melee_attack(&self) -> bool {
-        self.sub_attack.is_melee_attack()
-    }
-
-    fn normal_range(&self) -> Option<isize> {
-        self.sub_attack.normal_range()
-    }
-
-    fn min_effective_reach(&self) -> Option<isize> {
-        self.sub_attack.min_effective_reach()
-    }
+    forwards_to_sub_attack!(sub_attack);
 
     /// `count` copies of the sub-attack's own estimate.
     ///
@@ -3228,65 +3286,7 @@ impl Action for RechargingAttack {
         self.display_name
     }
 
-    fn aliases(&self) -> Vec<&str> {
-        self.sub_attack.aliases()
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        self.sub_attack.targeting_schema()
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        self.sub_attack.reach_tiles()
-    }
-
-    fn min_effective_reach(&self) -> Option<isize> {
-        self.sub_attack.min_effective_reach()
-    }
-
-    fn normal_range(&self) -> Option<isize> {
-        self.sub_attack.normal_range()
-    }
-
-    fn requires_los(&self) -> bool {
-        self.sub_attack.requires_los()
-    }
-
-    fn damage_types(&self) -> Vec<DamageType> {
-        self.sub_attack.damage_types()
-    }
-
-    fn deals_damage(&self) -> bool {
-        self.sub_attack.deals_damage()
-    }
-
-    fn is_weapon_attack(&self) -> bool {
-        self.sub_attack.is_weapon_attack()
-    }
-
-    fn is_melee_attack(&self) -> bool {
-        self.sub_attack.is_melee_attack()
-    }
-
-    fn underwater_weapon_name(&self) -> &str {
-        self.sub_attack.underwater_weapon_name()
-    }
-
-    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
-        self.sub_attack.expected_damage(encounter, caster_id)
-    }
-
-    fn cost(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        self.sub_attack
-            .cost(encounter, caster_id, target_ids, target_locations, overrides)
-    }
+    forwards_to_sub_attack!(sub_attack, transparent);
 
     /// The gate, and the sub-action's own gate underneath it. Both, in
     /// that order, for the reason `Multiattack::custom_validate_input`
@@ -3309,12 +3309,24 @@ impl Action for RechargingAttack {
             )
     }
 
-    /// Spend the charge, then resolve the wrapped attack.
+    /// Spend the charge, then resolve the wrapped attack exactly once.
     ///
     /// Spent *first* and unconditionally, matching both breath-weapon
     /// chassis: RAW's recharge is consumed by using the ability, not by
     /// the ability connecting. A rock that misses is still a rock that
     /// has been thrown.
+    ///
+    /// Resolved inside the multiattack-depth gate, which is the same
+    /// mechanism `Multiattack` uses and is here for a reason that is
+    /// about the charge rather than about RAW's Attack-action wording:
+    /// a `SimpleWeapon` costing an Action chains its wielder's Extra
+    /// Attack, and a chained second swing would throw the rock again
+    /// off a charge that has already been spent. Nothing in the
+    /// bestiary carries both today — Extra Attack lives on the class
+    /// chassis and the recharge clauses on the monsters — so this is
+    /// the trap being closed rather than a bug being fixed, of exactly
+    /// the kind `Multiattack::custom_validate_input`'s own docstring
+    /// describes.
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3326,13 +3338,16 @@ impl Action for RechargingAttack {
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
             caster.spend_recharge(self.recharge_key);
         }
-        self.sub_attack.side_effects(
+        encounter.enter_multiattack();
+        let effects = self.sub_attack.side_effects(
             encounter,
             caster_id,
             target_ids,
             target_locations,
             overrides,
-        )
+        );
+        encounter.exit_multiattack();
+        effects
     }
 }
 
@@ -3364,65 +3379,7 @@ impl Action for ProneOnlyAttack {
         self.display_name
     }
 
-    fn aliases(&self) -> Vec<&str> {
-        self.sub_attack.aliases()
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        self.sub_attack.targeting_schema()
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        self.sub_attack.reach_tiles()
-    }
-
-    fn min_effective_reach(&self) -> Option<isize> {
-        self.sub_attack.min_effective_reach()
-    }
-
-    fn normal_range(&self) -> Option<isize> {
-        self.sub_attack.normal_range()
-    }
-
-    fn requires_los(&self) -> bool {
-        self.sub_attack.requires_los()
-    }
-
-    fn damage_types(&self) -> Vec<DamageType> {
-        self.sub_attack.damage_types()
-    }
-
-    fn deals_damage(&self) -> bool {
-        self.sub_attack.deals_damage()
-    }
-
-    fn is_weapon_attack(&self) -> bool {
-        self.sub_attack.is_weapon_attack()
-    }
-
-    fn is_melee_attack(&self) -> bool {
-        self.sub_attack.is_melee_attack()
-    }
-
-    fn underwater_weapon_name(&self) -> &str {
-        self.sub_attack.underwater_weapon_name()
-    }
-
-    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
-        self.sub_attack.expected_damage(encounter, caster_id)
-    }
-
-    fn cost(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        self.sub_attack
-            .cost(encounter, caster_id, target_ids, target_locations, overrides)
-    }
+    forwards_to_sub_attack!(sub_attack, transparent);
 
     fn custom_validate_input(
         &self,
