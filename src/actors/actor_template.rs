@@ -1883,6 +1883,52 @@ const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
     },
 ];
 
+/// Sources of **blanket** opportunity-attack suppression on the *mover*
+/// — read by `ActorInstance::suppresses_opportunity_attacks`, which
+/// `EncounterInstance::dispatch_opportunity_attacks` consults before it
+/// so much as builds a reactor list.
+///
+/// Blanket is the word that decides membership. Every row here says
+/// "nobody gets to swing at me for leaving", full stop. The
+/// Swashbuckler's **Fancy Footwork** says something narrower — nobody
+/// *I have already hit this turn* gets to swing — and so it is not a
+/// row: it needs the reactor's identity, which a predicate over the
+/// mover alone cannot see, and it stays a per-candidate skip inside the
+/// dispatch loop.
+///
+/// The three that do qualify arrived one at a time as three stacked
+/// `match` arms on the same actor lookup, each with its own `return`,
+/// and the third one is what made the pattern worth naming: they are
+/// not three special cases, they are one rule with three sources.
+const MOVER_OA_SUPPRESSORS: &[ActorFlagRow] = &[
+    // 5e **Disengage**: "your movement doesn't provoke opportunity
+    // attacks for the rest of the turn." The whole-action version of
+    // what the two traits below grant for free.
+    ActorFlagRow {
+        flag: ActorInstance::is_disengaging,
+    },
+    // 5e monster trait **Flyby**: "the creature doesn't provoke an
+    // opportunity attack when it flies out of an enemy's reach."
+    //
+    // The `is_airborne` half is RAW's "when it flies" and is
+    // load-bearing rather than decorative: a pteranodon that the
+    // general flying rule has put on the floor is walking, and walking
+    // out of a halberd's reach provokes like anything else.
+    ActorFlagRow {
+        flag: |a| {
+            a.has_passive_feature(crate::actions::class_features::FLYBY_TAG) && a.is_airborne()
+        },
+    },
+    // 5e monster trait **Agile**: "the creature doesn't provoke an
+    // Opportunity Attack when it moves out of an enemy's reach." The
+    // row above it with the flight clause struck out — which is the
+    // entire difference between the two traits, and the reason they are
+    // two rows rather than one tag read twice.
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::AGILE_TAG),
+    },
+];
+
 /// The 5e exhaustion ladder, one constant per rung, named for what the
 /// rung does rather than for its number.
 ///
@@ -8344,6 +8390,20 @@ impl ActorInstance {
     /// `SWIM_SPEED_SOURCES`.
     pub fn has_swim_speed(&self) -> bool {
         self.matches_any(SWIM_SPEED_SOURCES)
+    }
+
+    /// True if this actor's movement provokes no opportunity attack from
+    /// anybody, whoever they are and whatever they are holding.
+    ///
+    /// The mover-side half of 5e's opportunity-attack rule, asked once
+    /// per step by `EncounterInstance::dispatch_opportunity_attacks`
+    /// before it snapshots a single reactor. Deliberately the *blanket*
+    /// question: the Swashbuckler's Fancy Footwork suppresses OAs too,
+    /// and is not in here, because it suppresses them from particular
+    /// reactors and this predicate cannot see who is asking. See
+    /// `MOVER_OA_SUPPRESSORS`.
+    pub fn suppresses_opportunity_attacks(&self) -> bool {
+        self.matches_any(MOVER_OA_SUPPRESSORS)
     }
 
     /// True if this actor crosses `TerrainType::Water` at no movement

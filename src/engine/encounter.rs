@@ -1,4 +1,27 @@
 use crate::engine::side_effects::ApplicableSideEffect;
+use crate::actors::creatures::allosauruses::ALLOSAURUS_TEMPLATE;
+use crate::actors::creatures::ankylosauruses::ANKYLOSAURUS_TEMPLATE;
+use crate::actors::creatures::apes::APE_TEMPLATE;
+use crate::actors::creatures::archelons::ARCHELON_TEMPLATE;
+use crate::actors::creatures::axe_beaks::AXE_BEAK_TEMPLATE;
+use crate::actors::creatures::baboons::BABOON_TEMPLATE;
+use crate::actors::creatures::badgers::BADGER_TEMPLATE;
+use crate::actors::creatures::black_bears::BLACK_BEAR_TEMPLATE;
+use crate::actors::creatures::blood_hawks::BLOOD_HAWK_TEMPLATE;
+use crate::actors::creatures::crabs::CRAB_TEMPLATE;
+use crate::actors::creatures::deer::DEER_TEMPLATE;
+use crate::actors::creatures::eagles::EAGLE_TEMPLATE;
+use crate::actors::creatures::elephants::ELEPHANT_TEMPLATE;
+use crate::actors::creatures::flying_snakes::FLYING_SNAKE_TEMPLATE;
+use crate::actors::creatures::giant_elks::GIANT_ELK_TEMPLATE;
+use crate::actors::creatures::hippopotamuses::HIPPOPOTAMUS_TEMPLATE;
+use crate::actors::creatures::octopuses::OCTOPUS_TEMPLATE;
+use crate::actors::creatures::owls::OWL_TEMPLATE;
+use crate::actors::creatures::piranhas::PIRANHA_TEMPLATE;
+use crate::actors::creatures::rhinoceroses::RHINOCEROS_TEMPLATE;
+use crate::actors::creatures::scorpions::SCORPION_TEMPLATE;
+use crate::actors::creatures::seahorses::{GIANT_SEAHORSE_TEMPLATE, SEAHORSE_TEMPLATE};
+use crate::actors::creatures::venomous_snakes::VENOMOUS_SNAKE_TEMPLATE;
 use crate::actors::creatures::giant_fire_beetles::GIANT_FIRE_BEETLE_TEMPLATE;
 use crate::actors::creatures::giant_weasels::GIANT_WEASEL_TEMPLATE;
 use crate::actors::creatures::homunculi::HOMUNCULUS_TEMPLATE;
@@ -7988,42 +8011,24 @@ impl EncounterInstance {
         use crate::actions::action_template::MELEE_REACH;
         use crate::engine::side_effects::Resource;
 
-        // 5e Disengage: this action suppresses opportunity attacks
-        // triggered by your movement until the start of your next turn.
-        // Bails before snapshotting the candidate list (and also covers
-        // the no-such-actor case, since the mover doesn't exist).
-        // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3): the
-        // flag doesn't blanket-suppress OAs the way Disengage does — it
-        // only surgically suppresses OAs from reactors the swash has
-        // already made a melee attack against this turn. The blanket
-        // suppression here is Disengage's job; the surgical per-reactor
-        // skip lives inside the candidate loop below via
-        // `mover_fancy_footwork_targets`. Keeping the two lanes
-        // separate lets a Swashbuckler with a spent bonus action
+        // Mover-side **blanket** suppression — Disengage, Flyby, Agile —
+        // read as one cohort off `MOVER_OA_SUPPRESSORS`. Bails before
+        // snapshotting the candidate list (and the `None` arm covers the
+        // no-such-actor case, since a mover who doesn't exist can hardly
+        // provoke).
+        //
+        // 5e Swashbuckler Rogue **Fancy Footwork** (subclass level 3) is
+        // deliberately *not* in that cohort: it doesn't blanket-suppress
+        // OAs the way the three above do, it only suppresses them from
+        // reactors the swash has already made a melee attack against
+        // this turn. That surgical skip lives inside the candidate loop
+        // below via `mover_fancy_footwork_targets`. Keeping the two
+        // lanes separate lets a Swashbuckler with a spent bonus action
         // benefit from Fancy Footwork's targeted suppression without
         // burning Cunning Disengage's bonus action.
         let (mover_team, mover_size, mover_fancy_footwork_targets) =
             match self.actors.get(&mover_id) {
-                Some(a) if a.is_disengaging() => return,
-                // 5e monster trait **Flyby**: "the creature doesn't
-                // provoke an opportunity attack when it flies out of an
-                // enemy's reach." The same blanket suppression Disengage
-                // buys with a whole action, granted free and permanently
-                // to the aerial harassers — which is the trait.
-                //
-                // The `is_airborne` half is RAW's "when it flies" and is
-                // load-bearing rather than decorative: a pteranodon that
-                // the general flying rule has put on the floor is
-                // walking, and walking out of a halberd's reach provokes
-                // like anything else. It is also the reason this clause
-                // could not exist before a creature could be said to be
-                // flying at all.
-                Some(a)
-                    if a.has_passive_feature(crate::actions::class_features::FLYBY_TAG)
-                        && a.is_airborne() =>
-                {
-                    return;
-                }
+                Some(a) if a.suppresses_opportunity_attacks() => return,
                 Some(a) => {
                     let footwork_targets = if a.has_fancy_footwork() {
                         Some(a.melee_attack_targets_this_turn_snapshot())
@@ -10577,6 +10582,52 @@ impl EncounterInstance {
             &RAVEN_TEMPLATE,
             &VULTURE_TEMPLATE,
             &QUIPPER_TEMPLATE,
+            // The rest of SRD 5.2's animal appendix — the block the
+            // roster had been carrying in pieces. Twenty-three stat
+            // blocks, from the CR-0 shelf up to the CR-4 dinosaurs,
+            // grouped here because they arrived together and because
+            // each one fills a rung by *shape* rather than by number:
+            //   - The CR-0 floor doubles in size (Baboon, Badger, Crab,
+            //     Deer, Eagle, Octopus, Owl, Piranha, Scorpion,
+            //     Seahorse). Five of them carry a clause nothing else
+            //     at that tier has — Pack Tactics, poison resistance,
+            //     Agile, Flyby, Blood Frenzy — so the bottom of the
+            //     ladder stops being ten copies of the same rat.
+            //   - The CR-⅛ to CR-½ band gains the escalating Blood Hawk,
+            //     two venomous snakes (one of which flies), the Ape's
+            //     recharging thrown rock, the Black Bear, and the Giant
+            //     Seahorse.
+            //   - The CR-2 to CR-4 band gains four charge-shaped
+            //     heavies (Rhinoceros, Giant Elk, Allosaurus, Elephant),
+            //     the Ankylosaurus's double knockdown, and two plain
+            //     hard hitters (Hippopotamus, Archelon).
+            //   - The Axe Beak arrives as the cheapest fast mount in
+            //     the game, and the Giant Elk as the only CR-2
+            //     celestial.
+            &ALLOSAURUS_TEMPLATE,
+            &ANKYLOSAURUS_TEMPLATE,
+            &APE_TEMPLATE,
+            &ARCHELON_TEMPLATE,
+            &AXE_BEAK_TEMPLATE,
+            &BABOON_TEMPLATE,
+            &BADGER_TEMPLATE,
+            &BLACK_BEAR_TEMPLATE,
+            &BLOOD_HAWK_TEMPLATE,
+            &CRAB_TEMPLATE,
+            &DEER_TEMPLATE,
+            &EAGLE_TEMPLATE,
+            &ELEPHANT_TEMPLATE,
+            &FLYING_SNAKE_TEMPLATE,
+            &GIANT_ELK_TEMPLATE,
+            &GIANT_SEAHORSE_TEMPLATE,
+            &HIPPOPOTAMUS_TEMPLATE,
+            &OCTOPUS_TEMPLATE,
+            &OWL_TEMPLATE,
+            &PIRANHA_TEMPLATE,
+            &RHINOCEROS_TEMPLATE,
+            &SCORPION_TEMPLATE,
+            &SEAHORSE_TEMPLATE,
+            &VENOMOUS_SNAKE_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
         pool

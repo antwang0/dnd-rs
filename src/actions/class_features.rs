@@ -12942,6 +12942,26 @@ pub const MAGICAL_ATTACKS_TAG: &str = "shared.magical_attacks";
 /// that is the trait.
 pub const FLYBY_TAG: &str = "shared.flyby";
 
+/// Monster trait **Agile**: *"the creature doesn't provoke an
+/// Opportunity Attack when it moves out of an enemy's reach."*
+///
+/// Flyby's ground-bound twin, and the wider of the two: where Flyby is
+/// gated on *"when it flies"* and lapses the moment the owl is walking,
+/// Agile asks nothing at all — the deer is simply never worth swinging
+/// at as it goes past. SRD 5.2 prints it on the skittish prey animals
+/// whose entire defence is that they leave.
+///
+/// A separate tag rather than a second meaning for `FLYBY_TAG` because
+/// the airborne gate is load-bearing on that one and absent on this
+/// one, and a shared tag would have to drop the gate for both — which
+/// would hand the pteranodon a clause RAW does not give it. Two tags on
+/// the same cohort table is the cheaper of the two shapes.
+///
+/// Read by `EncounterInstance::dispatch_opportunity_attacks` through
+/// `MOVER_OA_SUPPRESSORS`, in the blanket lane beside Disengage and
+/// Flyby.
+pub const AGILE_TAG: &str = "shared.agile";
+
 /// 5e Monk **Ki-Empowered Strikes** (class level 6): "your unarmed
 /// strikes count as magical for the purpose of overcoming resistance
 /// and immunity to nonmagical attacks."

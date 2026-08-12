@@ -1,4 +1,27 @@
 pub mod aboleths;
+pub mod allosauruses;
+pub mod ankylosauruses;
+pub mod apes;
+pub mod archelons;
+pub mod axe_beaks;
+pub mod baboons;
+pub mod badgers;
+pub mod black_bears;
+pub mod blood_hawks;
+pub mod crabs;
+pub mod deer;
+pub mod eagles;
+pub mod elephants;
+pub mod flying_snakes;
+pub mod giant_elks;
+pub mod hippopotamuses;
+pub mod octopuses;
+pub mod owls;
+pub mod piranhas;
+pub mod rhinoceroses;
+pub mod scorpions;
+pub mod seahorses;
+pub mod venomous_snakes;
 pub mod artificers;
 pub mod eldritch_cannons;
 pub mod steel_defenders;
@@ -627,6 +650,19 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &swarms::SWARM_OF_QUIPPERS_TEMPLATE,
         &water_elementals::WATER_ELEMENTAL_TEMPLATE,
         &water_weirds::WATER_WEIRD_TEMPLATE,
+        // The animal appendix's aquatic half. Every one of these
+        // carries `SWIM_SPEED_TAG`, which is what earns the place: a
+        // water map is only a water map for creatures that cross it
+        // free and swing in it without the underwater penalty.
+        &archelons::ARCHELON_TEMPLATE,
+        &crabs::CRAB_TEMPLATE,
+        &flying_snakes::FLYING_SNAKE_TEMPLATE,
+        &hippopotamuses::HIPPOPOTAMUS_TEMPLATE,
+        &octopuses::OCTOPUS_TEMPLATE,
+        &piranhas::PIRANHA_TEMPLATE,
+        &seahorses::GIANT_SEAHORSE_TEMPLATE,
+        &seahorses::SEAHORSE_TEMPLATE,
+        &venomous_snakes::VENOMOUS_SNAKE_TEMPLATE,
     ]
 }
 

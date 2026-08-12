@@ -601,18 +601,32 @@ mod tests {
                 0,
             )
             .unwrap();
+        // Instance 7 rather than 0: `ei()` fills the board from the
+        // random-encounter pool, which can and does roll a zombie of
+        // its own, and two actors called "Zombie 0" make the lookup
+        // under test ambiguous by construction.
         let zombie = e
             .instantiate_creature(
                 &ZOMBIE_TEMPLATE,
                 crate::engine::types::Coordinate::new(7, 5),
                 1,
-                0,
+                7,
             )
             .unwrap();
         // The fixture only means anything if the name really is more
         // than one token — which is the whole point.
         let name = e.actors[&zombie].name().to_string();
         assert!(name.split_whitespace().count() > 1, "name = {:?}", name);
+        // The fixture generates its own actors off the encounter pool,
+        // so the name has to be one only this zombie answers to — a
+        // name two actors share is *correctly* refused as ambiguous,
+        // which would fail this test for the opposite of the reason it
+        // is asking about. Hence the instance number below.
+        assert_eq!(
+            e.actors.values().filter(|a| a.name() == name).count(),
+            1,
+            "the fixture's target has to be uniquely named"
+        );
 
         let prompt = Prompt::new(wizard, e.actors[&wizard].available_actions());
         let by_name = prompt

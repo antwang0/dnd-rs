@@ -82160,3 +82160,239 @@ fn a_moan_carries_through_a_wall_where_a_gaze_would_not() {
     }
     panic!("expected the moan through the wall to land across 40 seeds");
 }
+
+/// The blood hawk's beak rolls a bigger die at a wounded target than at
+/// a healthy one.
+///
+/// SRD 5.2 writes this as a second half on the Hit line rather than as a
+/// trait — *"4 (1d4 + 2) Piercing damage, or 6 (1d8 + 2) Piercing damage
+/// if the target is Bloodied"* — and it is the one clause of its kind in
+/// the document, which is exactly why it is worth pinning: a lone rule
+/// has no siblings to keep it honest.
+///
+/// The assertion is on the *ceiling* of the damage rather than on an
+/// average, because a ceiling is decidable. A 1d4 beak cannot exceed 4
+/// plus the hawk's Dexterity modifier even on a critical hit (which
+/// doubles dice to 2d4), and a 1d8 one can — so a bloodied swing that
+/// lands above the healthy swing's hard maximum could only have come
+/// from the larger die. Both halves are asserted, because the failure
+/// modes point opposite ways: a beak that never escalates is the clause
+/// going missing, and one that always escalates is a blood hawk hitting
+/// full-strength targets a third harder than RAW allows.
+///
+/// The victim is a hill giant rather than something at the hawk's own
+/// tier because the bloodied half of the sweep has to *survive* being
+/// wounded to half and then pecked: a target the beak could finish
+/// would leave the run measuring an empty tile instead of a die.
+#[test]
+fn a_blood_hawks_beak_finds_a_bigger_die_in_a_wounded_target() {
+    use crate::actors::creatures::blood_hawks::BLOOD_HAWK_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+
+    // 1d4 doubled by a crit, plus the hawk's +2 Dexterity modifier. The
+    // most a beak can possibly do to a target that is not Bloodied.
+    const HEALTHY_CEILING: u32 = 4 * 2 + 2;
+
+    let mut healthy_worst = 0;
+    let mut bloodied_best = 0;
+    for seed in 0..60 {
+        for bloodied in [false, true] {
+            let mut e = ei_with_terrain_seeded(20, 12, &[], seed);
+            let hawk = e
+                .instantiate_creature(&BLOOD_HAWK_TEMPLATE, Coordinate::new(4, 6), 1, 0)
+                .unwrap();
+            let giant = e
+                .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(5, 6), 0, 0)
+                .unwrap();
+            if bloodied {
+                // Down to exactly half, which is the Bloodied threshold,
+                // on a frame with enough left over that the peck cannot
+                // finish it.
+                let max = e.actors[&giant].max_hitpoints();
+                e.actors.get_mut(&giant).unwrap().take_damage(max - max / 2);
+                assert!(e.actors[&giant].is_bloodied());
+            } else {
+                assert!(!e.actors[&giant].is_bloodied());
+            }
+
+            let before = e.actors[&giant].hitpoints();
+            let beak = e.actors[&hawk]
+                .find_action("blood hawk beak")
+                .expect("the hawk carries its beak");
+            e.pop_prompt();
+            let aei = ActionExecutionInfo::new(beak, hawk, Some(vec![giant]), None, None);
+            e.push_action(aei);
+            e.process_stack();
+            let after = e.actors[&giant].hitpoints();
+            let dealt = before.saturating_sub(after);
+
+            if bloodied {
+                bloodied_best = bloodied_best.max(dealt);
+            } else {
+                healthy_worst = healthy_worst.max(dealt);
+            }
+        }
+    }
+
+    assert!(
+        healthy_worst <= HEALTHY_CEILING,
+        "a beak against a full-strength target is a d4: {} exceeds the {} ceiling",
+        healthy_worst,
+        HEALTHY_CEILING
+    );
+    assert!(
+        bloodied_best > HEALTHY_CEILING,
+        "a beak against a Bloodied target is a d8, and never rolled above the d4 ceiling of {}",
+        HEALTHY_CEILING
+    );
+}
+
+/// The ape's rock is there once, and then it is not.
+///
+/// `RechargingAttack` is the chassis that put a 5e Recharge clause on an
+/// ordinary attack roll for the first time — before it, the only things
+/// in the engine that could read a recharge key were the two
+/// breath-weapon shapes. Its whole contract is two lines: the gate
+/// refuses a spent ability, and using the ability spends it. Both are
+/// asserted here, and the second is asserted on a *miss-tolerant* basis
+/// — RAW's recharge is consumed by using the ability rather than by the
+/// ability connecting, so a rock that sails past still leaves the ape
+/// empty-handed.
+#[test]
+fn an_apes_rock_is_spent_by_throwing_it_rather_than_by_hitting() {
+    use crate::actors::creatures::apes::APE_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    let mut e = ei_with_terrain(24, 12, &[]);
+    let ape = e
+        .instantiate_creature(&APE_TEMPLATE, Coordinate::new(3, 6), 1, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(11, 6), 0, 0)
+        .unwrap();
+
+    let rock = e.actors[&ape]
+        .find_action("ape rock")
+        .expect("the ape carries a rock");
+    e.pop_prompt();
+    assert!(
+        ActionExecutionInfo::new(rock, ape, Some(vec![ogre]), None, None).validate(&e),
+        "a fresh ape has its rock"
+    );
+
+    e.push_action(ActionExecutionInfo::new(
+        rock,
+        ape,
+        Some(vec![ogre]),
+        None,
+        None,
+    ));
+    e.process_stack();
+
+    assert!(
+        !e.actors[&ape].is_recharge_available("rock"),
+        "the throw spends the charge whether or not it landed"
+    );
+    e.actors.get_mut(&ape).unwrap().reset_for_new_round();
+    e.pop_prompt();
+    assert!(
+        !ActionExecutionInfo::new(rock, ape, Some(vec![ogre]), None, None).validate(&e),
+        "and a spent rock is not a rock the ape can throw again"
+    );
+}
+
+/// The elephant's trample refuses a target that is still standing, and
+/// takes one that isn't.
+///
+/// `ProneOnlyAttack` generalised the gate that used to live inside the
+/// mammoth's bespoke stomp, and both sides of it are load-bearing in
+/// opposite directions. A gate that never opens is the elephant's whole
+/// damage spike going missing — silently, because the charge still
+/// knocks targets down and simply never cashes in. A gate that never
+/// closes is a bonus-action 2d10+6 on every turn of the fight, which is
+/// most of a CR-4 stat block's budget handed over for free.
+#[test]
+fn an_elephants_trample_waits_for_the_target_to_fall_over() {
+    use crate::actors::creatures::elephants::ELEPHANT_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 12, &[]);
+    let elephant = e
+        .instantiate_creature(&ELEPHANT_TEMPLATE, Coordinate::new(4, 6), 1, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 6), 0, 0)
+        .unwrap();
+
+    let trample = e.actors[&elephant]
+        .find_action("elephant trample")
+        .expect("the elephant carries its trample");
+    e.pop_prompt();
+    assert!(
+        !ActionExecutionInfo::new(trample, elephant, Some(vec![ogre]), None, None).validate(&e),
+        "an upright ogre is not something an elephant steps on"
+    );
+
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .add_condition(Condition::Prone, ConditionTimer::Permanent);
+    e.pop_prompt();
+    assert!(
+        ActionExecutionInfo::new(trample, elephant, Some(vec![ogre]), None, None).validate(&e),
+        "and a prone one is"
+    );
+}
+
+/// A deer walks out of a zombie's reach and nothing swings.
+///
+/// **Agile** is Flyby's ground-bound twin, and it is the first blanket
+/// opportunity-attack suppressor in the engine that is not gated on
+/// anything — Disengage costs an action, Flyby lapses the moment its
+/// holder is walking, and Agile simply always holds. That makes it the
+/// row most likely to be quietly folded into one of its neighbours by a
+/// later tidy-up, and the row whose loss is hardest to notice: a deer
+/// that provokes still works, it just stops being a deer.
+///
+/// Measured on the reactor's spent reaction rather than on the log,
+/// following `a_flyby_creature_leaves_for_free_and_only_while_it_is_flying`
+/// one screen up: the reaction is consumed on the attempt whether the
+/// swing lands or not, so the check is free of the die. The control is
+/// the same board with an ordinary beast on it — without one, a reactor
+/// that had simply failed to swing at anybody would let this pass.
+#[test]
+fn a_deer_leaves_an_enemys_reach_without_being_swung_at() {
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::deer::DEER_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+    fn provoked(template: &'static CreatureTemplate) -> bool {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "the reactor starts with a reaction to spend"
+        );
+        MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        !e.actors[&reactor].can_consume_resource(Resource::Reaction)
+    }
+
+    assert!(
+        !provoked(&DEER_TEMPLATE),
+        "Agile means nobody gets to swing at a deer that is leaving"
+    );
+    assert!(
+        provoked(&BOAR_TEMPLATE),
+        "the control has to provoke, or the deer's silence proves nothing"
+    );
+}

@@ -469,6 +469,24 @@ fn simple_weapon_swing(
         .damage_ability
         .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
+    // SRD 5.2's "or N (XdY + mod) damage if the target is Bloodied"
+    // clause — a die *swap*, not a rider, so the bigger die replaces
+    // the smaller one rather than joining it. Read here rather than at
+    // the attack chokepoint because it is a property of the weapon
+    // (`SimpleWeapon::bloodied_dice`) and every other weapon chassis
+    // that wanted it would be handing `resolve_attack` the same already-
+    // resolved `damage_dice` field this one does.
+    let damage_dice = match weapon.bloodied_dice {
+        Some(escalated)
+            if encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.is_bloodied()) =>
+        {
+            escalated
+        }
+        _ => weapon.damage_dice,
+    };
     crate::engine::attack::resolve_attack_with_rider(
         encounter,
         AttackParams {
@@ -476,7 +494,7 @@ fn simple_weapon_swing(
             target_id,
             action_name: weapon.display_name,
             attack_bonus,
-            damage_dice: weapon.damage_dice,
+            damage_dice,
             damage_bonus,
             damage_type: weapon.damage_type,
             is_melee: weapon.is_melee,
@@ -864,6 +882,31 @@ pub struct SimpleWeapon {
     /// is orthogonal to all four weapon shapes, and pairing it with
     /// each would be four more near-identical constructors.
     pub mastery: Option<WeaponMastery>,
+    /// The die this weapon rolls *instead of* `damage_dice` when the
+    /// target is Bloodied, or `None` for the ordinary weapon that hits
+    /// a wounded creature exactly as hard as a fresh one.
+    ///
+    /// SRD 5.2 writes this as a second half on the Hit line rather than
+    /// as a trait — *"Hit: 4 (1d4 + 2) Piercing damage, or 6 (1d8 + 2)
+    /// Piercing damage if the target is Bloodied"* — which is why it
+    /// belongs to the weapon and not to the creature holding it. It is
+    /// a swap and not a rider: the bigger die replaces the smaller one,
+    /// so a bloodied blood hawk beak is `1d8 + DEX` and never
+    /// `1d4 + 1d8 + DEX`. Modeling it as a `+1d4` rider would have been
+    /// the easier change and would have been wrong by a point of
+    /// average damage in the direction that matters — upward, on the
+    /// swing that finishes people.
+    ///
+    /// Read once, in `simple_weapon_swing`, against the target's own
+    /// `is_bloodied` at the moment the swing resolves. That timing is
+    /// the rule: a hawk that opens a turn against a healthy target and
+    /// closes it against a bloodied one escalates on the second swing,
+    /// because RAW asks about the target and not about the turn.
+    ///
+    /// Defaulted to `None` by every constructor and set with the
+    /// `escalating_vs_bloodied()` builder, for the same reason
+    /// `mastery` and `is_light` are.
+    pub bloodied_dice: Option<Dice>,
 }
 
 impl SimpleWeapon {
@@ -927,6 +970,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            bloodied_dice: None,
         }
     }
 
@@ -969,6 +1013,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            bloodied_dice: None,
         }
     }
 
@@ -1008,6 +1053,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            bloodied_dice: None,
         }
     }
 
@@ -1062,6 +1108,26 @@ impl SimpleWeapon {
     pub const fn mastery(self, mastery: WeaponMastery) -> Self {
         Self {
             mastery: Some(mastery),
+            ..self
+        }
+    }
+
+    /// Const builder that gives a weapon a second, larger damage die it
+    /// rolls against a Bloodied target — `SimpleWeapon::melee(...)
+    /// .escalating_vs_bloodied(Dice::new(1, 8))`.
+    ///
+    /// SRD 5.2's *"or 6 (1d8 + 2) Piercing damage if the target is
+    /// Bloodied"* clause, which the blood hawk's beak is the roster's
+    /// only carrier of today. A builder rather than a constructor for
+    /// the same reason `mastery` and `light` are: the clause is
+    /// orthogonal to all four weapon shapes, and RAW could as easily
+    /// print it on a reach weapon or a bow as on the melee swing that
+    /// happens to have it.
+    ///
+    /// See `bloodied_dice` for why the die is swapped rather than added.
+    pub const fn escalating_vs_bloodied(self, bloodied_dice: Dice) -> Self {
+        Self {
+            bloodied_dice: Some(bloodied_dice),
             ..self
         }
     }
@@ -2354,6 +2420,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     mastery: Some(WeaponMastery::Vex),
+    bloodied_dice: None,
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -3119,6 +3186,280 @@ impl Action for Multiattack {
         }
         encounter.exit_multiattack();
         all
+    }
+}
+
+/// Wraps another action and gates it on a 5e **Recharge** clause —
+/// `Rock (Recharge 6)`, `Tail Spike (Recharge 5–6)`.
+///
+/// The recharge machinery already existed on both ends: a template
+/// declares `recharge_abilities: vec![("rock", 6)]`, and
+/// `EncounterInstance::start_turn` rolls a d6 per spent entry and hands
+/// it back on a qualifying roll. What was missing was the middle — the
+/// only things that consulted a recharge key were the two bespoke
+/// breath-weapon chassis, each of which open-codes the check inside its
+/// own `custom_validate_input` and its own `side_effects`. A third
+/// stat block wanting the clause on an ordinary attack roll had a
+/// choice between a third copy of that code and going without.
+///
+/// So this is `Multiattack`'s shape rather than `BreathWeapon`'s: a
+/// wrapper that owns *only* the gate and forwards everything else to
+/// what it wraps. The sub-action keeps its own reach, targeting schema,
+/// damage types, cost, and resolution — a recharging rock is a thrown
+/// rock that is sometimes not there, not a different attack.
+///
+/// The key is matched against `CreatureTemplate::recharge_abilities` by
+/// string, so it has to be spelled the same in both places; a
+/// mismatched key fails *closed* (`is_recharge_available` finds no
+/// entry and answers false), which surfaces as "the monster never uses
+/// its rock" rather than as an ability that recharges silently forever.
+pub struct RechargingAttack {
+    pub display_name: &'static str,
+    pub sub_attack: &'static (dyn Action + Send + Sync),
+    /// Key passed to `is_recharge_available` / `spend_recharge`, and the
+    /// name the template's `recharge_abilities` row must carry. Also
+    /// what the recharge log line prints, so it reads as the ability's
+    /// name rather than as an internal handle.
+    pub recharge_key: &'static str,
+}
+
+impl Action for RechargingAttack {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.sub_attack.aliases()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        self.sub_attack.targeting_schema()
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        self.sub_attack.reach_tiles()
+    }
+
+    fn min_effective_reach(&self) -> Option<isize> {
+        self.sub_attack.min_effective_reach()
+    }
+
+    fn normal_range(&self) -> Option<isize> {
+        self.sub_attack.normal_range()
+    }
+
+    fn requires_los(&self) -> bool {
+        self.sub_attack.requires_los()
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        self.sub_attack.damage_types()
+    }
+
+    fn deals_damage(&self) -> bool {
+        self.sub_attack.deals_damage()
+    }
+
+    fn is_weapon_attack(&self) -> bool {
+        self.sub_attack.is_weapon_attack()
+    }
+
+    fn is_melee_attack(&self) -> bool {
+        self.sub_attack.is_melee_attack()
+    }
+
+    fn underwater_weapon_name(&self) -> &str {
+        self.sub_attack.underwater_weapon_name()
+    }
+
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        self.sub_attack.expected_damage(encounter, caster_id)
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        self.sub_attack
+            .cost(encounter, caster_id, target_ids, target_locations, overrides)
+    }
+
+    /// The gate, and the sub-action's own gate underneath it. Both, in
+    /// that order, for the reason `Multiattack::custom_validate_input`
+    /// gives: a wrapper cannot be legal where the thing it wraps is not.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        actor_has_recharge(encounter, caster_id, self.recharge_key)
+            && self.sub_attack.custom_validate_input(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            )
+    }
+
+    /// Spend the charge, then resolve the wrapped attack.
+    ///
+    /// Spent *first* and unconditionally, matching both breath-weapon
+    /// chassis: RAW's recharge is consumed by using the ability, not by
+    /// the ability connecting. A rock that misses is still a rock that
+    /// has been thrown.
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge(self.recharge_key);
+        }
+        self.sub_attack.side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        )
+    }
+}
+
+/// Wraps another action and refuses it unless the target is already
+/// **Prone** — the "I can only hit you once you're down" clause the
+/// heavy trampling creatures carry.
+///
+/// `RechargingAttack`'s sibling in every respect: a gate and nothing
+/// else, forwarding the whole of the sub-action's self-description so
+/// the AI's picker, the reach check and the log line all see the limb
+/// rather than the wrapper. It exists for the same reason too — the
+/// gate had been written once as a bespoke `impl Action` (the mammoth's
+/// stomp), and the second creature to want it (the elephant's trample)
+/// would otherwise have copied thirty lines to change two dice.
+///
+/// The gate pairs with `ChargeRider::prone_follow_up`, which is how the
+/// target gets prone in the first place: the charge knocks them down
+/// and hands the trampler a bonus-action swing at a target this gate
+/// now admits. Standalone, it is also the fallback the AI reaches for
+/// when something *else* put the target on the floor — a Booming Blade
+/// follow-up, a wolf's trip bite, a failed Grease save.
+pub struct ProneOnlyAttack {
+    pub display_name: &'static str,
+    pub sub_attack: &'static (dyn Action + Send + Sync),
+}
+
+impl Action for ProneOnlyAttack {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.sub_attack.aliases()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        self.sub_attack.targeting_schema()
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        self.sub_attack.reach_tiles()
+    }
+
+    fn min_effective_reach(&self) -> Option<isize> {
+        self.sub_attack.min_effective_reach()
+    }
+
+    fn normal_range(&self) -> Option<isize> {
+        self.sub_attack.normal_range()
+    }
+
+    fn requires_los(&self) -> bool {
+        self.sub_attack.requires_los()
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        self.sub_attack.damage_types()
+    }
+
+    fn deals_damage(&self) -> bool {
+        self.sub_attack.deals_damage()
+    }
+
+    fn is_weapon_attack(&self) -> bool {
+        self.sub_attack.is_weapon_attack()
+    }
+
+    fn is_melee_attack(&self) -> bool {
+        self.sub_attack.is_melee_attack()
+    }
+
+    fn underwater_weapon_name(&self) -> &str {
+        self.sub_attack.underwater_weapon_name()
+    }
+
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        self.sub_attack.expected_damage(encounter, caster_id)
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        self.sub_attack
+            .cost(encounter, caster_id, target_ids, target_locations, overrides)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Routes through the shared `target_has_condition` helper so the
+        // missing-target / missing-actor fail-closed convention stays
+        // consistent with the recharge gates.
+        target_has_condition(encounter, target_ids, Condition::Prone)
+            && self.sub_attack.custom_validate_input(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            )
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        self.sub_attack.side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        )
     }
 }
 
@@ -15149,70 +15490,34 @@ pub static MAMMOTH_GORE: SimpleWeapon = SimpleWeapon::melee(
 /// per stomp on the CR-6 Huge frame — the higher-damage limb in the
 /// gore + stomp combo, paired in the `MAMMOTH_MULTI` wrapper.
 ///
-/// The Prone gate is enforced via `custom_validate_input` reading the
-/// target's condition set: the stomp validates only when the target has
-/// the `Prone` condition. Mirrors the gate shape of the Vampire Bite
-/// (which validates only against Charmed / Restrained / Incapacitated /
-/// Grappled / Unconscious / Willing targets) — the engine's "I can only
-/// hit you if you're already down" idiom. Out of the multiattack, the
-/// stomp is a single-target standalone the AI can fall back to if the
-/// target is already prone from a previous round (Trampling Charge rider
-/// install, Booming Blade follow-up, etc.).
-pub struct MammothStomp {}
+/// The swing itself, without the gate. Declared separately from
+/// `MAMMOTH_STOMP` below because the gate is the wrapper's job now: it
+/// used to be a bespoke `impl Action` whose only difference from a
+/// `SimpleWeapon` was six lines of `custom_validate_input`, and the
+/// elephant wanting the same clause is what turned that into a chassis.
+/// Never put on a template directly — `MAMMOTH_STOMP` is what the
+/// mammoth carries, and an ungated 4d10 stomp is not a thing RAW has.
+static MAMMOTH_STOMP_SWING: SimpleWeapon = SimpleWeapon::melee(
+    "mammoth stomp",
+    &["mstomp", "stomp-m"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+);
 
-impl Action for MammothStomp {
-    fn name(&self) -> &str {
-        "mammoth stomp"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["mstomp", "stomp-m"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        _caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // RAW: "the mammoth can only make this attack against a target
-        // that is prone." Routes through the shared `target_has_condition`
-        // helper so the missing-target / missing-actor fail-closed
-        // convention stays consistent with the recharge gates.
-        target_has_condition(encounter, target_ids, Condition::Prone)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "mammoth stomp",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(4, 10),
-            DamageType::Bludgeoning,
-            true,
-        )
-    }
-}
-
-pub static MAMMOTH_STOMP: LazyLock<MammothStomp> = LazyLock::new(|| MammothStomp {});
+/// The mammoth's stomp as the mammoth actually has it: the swing above,
+/// admitted only against a target already on the floor.
+///
+/// Out of the multiattack, the stomp is a single-target standalone the
+/// AI can fall back to if the target is already prone from a previous
+/// round (Trampling Charge rider install, Booming Blade follow-up,
+/// etc.) — and inside it, `MAMMOTH_CHARGE::prone_follow_up` names this
+/// action so the charge that flattens a target immediately earns the
+/// swing that only a flattened target admits.
+pub static MAMMOTH_STOMP: LazyLock<ProneOnlyAttack> = LazyLock::new(|| ProneOnlyAttack {
+    display_name: "mammoth stomp",
+    sub_attack: &MAMMOTH_STOMP_SWING,
+});
 
 // ─── Dust Mephit ─────────────────────────────────────────────────────
 
@@ -17204,6 +17509,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     mastery: None,
+    bloodied_dice: None,
 };
 
 /// Violet Fungus Multiattack — 3 rotting touches per Action. RAW: "The
@@ -18021,4 +18327,642 @@ pub static CLOAKER_BITE: SimpleWeapon = SimpleWeapon::melee(
 pub static CLOAKER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "cloaker multiattack",
     parts: vec![(&CLOAKER_BITE, 1), (&CLOAKER_TAIL, 1)],
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// SRD 5.2 beast roster — the ambient fauna ladder
+//
+// Everything below this line belongs to the block of stat blocks the
+// SRD files under "Animals": the CR-0 scenery, the CR-⅛ to CR-4
+// predators a druid's Conjure Animals draws from, and the four
+// dinosaurs. They share a shape — one or two natural weapons, no
+// spellcasting, a trait or two of pure positioning — so they are
+// gathered here rather than scattered by size or habitat.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Ape ─────────────────────────────────────────────────────────────
+
+/// Ape Fist — STR-based 1d4+STR bludgeoning melee. RAW: "Fist. Melee
+/// Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Bludgeoning damage."
+/// The smaller of the ape's two limbs by damage, and the one it throws
+/// twice a turn through `APE_MULTI`.
+pub static APE_FIST: SimpleWeapon = SimpleWeapon::melee(
+    "ape fist",
+    &["fist", "ape-punch"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+/// Ape Multiattack — "The ape makes two Fist attacks."
+pub static APE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "ape multiattack",
+    sub_attack: &APE_FIST,
+    count: 2,
+});
+
+/// Ape Rock — the thrown-rock swing, without its recharge. RAW: "Rock
+/// (Recharge 6). Ranged Attack Roll: +5, range 25/50 ft. Hit: 10 (2d6
+/// + 3) Bludgeoning damage."
+///
+/// Ranges converted at the engine's 2.5 ft per tile: 25 ft normal → 10
+/// tiles, 50 ft maximum → reach 20. Beyond the normal band and inside
+/// the maximum the shot rolls at disadvantage, which is the whole point
+/// of a stat block printing two numbers.
+///
+/// STR-based on both halves rather than DEX, matching RAW's +5 to hit
+/// on a STR 16 / DEX 14 frame: a thrown rock is a heavy-object toss,
+/// and the ape's own stat line prices it off its arms.
+static APE_ROCK_THROW: SimpleWeapon = SimpleWeapon::ranged(
+    "ape rock",
+    &["rock", "hurl-rock"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    20,
+    10,
+);
+
+/// Ape Rock as the ape has it — the throw above, gated on RAW's
+/// **Recharge 6**.
+///
+/// The roster's first user of `RechargingAttack`, and the reason that
+/// chassis exists: before it, the only things in the engine that could
+/// read a recharge key were the two breath-weapon shapes, neither of
+/// which rolls an attack. The key is `"rock"`, which the ape's template
+/// must spell identically in `recharge_abilities` — see the chassis
+/// docs for why a mismatch fails closed.
+pub static APE_ROCK: LazyLock<RechargingAttack> = LazyLock::new(|| RechargingAttack {
+    display_name: "ape rock",
+    sub_attack: &APE_ROCK_THROW,
+    recharge_key: "rock",
+});
+
+// ─── Baboon ──────────────────────────────────────────────────────────
+
+/// Baboon Bite — STR-based 1d4+STR piercing melee. RAW: "Bite. Melee
+/// Attack Roll: +1, reach 5 ft. Hit: 1 (1d4 − 1) Piercing damage."
+///
+/// The minus one is the baboon's own Strength 8, not a flat penalty on
+/// the weapon, so this is an ordinary STR-based swing and the stat
+/// block's arithmetic falls out of the template. What makes a baboon
+/// dangerous is never the die — it is that there are six of them and
+/// they all have Pack Tactics.
+pub static BABOON_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "baboon bite",
+    &["baboon", "bab-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
+
+// ─── Badger ──────────────────────────────────────────────────────────
+
+/// Badger Bite — flat 1 piercing. RAW: "Bite. Melee Attack Roll: +2,
+/// reach 5 ft. Hit: 1 Piercing damage."
+///
+/// A `1d1`-shaped die rather than a literal, so a confirmed crit
+/// doubles to 2 through the engine's uniform crit chassis instead of a
+/// special-case flat path — the same shape `HAWK_TALONS` uses.
+/// STR-based on the roll (STR 10, so +0 + PB 2 = the printed +2) and
+/// flat on the damage, which is what `flat_melee` is for.
+pub static BADGER_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "badger bite",
+    &["badger", "bdg-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+// ─── Black Bear ──────────────────────────────────────────────────────
+
+/// Black Bear Rend — STR-based 1d6+STR slashing melee. RAW: "Rend.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Slashing
+/// damage." SRD 5.2 collapses the older claw/bite pair into one limb
+/// swung twice, which is what `BLACK_BEAR_MULTI` does.
+pub static BLACK_BEAR_REND: SimpleWeapon = SimpleWeapon::melee(
+    "black bear rend",
+    &["rend", "bb-rend"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+);
+
+/// Black Bear Multiattack — "The bear makes two Rend attacks."
+pub static BLACK_BEAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "black bear multiattack",
+    sub_attack: &BLACK_BEAR_REND,
+    count: 2,
+});
+
+// ─── Blood Hawk ──────────────────────────────────────────────────────
+
+/// Blood Hawk Beak — DEX-based 1d4+DEX piercing melee that swaps to
+/// **1d8** against a Bloodied target. RAW: "Beak. Melee Attack Roll:
+/// +4, reach 5 ft. Hit: 4 (1d4 + 2) Piercing damage, or 6 (1d8 + 2)
+/// Piercing damage if the target is Bloodied."
+///
+/// The roster's only carrier of `SimpleWeapon::bloodied_dice`, and the
+/// stat block that motivated the field. It is the mechanical statement
+/// of the bird's name: a blood hawk is not much of a threat to a
+/// healthy creature and is a serious one to a wounded one, which —
+/// paired with Pack Tactics on the template — is what makes a flock
+/// the thing that finishes a fight somebody else started.
+pub static BLOOD_HAWK_BEAK: SimpleWeapon = SimpleWeapon::melee(
+    "blood hawk beak",
+    &["beak", "bh-beak"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+)
+.escalating_vs_bloodied(Dice::new(1, 8));
+
+// ─── Crab ────────────────────────────────────────────────────────────
+
+/// Crab Claw — flat 1 bludgeoning. RAW: "Claw. Melee Attack Roll: +2,
+/// reach 5 ft. Hit: 1 Bludgeoning damage." DEX-based on the roll (DEX
+/// 11 → +0 + PB 2 = +2); the crab's Strength 6 would have made a
+/// STR-based swing miss the printed number by two.
+pub static CRAB_CLAW: SimpleWeapon = SimpleWeapon::flat_melee(
+    "crab claw",
+    &["claw-c", "pinch"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Bludgeoning,
+);
+
+// ─── Deer ────────────────────────────────────────────────────────────
+
+/// Deer Ram — STR-based 1d4+STR bludgeoning melee. RAW: "Ram. Melee
+/// Attack Roll: +2, reach 5 ft. Hit: 2 (1d4) Bludgeoning damage."
+/// Strength 11 makes the modifier zero, so the printed `(1d4)` and an
+/// ordinary STR swing are the same number.
+///
+/// The deer's actual combat contribution is the **Agile** trait on its
+/// template, not this — a deer that is being swung at leaves, and the
+/// leaving is free.
+pub static DEER_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "deer ram",
+    &["ram-d", "deer"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Eagle ───────────────────────────────────────────────────────────
+
+/// Eagle Talons — DEX-based 1d4+DEX slashing melee. RAW: "Talons. Melee
+/// Attack Roll: +4, reach 5 feet. Hit: 4 (1d4 + 2) Slashing damage."
+/// The bigger cousin of `HAWK_TALONS` — same limb, a real die behind it.
+pub static EAGLE_TALONS: SimpleWeapon = SimpleWeapon::melee(
+    "eagle talons",
+    &["talons-e", "eagle"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+);
+
+// ─── Octopus ─────────────────────────────────────────────────────────
+
+/// Octopus Tentacles — flat 1 bludgeoning. RAW: "Tentacles. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 1 Bludgeoning damage." DEX-based
+/// on the roll; the octopus's Strength 4 is not what it hits with.
+pub static OCTOPUS_TENTACLES: SimpleWeapon = SimpleWeapon::flat_melee(
+    "octopus tentacles",
+    &["tentacles-o", "octopus"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Bludgeoning,
+);
+
+// ─── Owl ─────────────────────────────────────────────────────────────
+
+/// Owl Talons — flat 1 slashing. RAW: "Talons. Melee Attack Roll: +3,
+/// reach 5 ft. Hit: 1 Slashing damage." The owl is a Flyby creature
+/// with one hit point and a hundred and twenty feet of darkvision; the
+/// talons are a formality.
+pub static OWL_TALONS: SimpleWeapon = SimpleWeapon::flat_melee(
+    "owl talons",
+    &["talons-o", "owl"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Slashing,
+);
+
+// ─── Piranha ─────────────────────────────────────────────────────────
+
+/// Piranha Bite — flat 1 piercing. RAW: "Bite. Melee Attack Roll: +5
+/// (with Advantage if the target doesn't have all its Hit Points),
+/// reach 5 ft. Hit: 1 Piercing damage."
+///
+/// The parenthetical is the shark family's **Blood Frenzy**, spelled
+/// inline on the Hit line instead of as a trait, and it rides the same
+/// `BLOOD_FRENZY_TAG` the sahuagin and the three sharks already carry
+/// — one wounded swimmer turns every fish in the shoal into an
+/// advantaged attacker, which is the entire reason a CR-0 fish with one
+/// hit point is worth writing down.
+pub static PIRANHA_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "piranha bite",
+    &["piranha", "pir-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+// ─── Rhinoceros ──────────────────────────────────────────────────────
+
+/// Rhinoceros Gore — STR-based 2d8+STR piercing melee. RAW: "Gore.
+/// Melee Attack Roll: +7, reach 5 ft. Hit: 14 (2d8 + 5) Piercing
+/// damage."
+pub static RHINOCEROS_GORE: SimpleWeapon = SimpleWeapon::melee(
+    "rhinoceros gore",
+    &["gore-r", "rhino"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+);
+
+/// Rhinoceros **Charge** (RAW): "If the target is a Large or smaller
+/// creature and the rhinoceros moved 20+ feet straight toward it
+/// immediately before the hit, the target takes an extra 9 (2d8)
+/// Piercing damage and has the Prone condition."
+///
+/// The size clause is not modeled — the engine's charge chassis has no
+/// target-size gate, and every clause in the bestiary that carries one
+/// carries it at a size the charger is already too big to meet in
+/// practice. The knockdown is a Strength save at the rhino's own
+/// derived DC rather than RAW's automatic Prone, which is the
+/// convention every other charge on the chassis follows.
+pub const RHINOCEROS_CHARGE: ChargeRider = ChargeRider {
+    weapon: Some("rhinoceros gore"),
+    dice: Dice::new(2, 8),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "rhinoceros charge",
+    knockdown_label: "rhinoceros charge knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: None,
+};
+
+// ─── Scorpion ────────────────────────────────────────────────────────
+
+/// Scorpion Sting — flat 1 piercing plus 1d6 poison. RAW: "Sting. Melee
+/// Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage plus 3 (1d6)
+/// Poison damage."
+///
+/// DEX-based (DEX 11 → +0 + PB 2 = the printed +2), which also zeroes
+/// the damage modifier so the `1d1` piercing half lands as RAW's flat 1.
+/// The venom is the whole stat block: a tiny scorpion's puncture is
+/// nothing and its poison averages more than three times the puncture.
+/// The engine's `WeaponWithRider` adds the rider on a hit with no save,
+/// which is what SRD 5.2 prints here — the save-gated venom belongs to
+/// the *giant* scorpion, and that one is already on the roster.
+pub static SCORPION_STING: WeaponWithRider = WeaponWithRider::melee(
+    "scorpion sting",
+    &["sting-s", "scorpion"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+    Dice::new(1, 6),
+    DamageType::Poison,
+    "scorpion venom",
+);
+
+// ─── Venomous Snake ──────────────────────────────────────────────────
+
+/// Venomous Snake Bite — DEX-based 1d4+DEX piercing plus 1d6 poison.
+/// RAW: "Bite. Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2)
+/// Piercing damage plus 3 (1d6) Poison damage." The small sibling of
+/// `GIANT_POISONOUS_SNAKE_BITE`; same venom die, a quarter of the frame.
+pub static VENOMOUS_SNAKE_BITE: WeaponWithRider = WeaponWithRider::melee(
+    "venomous snake bite",
+    &["vs-bite", "snake-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    Dice::new(1, 6),
+    DamageType::Poison,
+    "snake venom",
+);
+
+// ─── Flying Snake ────────────────────────────────────────────────────
+
+/// Flying Snake Bite — flat 1 piercing plus 2d4 poison. RAW: "Bite.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage plus 5
+/// (2d4) Poison damage."
+///
+/// The venom is five times the bite, which is the flying snake in one
+/// line: a Tiny monstrosity with a sixty-foot fly speed and Flyby whose
+/// only job is to touch somebody once a turn and leave before anything
+/// can swing back.
+pub static FLYING_SNAKE_BITE: WeaponWithRider = WeaponWithRider::melee(
+    "flying snake bite",
+    &["fs-bite", "flying-snake"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "flying snake venom",
+);
+
+// ─── Giant Elk ───────────────────────────────────────────────────────
+
+/// Giant Elk Ram — STR-based 2d6+STR bludgeoning at reach 2 (10 ft),
+/// with a flat 2d4 radiant rider. RAW: "Ram. Melee Attack Roll: +6,
+/// reach 10 ft. Hit: 11 (2d6 + 4) Bludgeoning damage plus 5 (2d4)
+/// Radiant damage."
+///
+/// The radiant half is the giant elk's Celestial type made mechanical —
+/// this is not a large elk, it is a good creature that looks like one,
+/// and the undead it is usually pointed at feel the difference.
+pub static GIANT_ELK_RAM: WeaponWithRider = WeaponWithRider::reach_melee(
+    "giant elk ram",
+    &["ram-ge", "giant-elk"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    2,
+    Dice::new(2, 4),
+    DamageType::Radiant,
+    "celestial ram",
+);
+
+/// Giant Elk **Charge** (RAW): "If the target is a Huge or smaller
+/// creature and the elk moved 20+ feet straight toward it immediately
+/// before the hit, the target takes an extra 5 (2d4) Bludgeoning damage
+/// and has the Prone condition."
+pub const GIANT_ELK_CHARGE: ChargeRider = ChargeRider {
+    weapon: Some("giant elk ram"),
+    dice: Dice::new(2, 4),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "giant elk charge",
+    knockdown_label: "giant elk charge knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: None,
+};
+
+// ─── Giant Seahorse ──────────────────────────────────────────────────
+
+/// Giant Seahorse Ram — STR-based 2d6+STR bludgeoning melee. RAW:
+/// "Ram. Melee Attack Roll: +4, reach 5 ft. Hit: 9 (2d6 + 2)
+/// Bludgeoning damage, or 11 (2d8 + 2) Bludgeoning damage if the
+/// seahorse moved 20+ feet straight toward the target immediately
+/// before the hit."
+pub static GIANT_SEAHORSE_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "giant seahorse ram",
+    &["ram-gs", "seahorse-ram"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+);
+
+/// Giant Seahorse **Charge** — RAW's escalation clause, expressed as
+/// the engine's charge rider.
+///
+/// RAW swaps 2d6 for 2d8 rather than adding a die, a difference of two
+/// points of average, so the rider carries `1d4` (average 2.5) and no
+/// knockdown. A die swap is what `SimpleWeapon::bloodied_dice` does for
+/// the blood hawk, but that field asks about the *target* and this
+/// clause asks how far the attacker ran — which is precisely the
+/// question the charge chassis already answers, and re-answering it on
+/// the weapon would put the run-distance check in two places.
+pub const GIANT_SEAHORSE_CHARGE: ChargeRider = ChargeRider {
+    weapon: Some("giant seahorse ram"),
+    dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: false,
+    label: "giant seahorse charge",
+    knockdown_label: "giant seahorse charge knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: None,
+};
+
+// ─── Axe Beak ────────────────────────────────────────────────────────
+
+/// Axe Beak Beak — STR-based 1d8+STR slashing melee. RAW: "Beak. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Slashing damage." One
+/// swing, fifty feet of speed, and nothing else: the axe beak is a
+/// mount-shaped monstrosity whose stat block is a chase.
+pub static AXE_BEAK_BEAK: SimpleWeapon = SimpleWeapon::melee(
+    "axe beak beak",
+    &["beak-ab", "axe-beak"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+);
+
+// ─── Elephant ────────────────────────────────────────────────────────
+
+/// Elephant Gore — STR-based 2d8+STR piercing melee. RAW: "Gore. Melee
+/// Attack Roll: +8, reach 5 ft. Hit: 15 (2d8 + 6) Piercing damage."
+pub static ELEPHANT_GORE: SimpleWeapon = SimpleWeapon::melee(
+    "elephant gore",
+    &["gore-e", "elephant"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+);
+
+/// Elephant Multiattack — "The elephant makes two Gore attacks."
+pub static ELEPHANT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "elephant multiattack",
+    sub_attack: &ELEPHANT_GORE,
+    count: 2,
+});
+
+/// The elephant's trample, without its Prone gate. RAW: "Trample
+/// (Bonus Action). Dexterity Saving Throw: DC 16, one creature within 5
+/// feet that has the Prone condition. Failure: 17 (2d10 + 6)
+/// Bludgeoning damage. Success: Half damage."
+///
+/// Resolved as a bonus-action attack roll rather than as RAW's
+/// Dexterity save, which is the same collapse `MAMMOTH_STOMP_SWING`
+/// makes and for the same reason: the engine has no single-target
+/// save-for-half melee chassis, and the two shapes agree closely on a
+/// prone target — Prone already grants the attacker advantage, which is
+/// roughly where a DC-16 save against a flattened creature lands.
+///
+/// Never put on a template directly; `ELEPHANT_TRAMPLE` is what the
+/// elephant carries.
+static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
+    display_name: "elephant trample",
+    aliases: &["trample", "stomp-e"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    // RAW prints Trample as a Bonus Action, which is what makes the
+    // elephant's turn "gore twice, then step on whatever fell over"
+    // rather than a choice between the two.
+    cost_resource: Resource::BonusAction,
+    normal_range: None,
+    requires_condition: None,
+    min_effective_range: None,
+    is_light: false,
+    mastery: None,
+    bloodied_dice: None,
+};
+
+/// The elephant's trample as the elephant has it: the stomp above,
+/// admitted only against a target that already has the Prone condition
+/// — RAW's "one creature within 5 feet that has the Prone condition".
+///
+/// Paired with `ELEPHANT_CHARGE::prone_follow_up`, so a gore that came
+/// off a twenty-foot run knocks the target down and immediately earns
+/// the bonus action that only a knocked-down target admits. That
+/// sequence is the elephant's whole damage spike, and neither half of
+/// it does anything alone.
+pub static ELEPHANT_TRAMPLE: LazyLock<ProneOnlyAttack> = LazyLock::new(|| ProneOnlyAttack {
+    display_name: "elephant trample",
+    sub_attack: &ELEPHANT_TRAMPLE_STOMP,
+});
+
+/// Elephant **Charge** (RAW): "If the target is a Huge or smaller
+/// creature and the elephant moved 20+ feet straight toward it
+/// immediately before the hit, the target has the Prone condition."
+///
+/// Damage-free — RAW's clause is the knockdown and nothing else, which
+/// is what `Dice::new(0, 0)` says here. The payoff is the follow-up,
+/// not the rider.
+pub const ELEPHANT_CHARGE: ChargeRider = ChargeRider {
+    weapon: Some("elephant gore"),
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "elephant charge",
+    knockdown_label: "elephant charge knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: Some("elephant trample"),
+};
+
+// ─── Hippopotamus ────────────────────────────────────────────────────
+
+/// Hippopotamus Bite — STR-based 2d10+STR piercing melee. RAW: "Bite.
+/// Melee Attack Roll: +7, reach 5 ft. Hit: 16 (2d10 + 5) Piercing
+/// damage." Two of these a turn is thirty-two points of average damage
+/// off a CR-4 stat block with no rider and no gate — the hippo is the
+/// roster's plainest heavy hitter, and the reason people who know
+/// rivers are afraid of them.
+pub static HIPPOPOTAMUS_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "hippopotamus bite",
+    &["hippo-bite", "hippo"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Piercing,
+);
+
+/// Hippopotamus Multiattack — "The hippopotamus makes two Bite attacks."
+pub static HIPPOPOTAMUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "hippopotamus multiattack",
+    sub_attack: &HIPPOPOTAMUS_BITE,
+    count: 2,
+});
+
+// ─── Allosaurus ──────────────────────────────────────────────────────
+
+/// Allosaurus Bite — STR-based 2d10+STR piercing melee. RAW: "Bite.
+/// Melee Attack Roll: +6, reach 5 ft. Hit: 15 (2d10 + 4) Piercing
+/// damage." The pounce's payoff limb rather than its trigger.
+pub static ALLOSAURUS_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "allosaurus bite",
+    &["allo-bite", "allosaurus"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Piercing,
+);
+
+/// Allosaurus Claws — STR-based 1d8+STR slashing melee. RAW: "Claws.
+/// Melee Attack Roll: +6, reach 5 ft. Hit: 8 (1d8 + 4) Slashing
+/// damage. If the target is a Large or smaller creature and the
+/// allosaurus moved 30+ feet straight toward it immediately before the
+/// hit, the target has the Prone condition, and the allosaurus can make
+/// one Bite attack against it."
+pub static ALLOSAURUS_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "allosaurus claws",
+    &["allo-claws", "claws-a"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+);
+
+/// Allosaurus **Pounce** — the claws' second half, as a charge rider.
+///
+/// Thirty feet of run rather than the usual twenty, which is the one
+/// number that separates this clause from every other pounce in the
+/// bestiary — a sixty-foot speed makes the longer run cheap, and RAW
+/// prices it accordingly. Damage-free: the whole payoff is the
+/// knockdown and the free bite behind it.
+pub const ALLOSAURUS_POUNCE: ChargeRider = ChargeRider {
+    weapon: Some("allosaurus claws"),
+    dice: Dice::new(0, 0),
+    damage_type: DamageType::Slashing,
+    run_tiles: charge_run_tiles(30),
+    knocks_prone: true,
+    label: "allosaurus pounce",
+    knockdown_label: "allosaurus pounce knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: Some("allosaurus bite"),
+};
+
+// ─── Ankylosaurus ────────────────────────────────────────────────────
+
+/// Ankylosaurus Tail — STR-based 1d10+STR bludgeoning at reach 2
+/// (10 ft), with a save-or-Prone rider. RAW: "Tail. Melee Attack Roll:
+/// +6, reach 10 ft. Hit: 9 (1d10 + 4) Bludgeoning damage. If the target
+/// is a Huge or smaller creature, it has the Prone condition."
+///
+/// RAW's Prone is automatic and this is a Strength save against a fixed
+/// DC 14 (`8 + PB 2 + STR 4`, the ankylosaurus's own derived number
+/// written out), which is the convention every other knockdown on the
+/// `WeaponWithSaveCondition` chassis follows. Two tail swings a turn,
+/// each of which can put a target on the floor, is the whole stat
+/// block: an ankylosaurus does not out-damage a tyrannosaurus, it
+/// out-*positions* one.
+pub static ANKYLOSAURUS_TAIL: WeaponWithSaveCondition = WeaponWithSaveCondition::reach_melee(
+    "ankylosaurus tail",
+    &["anky-tail", "tail-a"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Bludgeoning,
+    AbilityScoreType::Strength,
+    14,
+    Condition::Prone,
+    ConditionTimer::Permanent,
+    "ankylosaurus knockdown",
+    2,
+);
+
+/// Ankylosaurus Multiattack — "The ankylosaurus makes two Tail attacks."
+pub static ANKYLOSAURUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "ankylosaurus multiattack",
+    sub_attack: &ANKYLOSAURUS_TAIL,
+    count: 2,
+});
+
+// ─── Archelon ────────────────────────────────────────────────────────
+
+/// Archelon Bite — STR-based 3d6+STR piercing melee. RAW: "Bite. Melee
+/// Attack Roll: +6, reach 5 ft. Hit: 14 (3d6 + 4) Piercing damage."
+pub static ARCHELON_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "archelon bite",
+    &["arch-bite", "archelon"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Piercing,
+);
+
+/// Archelon Multiattack — "The archelon makes two Bite attacks."
+pub static ARCHELON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "archelon multiattack",
+    sub_attack: &ARCHELON_BITE,
+    count: 2,
 });
