@@ -32,6 +32,7 @@ use std::sync::LazyLock;
 static STIRGE_ATTACH: AttachProfile = AttachProfile {
     verb: "sinks its proboscis into",
     drain: Some((Dice::new(2, 4), DamageType::Necrotic)),
+    blocked_while_attached: true,
     ..AttachProfile::defaults()
 };
 

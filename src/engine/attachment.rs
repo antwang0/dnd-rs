@@ -43,10 +43,13 @@
 //!     `ActorInstance::remaining_movement` returns zero while
 //!     `attached_to` is set.
 //!   - The **attacher can only attack its host.** RAW says so outright
-//!     for the darkmantle ("can attack only the target"), and for the
-//!     other two by the narrower clause that it cannot repeat the
-//!     attach attack. One gate covers both, at the same site the
-//!     Charmed hostility gate uses — see `attachment_blocks_hostility`.
+//!     for the darkmantle ("can attack only the target") and for the
+//!     cloaker ("can't make Attach attacks against other targets"),
+//!     and neither is stopped from hitting the creature it is holding.
+//!     One gate covers both, at the same site the Charmed hostility
+//!     gate uses — see `attachment_blocks_hostility`. The stirge is the
+//!     one that stops attacking altogether, which is a separate rule:
+//!     `AttachProfile::blocked_while_attached`.
 //!
 //! ## What is deliberately not modeled
 //!
@@ -162,6 +165,23 @@ pub struct AttachProfile {
     /// The darkmantle's "…but has Advantage on its attack rolls",
     /// which it gets for being wrapped around its victim's head.
     pub advantage_on_host: bool,
+    /// True when the latch stops its own attack outright, rather than
+    /// merely aiming it: the stirge's "while attached, the stirge can't
+    /// make Proboscis attacks".
+    ///
+    /// The stirge is the only one of the three, and the difference is
+    /// the whole shape of what each creature does after it lands. RAW
+    /// bars the cloaker only *"against other targets"* and tells the
+    /// darkmantle it *"can attack only the target"* — both of which are
+    /// sentences about aim, and both of which the shared hostility gate
+    /// already answers. Neither is barred from hitting the thing it is
+    /// wrapped around, and a cloaker that could not would lose its
+    /// whole Multiattack the moment it succeeded with it.
+    ///
+    /// So this is genuinely a third rule and not a rephrasing of the
+    /// other two: a stirge that has latched on is *done attacking* and
+    /// spends the rest of the fight feeding.
+    pub blocked_while_attached: bool,
 }
 
 impl AttachProfile {
@@ -178,6 +198,7 @@ impl AttachProfile {
             shares_damage: false,
             pry_dc: None,
             advantage_on_host: false,
+            blocked_while_attached: false,
         }
     }
 
@@ -359,6 +380,19 @@ impl EncounterInstance {
         attacher_id: usize,
         host_id: usize,
     ) -> Result<(), AttachRefusal> {
+        // Landing the same swing again on the creature you are already
+        // wrapped around is a no-op with a refresh, not a second latch.
+        // RAW lets the cloaker and the darkmantle keep attacking their
+        // host — see `AttachProfile::blocked_while_attached` — and the
+        // attack that does it is the one whose Hit line says "attaches
+        // to the target", so it arrives here every round. Resolved
+        // before `can_attach`, which would (correctly) call this
+        // `AlreadyPaired` and log a refusal for something that is not a
+        // refusal.
+        if self.attached_host(attacher_id) == Some(host_id) {
+            self.impose_host_conditions(attacher_id);
+            return Ok(());
+        }
         let profile = self.can_attach(attacher_id, host_id)?;
         let (loc, size, host_loc) = {
             let attacher = &self.actors[&attacher_id];

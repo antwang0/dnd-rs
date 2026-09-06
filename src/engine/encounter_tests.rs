@@ -82737,9 +82737,13 @@ fn a_cloaker_cannot_wrap_something_bigger_than_it_is() {
 /// "While attached to a target, the darkmantle can attack only the
 /// target but has Advantage on its attack rolls."
 ///
-/// Both clauses, and they are the two the hostility gate and the
-/// attack-mode tally answer respectively — neither of which the
-/// darkmantle's own files can see.
+/// Three clauses. Two are the hostility gate and the attack-mode tally,
+/// neither of which the darkmantle's own files can see. The third is
+/// the one that reads as an absence: a wrapped darkmantle *keeps
+/// swinging*, because "can attack only the target" is a sentence about
+/// aim rather than a prohibition — and the Crush is the only Action it
+/// has, so a gate that refused it would leave the creature sitting
+/// there.
 #[test]
 fn an_attached_darkmantle_swings_only_at_its_host_and_swings_at_advantage() {
     use crate::actors::creatures::darkmantles::DARKMANTLE_TEMPLATE;
@@ -82752,6 +82756,18 @@ fn an_attached_darkmantle_swings_only_at_its_host_and_swings_at_advantage() {
 
     assert!(!e.attachment_blocks_hostility(mantle, host));
     assert!(e.attachment_blocks_hostility(mantle, bystander));
+    let crush = e.actors[&mantle]
+        .find_action("darkmantle crush")
+        .expect("the darkmantle carries its crush");
+    assert!(
+        ActionExecutionInfo::new(crush, mantle, Some(vec![host]), None, None).validate(&e),
+        "a wrapped darkmantle keeps crushing the head it is wrapped around"
+    );
+    assert!(
+        !ActionExecutionInfo::new(crush, mantle, Some(vec![bystander]), None, None)
+            .validate(&e),
+        "…and nobody else's"
+    );
     assert_eq!(
         e.compute_attack_mode(mantle, host, true),
         RollMode::Advantage,
@@ -82780,6 +82796,43 @@ fn a_darkmantle_holds_onto_a_large_creature_without_blinding_it() {
         !e.actors[&ogre].has_condition(Condition::Blinded),
         "but it cannot cover a Large head"
     );
+}
+
+/// "…the cloaker can't make Attach attacks against **other** targets."
+///
+/// The word doing the work is "other". A wrapped cloaker keeps its
+/// whole Multiattack against the creature it is holding — which it has
+/// to, because `CompoundAttack` validates every part of itself and a
+/// refused Attach would take the two Tails down with it.
+#[test]
+fn a_wrapped_cloaker_keeps_swinging_at_the_creature_it_is_holding() {
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
+    let (mut e, cloaker, host) = cloaker_pair();
+    let bystander = e
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(7, 4), 0, 1)
+        .unwrap();
+    assert!(e.attach(cloaker, host).is_ok());
+
+    let multi = e.actors[&cloaker]
+        .find_action("cloaker multiattack")
+        .expect("the cloaker carries its multiattack");
+    assert!(
+        ActionExecutionInfo::new(multi, cloaker, Some(vec![host]), None, None).validate(&e),
+        "the whole Action survives the latch that opened it"
+    );
+    assert!(
+        !ActionExecutionInfo::new(multi, cloaker, Some(vec![bystander]), None, None)
+            .validate(&e),
+        "…and cannot be turned on anybody else"
+    );
+
+    // Re-landing it re-rolls the damage and leaves the link alone,
+    // rather than refusing or re-latching.
+    let before = e.actors[&host].hitpoints();
+    assert!(e.attach(cloaker, host).is_ok(), "a repeat latch is a no-op");
+    assert_eq!(e.attached_host(cloaker), Some(host));
+    assert_eq!(e.attachers_on(host), vec![cloaker]);
+    assert_eq!(e.actors[&host].hitpoints(), before);
 }
 
 /// "The target or a creature within 5 feet of it can detach the stirge

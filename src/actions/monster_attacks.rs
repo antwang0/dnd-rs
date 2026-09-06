@@ -2443,18 +2443,23 @@ impl Action for AttachingWeapon {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
     }
-    /// The swing is refused while its swinger is already holding onto
-    /// somebody, which is RAW for all three carriers — "while attached,
-    /// the stirge can't make Proboscis attacks", "the cloaker can't
-    /// make Attach attacks against other targets".
+    /// Refused only for the carrier RAW stops outright — the stirge's
+    /// "while attached, the stirge can't make Proboscis attacks".
     ///
-    /// The hostility gate in `Action::validate` already stops this
-    /// action being aimed at a *third* creature. What it cannot stop is
-    /// a latched creature biting the thing it is already wrapped around
-    /// — the one target the gate lets through — which would re-open a
-    /// link that is already open and, for the cloaker, re-roll its
-    /// victim's blindness for free. So the second half of the sentence
-    /// is checked here, on the one action that can violate it.
+    /// The other two are *not* refused, which is the distinction that
+    /// matters and the one this gate originally got wrong. RAW bars the
+    /// cloaker only "against other targets" and tells the darkmantle it
+    /// "can attack only the target": both are sentences about aim, both
+    /// are already enforced by the shared hostility gate in
+    /// `Action::validate`, and neither stops the creature hitting the
+    /// thing it is wrapped around. A blanket refusal here cost the
+    /// cloaker its entire Multiattack the moment it landed one —
+    /// `CompoundAttack` validates all of its parts, so one refused part
+    /// refuses the Action — and left the darkmantle, whose only Action
+    /// this is, with nothing to do at all.
+    ///
+    /// A repeat swing on the same host re-rolls the damage and no-ops
+    /// the latch; see `EncounterInstance::attach`.
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -2463,7 +2468,10 @@ impl Action for AttachingWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        !encounter.is_attached(caster_id)
+        !(encounter.is_attached(caster_id)
+            && encounter
+                .attach_profile(caster_id)
+                .is_some_and(|p| p.blocked_while_attached))
     }
     fn side_effects(
         &self,
@@ -18587,21 +18595,13 @@ pub static CLOAKER_ATTACH: AttachingWeapon = AttachingWeapon::melee(
 /// matters: the latch is tried before the tails, so a cloaker that
 /// wraps somebody spends the rest of its Action on a Blinded target.
 ///
-/// **A cloaker that is already attached cannot take this Action at
-/// all**, and RAW says it should still swing the two tails. The
-/// `CompoundAttack` chassis validates `all` of its parts and then
-/// resolves all of them, so a compound whose Attach is refused has to
-/// be refused whole — see `CompoundAttack::custom_validate_input` for
-/// the argument, which is that a compound resolving a part it should
-/// not is a silent rules violation and a compound refusing is a visible
-/// loss. So an attached cloaker falls back to a single bare Tail: one
-/// swing short of RAW, in the direction that under-powers the monster.
-///
-/// The other refusal is not this one. A cloaker whose Attach is turned
-/// away by the *size* gate — an ogre is Large, a giant is not — still
-/// gets its whole Action, because that gate lives in `AttachTo` and
-/// fires when the stack applies the latch, long after every part of the
-/// compound has swung.
+/// The Action stays available once the cloaker has landed it. RAW bars
+/// its Attach only "against other targets", so a wrapped cloaker keeps
+/// swinging all three attacks at the creature it is holding — the
+/// Attach re-rolls its 3d6 and no-ops the latch, and the tails follow.
+/// That is load-bearing for the `CompoundAttack` chassis, which
+/// validates `all` of its parts and would otherwise refuse the whole
+/// Multiattack because one part of it had succeeded.
 pub static CLOAKER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "cloaker multiattack",
     parts: vec![(&CLOAKER_ATTACH, 1), (&CLOAKER_TAIL, 2)],
