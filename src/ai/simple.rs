@@ -1730,10 +1730,17 @@ fn try_disengage(
         encounter,
         actor_id,
         // The monk's Step of the Wind is the bonus-action printing of
-        // Disengage *and* Dash at once, so it heads both lists. No
-        // chassis carries it alongside Cunning Action, so the order
-        // between the two cheap printings decides nothing.
-        &["step of the wind", "cunning disengage", "disengage"],
+        // Disengage *and* Dash at once, so it heads both lists. Nothing
+        // carries two of the three cheap printings, so the order among
+        // them decides nothing — what matters is that all three sort
+        // above the Action-priced one at the end. Nimble Escape is the
+        // monster-side printing: the goblins and the big cats.
+        &[
+            "step of the wind",
+            "cunning disengage",
+            "nimble disengage",
+            "disengage",
+        ],
     )
 }
 
@@ -15999,11 +16006,13 @@ mod tests {
 
     /// The same effect at two prices is bought at the cheaper one. A
     /// rogue Disengages with Cunning Action and keeps its Action; a monk
-    /// does it with Step of the Wind and gets the Dash thrown in;
-    /// everyone else pays the PHB's Action for it.
+    /// does it with Step of the Wind and gets the Dash thrown in; a
+    /// goblin does it with Nimble Escape, which is the whole reason a
+    /// goblin is annoying; everyone else pays the PHB's Action for it.
     #[test]
     fn the_cheap_printing_of_disengage_is_the_one_that_gets_bought() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::monks::MONK_TEMPLATE;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
@@ -16025,6 +16034,7 @@ mod tests {
         for (template, expected, x) in [
             (&*ROGUE_TEMPLATE, "cunning disengage", 8),
             (&*MONK_TEMPLATE, "step of the wind", 10),
+            (&*GOBLIN_TEMPLATE, "nimble disengage", 6),
             (&*FIGHTER_TEMPLATE, "disengage", 12),
         ] {
             let id = e

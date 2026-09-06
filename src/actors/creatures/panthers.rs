@@ -1,3 +1,4 @@
+use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{PANTHER_BITE, PANTHER_CLAW, PANTHER_POUNCE};
 use crate::actors::actor_template::CreatureTemplate;
@@ -34,6 +35,11 @@ pub static PANTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PANTHER_CLAW);
     actions.push(&PANTHER_BITE);
+    // RAW **Nimble Escape**: "the cat takes the Disengage or Hide
+    // action" as a Bonus Action — the trait that lets it close, maul
+    // and step back out of reach in one turn.
+    actions.push(&*NIMBLE_DISENGAGE);
+    actions.push(&*NIMBLE_HIDE);
     CreatureTemplate {
         name: "Panther",
         // 'f' (lowercase) — the feline band, one rung below the Tiger's

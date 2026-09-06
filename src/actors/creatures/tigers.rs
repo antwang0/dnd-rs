@@ -1,3 +1,4 @@
+use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TIGER_BITE, TIGER_CLAWS, TIGER_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
@@ -18,6 +19,11 @@ pub static TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&TIGER_BITE);
     actions.push(&TIGER_CLAWS);
     actions.push(&*TIGER_MULTI);
+    // RAW **Nimble Escape**: "the cat takes the Disengage or Hide
+    // action" as a Bonus Action — the trait that lets it close, maul
+    // and step back out of reach in one turn.
+    actions.push(&*NIMBLE_DISENGAGE);
+    actions.push(&*NIMBLE_HIDE);
     CreatureTemplate {
         name: "Tiger",
         // 'T' for Tiger — capital because Large; collides with Troll

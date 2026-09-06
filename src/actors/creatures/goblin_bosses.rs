@@ -1,3 +1,4 @@
+use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GOBLIN_BOSS_MULTI, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
@@ -14,6 +15,11 @@ pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*GOBLIN_BOSS_MULTI);
     actions.push(&SHORTBOW);
+    // RAW **Nimble Escape**: "the goblin takes the Disengage or Hide
+    // action" as a Bonus Action. Two entries because RAW's "or" is a
+    // choice the creature makes each turn.
+    actions.push(&*NIMBLE_DISENGAGE);
+    actions.push(&*NIMBLE_HIDE);
     CreatureTemplate {
         name: "Goblin Boss",
         glyph: 'B',

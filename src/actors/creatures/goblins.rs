@@ -1,3 +1,4 @@
+use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DAGGER, SCIMITAR, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
@@ -5,13 +6,23 @@ use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Sneaky melee skirmisher that doubles up its turn with a bonus-action
-/// shortbow shot. Action: scimitar (close in and slash). Bonus: shortbow
-/// (extra ranged ping). The action-economy split is the headline — most
-/// creatures don't have a bonus-action attack option.
+/// Goblin Warrior — CR ¼ small goblinoid, and the bestiary's clearest
+/// lesson in action economy.
+///
+/// Action: scimitar, to close in and slash. Bonus: a shortbow ping, or
+/// — RAW's **Nimble Escape** — a Disengage or a Hide. Three ways to
+/// spend one bonus action is more choice than most creatures at this
+/// rung have any of, and the goblin is what it is because of the third:
+/// it steps into reach, cuts, and leaves without provoking, which no
+/// amount of damage on the scimitar would have produced.
 pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
+    // RAW **Nimble Escape**: "the goblin takes the Disengage or Hide
+    // action" as a Bonus Action. Two entries because RAW's "or" is a
+    // choice the creature makes each turn.
+    actions.push(&*NIMBLE_DISENGAGE);
+    actions.push(&*NIMBLE_HIDE);
     actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Goblin",
@@ -47,16 +58,18 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// kit, which is why six of them are a fight and one of them is
 /// scenery.
 ///
-/// One action lane and no bonus one. RAW gives it Nimble Escape, the
-/// bonus-action Disengage-or-Hide the Warrior also has; the engine
-/// carries Disengage and Hide as ordinary actions any creature can
-/// take, so what the trait actually buys is the *bonus action*, and
-/// there is no lane for "this creature may take that action for free".
-/// The clause is dropped on both goblins rather than half-modeled on
-/// one.
+/// **Nimble Escape** rides here as it does on the Warrior and the Boss:
+/// a bonus-action Disengage or Hide, which on a creature with seven hit
+/// points is most of what it has. A minion that stabs and then vanishes
+/// is a minion the party has to spend a turn finding.
 pub static GOBLIN_MINION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DAGGER);
+    // RAW **Nimble Escape**: "the goblin takes the Disengage or Hide
+    // action" as a Bonus Action. Two entries because RAW's "or" is a
+    // choice the creature makes each turn.
+    actions.push(&*NIMBLE_DISENGAGE);
+    actions.push(&*NIMBLE_HIDE);
     CreatureTemplate {
         name: "Goblin Minion",
         // 'g' (lowercase) beside the Warrior's 'G' — the same
@@ -99,6 +112,35 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    /// Every goblin on the ladder has both halves of Nimble Escape.
+    ///
+    /// Both, and not one: RAW's clause is "the Disengage **or** Hide
+    /// action", which is a choice the goblin makes each turn, and a
+    /// goblin that could only vanish would be a different creature from
+    /// one that could only leave. Swept over all three so a fourth
+    /// goblin cannot arrive without it.
+    #[test]
+    fn every_goblin_escapes_nimbly() {
+        use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
+        for t in [
+            &*GOBLIN_MINION_TEMPLATE,
+            &*GOBLIN_TEMPLATE,
+            &*GOBLIN_BOSS_TEMPLATE,
+        ] {
+            let a = make(t);
+            assert!(
+                a.find_action("nimble disengage").is_some(),
+                "{} should be able to leave",
+                t.name
+            );
+            assert!(
+                a.find_action("nimble hide").is_some(),
+                "{} should be able to vanish",
+                t.name
+            );
+        }
     }
 
     #[test]

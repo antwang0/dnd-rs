@@ -1388,6 +1388,121 @@ impl Action for CunningHide {
 
 pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {});
 
+/// 5e monster trait **Nimble Escape** — "the goblin takes the Disengage
+/// or Hide action" as a Bonus Action.
+///
+/// Two Actions rather than one, because RAW's "or" is a choice the
+/// creature makes each turn and the engine's action list is where a
+/// choice lives. They are the Rogue's Cunning Disengage and Cunning
+/// Hide in everything but the name — same cost, same payload, delegated
+/// to the same helpers — and they are separate statics for the same
+/// reason `bonus_action_hide_effects` was extracted in the first place:
+/// what is shared is the *effect*, and a goblin whose action list reads
+/// "cunning hide" is a goblin claiming a class feature it does not have.
+///
+/// Six stat blocks carry the trait in SRD 5.2 and they are not the six
+/// anyone would guess: the three goblins, and then the Panther, the
+/// Tiger and the Saber-Toothed Tiger. The cats are the interesting
+/// half — a Nimble Escape panther fights the way a cat actually does,
+/// closing, mauling and stepping back out of reach in the same turn,
+/// and no amount of extra damage would have produced that.
+///
+/// Deliberately *not* the third of Cunning Action's three: RAW's Nimble
+/// Escape has no Dash. A goblin's business is leaving without being
+/// hit, not covering ground.
+pub struct NimbleDisengage {}
+
+impl Action for NimbleDisengage {
+    fn name(&self) -> &str {
+        "nimble disengage"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ndis", "ne-dis"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::SetDisengaging {
+            actor_id: caster_id,
+            disengaging: true,
+        })]
+    }
+}
+
+pub static NIMBLE_DISENGAGE: LazyLock<NimbleDisengage> = LazyLock::new(|| NimbleDisengage {});
+
+/// The Hide half of **Nimble Escape** — see `NimbleDisengage` above for
+/// why the trait is two actions and why they are not the Rogue's.
+pub struct NimbleHide {}
+
+impl Action for NimbleHide {
+    fn name(&self) -> &str {
+        "nimble hide"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nhide", "ne-hide"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        bonus_action_hide_effects(caster_id)
+    }
+}
+
+pub static NIMBLE_HIDE: LazyLock<NimbleHide> = LazyLock::new(|| NimbleHide {});
+
 /// 5e Ranger **Vanish** (class feature, level 14) — feature tag. Passive
 /// gate on the paired `VANISH` action, which is a bonus-action Hide
 /// (same one-shot attack-advantage rider as CunningHide / the baseline
