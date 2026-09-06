@@ -46,7 +46,7 @@ pub mod beholders;
 pub mod berserkers;
 pub mod bone_devils;
 pub mod bugbears;
-pub mod bullettes;
+pub mod bulettes;
 pub mod chimeras;
 pub mod chuuls;
 pub mod clay_golems;
@@ -273,7 +273,7 @@ pub mod needle_blights;
 pub mod giant_boars;
 pub mod giant_goats;
 pub mod giant_owls;
-pub mod giant_poisonous_snakes;
+pub mod giant_venomous_snakes;
 pub mod killer_whales;
 pub mod crawling_claws;
 pub mod phantom_steeds;
@@ -324,7 +324,6 @@ pub mod homunculi;
 pub mod jackals;
 pub mod ravens;
 pub mod vultures;
-pub mod quippers;
 pub mod giant_weasels;
 pub mod giant_fire_beetles;
 
@@ -633,7 +632,7 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &giant_crabs::GIANT_CRAB_TEMPLATE,
         &giant_frogs::GIANT_FROG_TEMPLATE,
         &giant_octopuses::GIANT_OCTOPUS_TEMPLATE,
-        &giant_poisonous_snakes::GIANT_POISONOUS_SNAKE_TEMPLATE,
+        &giant_venomous_snakes::GIANT_VENOMOUS_SNAKE_TEMPLATE,
         &giant_sharks::GIANT_SHARK_TEMPLATE,
         &giant_toads::GIANT_TOAD_TEMPLATE,
         &hunter_sharks::HUNTER_SHARK_TEMPLATE,
@@ -644,13 +643,12 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &marids::MARID_TEMPLATE,
         &merfolk::MERFOLK_TEMPLATE,
         &merrow::MERROW_TEMPLATE,
-        &quippers::QUIPPER_TEMPLATE,
         &plesiosauruses::PLESIOSAURUS_TEMPLATE,
         &reef_sharks::REEF_SHARK_TEMPLATE,
         &sahuagins::SAHUAGIN_TEMPLATE,
         &sea_hags::SEA_HAG_TEMPLATE,
         &storm_giants::STORM_GIANT_TEMPLATE,
-        &swarms::SWARM_OF_QUIPPERS_TEMPLATE,
+        &swarms::SWARM_OF_PIRANHAS_TEMPLATE,
         &water_elementals::WATER_ELEMENTAL_TEMPLATE,
         &water_weirds::WATER_WEIRD_TEMPLATE,
         // The animal appendix's aquatic half. Every one of these

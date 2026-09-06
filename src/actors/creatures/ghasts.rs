@@ -56,7 +56,7 @@ pub static GHAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*GHAST_MULTI);
     CreatureTemplate {
         name: "Ghast",
-        // 'U' — shared with Ghoul / Bullette: the ghast is the bigger
+        // 'U' — shared with Ghoul / Bulette: the ghast is the bigger
         // sibling of the ghoul, so the shared 'U' (Undead) silhouette
         // reads correctly on the map. Team color disambiguates if both
         // appear in the same encounter.

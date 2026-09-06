@@ -32482,25 +32482,25 @@ fn distracted_attack_mode_grants_advantage_to_off_attackers() {
     assert!(e.actors[&goblin].linked_by(Condition::Distracted).is_none());
 }
 
-/// Bullette template: high-HP CR-5 monstrosity with bite + multi +
+/// Bulette template: high-HP CR-5 monstrosity with bite + multi +
 /// deadly leap. Verifies the template wires cleanly via
 /// instantiate_creature.
 #[test]
-fn bullette_template_instantiates_cleanly() {
-    use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+fn bulette_template_instantiates_cleanly() {
+    use crate::actors::creatures::bulettes::BULETTE_TEMPLATE;
     let mut e = ei_with_terrain(15, 15, &[]);
     let id = e
-        .instantiate_creature(&BULLETTE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .instantiate_creature(&BULETTE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
         .unwrap();
-    let bullette = &e.actors[&id];
+    let bulette = &e.actors[&id];
     // Verify the headline stats: large footprint, high HP, AC 17.
-    assert_eq!(bullette.size(), crate::engine::types::Size::Large);
-    assert!(bullette.max_hitpoints() >= 50);
-    assert_eq!(bullette.armor_class(), 17);
+    assert_eq!(bulette.size(), crate::engine::types::Size::Large);
+    assert!(bulette.max_hitpoints() >= 50);
+    assert_eq!(bulette.armor_class(), 17);
     // Three signature actions are in the loadout.
-    assert!(bullette.find_action("bullette bite").is_some());
-    assert!(bullette.find_action("bullette multiattack").is_some());
-    assert!(bullette.find_action("bullette deadly leap").is_some());
+    assert!(bulette.find_action("bulette bite").is_some());
+    assert!(bulette.find_action("bulette multiattack").is_some());
+    assert!(bulette.find_action("bulette deadly leap").is_some());
 }
 
 /// Bone Devil template: CR-9 fiend envelope: immune to fire +

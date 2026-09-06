@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Venomous Snake — CR ⅛ tiny beast. The small end of the serpent
-/// ladder below the Giant Poisonous Snake (CR ¼), carrying the same
+/// ladder below the Giant Venomous Snake (CR ¼), carrying the same
 /// 1d6 venom die on a quarter of the frame.
 ///
 /// Action lane:

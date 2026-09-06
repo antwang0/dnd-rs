@@ -8275,31 +8275,31 @@ impl Action for StoneGolemSlow {
 
 pub static STONE_GOLEM_SLOW: LazyLock<StoneGolemSlow> = LazyLock::new(|| StoneGolemSlow {});
 
-/// Bullette Bite — STR-based 4d12+STR piercing melee, reach 1. The
-/// bullette's signature crunch — averages ~26 piercing per hit. No
-/// rider effects; pure damage. Stays a `SimpleWeapon` so the bullette's
+/// Bulette Bite — STR-based 4d12+STR piercing melee, reach 1. The
+/// bulette's signature crunch — averages ~26 piercing per hit. No
+/// rider effects; pure damage. Stays a `SimpleWeapon` so the bulette's
 /// loadout can mix this with the Deadly Leap follow-up cleanly.
-pub static BULLETTE_BITE: SimpleWeapon = SimpleWeapon::melee(
-    "bullette bite",
-    &["bbite", "bullette-bite"],
+pub static BULETTE_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "bulette bite",
+    &["bbite", "bulette-bite"],
     AbilityScoreType::Strength,
     Dice::new(4, 12),
     DamageType::Piercing,
 );
 
-/// Bullette Deadly Leap — Action; the bullette jumps onto a target,
+/// Bulette Deadly Leap — Action; the bulette jumps onto a target,
 /// landing with crushing force. We model as a single melee swing dealing
 /// 3d6+STR bludgeoning, plus the target makes a STR save vs DC 16 or
-/// is knocked Prone. The leap is RAW reserved for the Bullette's bonus
+/// is knocked Prone. The leap is RAW reserved for the Bulette's bonus
 /// "Deadly Leap" action; we expose it as a regular Action lane so the
 /// AI can pick between Bite and Leap based on whether knocking the
 /// target prone (e.g. setting up an ally's melee crit window) is worth
 /// the lower damage tier.
-pub struct BulletteDeadlyLeap {}
+pub struct BuletteDeadlyLeap {}
 
-impl Action for BulletteDeadlyLeap {
+impl Action for BuletteDeadlyLeap {
     fn name(&self) -> &str {
-        "bullette deadly leap"
+        "bulette deadly leap"
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["leap", "bleap"]
@@ -8356,16 +8356,16 @@ impl Action for BulletteDeadlyLeap {
     }
 }
 
-pub static BULLETTE_DEADLY_LEAP: LazyLock<BulletteDeadlyLeap> =
-    LazyLock::new(|| BulletteDeadlyLeap {});
+pub static BULETTE_DEADLY_LEAP: LazyLock<BuletteDeadlyLeap> =
+    LazyLock::new(|| BuletteDeadlyLeap {});
 
-/// Bullette Multiattack — Action: 2 bites. The bullette's RAW
-/// multiattack is one Bite; we double it so the CR-5 bullette can keep
+/// Bulette Multiattack — Action: 2 bites. The bulette's RAW
+/// multiattack is one Bite; we double it so the CR-5 bulette can keep
 /// pace with the other CR-5 boss-tier templates (manticore, etc.)
 /// without needing to chain back-to-back Action picks.
-pub static BULLETTE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
-    display_name: "bullette multiattack",
-    sub_attack: &BULLETTE_BITE,
+pub static BULETTE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "bulette multiattack",
+    sub_attack: &BULETTE_BITE,
     count: 2,
 });
 
@@ -12538,7 +12538,7 @@ pub static HELMED_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 /// Pixie Sleep Dust — burst-1 (5 ft) save-burst centered on a chosen tile
 /// within 6 tiles (30 ft). Every creature in the burst makes a DC 12 WIS
 /// save; on fail they fall Asleep for 10 rounds (1 minute RAW). Mirrors
-/// the chosen-tile + small radius shape of the bullette's earth tremor
+/// the chosen-tile + small radius shape of the bulette's earth tremor
 /// or the orcish javelin's drop — single Action cost, no recharge
 /// (RAW: 1/day, but we use a tick-down install instead of a per-rest
 /// resource so the pixie has a hook in any encounter; the action's
@@ -16470,9 +16470,9 @@ pub static GIANT_OWL_TALONS: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-// ─── Giant Poisonous Snake ─────────────────────────────────────────
+// ─── Giant Venomous Snake ─────────────────────────────────────────
 
-/// Giant Poisonous Snake Bite — DEX-based 1d4+DEX piercing melee with
+/// Giant Venomous Snake Bite — DEX-based 1d4+DEX piercing melee with
 /// a DC 11 CON save-or-3d6-poison rider via `WeaponWithSaveDamage`.
 /// RAW: "+6 to hit, reach 10 ft, one target. Hit: 6 (1d4+4) piercing
 /// damage, and the target must make a DC 11 Constitution saving throw,
@@ -16481,8 +16481,8 @@ pub static GIANT_OWL_TALONS: SimpleWeapon = SimpleWeapon::melee(
 /// engine's standard SaveDamagePolicy::HalfOnPass shape implicit in
 /// the chassis. Reach 10 ft = 2 tile-gap units — the snake strikes
 /// from a coil one tile away (RAW: medium serpent on a 10-ft reach).
-pub static GIANT_POISONOUS_SNAKE_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::reach_melee(
-    "giant poisonous snake bite",
+pub static GIANT_VENOMOUS_SNAKE_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::reach_melee(
+    "giant venomous snake bite",
     &["gpsb", "snake-bite", "venom-bite"],
     AbilityScoreType::Dexterity,
     Dice::new(1, 4),
@@ -17067,23 +17067,23 @@ pub static SWARM_OF_INSECTS_BITES: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Swarm of Quippers Bites — DEX-based 4d6 piercing melee. RAW: "+5
+/// Swarm of Piranhas Bites — DEX-based 4d6 piercing melee. RAW: "+5
 /// to hit, reach 0 ft., one creature in the swarm's space. Hit: 14
 /// (4d6) piercing damage, or 7 (2d6) piercing damage if the swarm has
-/// has half of its hit points or fewer."
+/// half of its hit points or fewer."
 ///
-/// The heaviest swarm bite, and the one that compounds: the quipper
-/// swarm's Blood Frenzy hands it advantage against anything already
-/// wounded, so the first bite that lands makes the second likelier.
-pub static SWARM_OF_QUIPPERS_BITES: SimpleWeapon = SimpleWeapon::melee(
-    "swarm of quippers bites",
+/// The heaviest swarm bite, and the one that compounds: the swarm's
+/// Blood Frenzy hands it advantage against anything already wounded,
+/// so the first bite that lands makes the second likelier.
+pub static SWARM_OF_PIRANHAS_BITES: SimpleWeapon = SimpleWeapon::melee(
+    "swarm of piranhas bites",
     &["sqb", "quipper-swarm", "quippers"],
     AbilityScoreType::Dexterity,
     Dice::new(4, 6),
     DamageType::Piercing,
 );
 
-/// Swarm of Poisonous Snakes Bites — DEX-based 2d6 piercing melee
+/// Swarm of Venomous Snakes Bites — DEX-based 2d6 piercing melee
 /// with a DC 10 CON save-or-4d6-poison rider. RAW: "+6 to hit, reach 0
 /// ft., one creature in the swarm's space. Hit: 7 (2d6) piercing
 /// damage, or 3 (1d6) piercing damage if the swarm has half of its hit
@@ -17098,8 +17098,8 @@ pub static SWARM_OF_QUIPPERS_BITES: SimpleWeapon = SimpleWeapon::melee(
 /// out of the same dwindling supply of snakes, and the engine's
 /// attacker-scoped lane halves the whole swing rather than picking one
 /// damage line out of it.
-pub static SWARM_OF_POISONOUS_SNAKES_BITES: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
-    "swarm of poisonous snakes bites",
+pub static SWARM_OF_VENOMOUS_SNAKES_BITES: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "swarm of venomous snakes bites",
     &["spsb", "snake-swarm", "snakes"],
     AbilityScoreType::Dexterity,
     Dice::new(2, 6),
@@ -17980,23 +17980,6 @@ pub static VULTURE_BEAK: SimpleWeapon = SimpleWeapon::flat_melee(
 
 // ─── Quipper ────────────────────────────────────────────────────────
 
-/// Quipper Bite — DEX-based 1 piercing melee, flat. RAW: "Bite. Melee
-/// Weapon Attack: +5 to hit, reach 5 ft., one creature. Hit: 1 piercing
-/// damage."
-///
-/// One quipper is nothing. The stat block exists so that a river can
-/// contain forty of them, and the threat is `has_pack_tactics` plus
-/// Blood Frenzy on the template rather than anything on this line.
-pub static QUIPPER_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
-    "quipper bite",
-    &["qp-bite", "quipper-bite"],
-    AbilityScoreType::Dexterity,
-    Dice::new(1, 2),
-    DamageType::Piercing,
-);
-
-// ─── Giant Weasel ───────────────────────────────────────────────────
-
 /// Giant Weasel Bite — DEX-based 1d4+DEX piercing melee. RAW: "Bite.
 /// Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit:
 /// 5 (1d4 + 3) piercing damage." DEX-based off the weasel's 16, which
@@ -18816,7 +18799,7 @@ pub static SCORPION_STING: WeaponWithRider = WeaponWithRider::melee(
 /// Venomous Snake Bite — DEX-based 1d4+DEX piercing plus 1d6 poison.
 /// RAW: "Bite. Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2)
 /// Piercing damage plus 3 (1d6) Poison damage." The small sibling of
-/// `GIANT_POISONOUS_SNAKE_BITE`; same venom die, a quarter of the frame.
+/// `GIANT_VENOMOUS_SNAKE_BITE`; same venom die, a quarter of the frame.
 pub static VENOMOUS_SNAKE_BITE: WeaponWithRider = WeaponWithRider::melee(
     "venomous snake bite",
     &["vs-bite", "snake-bite"],

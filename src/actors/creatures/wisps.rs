@@ -16,7 +16,7 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*WISP_SHOCK);
     CreatureTemplate {
-        name: "Will-o-Wisp",
+        name: "Will-o'-Wisp",
         // 'w' (lowercase) — distinct from 'W' (Wolf) and 'R' (Wraith).
         glyph: 'w',
         ac: 19,

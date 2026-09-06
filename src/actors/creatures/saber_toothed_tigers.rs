@@ -19,7 +19,7 @@ pub static SABER_TOOTHED_TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     actions.push(&SABER_TIGER_CLAWS);
     actions.push(&*SABER_TIGER_MULTI);
     CreatureTemplate {
-        name: "Saber-toothed Tiger",
+        name: "Saber-Toothed Tiger",
         // 't' (lowercase) — distinct from 'T' (Tiger / Troll). Mnemonic:
         // smaller-cased tiger glyph for the upgraded-stat variant.
         glyph: 't',

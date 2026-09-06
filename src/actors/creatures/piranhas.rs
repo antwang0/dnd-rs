@@ -18,8 +18,16 @@ use std::sync::LazyLock;
 /// does rather than a second copy spelled differently.
 ///
 /// One piranha is nothing. The stat block exists to be fielded in
-/// numbers, and the swarm version (`SWARM_OF_QUIPPERS_TEMPLATE`'s
-/// nearest cousin) is what a river actually throws at a party.
+/// numbers, and `SWARM_OF_PIRANHAS_TEMPLATE` is what a river actually
+/// throws at a party.
+///
+/// This used to be two stat blocks. The 2014 printing called the same
+/// fish a **Quipper**, and the bestiary carried both — same AC, same
+/// CR, same ability array to the point, same Blood Frenzy, same swim,
+/// differing only in how the one hit point was spelled (`1d1` against
+/// RAW's `1d4 − 1`). Two templates for one creature is two things the
+/// encounter generator can roll and no way for a reader to tell which
+/// is canonical, so the quipper is gone and this is the survivor.
 ///
 /// **Water Breathing** collapses to flavor — water is terrain in this
 /// engine, not an atmosphere. The swim speed is the half with teeth.

@@ -3089,7 +3089,7 @@ pub struct CreatureTemplate {
     /// exists to carry.
     pub sunlight_frailty: Option<SunlightFrailty>,
     /// 5e **Swarm** (Swarm of Bats, Swarm of Rats, Swarm of Insects,
-    /// Swarm of Poisonous Snakes, Swarm of Quippers): this "creature" is
+    /// Swarm of Venomous Snakes, Swarm of Piranhas): this "creature" is
     /// a cloud of Tiny ones sharing one HP pool and one initiative slot.
     ///
     /// Most of the statblock's swarm identity is already expressible

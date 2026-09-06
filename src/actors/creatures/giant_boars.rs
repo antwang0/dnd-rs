@@ -43,7 +43,7 @@ pub static GIANT_BOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Giant Boar",
         // 'B' (uppercase) — shared with Bandit / Berserker / Brown Bear
-        // / Bugbear / Bullette cohort. The team color disambiguates on
+        // / Bugbear / Bulette cohort. The team color disambiguates on
         // the map; the giant boar's Large size also separates it
         // visually from the medium 'b' (regular Boar / Berserker).
         // Uppercase 'B' reads as "large bristled brute" at the small

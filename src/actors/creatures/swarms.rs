@@ -39,8 +39,8 @@ use crate::actions::action_template::Action;
 use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_POISONOUS_SNAKES_BITES,
-    SWARM_OF_QUIPPERS_BITES, SWARM_OF_RATS_BITES,
+    SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_VENOMOUS_SNAKES_BITES,
+    SWARM_OF_PIRANHAS_BITES, SWARM_OF_RATS_BITES,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -260,7 +260,7 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     )
 });
 
-/// Swarm of Quippers — CR 1 Medium swarm of Tiny beasts. RAW: AC 13, 28
+/// Swarm of Piranhas — CR 1 Medium swarm of Tiny beasts. RAW: AC 13, 28
 /// HP (8d8-8), speed 0 ft / swim 40 ft, darkvision 60 ft, resistant to
 /// bludgeoning / piercing / slashing, **Blood Frenzy**, Bites 14 (4d6)
 /// piercing.
@@ -269,20 +269,20 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// four. **Blood Frenzy** — "the swarm has advantage on melee attack
 /// rolls against any creature that doesn't have all its hit points" —
 /// rides the existing `BLOOD_FRENZY_TAG` that the Hunter Shark and
-/// Sahuagin already read at `compute_attack_mode`, so the quippers
+/// Sahuagin already read at `compute_attack_mode`, so the piranhas
 /// inherit the whole gate for one tag.
 ///
 /// The interaction with the swarm's own thinning is the thing to watch:
 /// its 4d6 halves as it dies while its accuracy *improves* as its
-/// target bleeds. A quipper swarm at 5 HP against a wounded fighter is
+/// target bleeds. A piranha swarm at 5 HP against a wounded fighter is
 /// still landing every bite, for a third of what it used to.
 ///
 /// Speed 40 for RAW's "0 ft, swim 40 ft" — the engine models one speed
 /// magnitude, so the swim number is the one that matters; a swarm of
 /// quippers on dry land is not an encounter.
-pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     swarm_template(
-        "Swarm of Quippers",
+        "Swarm of Piranhas",
         'ß',
         13,
         "8d8-8",
@@ -290,7 +290,7 @@ pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         [13, 16, 9, 1, 7, 2],
         HashSet::from([SpecialSense::Darkvision(60)]),
         1.0,
-        &SWARM_OF_QUIPPERS_BITES,
+        &SWARM_OF_PIRANHAS_BITES,
         true,
         // The one swarm of the five that lives in the water — RAW's
         // "Speed 0 ft., swim 40 ft.", the only entry on the ladder with
@@ -300,7 +300,7 @@ pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     )
 });
 
-/// Swarm of Poisonous Snakes — CR 2 Medium swarm of Tiny beasts. RAW:
+/// Swarm of Venomous Snakes — CR 2 Medium swarm of Tiny beasts. RAW:
 /// AC 14, 36 HP (8d8), speed 30 ft / swim 30 ft, blindsight 10 ft,
 /// resistant to bludgeoning / piercing / slashing, Bites 7 (2d6)
 /// piercing plus DC 10 CON save or 14 (4d6) poison, half on a success.
@@ -317,9 +317,9 @@ pub static SWARM_OF_QUIPPERS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// needs to land more raw damage on this swarm than on any other before
 /// its bite starts shrinking — and against b/p/s resistance that is 36
 /// points of sword.
-pub static SWARM_OF_POISONOUS_SNAKES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+pub static SWARM_OF_VENOMOUS_SNAKES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     swarm_template(
-        "Swarm of Poisonous Snakes",
+        "Swarm of Venomous Snakes",
         'ß',
         14,
         "8d8",
@@ -327,7 +327,7 @@ pub static SWARM_OF_POISONOUS_SNAKES_TEMPLATE: LazyLock<CreatureTemplate> = Lazy
         [8, 18, 11, 1, 10, 3],
         HashSet::from([SpecialSense::Blindsight(10)]),
         2.0,
-        &SWARM_OF_POISONOUS_SNAKES_BITES,
+        &SWARM_OF_VENOMOUS_SNAKES_BITES,
         true,
         HashSet::new(),
     )
@@ -340,8 +340,8 @@ pub fn all_swarm_templates() -> [&'static CreatureTemplate; 5] {
         &SWARM_OF_BATS_TEMPLATE,
         &SWARM_OF_RATS_TEMPLATE,
         &SWARM_OF_INSECTS_TEMPLATE,
-        &SWARM_OF_QUIPPERS_TEMPLATE,
-        &SWARM_OF_POISONOUS_SNAKES_TEMPLATE,
+        &SWARM_OF_PIRANHAS_TEMPLATE,
+        &SWARM_OF_VENOMOUS_SNAKES_TEMPLATE,
     ]
 }
 
@@ -387,7 +387,7 @@ mod tests {
     /// points." Both halves, on a swarm that has room for both.
     #[test]
     fn a_swarm_refuses_healing_and_temp_hp() {
-        let mut a = make(&SWARM_OF_POISONOUS_SNAKES_TEMPLATE);
+        let mut a = make(&SWARM_OF_VENOMOUS_SNAKES_TEMPLATE);
         a.take_damage(10);
         let wounded = a.hitpoints();
         assert!(wounded > 0, "the test needs a swarm that is hurt, not dead");
@@ -449,17 +449,17 @@ mod tests {
         }
     }
 
-    /// The quipper swarm is the only one with a trait beyond the shared
+    /// The piranha swarm is the only one with a trait beyond the shared
     /// four, and it reuses the existing shark / sahuagin tag rather
     /// than a swarm-specific one.
     #[test]
-    fn only_the_quipper_swarm_frenzies() {
+    fn only_the_piranha_swarm_frenzies() {
         for template in all_swarm_templates() {
             // Compared against the *template* name: an instance's
             // `name()` carries a disambiguating suffix ("Swarm of
-            // Quippers 0") that would make an equality check here
+            // Piranhas 0") that would make an equality check here
             // silently always-false.
-            let expected = template.name == "Swarm of Quippers";
+            let expected = template.name == "Swarm of Piranhas";
             assert_eq!(
                 make(template).has_passive_feature(BLOOD_FRENZY_TAG),
                 expected,

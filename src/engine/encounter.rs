@@ -31,7 +31,6 @@ use crate::actors::creatures::giant_weasels::GIANT_WEASEL_TEMPLATE;
 use crate::actors::creatures::homunculi::HOMUNCULUS_TEMPLATE;
 use crate::actors::creatures::jackals::JACKAL_TEMPLATE;
 use crate::actors::creatures::merfolk::MERFOLK_TEMPLATE;
-use crate::actors::creatures::quippers::QUIPPER_TEMPLATE;
 use crate::actors::creatures::ravens::RAVEN_TEMPLATE;
 use crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE;
 use crate::actors::creatures::rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE;
@@ -138,7 +137,7 @@ use crate::actors::creatures::erinyes::ERINYES_TEMPLATE;
 use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
 use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE;
-use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+use crate::actors::creatures::bulettes::BULETTE_TEMPLATE;
 use crate::actors::creatures::couatls::COUATL_TEMPLATE;
 use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::flameskulls::FLAMESKULL_TEMPLATE;
@@ -271,7 +270,7 @@ use crate::actors::creatures::needle_blights::NEEDLE_BLIGHT_TEMPLATE;
 use crate::actors::creatures::giant_boars::GIANT_BOAR_TEMPLATE;
 use crate::actors::creatures::giant_goats::GIANT_GOAT_TEMPLATE;
 use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
-use crate::actors::creatures::giant_poisonous_snakes::GIANT_POISONOUS_SNAKE_TEMPLATE;
+use crate::actors::creatures::giant_venomous_snakes::GIANT_VENOMOUS_SNAKE_TEMPLATE;
 use crate::actors::creatures::killer_whales::KILLER_WHALE_TEMPLATE;
 use crate::actors::creatures::crawling_claws::CRAWLING_CLAW_TEMPLATE;
 use crate::actors::creatures::riding_horses::RIDING_HORSE_TEMPLATE;
@@ -9605,7 +9604,7 @@ impl EncounterInstance {
             &FROST_GIANT_TEMPLATE,
             &EARTH_ELEMENTAL_TEMPLATE,
             &AIR_ELEMENTAL_TEMPLATE,
-            &BULLETTE_TEMPLATE,
+            &BULETTE_TEMPLATE,
             &FLAMESKULL_TEMPLATE,
             &SPECTATOR_TEMPLATE,
             &WRAITH_TEMPLATE,
@@ -10311,7 +10310,7 @@ impl EncounterInstance {
             //     (fly 60) frame with Darkvision 120. The nocturnal
             //     aerial scout sibling of the Giant Eagle / Hawk /
             //     Pteranodon cohort at the low-CR end.
-            //   - Giant Poisonous Snake (CR ¼ medium beast): DEX-based
+            //   - Giant Venomous Snake (CR ¼ medium beast): DEX-based
             //     1d4 bite with a DC 11 CON save-or-3d6-poison rider
             //     via `WeaponWithSaveDamage` at reach 10. The "coiled
             //     viper" sibling of the Constrictor Snake on the snake
@@ -10333,7 +10332,7 @@ impl EncounterInstance {
             &GIANT_BOAR_TEMPLATE,
             &GIANT_GOAT_TEMPLATE,
             &GIANT_OWL_TEMPLATE,
-            &GIANT_POISONOUS_SNAKE_TEMPLATE,
+            &GIANT_VENOMOUS_SNAKE_TEMPLATE,
             &KILLER_WHALE_TEMPLATE,
             &CRAWLING_CLAW_TEMPLATE,
             &RIDING_HORSE_TEMPLATE,
@@ -10600,7 +10599,6 @@ impl EncounterInstance {
             &JACKAL_TEMPLATE,
             &RAVEN_TEMPLATE,
             &VULTURE_TEMPLATE,
-            &QUIPPER_TEMPLATE,
             // The rest of SRD 5.2's animal appendix — the block the
             // roster had been carrying in pieces. Twenty-three stat
             // blocks, from the CR-0 shelf up to the CR-4 dinosaurs,

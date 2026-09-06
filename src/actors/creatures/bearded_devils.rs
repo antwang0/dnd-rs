@@ -60,7 +60,7 @@ pub static BEARDED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     CreatureTemplate {
         name: "Bearded Devil",
         // 'B' (uppercase) — distinct from 'b' (Bandit lowercase). Shared
-        // with Balor / Bone Devil / Bullette / Bullywug in the upper-
+        // with Balor / Bone Devil / Bulette / Bullywug in the upper-
         // case glyph pool — the bearded devil's CR-3 reach-polearm
         // silhouette stands apart from the CR-19 balor on the encounter
         // map (CR gap surfaces in the encounter generator's pool).

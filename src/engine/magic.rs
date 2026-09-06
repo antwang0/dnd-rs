@@ -552,8 +552,8 @@ mod tests {
             // between them, and enchanting it does not make it wider.
             "Swarm of Bats",
             "Swarm of Insects",
-            "Swarm of Quippers",
-            "Swarm of Poisonous Snakes",
+            "Swarm of Piranhas",
+            "Swarm of Venomous Snakes",
             // Wood. Enchanting the axe does not thin the trunk.
             "Treant",
             "Awakened Tree",

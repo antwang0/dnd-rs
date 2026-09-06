@@ -58,7 +58,7 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&WEREBEAR_CLAWS);
     CreatureTemplate {
         name: "Werebear",
-        // 'B' (uppercase) — distinct from 'b' (Bandit / Bullette /
+        // 'B' (uppercase) — distinct from 'b' (Bandit / Bulette /
         // Berserker / Banshee all share lowercase 'b'). 'B' for
         // "werebear" reads as the larger-statured bear-bodied
         // silhouette; reserves the capital glyph slot for the more

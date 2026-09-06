@@ -1,12 +1,12 @@
 use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GIANT_POISONOUS_SNAKE_BITE;
+use crate::actions::monster_attacks::GIANT_VENOMOUS_SNAKE_BITE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Giant Poisonous Snake — CR ¼ medium beast. The "ambush viper" tier
+/// Giant Venomous Snake — CR ¼ medium beast. The "ambush viper" tier
 /// of serpent: a fast medium frame with a venomous bite and
 /// Blindsight 10 + Darkvision 60 senses. Slots beside the Giant
 /// Centipede (CR ¼ small venom-glass-cannon) and the Giant Wolf
@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// snake family.
 ///
 /// Action lane:
-/// - **giant poisonous snake bite** — DEX-based 1d4+DEX piercing
+/// - **giant venomous snake bite** — DEX-based 1d4+DEX piercing
 ///   melee with a DC 11 CON save-or-3d6-poison rider via the shared
 ///   `WeaponWithSaveDamage` chassis. Same "one save gates both base
 ///   and rider damage" shape as the Giant Wolf Spider / Spider Bite /
@@ -40,11 +40,11 @@ use std::sync::LazyLock;
 /// collapsed to walking 30 since the engine doesn't track a swimming
 /// separately). Senses: Blindsight 10, Darkvision 60. Size Medium.
 /// CR ¼. XP: 50 per RAW.
-pub static GIANT_POISONOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+pub static GIANT_VENOMOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GIANT_POISONOUS_SNAKE_BITE);
+    actions.push(&GIANT_VENOMOUS_SNAKE_BITE);
     CreatureTemplate {
-        name: "Giant Poisonous Snake",
+        name: "Giant Venomous Snake",
         // 's' (lowercase) — small serpentine silhouette. Shared with
         // Sprite ('s'); the team color disambiguates on the map and
         // the beast / fey CR contexts rarely collide. Uppercase 'S'
@@ -86,7 +86,7 @@ mod tests {
 
     fn make() -> ActorInstance {
         ActorInstance::from_creature_template(
-            &GIANT_POISONOUS_SNAKE_TEMPLATE,
+            &GIANT_VENOMOUS_SNAKE_TEMPLATE,
             Coordinate::new(0, 0),
             1,
             &mut FastRandRoller::with_seed(0),
@@ -96,16 +96,16 @@ mod tests {
     }
 
     #[test]
-    fn giant_poisonous_snake_template_shape() {
+    fn giant_venomous_snake_template_shape() {
         let a = make();
         assert_eq!(a.cr(), 0.25);
         assert_eq!(a.size(), Size::Medium);
         assert_eq!(a.creature_type(), CreatureType::Beast);
-        assert!(a.find_action("giant poisonous snake bite").is_some());
+        assert!(a.find_action("giant venomous snake bite").is_some());
     }
 
     #[test]
-    fn giant_poisonous_snake_has_blindsight() {
+    fn giant_venomous_snake_has_blindsight() {
         // Pin the load-bearing sensory trait: Blindsight 10 lets the
         // snake ambush in pitch dark even at point-blank — vital for
         // the "coiled in a dungeon corner" reveal. A future template
