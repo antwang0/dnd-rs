@@ -18,8 +18,8 @@ pub static VETERAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'v' — distinct from existing 'V' (Vampire Spawn).
         glyph: 'v',
         ac: 17,
-        // 9d8+18 = 58 average per MM.
-        hitpoints: "9d8+18".parse().unwrap(),
+        // 10d8+20 = 65 average per SRD 5.2 (CR 3).
+        hitpoints: "10d8+20".parse().unwrap(),
         speed: 30.,
         strength: 16,
         dexterity: 13,

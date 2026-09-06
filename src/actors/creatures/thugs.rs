@@ -31,12 +31,12 @@ use std::sync::LazyLock;
 /// thugs locking down one target is the canonical Pack Tactics double-
 /// team — same chassis as the Wolf / Kobold pack lane.
 ///
-/// Defensive identity: AC 11 (leather armor, no shield), 32 HP
+/// Defensive identity: AC 12 (leather armor, no shield), 32 HP
 /// (5d8+10). Vanilla humanoid envelope — no resistances or condition
 /// immunities. The threat profile is Pack-Tactics-fueled multiattack
 /// at close range; isolated, a thug is just a bag of HP with a club.
 ///
-/// Stat shape: AC 11, ~32 HP (5d8+10), STR 15, DEX 11, CON 14, INT 10,
+/// Stat shape: AC 12, ~32 HP (5d8+10), STR 15, DEX 12, CON 14, INT 10,
 /// WIS 10, CHA 11. Speed 30. Languages: Common. Size Medium. CR ½.
 /// XP: 100 per RAW.
 pub static THUG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -51,13 +51,13 @@ pub static THUG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // on the map while still reading as a humanoid mook silhouette.
         // 'H' is otherwise untaken in the glyph map.
         glyph: 'H',
-        ac: 11,
-        // 5d8+10 ≈ 32 average per MM (CR ½).
+        ac: 12,
+        // 5d8+10 ≈ 32 average per SRD 5.2 (CR ½).
         hitpoints: "5d8+10".parse().unwrap(),
         speed: 30.,
         strength: 15,
         intelligence: 10,
-        dexterity: 11,
+        dexterity: 12,
         wisdom: 10,
         constitution: 14,
         charisma: 11,

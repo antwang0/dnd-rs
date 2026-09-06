@@ -1121,6 +1121,7 @@ mod tests {
         (&*chuuls::CHUUL_TEMPLATE, 16, "9d10+27", [19, 10, 16, 5, 11, 5], 30, 0, 4.0),
         (&*cloakers::CLOAKER_TEMPLATE, 14, "14d10+14", [17, 15, 12, 13, 14, 7], 10, 40, 8.0),
         (&*cockatrices::COCKATRICE_TEMPLATE, 11, "5d6+5", [6, 12, 12, 2, 13, 5], 20, 40, 0.5),
+        (&*cult_fanatics::CULT_FANATIC_TEMPLATE, 13, "8d8+8", [11, 14, 12, 10, 14, 13], 30, 0, 2.0),  // SRD 5.2: Cultist Fanatic
         (&*dire_wolves::DIRE_WOLF_TEMPLATE, 14, "3d10+6", [17, 15, 15, 3, 12, 7], 50, 0, 1.0),
         (&*doppelgangers::DOPPELGANGER_TEMPLATE, 14, "8d8+16", [11, 18, 14, 11, 12, 14], 30, 0, 3.0),
         (&*ettins::ETTIN_TEMPLATE, 12, "10d10+30", [21, 8, 17, 6, 10, 8], 40, 0, 4.0),
@@ -1165,6 +1166,7 @@ mod tests {
         (&*treants::TREANT_TEMPLATE, 16, "12d12+60", [23, 8, 21, 12, 16, 12], 30, 0, 9.0),
         (&*trolls::TROLL_TEMPLATE, 15, "9d10+45", [18, 13, 20, 7, 9, 7], 30, 0, 5.0),
         (&*vampire_spawns::VAMPIRE_SPAWN_TEMPLATE, 16, "12d8+36", [16, 16, 16, 11, 10, 12], 30, 0, 5.0),
+        (&*veterans::VETERAN_TEMPLATE, 17, "10d8+20", [16, 13, 14, 10, 11, 10], 30, 0, 3.0),  // SRD 5.2: Warrior Veteran
         (&*vrocks::VROCK_TEMPLATE, 15, "16d10+64", [17, 15, 18, 8, 13, 8], 40, 60, 6.0),
         (&*werewolves::WEREWOLF_TEMPLATE, 15, "11d8+22", [16, 14, 14, 10, 11, 10], 30, 0, 3.0),
         (&*wights::WIGHT_TEMPLATE, 14, "11d8+33", [15, 14, 16, 10, 13, 15], 30, 0, 3.0),
@@ -1265,6 +1267,8 @@ mod tests {
         (&*giant_octopuses::GIANT_OCTOPUS_TEMPLATE, 11, "7d10+7", [17, 13, 13, 5, 10, 4], 10, 0, 1.0),
         (&*plesiosauruses::PLESIOSAURUS_TEMPLATE, 13, "8d10+24", [18, 15, 16, 2, 12, 5], 20, 0, 2.0),
         (&*pteranodons::PTERANODON_TEMPLATE, 13, "3d8", [12, 15, 10, 2, 9, 5], 10, 60, 0.25),
+        (&*thugs::THUG_TEMPLATE, 12, "5d8+10", [15, 12, 14, 10, 10, 11], 30, 0, 0.5),  // SRD 5.2: Tough
+        (&*tribal_warriors::TRIBAL_WARRIOR_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),  // SRD 5.2: Warrior Infantry
         (&*scouts::SCOUT_TEMPLATE, 13, "3d8+3", [11, 14, 12, 11, 13, 11], 30, 0, 0.5),
         (&*giant_rats::GIANT_RAT_TEMPLATE, 13, "2d6", [7, 16, 11, 2, 10, 4], 30, 0, 0.125),
         (&*ghasts::GHAST_TEMPLATE, 13, "8d8", [16, 17, 10, 11, 10, 8], 30, 0, 2.0),
@@ -1315,6 +1319,7 @@ mod tests {
         (&*stone_golems::STONE_GOLEM_TEMPLATE, 18, "21d10+105", [22, 9, 20, 3, 11, 1], 30, 0, 10.0),
         (&*clay_golems::CLAY_GOLEM_TEMPLATE, 14, "13d10+52", [20, 9, 18, 3, 8, 1], 30, 0, 9.0),
         (&*tarrasques::TARRASQUE_TEMPLATE, 25, "34d20+340", [30, 11, 30, 3, 11, 11], 60, 0, 30.0),
+        (&*acolytes::ACOLYTE_TEMPLATE, 13, "2d8+2", [14, 10, 12, 10, 14, 11], 30, 0, 0.25),  // SRD 5.2: Priest Acolyte
         (&*cultists::CULTIST_TEMPLATE, 12, "2d8", [11, 12, 10, 10, 11, 10], 30, 0, 0.125),
         (&*nobles::NOBLE_TEMPLATE, 15, "2d8", [11, 12, 11, 12, 14, 16], 30, 0, 0.125),
         (&*spies::SPY_TEMPLATE, 12, "6d8", [10, 15, 10, 12, 14, 16], 30, 0, 1.0),

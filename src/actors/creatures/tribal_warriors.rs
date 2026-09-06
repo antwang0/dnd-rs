@@ -32,11 +32,11 @@ use std::sync::LazyLock;
 /// of tribal warriors closing on one target lands four advantage-rolled
 /// spear swings.
 ///
-/// Defensive identity: AC 12 (hide armor), 11 HP (2d8+2). Vanilla
+/// Defensive identity: AC 13 (hide armor), 9 HP (2d8). Vanilla
 /// humanoid envelope — no resistances or condition immunities. The
 /// warrior dies to a single solid hit; the threat lives in the swarm.
 ///
-/// Stat shape: AC 12, ~11 HP (2d8+2), STR 13, DEX 11, CON 12, INT 8,
+/// Stat shape: AC 13, ~9 HP (2d8), STR 13, DEX 11, CON 11, INT 8,
 /// WIS 11, CHA 8. Speed 30. Languages: one language (we pick Common —
 /// the engine doesn't track tribal-specific language pools). Size
 /// Medium. CR ⅛. XP: 25 per RAW.
@@ -50,15 +50,15 @@ pub static TRIBAL_WARRIOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // / Wraith). Lowercase reads as "low-CR humanoid mook" at the
         // small UI scale, mirroring 'b' (Berserker), 'd' (Dretch), etc.
         glyph: 'w',
-        ac: 12,
-        // 2d8+2 ≈ 11 average per MM (CR ⅛).
-        hitpoints: "2d8+2".parse().unwrap(),
+        ac: 13,
+        // 2d8 ≈ 9 average per SRD 5.2 (CR ⅛).
+        hitpoints: "2d8".parse().unwrap(),
         speed: 30.,
         strength: 13,
         intelligence: 8,
         dexterity: 11,
         wisdom: 11,
-        constitution: 12,
+        constitution: 11,
         charisma: 8,
         languages: HashSet::from([Language::Common]),
         cr: 0.125,

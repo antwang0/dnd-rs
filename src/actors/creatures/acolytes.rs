@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 /// - **sanctuary** — the ward, on an ally the party is about to finish.
 /// - **acolyte club** — what is left when the slots are gone.
 ///
-/// Stat shape per the SRD NPC appendix: AC 10, 9 HP (2d8), STR 10 / DEX
+/// Stat shape per the SRD NPC appendix: AC 13, 11 HP (2d8+2), STR 14 / DEX
 /// 10 / CON 10 / INT 10 / WIS 14 / CHA 11. Speed 30. Spellcasting is
 /// WIS-based, which is both RAW and the engine's single spell ability,
 /// so the acolyte is one of the few casters whose sheet needs no
@@ -45,13 +45,13 @@ pub static ACOLYTE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the Cultist that most often stands opposite it. 'C' is the
         // Cleric / Chimera / Chuul band.
         glyph: 'c',
-        ac: 10,
-        // 2d8 ≈ 9 average per the SRD NPC appendix (CR ¼).
-        hitpoints: "2d8".parse().unwrap(),
+        ac: 13,
+        // 2d8+2 ≈ 11 average per the SRD NPC appendix (CR ¼).
+        hitpoints: "2d8+2".parse().unwrap(),
         speed: 30.,
-        strength: 10,
+        strength: 14,
         dexterity: 10,
-        constitution: 10,
+        constitution: 12,
         intelligence: 10,
         wisdom: 14,
         charisma: 11,
