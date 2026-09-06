@@ -1300,27 +1300,7 @@ impl Action for Hide {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-        let Some(me) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        let my_team = me.team();
-        let my_loc = me.location();
-        let my_size = get_tiles_from_size(me.size());
-        // Hide is invalid while a hostile is footprint-adjacent — too
-        // close to slip out of sight.
-        let in_melee = encounter.actors.iter().any(|(id, other)| {
-            *id != caster_id
-                && other.team() != my_team
-                && other.is_combat_active()
-                && footprint_chebyshev(
-                    other.location(),
-                    get_tiles_from_size(other.size()),
-                    my_loc,
-                    my_size,
-                ) == 0
-        });
-        !in_melee
+        can_attempt_hide(encounter, caster_id)
     }
     fn side_effects(
         &self,
@@ -1330,49 +1310,98 @@ impl Action for Hide {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::engine::types::{AbilityScoreType, Skill};
-        // Find the highest passive Perception among active enemies, via
-        // `ActorInstance::passive_perception` (which folds in Perception
-        // skill proficiency where applicable).
-        let caster_team = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.team())
-            .unwrap_or(0);
-        let dc = encounter
-            .actors
-            .iter()
-            .filter(|(id, a)| {
-                **id != caster_id && a.team() != caster_team && a.is_combat_active()
-            })
-            .map(|(_, a)| a.passive_perception())
-            .max()
-            .unwrap_or(10);
-        // 5e Hide is a Dexterity (Stealth) *check* against the best
-        // passive Perception watching. It used to roll a Dexterity
-        // *save*, which is a different number on the same die: the save
-        // lane collects save proficiency, Aura of Protection, Bless, and
-        // the save-mode cohorts, and collects none of the Stealth
-        // proficiency the action is named after. A rogue who is
-        // proficient in Stealth got nothing for it — while `Search`, on
-        // the other side of the same contest, was already adding that
-        // very proficiency into the DC it compared against.
-        let roll = encounter.roll_ability_check(
-            caster_id,
-            AbilityScoreType::Dexterity,
-            Some(Skill::Stealth),
-        );
-        if roll < dc {
-            encounter.log(format!("  hide: stealth {} fails vs DC {}", roll, dc));
-            return Vec::new();
-        }
-        encounter.log("  hide: succeeds");
-        vec![Box::new(crate::engine::side_effects::ApplyCondition {
-            actor_id: caster_id,
-            condition: crate::conditions::Condition::Hidden,
-            timer: crate::conditions::ConditionTimer::Permanent,
-        })]
+        resolve_hide_attempt(encounter, caster_id)
     }
+}
+
+/// Can `caster_id` attempt to hide at all?
+///
+/// One gate for all three printings of the action. RAW's own version of
+/// this sentence is a paragraph about obscurement and cover; the
+/// engine's is the one clause of it a flat, fully-lit board can
+/// enforce — **not while something hostile is standing next to you.**
+/// You cannot slip out of sight of a creature that is already inside
+/// your reach, whatever you are wearing.
+///
+/// Shared because it was not. `Hide` carried this check and the two
+/// bonus-action printings — the Rogue's Cunning Hide and the Ranger's
+/// Vanish — carried none, so a rogue toe-to-toe with an ogre could
+/// vanish from it as a bonus action while the ogre's own player could
+/// not do it with a whole Action. The docstrings on those printings say
+/// they are "the same effect at the cheaper cost", and now they are.
+pub fn can_attempt_hide(encounter: &EncounterInstance, caster_id: usize) -> bool {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    let Some(me) = encounter.actors.get(&caster_id) else {
+        return false;
+    };
+    let my_team = me.team();
+    let my_loc = me.location();
+    let my_size = get_tiles_from_size(me.size());
+    !encounter.actors.iter().any(|(id, other)| {
+        *id != caster_id
+            && other.team() != my_team
+            && other.is_combat_active()
+            && footprint_chebyshev(
+                other.location(),
+                get_tiles_from_size(other.size()),
+                my_loc,
+                my_size,
+            ) == 0
+    })
+}
+
+/// Roll one Hide attempt and return what it installs — the `Hidden`
+/// condition on a pass, and nothing at all on a fail.
+///
+/// 5e Hide is a Dexterity (Stealth) *check* against the best passive
+/// Perception watching. It used to roll a Dexterity *save*, which is a
+/// different number on the same die: the save lane collects save
+/// proficiency, Aura of Protection, Bless, and the save-mode cohorts,
+/// and collects none of the Stealth proficiency the action is named
+/// after. A rogue who is proficient in Stealth got nothing for it —
+/// while `Search`, on the other side of the same contest, was already
+/// adding that very proficiency into the DC it compared against.
+///
+/// Shared by all three printings for the same reason `can_attempt_hide`
+/// is: the bonus-action ones used to install `Hidden` outright, with no
+/// roll and nothing to beat. A Stealth check the cheap printing never
+/// makes is not a cheaper Hide, it is a better one, and the difference
+/// was invisible because the two lived in different files.
+pub fn resolve_hide_attempt(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::engine::types::{AbilityScoreType, Skill};
+    // The highest passive Perception among active enemies, via
+    // `ActorInstance::passive_perception` (which folds in Perception
+    // skill proficiency where applicable).
+    let caster_team = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.team())
+        .unwrap_or(0);
+    let dc = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| **id != caster_id && a.team() != caster_team && a.is_combat_active())
+        .map(|(_, a)| a.passive_perception())
+        .max()
+        .unwrap_or(10);
+    let roll = encounter.roll_ability_check(
+        caster_id,
+        AbilityScoreType::Dexterity,
+        Some(Skill::Stealth),
+    );
+    if roll < dc {
+        encounter.log(format!("  hide: stealth {} fails vs DC {}", roll, dc));
+        return Vec::new();
+    }
+    encounter.log("  hide: succeeds");
+    vec![Box::new(crate::engine::side_effects::ApplyCondition {
+        actor_id: caster_id,
+        condition: crate::conditions::Condition::Hidden,
+        timer: crate::conditions::ConditionTimer::Permanent,
+    })]
 }
 
 pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});

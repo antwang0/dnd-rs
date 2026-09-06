@@ -1615,6 +1615,29 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 8a'. The bonus-action Hide lane — the Rogue's Cunning Hide,
+        //      the Ranger's Vanish, and the goblins' and big cats'
+        //      Nimble Escape. See `try_bonus_action_hide` for why the
+        //      Action-priced printing is deliberately not on the list.
+        //
+        //      Dead last among the things that spend a bonus action,
+        //      and that placement is the whole design. `Hidden` lasts
+        //      until its holder attacks, so a hide bought *after* this
+        //      turn's swing pays out on the next one — which means it
+        //      costs nothing that any rung above it wanted. Put higher,
+        //      it would buy advantage on this turn's shot and take the
+        //      Soulknife's second blade to do it, and a 1d4 psychic
+        //      blade in the hand beats advantage on a shot already
+        //      fired.
+        //
+        //      What it produces is the archer's own footwork: shoot,
+        //      then drop out of sight, and open the next round with
+        //      advantage against a target that cannot see where it is
+        //      coming from.
+        if let Some(aei) = try_bonus_action_hide(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8b. We have an Action but no offensive option — Dodge is strictly
         //    better than Skip (imposes disadvantage on incoming attacks).
         if let Some(aei) = try_dodge(encounter, actor_id) {
@@ -1767,6 +1790,62 @@ fn try_cheapest_printing(
     names
         .iter()
         .find_map(|name| try_self_action(encounter, actor_id, name))
+}
+
+/// Slip out of sight with a **bonus action**, when the actor has a
+/// printing of Hide that costs one and something worth hiding from.
+///
+/// The whole rung is about which printing is on the sheet. Hide costs
+/// an Action for nearly everybody, and paying an Action to gain
+/// advantage on the one attack you then cannot make is a losing trade —
+/// which is why the Action-priced "hide" is deliberately *not* on this
+/// list and the AI has gone this long without a hiding lane at all. For
+/// the chassis that carry a bonus-action printing it is nearly free:
+/// `Hidden` lasts until its holder attacks, so a hide bought at the end
+/// of a turn opens the next one with advantage and costs nothing the
+/// turn it was bought in. That is why the rung sits below every other
+/// bonus-action lane — see its placement in the ladder.
+///
+/// Three gates, and the shape of each is what keeps the rung quiet:
+///
+///   - **Already hidden.** The condition survives until the holder
+///     attacks, so a second Hide would spend a bonus action to install
+///     something already installed.
+///   - **Somebody to hide from.** `Hidden`'s whole value is the
+///     advantage it hands the next swing, so a board with nothing
+///     hostile on it is a board where the bonus action is better spent
+///     on anything else — including nothing.
+///   - **The action's own validator**, which `try_self_action` runs.
+///     That is where the melee clause lives: you cannot slip out of
+///     sight of something standing next to you, which is exactly the
+///     case a melee chassis is in every round it matters. So this rung
+///     fires for the archers and the knife-throwers and quietly
+///     declines for everybody in contact, without needing to know which
+///     is which. The Stealth check itself is the action's too — the
+///     hide can simply fail, and a failed hide still costs the bonus
+///     action, which is RAW.
+fn try_bonus_action_hide(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Hidden) {
+        return None;
+    }
+    if !encounter
+        .actors
+        .iter()
+        .any(|(id, other)| *id != actor_id && other.team() != actor.team() && other.is_combat_active())
+    {
+        return None;
+    }
+    // Cheapest-printing order, with the Action-priced "hide" absent by
+    // design — see the docstring.
+    try_cheapest_printing(
+        encounter,
+        actor_id,
+        &["cunning hide", "nimble hide", "vanish"],
+    )
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -16001,6 +16080,77 @@ mod tests {
         assert!(
             try_radiance_of_the_dawn(&e, cleric).is_some(),
             "two is what the Channel Divinity is for"
+        );
+    }
+
+    /// The bonus-action Hide lane fires, and only for the chassis that
+    /// can pay for it that way.
+    ///
+    /// Two halves. A rogue standing at bow range with its bonus action
+    /// unspent ducks out of sight; a fighter on the same tile, whose
+    /// only printing of Hide costs the whole Action, does not — which
+    /// is the point of the lane rather than an omission from it, since
+    /// buying advantage on a shot by giving up the shot is a losing
+    /// trade.
+    #[test]
+    fn the_archer_ducks_and_the_knight_does_not() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let mut e = empty_arena();
+        // Far enough away that nothing is in contact — the melee clause
+        // on the action's own validator is a separate rule and has its
+        // own test below.
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(3, 4), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 6), 0, 1)
+            .unwrap();
+        let picked = try_bonus_action_hide(&e, rogue).expect("a rogue can duck for free");
+        assert_eq!(picked.action().name(), "cunning hide");
+        assert!(
+            try_bonus_action_hide(&e, fighter).is_none(),
+            "a fighter's only Hide costs the Action it wants to attack with"
+        );
+    }
+
+    /// Nobody hides from something already standing next to them, and
+    /// nobody hides twice.
+    ///
+    /// The first is the action's own validator — the melee clause every
+    /// printing of Hide now shares — and the second is this rung's, so
+    /// a rogue that is already unseen spends its bonus action on
+    /// something else.
+    #[test]
+    fn a_rogue_in_contact_or_already_unseen_does_not_bother_hiding() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = empty_arena();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(3, 4), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+            .unwrap();
+        assert!(try_bonus_action_hide(&e, rogue).is_some());
+
+        // Already unseen: nothing to buy.
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+        assert!(try_bonus_action_hide(&e, rogue).is_none());
+        e.actors.get_mut(&rogue).unwrap().remove_condition(Condition::Hidden);
+
+        // In contact: the action itself refuses.
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 4), 1, 1)
+            .unwrap();
+        assert!(
+            try_bonus_action_hide(&e, rogue).is_none(),
+            "you cannot slip out of sight of something inside your reach"
         );
     }
 

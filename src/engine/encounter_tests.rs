@@ -83821,3 +83821,91 @@ fn a_creature_without_the_trait_still_falls_over() {
         "and nothing should have offered it one"
     );
 }
+
+/// All three printings of Hide are the same effect at three prices, and
+/// now they are.
+///
+/// The Action-priced `Hide` has always rolled a Dexterity (Stealth)
+/// check against the best passive Perception watching, and refused
+/// outright while something hostile stood inside the hider's reach. The
+/// two bonus-action printings — the Rogue's Cunning Hide and the
+/// Ranger's Vanish — did neither: they installed `Hidden` outright, from
+/// any position, with nothing to beat. Their own docstrings called them
+/// "the same effect at the cheaper cost", which made the difference
+/// invisible; it lived in two files that never mention each other.
+#[test]
+fn the_cheap_printings_of_hide_answer_to_the_same_rules_as_the_expensive_one() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::CUNNING_HIDE;
+    use crate::actions::default_actions::HIDE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 4), 1, 0)
+        .unwrap();
+
+    // Across the room, both printings are legal.
+    for action in [&*HIDE as &dyn Action, &*CUNNING_HIDE as &dyn Action] {
+        assert!(
+            action.custom_validate_input(&e, rogue, None, None, None),
+            "{} should be available at range",
+            action.name()
+        );
+    }
+
+    // Toe to toe with the ogre, neither is.
+    e.relocate_actor(ogre, Coordinate::new(5, 4), false).ok();
+    for action in [&*HIDE as &dyn Action, &*CUNNING_HIDE as &dyn Action] {
+        assert!(
+            !action.custom_validate_input(&e, rogue, None, None, None),
+            "{} should refuse with something inside the rogue's reach",
+            action.name()
+        );
+    }
+}
+
+/// And the cheap printing rolls the same die: a Stealth check it can
+/// fail, against the same passive Perception.
+///
+/// Swept across seeds because the roll is the assertion — what is
+/// pinned is that both outcomes occur, which is only true of something
+/// that rolls. The old bonus-action payload installed `Hidden` every
+/// single time.
+#[test]
+fn a_bonus_action_hide_can_fail_its_stealth_check() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::CUNNING_HIDE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
+
+    let mut hid = 0;
+    let mut spotted = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // A Scout is the roster's sharpest ordinary pair of eyes, which
+        // is what makes the contest close enough to go both ways.
+        e.instantiate_creature(&SCOUT_TEMPLATE, Coordinate::new(14, 4), 1, 0)
+            .unwrap();
+        for ef in CUNNING_HIDE.side_effects(&mut e, rogue, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&rogue].has_condition(Condition::Hidden) {
+            hid += 1;
+        } else {
+            spotted += 1;
+        }
+    }
+    assert!(hid > 0, "the rogue never once got out of sight");
+    assert!(
+        spotted > 0,
+        "the rogue never once failed — the cheap printing is not rolling"
+    );
+}

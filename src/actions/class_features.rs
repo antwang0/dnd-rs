@@ -1316,9 +1316,16 @@ impl Action for CunningDisengage {
 pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| CunningDisengage {});
 
 /// Shared side-effects payload for any bonus-action Hide feature —
-/// installs the `Hidden` condition on the caster with a Permanent
-/// timer (cleared on the caster's next attack via
-/// `clear_attack_advantage_riders`). Sibling to Cunning Hide (Rogue
+/// rolls one Dexterity (Stealth) check against the best passive
+/// Perception watching and, on a pass, installs the `Hidden` condition
+/// on the caster with a Permanent timer (cleared on the caster's next
+/// attack via `clear_attack_advantage_riders`).
+///
+/// It used to install the condition outright, with no roll and nothing
+/// to beat, while the Action-priced `Hide` rolled the check. That made
+/// the cheap printing not a cheaper Hide but a better one, and the
+/// difference was invisible because the two lived in different files.
+/// Both go through `default_actions::resolve_hide_attempt` now. Sibling to Cunning Hide (Rogue
 /// Cunning Action) and Vanish (Ranger lv14) — both classes get a
 /// "bonus-action Hide" pick that RAW-agnostically drops the same
 /// one-shot attack-advantage rider on the holder. Extracted so a new
@@ -1326,12 +1333,11 @@ pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| Cunn
 /// Shadow Monk pick) lands as a one-line action `side_effects`
 /// delegating here rather than another hand-copied `ApplyCondition`
 /// literal.
-pub fn bonus_action_hide_effects(caster_id: usize) -> Vec<Box<dyn ApplicableSideEffect>> {
-    vec![Box::new(ApplyCondition {
-        actor_id: caster_id,
-        condition: Condition::Hidden,
-        timer: ConditionTimer::Permanent,
-    })]
+pub fn bonus_action_hide_effects(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    crate::actions::default_actions::resolve_hide_attempt(encounter, caster_id)
 }
 
 /// Rogue Cunning Hide — bonus-action Hide. Same condition as the regular
@@ -1368,9 +1374,20 @@ impl Action for CunningHide {
         bonus_action_only()
     }
 
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
+    }
+
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
@@ -1382,7 +1399,7 @@ impl Action for CunningHide {
         // `bonus_action_hide_effects` helper so any future bonus-
         // action Hide feature (Vanish, Skulker feat, ...) lands as a
         // one-line delegation.
-        bonus_action_hide_effects(caster_id)
+        bonus_action_hide_effects(encounter, caster_id)
     }
 }
 
@@ -1489,15 +1506,26 @@ impl Action for NimbleHide {
         bonus_action_only()
     }
 
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
+    }
+
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        bonus_action_hide_effects(caster_id)
+        bonus_action_hide_effects(encounter, caster_id)
     }
 }
 
@@ -1565,18 +1593,21 @@ impl Action for Vanish {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Gate on the ranger having the VANISH_TAG passive — the
-        // action only fires for a template that ships the tag. Actors
-        // without the tag never see the action's cost / effect surface.
+        // Two gates. The ranger has to have the VANISH_TAG passive —
+        // the action only fires for a template that ships it, so actors
+        // without the tag never see the cost or the effect surface —
+        // and the ranger has to be somewhere it is possible to hide,
+        // which is the same clause every other printing of Hide reads.
         encounter
             .actors
             .get(&caster_id)
             .is_some_and(|a| a.has_passive_feature(VANISH_TAG))
+            && crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
     }
 
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
@@ -1584,8 +1615,8 @@ impl Action for Vanish {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         // Routed through the shared `bonus_action_hide_effects` helper
         // so any tweak to the Hide install lands once across every
-        // bonus-action-Hide caller (Cunning Hide, Vanish, ...).
-        bonus_action_hide_effects(caster_id)
+        // bonus-action-Hide caller (Cunning Hide, Nimble Hide, ...).
+        bonus_action_hide_effects(encounter, caster_id)
     }
 }
 
