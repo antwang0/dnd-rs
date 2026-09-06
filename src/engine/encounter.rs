@@ -1792,6 +1792,37 @@ struct DamageInterposer {
     label: &'static str,
 }
 
+/// The walker-side half of "is this tile bad ground" — the facts about
+/// a particular creature that decide whether a tile it could stand on
+/// is one it should.
+///
+/// A struct rather than a pair of `bool` parameters because the
+/// pathfinder resolves them together, once per search, and passes them
+/// through two call layers to reach `tile_is_bad_ground`. Two bare
+/// bools at that depth are two chances to swap them, and the compiler
+/// would not notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WalkerAversions {
+    /// This walker has a spell on its list, so an Antimagic Field is
+    /// worse for it than a web — it does not take damage there, it
+    /// simply loses its turn.
+    casts: bool,
+    /// This walker has run out of breath and has no gills, so every
+    /// round it spends in the water costs it a rung of the exhaustion
+    /// ladder. See `engine::breath`.
+    drowns: bool,
+}
+
+impl WalkerAversions {
+    /// The walker who minds nothing — what the pathfinder's second,
+    /// unrestricted pass carries so that pass has no per-tile checks to
+    /// make at all.
+    const NONE: WalkerAversions = WalkerAversions {
+        casts: false,
+        drowns: false,
+    };
+}
+
 pub struct EncounterInstance {
     /// Non-zero while a damage instance is being carried by somebody
     /// other than the creature it was aimed at — see
@@ -9043,20 +9074,54 @@ impl EncounterInstance {
         self.step_toward_actor_inner(actor_id, target_id, false)
     }
 
-    /// True if any persistent area on the board is worth `actor_id`
-    /// walking around. The cheap board-level pre-check that lets the
-    /// pathfinder skip its first pass entirely on the common board.
+    /// True if any tile on the board is worth `actor_id` walking
+    /// around. The cheap board-level pre-check that lets the pathfinder
+    /// skip its first pass entirely on the common board.
+    ///
+    /// Ordered cheapest-first and short-circuiting, because this runs
+    /// once per AI move decision on every board including the empty
+    /// ones. The zone scan is a walk of a list that is usually empty;
+    /// the water scan behind it is a walk of the whole terrain grid, so
+    /// it is gated on the walker actually being in trouble — which is
+    /// almost never, and never at all on a board with no lake.
     fn has_bad_ground_for(&self, actor_id: usize) -> bool {
-        self.zones.iter().any(|z| {
-            z.effect.deters_walkers() || (z.effect.suppresses_magic && self.actor_casts_spells(actor_id))
-        })
+        let aversions = self.aversions_of(actor_id);
+        self.zones
+            .iter()
+            .any(|z| z.effect.deters_walkers() || (z.effect.suppresses_magic && aversions.casts))
+            || (aversions.drowns && self.has_water())
     }
 
-    /// Is this tile bad ground to stand on, for a walker who casts if
-    /// and only if `casts`?
+    /// Everything about `actor_id` that makes a tile bad ground for it
+    /// and would otherwise have to be re-derived per candidate tile.
     ///
-    /// Two different senses of bad, and the second is why the walker's
-    /// nature is a parameter rather than something the tile knows:
+    /// Resolved once per path by `step_toward_actor_inner`, because
+    /// neither answer can change while a single search runs and both
+    /// are more than a field read: one is a scan of an action list, the
+    /// other a scan of a cohort.
+    fn aversions_of(&self, actor_id: usize) -> WalkerAversions {
+        WalkerAversions {
+            casts: self.actor_casts_spells(actor_id),
+            // Out of breath *and* no gills. Deliberately not "cannot
+            // breathe water": a creature with its lungs full has ten
+            // rounds or more of slack and should wade through a pond
+            // like anybody else — 5e charges nothing for that, and an
+            // AI that treated every puddle as a hazard would path
+            // around water for the whole game to avoid a cost it was
+            // never going to pay. The tile only becomes bad ground at
+            // the moment the next round in it starts costing rungs.
+            drowns: self.actors.get(&actor_id).is_some_and(|a| {
+                a.breath_rounds() == 0 && !a.breathes_underwater()
+            }),
+        }
+    }
+
+    /// Is this tile bad ground to stand on, for a walker with these
+    /// aversions?
+    ///
+    /// Three different senses of bad, and the last two are why the
+    /// walker's nature is a parameter rather than something the tile
+    /// knows:
     ///
     ///   - it can hurt anybody who stands there (`tile_is_hazardous`);
     ///   - it is an Antimagic Field and the walker casts. Nothing lands
@@ -9064,12 +9129,24 @@ impl EncounterInstance {
     ///     turn, which for a wizard is worse than a web. For everybody
     ///     else the same tile is open ground, and telling a barbarian
     ///     to walk around it would be strictly worse pathing.
+    ///   - it is water and the walker has run out of breath in it. Same
+    ///     shape as the field: the tile is perfectly good ground for
+    ///     the shark chasing them across it.
     ///
-    /// `casts` is passed in rather than looked up because the caller is
-    /// a per-tile inner loop and the answer is a scan of an action
-    /// list — see `step_toward_actor_inner`, which reads it once.
-    fn tile_is_bad_ground(&self, coord: Coordinate, casts: bool) -> bool {
-        self.tile_is_hazardous(coord) || (casts && self.tile_suppresses_magic(coord))
+    /// The water clause reads the anchor tile rather than asking
+    /// `is_immersed` about the whole footprint, which is stricter than
+    /// the rule it serves — a Medium creature with one corner on the
+    /// bank is not suffocating. Stricter is the right direction here:
+    /// the question is where to *walk*, and a creature that has already
+    /// run out of air has no business picking its way along the
+    /// shallows counting which corner is dry.
+    fn tile_is_bad_ground(&self, coord: Coordinate, aversions: WalkerAversions) -> bool {
+        self.tile_is_hazardous(coord)
+            || (aversions.casts && self.tile_suppresses_magic(coord))
+            || (aversions.drowns
+                && self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type.is_water()))
     }
 
     /// True if `actor_id` has anything on its action list that is a
@@ -9154,9 +9231,13 @@ impl EncounterInstance {
         let t_size = get_tiles_from_size(target.size());
 
         // Read once for the whole walk rather than per candidate tile:
-        // whether the walker casts does not change as the BFS spreads,
-        // and the answer is a scan of its action list.
-        let casts = avoid_hazards && self.actor_casts_spells(actor_id);
+        // nothing about the walker changes as the BFS spreads, and both
+        // answers cost more than a field read. See `aversions_of`.
+        let aversions = if avoid_hazards {
+            self.aversions_of(actor_id)
+        } else {
+            WalkerAversions::NONE
+        };
 
         let in_melee =
             |c: Coordinate| -> bool { footprint_chebyshev(c, my_size, t_loc, t_size) <= 1 };
@@ -9186,7 +9267,7 @@ impl EncounterInstance {
                 if !self.can_move_to(actor_id, next) {
                     continue;
                 }
-                if avoid_hazards && self.tile_is_bad_ground(next, casts) {
+                if avoid_hazards && self.tile_is_bad_ground(next, aversions) {
                     continue;
                 }
                 parent.insert(next, coord);

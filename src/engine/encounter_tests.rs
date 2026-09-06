@@ -83523,3 +83523,123 @@ fn being_inside_a_gelatinous_cube_is_not_only_inconvenient() {
         "there is no air inside a cube"
     );
 }
+
+/// A rest gives the breath back, and gives back only what the water
+/// took.
+///
+/// The round-end tick normally pays this the moment a creature
+/// surfaces, so a rest would seem to have nothing to do. It has
+/// something to do because a fight can end on the round a creature is
+/// still under: the encounter stops, the tick never runs again, and the
+/// party carries its ledger into the next fight. Without a rest that
+/// settles it, the first round-end of the *next* encounter would hand
+/// back rungs that a long rest had already paid for — the water
+/// refunding somebody else's exhaustion.
+#[test]
+fn a_rest_settles_what_the_water_is_owed_before_the_rest_takes_its_own() {
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    e.actors.get_mut(&swimmer).unwrap().gain_exhaustion(1);
+    let capacity = e.actors[&swimmer].hold_breath_capacity();
+    pass_rounds(&mut e, capacity + 2);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 3);
+    assert_eq!(e.actors[&swimmer].suffocation_exhaustion(), 2);
+
+    // The fight ends here, with the fighter still face-down in the
+    // pool — so nothing else will ever tick the clock.
+    e.actors.get_mut(&swimmer).unwrap().long_rest();
+    assert_eq!(
+        e.actors[&swimmer].suffocation_exhaustion(),
+        0,
+        "eight hours of sleep is eight hours of breathing"
+    );
+    assert_eq!(
+        e.actors[&swimmer].exhaustion_level(),
+        0,
+        "the water gives back its two and the rest takes the last one"
+    );
+    // And the ledger is settled rather than merely quiet: another
+    // round in the water must not hand back a third time.
+    pass_rounds(&mut e, 1);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 0);
+}
+
+/// A creature that has run out of breath treats water as bad ground
+/// and takes the long way round; one with air in its lungs wades
+/// straight through.
+///
+/// The threshold matters as much as the behaviour. A fighter with a
+/// full chest has ten rounds of slack and should cross a pond like
+/// anything else — 5e charges nothing for it, and an AI that routed
+/// around every puddle would be paying a cost it was never going to
+/// owe. The tile becomes bad ground at exactly the moment the next
+/// round in it starts costing rungs, and not a round earlier.
+///
+/// Measured by walking the creature rather than by inspecting one
+/// step, because the first step out of a doorway is the same either
+/// way — it is the middle of the route that differs.
+#[test]
+fn a_creature_out_of_breath_walks_around_the_pool_it_would_have_waded() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::terrain::TerrainType;
+
+    /// Walk `mover` toward `target` a step at a time, reporting whether
+    /// the route ever put it in the water. Bounded so a walker with no
+    /// route cannot spin.
+    fn route_gets_wet(e: &mut EncounterInstance, mover: usize, target: usize) -> bool {
+        let start = e.actors[&mover].location();
+        let mut wet = false;
+        for _ in 0..60 {
+            let Some(step) = e.step_toward_actor(mover, target) else {
+                break;
+            };
+            let _ = e.relocate_actor(mover, step, false);
+            if e.terrain_at(step)
+                .is_some_and(|t| t.terrain_type.is_water())
+            {
+                wet = true;
+            }
+        }
+        let _ = e.relocate_actor(mover, start, false);
+        wet
+    }
+
+    // A pond straddling the straight line between the two of them, with
+    // dry ground above and below it. Both routes exist; one is shorter.
+    let mut e = ei_with_terrain(24, 24, &[]);
+    for x in 8..=13isize {
+        for y in 6..=15isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let walker = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 10), 0, 1)
+        .unwrap();
+    let quarry = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 10), 1, 1)
+        .unwrap();
+
+    assert!(
+        route_gets_wet(&mut e, walker, quarry),
+        "a fighter with air in its lungs takes the short way, through the pond"
+    );
+
+    // Spend the clock. Nothing else about the board changes.
+    while e.actors[&walker].breath_rounds() > 0 {
+        e.actors.get_mut(&walker).unwrap().spend_breath(false);
+    }
+    assert!(
+        !route_gets_wet(&mut e, walker, quarry),
+        "out of breath, it goes around"
+    );
+
+    // Gills put it back: the tile is only bad ground for a creature the
+    // water is actually costing something.
+    e.actors
+        .get_mut(&walker)
+        .unwrap()
+        .grant_feature_for_test(crate::actions::class_features::UNDERWATER_BREATHING_TAG);
+    assert!(
+        route_gets_wet(&mut e, walker, quarry),
+        "a creature that breathes water has no reason to walk around it"
+    );
+}

@@ -6455,6 +6455,24 @@ impl ActorInstance {
     /// concentration and any temp HP. 5e long rest semantics.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
+        // A creature that has slept for eight hours has been breathing
+        // for eight hours, so RAW's "when a creature can breathe again,
+        // it removes all levels of Exhaustion it gained from
+        // suffocating" has certainly fired by now.
+        //
+        // Ahead of the rest's own rung below, and the order is the
+        // rule: the water gives its levels back the moment the creature
+        // surfaces, which is long before the rest ends, so the rest's
+        // −1 applies to whatever is left after that rather than
+        // competing with it.
+        //
+        // Needed here at all — rather than left to the round-end tick
+        // that normally pays it — because a fight can end on the round
+        // a creature is still under, and a party persists between
+        // encounters. Without this the ledger would survive the rest
+        // and hand back somebody else's exhaustion on the first
+        // round-end of the next fight.
+        self.refill_breath();
         // 5e: "finishing a long rest reduces a creature's exhaustion
         // level by 1." One rung, not the whole ladder — a creature that
         // marched itself to tier 4 wakes up at tier 3, and the halved
@@ -6541,6 +6559,10 @@ impl ActorInstance {
         if !matches!(self.hp_state, HpState::Active) {
             return;
         }
+        // An hour of sitting down is an hour of breathing. Same clause
+        // and same reason as the long rest's — see there — minus the
+        // exhaustion rung, which RAW does not grant for a short rest.
+        self.refill_breath();
         let con_mod = modifier_from_score(self.constitution);
         let dice_count = (self.level / 2).max(1);
         let roll = roller.roll(&Dice::new(dice_count, 8)) as i32;
