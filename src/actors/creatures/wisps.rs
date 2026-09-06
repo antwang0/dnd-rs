@@ -58,6 +58,11 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // immunity in line with the rest of our undead pool — the
         // engine's command/charm interactions are tuned around that.
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Lightning, Poison; Exhaustion, Grappled,
+            // Paralyzed, Petrified, Poisoned, Prone, Restrained,
+            // Unconscious". The docstring above already listed exhaustion
+            // among the wisp's immunities; the set did not carry it.
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Grappled,
             Condition::Restrained,

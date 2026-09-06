@@ -44,6 +44,10 @@ pub static SHADOW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Radiant, DamageModifier::Vulnerability),
         ]),
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Necrotic, Poison; Exhaustion, Frightened,
+            // Grappled, Paralyzed, Petrified, Poisoned, Prone,
+            // Restrained, Unconscious".
+            Condition::Exhausted,
             Condition::Frightened,
             Condition::Grappled,
             Condition::Paralyzed,

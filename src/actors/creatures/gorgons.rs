@@ -53,7 +53,12 @@ pub static GORGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // themselves (their own breath can't stone-lock them — a
         // tactical safety so a friendly-fire breath doesn't trap two
         // gorgons in adjacent tiles).
-        condition_immunities: HashSet::from([Condition::Petrified]),
+        condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Exhaustion, Petrified" — the gorgon is iron-plated
+            // clockwork under the hide, and RAW files it as a Construct.
+            Condition::Exhausted,
+            Condition::Petrified,
+        ]),
         // Petrifying breath gates on a d6 of 5-6 at the start of the
         // gorgon's turn — shared `"breath_weapon"` pool with the dragons.
         recharge_abilities: vec![("breath_weapon", 5)],

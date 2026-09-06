@@ -48,6 +48,8 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         proficient_saves: HashSet::from([AbilityScoreType::Constitution]),
         // Standard undead condition immunities.
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned".
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,

@@ -67,9 +67,16 @@ pub fn construct_damage_immunities() -> HashMap<DamageType, DamageModifier> {
 /// `Prone` and `Grappled`, which are positional rather than
 /// physiological, and which RAW's "all conditions" would cover but
 /// which read as bugs when a Gelatinous Cube cannot engulf a turret.
+///
+/// `Exhausted` belongs on the physiological side of that split and was
+/// the one member of it missing. Every Construct in SRD 5.2 but the
+/// Homunculus prints Exhaustion on its Immunities row, and unlike the
+/// rest of this list it is not flavour: `sickening radiance` installs
+/// it, six rungs of it kill, and a turret has no stamina to lose.
 pub static CONSTRUCT_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> = LazyLock::new(|| {
     HashSet::from([
         Condition::Charmed,
+        Condition::Exhausted,
         Condition::Frightened,
         Condition::Poisoned,
         Condition::Asleep,

@@ -83,7 +83,12 @@ pub static GHAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // immunity. Distinct from the ghoul (which doesn't carry
         // Poisoned immunity in some MM printings — we standardize on
         // both for the undead family here).
-        condition_immunities: HashSet::from([Condition::Charmed, Condition::Poisoned]),
+        condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Charmed, Exhaustion, Poisoned".
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Poisoned,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

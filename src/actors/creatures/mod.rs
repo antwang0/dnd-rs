@@ -672,7 +672,128 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
 
 #[cfg(test)]
 mod tests {
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::conditions::Condition;
     use crate::engine::types::Skill;
+
+    /// SRD 5.2's Exhaustion immunity, stat block by stat block, for every
+    /// carrier of it this bestiary ships plus the near misses that share a
+    /// creature type with one.
+    ///
+    /// A table rather than a predicate because there is no predicate. The
+    /// cohort looks type-shaped at first glance — every Undead, every
+    /// Ooze, every Construct, every Elemental — and it is not: the
+    /// Homunculus is a Construct that tires, the genies and the Azer and
+    /// the Magmin and the Xorn are Elementals that tire, the Vampire is an
+    /// Undead that tires, and the Shambling Mound is the only Plant in the
+    /// book that does not.
+    ///
+    /// It is worth pinning because the immunity is *load-bearing* and its
+    /// absence is silent. `sickening radiance` installs exhaustion,
+    /// `greater restoration` lifts a rung of it, tier 3 costs attack rolls
+    /// and saves, tier 5 zeroes movement, and tier 6 kills. A stat block
+    /// missing the row plays as a creature the spell works on; nothing
+    /// crashes, no test fails, and the encounter is simply wrong. Thirty-
+    /// one of these rows were wrong in that direction before the table
+    /// existed, and two were wrong in the other.
+    ///
+    /// The `false` rows are as load-bearing as the `true` ones: they are
+    /// the places a future "constructs don't get tired" tidy-up would
+    /// break RAW, and each of them carries its reason on the stat block
+    /// itself.
+    ///
+    /// Templates are named by static rather than by string so a rename is
+    /// a compile error, and so the table can reach the stat blocks that
+    /// are summoned rather than rolled — `TINY_ANIMATED_OBJECT_TEMPLATE`
+    /// is on nobody's encounter pool and is exactly the kind of entry a
+    /// roster walk would quietly skip.
+    fn exhaustion_immunity_table() -> Vec<(&'static CreatureTemplate, bool)> {
+        vec![
+        // Elementals — the bodied ones.
+        (&*super::air_elementals::AIR_ELEMENTAL_TEMPLATE, true),
+        (&*super::earth_elementals::EARTH_ELEMENTAL_TEMPLATE, true),
+        (&*super::fire_elementals::FIRE_ELEMENTAL_TEMPLATE, true),
+        (&*super::water_elementals::WATER_ELEMENTAL_TEMPLATE, true),
+        (&*super::mephits::DUST_MEPHIT_TEMPLATE, true),
+        (&*super::mephits::ICE_MEPHIT_TEMPLATE, true),
+        (&*super::mephits::MAGMA_MEPHIT_TEMPLATE, true),
+        (&*super::mephits::STEAM_MEPHIT_TEMPLATE, true),
+        (&*super::invisible_stalkers::INVISIBLE_STALKER_TEMPLATE, true),
+        (&*super::gargoyles::GARGOYLE_TEMPLATE, true),
+        // …and the people who merely live on an elemental plane.
+        (&*super::azers::AZER_TEMPLATE, false),
+        (&*super::magmins::MAGMIN_TEMPLATE, false),
+        (&*super::efreeti::EFREETI_TEMPLATE, false),
+        (&*super::xorns::XORN_TEMPLATE, false),
+        // Constructs — all of them but one.
+        (&*super::animated_armors::ANIMATED_ARMOR_TEMPLATE, true),
+        (&*super::tiny_animated_objects::TINY_ANIMATED_OBJECT_TEMPLATE, true),
+        (&*super::rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE, true),
+        (&*super::clay_golems::CLAY_GOLEM_TEMPLATE, true),
+        (&*super::flesh_golems::FLESH_GOLEM_TEMPLATE, true),
+        (&*super::iron_golems::IRON_GOLEM_TEMPLATE, true),
+        (&*super::stone_golems::STONE_GOLEM_TEMPLATE, true),
+        (&*super::shield_guardians::SHIELD_GUARDIAN_TEMPLATE, true),
+        (&*super::gorgons::GORGON_TEMPLATE, true),
+        // The one Construct RAW leaves off the list: a homunculus is built
+        // out of its maker's own blood, and bleeds like it.
+        (&*super::homunculi::HOMUNCULUS_TEMPLATE, false),
+        // Oozes — all of them.
+        (&*super::black_puddings::BLACK_PUDDING_TEMPLATE, true),
+        (&*super::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE, true),
+        (&*super::gray_oozes::GRAY_OOZE_TEMPLATE, true),
+        (&*super::ochre_jellies::OCHRE_JELLY_TEMPLATE, true),
+        // Undead — all of them but the vampires.
+        (&*super::skeletons::SKELETON_TEMPLATE, true),
+        (&*super::warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE, true),
+        (&*super::zombies::ZOMBIE_TEMPLATE, true),
+        (&*super::ghasts::GHAST_TEMPLATE, true),
+        (&*super::ghouls::GHOUL_TEMPLATE, true),
+        (&*super::ghosts::GHOST_TEMPLATE, true),
+        (&*super::shadows::SHADOW_TEMPLATE, true),
+        (&*super::specters::SPECTER_TEMPLATE, true),
+        (&*super::wraiths::WRAITH_TEMPLATE, true),
+        (&*super::wights::WIGHT_TEMPLATE, true),
+        (&*super::mummies::MUMMY_TEMPLATE, true),
+        (&*super::mummy_lords::MUMMY_LORD_TEMPLATE, true),
+        (&*super::liches::LICH_TEMPLATE, true),
+        (&*super::crawling_claws::CRAWLING_CLAW_TEMPLATE, true),
+        (&*super::wisps::WISP_TEMPLATE, true),
+        (&*super::vampires::VAMPIRE_TEMPLATE, false),
+        (&*super::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE, false),
+        // Celestials — the three upper ones and nobody else.
+        (&*super::devas::DEVA_TEMPLATE, true),
+        (&*super::planetars::PLANETAR_TEMPLATE, true),
+        (&*super::solars::SOLAR_TEMPLATE, true),
+        (&*super::unicorns::UNICORN_TEMPLATE, false),
+        (&*super::pegasi::PEGASUS_TEMPLATE, false),
+        // Plants — the mound alone.
+        (&*super::shambling_mounds::SHAMBLING_MOUND_TEMPLATE, true),
+        (&*super::violet_fungi::VIOLET_FUNGUS_TEMPLATE, false),
+        (&*super::treants::TREANT_TEMPLATE, false),
+        ]
+    }
+
+    #[test]
+    fn the_bestiary_agrees_with_the_srd_about_who_gets_tired() {
+        let wrong: Vec<String> = exhaustion_immunity_table()
+            .into_iter()
+            .filter_map(|(t, expected)| {
+                let actual = t.condition_immunities.contains(&Condition::Exhausted);
+                (actual != expected).then(|| {
+                    format!(
+                        "{}: SRD says immune={}, template says {}",
+                        t.name, expected, actual
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "exhaustion immunity disagrees with SRD 5.2:\n  {}",
+            wrong.join("\n  ")
+        );
+    }
 
     /// The four skills the engine actually rolls, and the templates that
     /// have to claim them for the lanes reading each one to have any

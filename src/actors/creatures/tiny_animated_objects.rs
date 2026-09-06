@@ -50,6 +50,9 @@ pub static TINY_ANIMATED_OBJECT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         // Standard construct condition immunities (mind-affecting +
         // poison + paralysis + blinded via blindsight).
         condition_immunities: std::collections::HashSet::from([
+            // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
+            // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,

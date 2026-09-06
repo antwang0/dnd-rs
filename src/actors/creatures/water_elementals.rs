@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::{CreatureTemplate, DamageFlinch};
 use crate::actors::creatures::fire_elementals::{
-    elemental_defaults,
+    elemental_body_defaults,
 };
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::types::{
@@ -61,7 +61,7 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_defaults`; acid resistance is the water
+        // `elemental_body_defaults`; acid resistance is the water
         // variant's signature overlay (waves diluting acid).
         // RAW **Freeze**: "if the elemental takes Cold damage, its Speed
         // decreases by 20 feet until the end of its next turn." The one
@@ -82,7 +82,7 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG]),
-        ..elemental_defaults([(
+        ..elemental_body_defaults([(
             DamageType::Acid,
             DamageModifier::Resistance,
         )])

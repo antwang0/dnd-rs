@@ -46,6 +46,9 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         // Standard undead condition immunities.
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Necrotic, Poison; Charmed, Exhaustion,
+            // Frightened, Paralyzed, Poisoned".
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,

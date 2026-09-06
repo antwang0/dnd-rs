@@ -122,6 +122,9 @@ pub static BLACK_PUDDING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // Exhausted / Frightened / Prone but the engine collapses the
         // standard ooze envelope to the six we model uniformly.
         condition_immunities: HashSet::from([
+            // SRD 5.2 "…Charmed, Deafened, Exhaustion, Frightened,
+            // Grappled, Prone, Restrained". A puddle has nothing to tire.
+            Condition::Exhausted,
             Condition::Blinded,
             Condition::Charmed,
             Condition::Deafened,

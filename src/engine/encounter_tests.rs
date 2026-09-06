@@ -26346,13 +26346,17 @@ fn tarrasque_template_immunities_and_regen() {
 #[test]
 fn the_roll_penalty_waits_for_the_third_rung_of_exhaustion() {
     use crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER;
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
     use crate::conditions::ConditionTimer;
     let mut e = ei_with_terrain(15, 15, &[]);
+    // A guard rather than a zombie: SRD 5.2 makes every Undead immune to
+    // Exhaustion, so a zombie is the one creature on the board that
+    // cannot demonstrate the ladder.
     let attacker = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let target = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
     let wis = crate::engine::types::AbilityScoreType::Wisdom;
     for tier in 1..EXHAUSTION_ROLL_PENALTY_TIER {
@@ -74580,12 +74584,16 @@ fn a_crawl_costs_double_per_tile_and_not_double_again_on_the_budget() {
 #[test]
 fn the_fifth_rung_of_exhaustion_stops_the_things_priced_in_feet() {
     use crate::actors::actor_template::EXHAUSTION_ZERO_SPEED_TIER;
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     use crate::engine::side_effects::Resource;
 
     let mut e = ei_with_terrain(15, 15, &[]);
+    // A guard rather than a zombie, for the reason
+    // `the_roll_penalty_waits_for_the_third_rung_of_exhaustion` gives:
+    // every SRD Undead is immune to the thing under test.
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert!(
         e.actors[&id].can_consume_resource(Resource::Movement(2.5)),

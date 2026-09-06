@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{INVISIBLE_STALKER_MULTI, INVISIBLE_STALKER_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    elemental_defaults,
+    elemental_body_defaults,
 };
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
@@ -108,7 +108,7 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // Hidden / Helped / Inspired one-shot cohort, never plain
         // Invisible).
         innate_conditions: vec![(Condition::Invisible, ConditionTimer::Permanent)],
-        ..elemental_defaults([])
+        ..elemental_body_defaults([])
     }
 });
 

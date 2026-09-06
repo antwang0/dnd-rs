@@ -44,6 +44,10 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // dynamic_immunity_to chokepoint already gates Asleep on Charmed
         // for several other immunity sources).
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
+            // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".
+            // A construct has no stamina to spend.
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,

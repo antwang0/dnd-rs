@@ -3,6 +3,7 @@ use crate::actions::monster_attacks::{
     SHAMBLING_MOUND_ENGULF, SHAMBLING_MOUND_MULTI, SHAMBLING_MOUND_SLAM,
 };
 use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -50,6 +51,15 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             (DamageType::Lightning, DamageModifier::Absorption),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
+        ]),
+        // SRD 5.2 "Immunities Lightning; Deafened, Exhaustion" — the one
+        // Plant in the book on the tireless list, and the reason the
+        // rule cannot be derived from creature type: a shambling mound
+        // is a heap of rotting vegetation with no muscle in it, where a
+        // treant is a tree that walks and gets tired doing it.
+        condition_immunities: HashSet::from([
+            Condition::Deafened,
+            Condition::Exhausted,
         ]),
         ..CreatureTemplate::defaults()
     }

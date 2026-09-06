@@ -7,7 +7,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
-    elemental_defaults,
+    elemental_body_defaults,
 };
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 /// Defensive identity: AC 11, ~21 HP (6d6). Cold immunity (the mephit
 /// IS ice — its own breath self-freezes without it). Fire vulnerability
 /// (RAW — its frozen body melts under flame). Poison immunity + non-
-/// magical BPS resistance from the shared `elemental_defaults`
+/// magical BPS resistance from the shared `elemental_body_defaults`
 /// baseline. Standard 9-condition elemental immunity envelope.
 ///
 /// Stat shape: AC 11, ~21 HP (6d6), STR 7, DEX 13, CON 10, INT 9,
@@ -78,7 +78,7 @@ pub static ICE_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // resistance from the shared elemental baseline.
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&ICE_MEPHIT_DEATH_BURST),
-        ..elemental_defaults([
+        ..elemental_body_defaults([
             (DamageType::Cold, DamageModifier::Immunity),
             (DamageType::Fire, DamageModifier::Vulnerability),
         ])
@@ -139,7 +139,7 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         actions,
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&STEAM_MEPHIT_DEATH_BURST),
-        ..elemental_defaults([(
+        ..elemental_body_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
         )])
@@ -201,7 +201,7 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         actions,
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&MAGMA_MEPHIT_DEATH_BURST),
-        ..elemental_defaults([
+        ..elemental_body_defaults([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Vulnerability),
         ])
@@ -271,7 +271,7 @@ pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // grit-imp without a paired elemental opposite.
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&DUST_MEPHIT_DEATH_BURST),
-        ..elemental_defaults([])
+        ..elemental_body_defaults([])
     }
 });
 

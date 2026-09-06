@@ -56,13 +56,18 @@ pub static VIOLET_FUNGUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         creature_type: CreatureType::Plant,
         actions,
         damage_modifiers: damage_modifiers_from([(DamageType::Poison, DamageModifier::Immunity)]),
-        // The plant envelope: no eyes to blind, no mind to charm or
-        // frighten, no metabolism to poison or tire.
+        // SRD 5.2 "Immunities Blinded, Charmed, Deafened, Frightened":
+        // no eyes to blind, no mind to charm or frighten. Exhaustion is
+        // deliberately *not* here, which is the one place this envelope
+        // parts company with the shambling mound's — RAW puts the mound
+        // on the tireless list and every other Plant in the book off
+        // it, so the rule is per stat block rather than per type. It
+        // matters: `sickening radiance` installs exhaustion and six
+        // rungs of it kill, so the difference is a spell working or not.
         condition_immunities: HashSet::from([
             Condition::Blinded,
             Condition::Charmed,
             Condition::Deafened,
-            Condition::Exhausted,
             Condition::Frightened,
             Condition::Poisoned,
         ]),

@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// damage — we lift the "non-magical" qualifier and just give it
 /// resistance to the physical trio so any weapon-wielding party feels
 /// the chip. Immune to the usual elemental/construct suite: Poisoned,
-/// Charmed, Exhaustion (not modeled), Petrified, Sleep/Unconscious from
+/// Charmed, Exhaustion, Petrified, Sleep/Unconscious from
 /// magical sleep. We model what we can with the existing Condition
 /// enum: Poisoned + Charmed + Prone (it flies) immunities.
 pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -43,6 +43,11 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Exhaustion, Petrified, Poisoned".
+            // Carved rock does not tire — and the docstring above this
+            // block used to call exhaustion unmodelled, which it has not
+            // been for some time.
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             // Constructs ignore prone (they're not biological).

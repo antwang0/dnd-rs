@@ -36,8 +36,13 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Piercing, DamageModifier::Resistance),
         ]),
-        // Undead: immune to Poisoned, Charmed.
-        condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
+        condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a pile of bones has
+            // no muscle to tire.
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Poisoned,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

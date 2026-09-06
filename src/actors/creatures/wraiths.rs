@@ -64,6 +64,10 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // ignores Grappled / Restrained / Prone (incorporeal) — we model
         // those as condition immunities so spell-driven control fails.
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Necrotic, Poison; Charmed, Exhaustion,
+            // Grappled, Paralyzed, Petrified, Poisoned, Prone,
+            // Restrained, Unconscious".
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Grappled,

@@ -79,6 +79,47 @@ pub fn elemental_defaults(
     }
 }
 
+/// `ELEMENTAL_CONDITION_IMMUNITIES` plus Exhaustion — the envelope for
+/// the creatures that *are* an element rather than the ones that merely
+/// live on its plane.
+///
+/// SRD 5.2 draws that line and draws it sharply. Every one of the four
+/// Elementals, all four Mephits, the Invisible Stalker and the Gargoyle
+/// prints `Exhaustion` on its Immunities row; the Azer, the Magmin, the
+/// Salamander, the Xorn and all four genies print none of it. Which is
+/// the sensible reading — a fire elemental is a fire, and a fire does
+/// not get tired; an efreeti is a person who happens to be on fire, and
+/// a person does.
+///
+/// A separate set rather than another entry in the shared one because
+/// that distinction is the whole content of it. The shared envelope is
+/// already broader than RAW (an azer is not immune to Petrified
+/// either), and it is broad in a direction that costs nothing —
+/// those clauses are flavour for a creature nobody was going to
+/// paralyse. Exhaustion is not flavour: `sickening radiance` installs
+/// it, `greater restoration` lifts one rung of it, and six rungs of it
+/// kill. Handing an efreeti a real immunity to a real spell is a rules
+/// change, so the two sets stay apart.
+pub static ELEMENTAL_BODY_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> =
+    LazyLock::new(|| {
+        let mut set = ELEMENTAL_CONDITION_IMMUNITIES.clone();
+        set.insert(Condition::Exhausted);
+        set
+    });
+
+/// `elemental_defaults` for the nine stat blocks on the tireless side
+/// of the line `ELEMENTAL_BODY_CONDITION_IMMUNITIES` draws. Identical
+/// in every other respect, so a template opts in by changing which of
+/// the two it spreads.
+pub fn elemental_body_defaults(
+    overlays: impl IntoIterator<Item = (DamageType, DamageModifier)>,
+) -> CreatureTemplate {
+    CreatureTemplate {
+        condition_immunities: ELEMENTAL_BODY_CONDITION_IMMUNITIES.clone(),
+        ..elemental_defaults(overlays)
+    }
+}
+
 /// Fire Elemental — CR 5 elemental. Walking inferno: fire-touch melee
 /// for 2d6 + ignite (Burning DOT). Immune to fire and poison, resistant
 /// to non-magical physical damage (we collapse to "physical resistance"
@@ -115,9 +156,9 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_defaults`; this overlay just adds the fire
+        // `elemental_body_defaults`; this overlay just adds the fire
         // immunity that distinguishes the variant.
-        ..elemental_defaults([(
+        ..elemental_body_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
         )])

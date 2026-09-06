@@ -53,6 +53,10 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Necrotic, Poison; Charmed, Exhaustion,
+            // Grappled, Paralyzed, Petrified, Poisoned, Prone,
+            // Restrained, Unconscious".
+            Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Grappled,

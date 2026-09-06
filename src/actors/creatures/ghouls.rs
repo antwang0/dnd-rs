@@ -33,7 +33,12 @@ pub static GHOUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Undead,
         actions,
         damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
-        condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
+        condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Charmed, Exhaustion, Poisoned".
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Poisoned,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

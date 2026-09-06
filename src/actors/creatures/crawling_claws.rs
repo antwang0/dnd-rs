@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::CRAWLING_CLAW_SLAM;
 use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -78,6 +79,20 @@ pub static CRAWLING_CLAW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         size: Size::Tiny,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 files the claws as a swarm whose Immunities row reads
+        // "Necrotic, Poison; Charmed, Exhaustion, Frightened, Grappled,
+        // Incapacitated, Paralyzed, Petrified, Poisoned, Prone,
+        // Restrained, Stunned". This template is the single claw rather
+        // than the swarm, so it carries the two clauses that belong to
+        // the hand itself — a severed hand has no mind to charm and no
+        // stamina to spend — and leaves the swarm-shape clauses
+        // (Grappled, Restrained, Prone) to the creature that has them.
+        condition_immunities: HashSet::from([
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Frightened,
+            Condition::Poisoned,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -36,11 +36,12 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         creature_type: CreatureType::Ooze,
         actions,
         // Ooze envelope: ignores Blinded (no eyes to gouge), Charmed,
-        // Deafened, Frightened, Prone (no shape to knock down), and
-        // Asleep. RAW oozes also ignore Exhaustion / Grappled but we
-        // skip Grappled so the Treant / similar grappler spells still
-        // pin the cube in place.
+        // Deafened, Exhaustion (no muscle to tire), Frightened, Prone
+        // (no shape to knock down), and Asleep. RAW oozes also ignore
+        // Grappled; we skip that one so the Treant / similar grappler
+        // spells still pin the cube in place.
         condition_immunities: HashSet::from([
+            Condition::Exhausted,
             Condition::Blinded,
             Condition::Charmed,
             Condition::Deafened,

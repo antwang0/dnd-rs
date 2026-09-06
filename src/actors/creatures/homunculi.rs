@@ -53,9 +53,18 @@ pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Construct,
         actions,
         damage_modifiers: damage_modifiers_from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // SRD 5.2 "Immunities Poison; Charmed, Poisoned" — the one
+        // Construct in the book that is *not* on the tireless list, and
+        // not by oversight: a homunculus is a living thing its maker
+        // built out of their own blood, which is why it also drops when
+        // they do. Exhaustion is a real immunity here (`sickening
+        // radiance` installs it, six rungs of it kill), so the set stays
+        // at RAW's two rather than inheriting the construct envelope it
+        // does not qualify for. Paralyzed and Petrified are kept: they
+        // are flavour on a clay bird nobody is going to petrify, and
+        // taking them away buys nothing.
         condition_immunities: HashSet::from([
             Condition::Charmed,
-            Condition::Exhausted,
             Condition::Paralyzed,
             Condition::Petrified,
             Condition::Poisoned,

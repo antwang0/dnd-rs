@@ -40,7 +40,13 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Radiant, DamageModifier::Vulnerability),
         ]),
         // Undead: immune to Poisoned and Charmed.
-        condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
+        condition_immunities: HashSet::from([
+            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a corpse walks until
+            // it is knocked apart, and never slower.
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Poisoned,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });
