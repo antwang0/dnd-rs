@@ -74,6 +74,10 @@ pub static CLOAKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Aberration,
         attach: Some(&CLOAKER_ATTACH_PROFILE),
+        // SRD 5.2 "Immunities Frightened". A thing that hunts by
+        // dropping out of the dark onto people is not frightened of
+        // anything in the dark.
+        condition_immunities: HashSet::from([Condition::Frightened]),
         actions,
         // 5e Cloaker **Light Sensitivity**: "while in bright light, the
         // cloaker has disadvantage on attack rolls and Wisdom

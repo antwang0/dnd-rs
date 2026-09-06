@@ -12,6 +12,16 @@ use std::sync::LazyLock;
 /// each elemental template clones the same value rather than repeating
 /// a 9-line literal — a new elemental added later opts in by cloning
 /// this set into `condition_immunities`.
+///
+/// `Unconscious`, which SRD 5.2 does print on the four Elementals and
+/// the Invisible Stalker, is deliberately not here and not overlaid
+/// per-template either. Every route to it is already blocked: magical
+/// sleep installs `Asleep`, which is on this list, and the other route
+/// is dropping to 0 hit points, which for a monster means leaving the
+/// board rather than lying on it. Adding the row would be five
+/// templates' worth of churn for no reachable behaviour, and adding it
+/// to *this* set would hand it to the five stat blocks — four mephits
+/// and the gargoyle — whose SRD rows do not carry it.
 pub static ELEMENTAL_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> = LazyLock::new(|| {
     HashSet::from([
         Condition::Charmed,

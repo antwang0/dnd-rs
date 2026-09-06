@@ -52,7 +52,9 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
             Condition::Charmed,
             Condition::Frightened,
             Condition::Paralyzed,
+            Condition::Petrified,
             Condition::Blinded,
+            Condition::Deafened,
             Condition::Asleep,
         ]),
         ..CreatureTemplate::defaults()

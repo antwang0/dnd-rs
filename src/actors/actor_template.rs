@@ -1371,7 +1371,7 @@ const FLAG_DRIVEN_SAVE_ADVANTAGES: &[FlagDrivenSaveAdvantage] = &[
 /// `(actor, ability)` pair its sibling takes, because the ability is
 /// not the gate here: the condition is. That also lets a row read a
 /// *condition* as its source (Bard Countercharm's `Countercharmed`)
-/// exactly as easily as a template flag (the Ettin's `has_two_heads`),
+/// exactly as easily as a template flag (the Ettin's `has_multiple_heads`),
 /// the same way `FLAG_DRIVEN_IMMUNITIES` rows already compose
 /// `has_passive_feature` with `has_condition`.
 ///
@@ -1399,16 +1399,22 @@ struct ConditionSaveAdvantage {
 /// (5e never stacks either way).
 ///
 /// Entries (in order):
-///   - **Two Heads** (Ettin, MM p.132): "The ettin has advantage on
-///     Wisdom (Perception) checks and on saving throws against being
-///     blinded, charmed, deafened, frightened, stunned, and knocked
-///     unconscious." Six conditions off one trait, which is precisely
-///     the shape that could not be rounded: as immunity it would hand a
-///     CR-4 giant a defensive envelope a Solar doesn't have, and as
-///     ability-scoped advantage it would cover the ettin's CON saves
-///     against poison and its DEX saves against fire. The Perception
-///     half is not modeled (the engine has no contested-Perception
-///     surface); the save half is now RAW-exact.
+///   - **Two Heads / Multiple Heads** (Ettin, Hydra, Death Dog): "The
+///     ettin has advantage on Wisdom (Perception) checks and on saving
+///     throws against being blinded, charmed, deafened, frightened,
+///     stunned, and knocked unconscious." Six conditions off one
+///     trait, which is precisely the shape that could not be rounded:
+///     as ability-scoped advantage it would cover the ettin's CON
+///     saves against poison and its DEX saves against fire.
+///
+///     **SRD 5.2 prints these six as flat immunities**, and the engine
+///     deliberately keeps the 2014 reading. Immunity would hand a CR-4
+///     brute — and a CR-1 dog — a mind harder to touch than a Solar's,
+///     off a trait that is flavour about redundant sensory organs; the
+///     cohort exists precisely so that "harder to charm" does not have
+///     to mean "uncharmable". Worth knowing it is a divergence rather
+///     than a gap. The Perception half is not modeled either way (the
+///     engine has no contested-Perception surface).
 ///   - **Countercharm** (Bard, PHB lv6): "you and any friendly
 ///     creatures within 30 feet of you have advantage on saving throws
 ///     against being frightened or charmed." Installed as the
@@ -1416,7 +1422,7 @@ struct ConditionSaveAdvantage {
 ///     the row reads a held condition rather than a template flag.
 const CONDITION_SAVE_ADVANTAGES: &[ConditionSaveAdvantage] = &[
     ConditionSaveAdvantage {
-        flag: |a| a.has_two_heads(),
+        flag: |a| a.has_multiple_heads(),
         against: &[
             Condition::Blinded,
             Condition::Charmed,
@@ -3054,15 +3060,23 @@ pub struct CreatureTemplate {
     /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
     /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
     pub has_pack_tactics: bool,
-    /// 5e **Two Heads** (Ettin): "advantage on Wisdom (Perception)
-    /// checks and on saving throws against being blinded, charmed,
-    /// deafened, frightened, stunned, and knocked unconscious." The
-    /// save half rides the `CONDITION_SAVE_ADVANTAGES` cohort, which is
-    /// the axis that lets six named conditions be six named conditions
-    /// rather than six blanket immunities or two whole abilities' worth
-    /// of advantage. The Perception half is not modeled — the engine
-    /// has no contested-Perception surface for it to bite on.
-    pub has_two_heads: bool,
+    /// 5e's **Two Heads** / **Multiple Heads**: "advantage on Wisdom
+    /// (Perception) checks and on saving throws against being blinded,
+    /// charmed, deafened, frightened, stunned, and knocked
+    /// unconscious." The save half rides the
+    /// `CONDITION_SAVE_ADVANTAGES` cohort, which is the axis that lets
+    /// six named conditions be six named conditions rather than six
+    /// blanket immunities or two whole abilities' worth of advantage.
+    /// The Perception half is not modeled — the engine has no
+    /// contested-Perception surface for it to bite on.
+    ///
+    /// Three stat blocks carry it, and they were carrying it three
+    /// different ways: the Ettin had the flag, the Hydra had a bare
+    /// `Unconscious` immunity standing in for a sixth of it, and the
+    /// Death Dog had nothing at all. Named for the trait rather than
+    /// for the head count so the Hydra's five and the Death Dog's two
+    /// answer the same field.
+    pub has_multiple_heads: bool,
     /// 5e **Sunlight Sensitivity** / **Sunlight Weakness** / **Sunlight
     /// Hypersensitivity** — the kobold-and-drow, shadow, and vampire
     /// tiers of "this creature does not belong outdoors". `None` for
@@ -4046,7 +4060,7 @@ impl CreatureTemplate {
             has_displacement: false,
             has_danger_sense: false,
             has_pack_tactics: false,
-            has_two_heads: false,
+            has_multiple_heads: false,
             sunlight_frailty: None,
             is_swarm: false,
             has_magic_resistance: false,
@@ -4803,7 +4817,7 @@ pub struct ActorInstance {
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
-    has_two_heads: bool,
+    has_multiple_heads: bool,
     sunlight_frailty: Option<SunlightFrailty>,
     is_swarm: bool,
     has_magic_resistance: bool,
@@ -5126,7 +5140,7 @@ impl ActorInstance {
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
-            has_two_heads: ct.has_two_heads,
+            has_multiple_heads: ct.has_multiple_heads,
             sunlight_frailty: ct.sunlight_frailty,
             is_swarm: ct.is_swarm,
             has_magic_resistance: ct.has_magic_resistance,
@@ -5324,11 +5338,12 @@ impl ActorInstance {
         self.has_pack_tactics
     }
 
-    /// True if this actor carries the Ettin's **Two Heads** trait. Read
-    /// only through the `CONDITION_SAVE_ADVANTAGES` cohort — see the
-    /// template field for which half of the trait that covers.
-    pub fn has_two_heads(&self) -> bool {
-        self.has_two_heads
+    /// True if this actor carries 5e's **Two Heads** / **Multiple
+    /// Heads** trait. Read only through the
+    /// `CONDITION_SAVE_ADVANTAGES` cohort — see the template field for
+    /// which half of the trait that covers.
+    pub fn has_multiple_heads(&self) -> bool {
+        self.has_multiple_heads
     }
 
     /// True if this actor can hear — which is to say, is not

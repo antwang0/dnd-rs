@@ -52,6 +52,7 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,
+            Condition::Paralyzed,
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

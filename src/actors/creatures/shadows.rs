@@ -55,6 +55,7 @@ pub static SHADOW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Poisoned,
             Condition::Prone,
             Condition::Restrained,
+            Condition::Unconscious,
         ]),
         skills: HashSet::from([Skill::Stealth]),
         // 5e Shadow **Sunlight Weakness**: "while in sunlight, the

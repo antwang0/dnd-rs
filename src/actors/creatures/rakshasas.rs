@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{RAKSHASA_CLAW, RAKSHASA_MULTI};
+use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -72,6 +73,12 @@ pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 13.0,
         size: Size::Medium,
         creature_type: CreatureType::Fiend,
+        // SRD 5.2 "Immunities Charmed, Frightened". A fiend that lives
+        // by charming people is not on the receiving end of it.
+        condition_immunities: HashSet::from([
+            Condition::Charmed,
+            Condition::Frightened,
+        ]),
         actions,
         // Fiend damage envelope: nonmagical B/P/S resistance. No
         // damage-type resistances beyond the physical triplet — RAW

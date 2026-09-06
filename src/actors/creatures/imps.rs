@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FIRE_BOLT, IMP_STING};
+use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
@@ -37,6 +38,10 @@ pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.0,
         size: Size::Tiny,
         creature_type: CreatureType::Fiend,
+        // SRD 5.2 "Immunities Fire, Poison; Poisoned" — the condition
+        // half of the fiend's poison immunity, which the damage row
+        // already carried without it.
+        condition_immunities: HashSet::from([Condition::Poisoned]),
         actions,
         damage_modifiers: HashMap::from([
             (DamageType::Fire, DamageModifier::Immunity),

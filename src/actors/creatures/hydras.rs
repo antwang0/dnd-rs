@@ -2,7 +2,6 @@ use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HYDRA_BITE, HYDRA_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -44,7 +43,14 @@ pub static HYDRA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Hydras are mindless; no Charm / Frighten resistance — they
         // simply don't process those effects (we leave the immunity
         // off to keep the spell list interactive).
-        condition_immunities: HashSet::from([Condition::Unconscious]),
+        // 5e **Multiple Heads**: "advantage on saving throws against
+        // being blinded, charmed, deafened, frightened, stunned, and
+        // knocked unconscious." The hydra had been carrying a bare
+        // `Unconscious` immunity in its place — one of the six, rounded
+        // the wrong way. See `CreatureTemplate::has_multiple_heads` for
+        // the other five and for why they are advantage rather than the
+        // immunity SRD 5.2 prints.
+        has_multiple_heads: true,
         // 10 HP/round regen — the iconic hydra trait. No suppressor
         // (we don't model fire-cauterizing head stumps).
         regen_per_round: 10,

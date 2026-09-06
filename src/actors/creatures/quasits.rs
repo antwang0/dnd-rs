@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{QUASIT_CLAWS, QUASIT_SCARE};
+use crate::conditions::Condition;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -44,6 +45,9 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.0,
         size: Size::Tiny,
         creature_type: CreatureType::Fiend,
+        // SRD 5.2 "Immunities Poison; Poisoned" — the condition half
+        // of an immunity whose damage half was already on the sheet.
+        condition_immunities: HashSet::from([Condition::Poisoned]),
         actions,
         damage_modifiers: damage_modifiers_from([(
             DamageType::Poison,

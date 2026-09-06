@@ -97,7 +97,14 @@ pub static NALFESHNEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        condition_immunities: HashSet::from([Condition::Poisoned]),
+        // SRD 5.2 "Immunities Frightened, Poisoned" — and the fear
+        // half is load-bearing on this stat block in particular, whose
+        // signature Horror Nimbus is a fear burst it should not be able
+        // to catch from a second nalfeshnee standing beside it.
+        condition_immunities: HashSet::from([
+            Condition::Frightened,
+            Condition::Poisoned,
+        ]),
         has_magic_resistance: true,
         // Horror Nimbus is the recharge ability — 5–6 refresh on a d6
         // at start of turn. Routes through the standard recharge pool;

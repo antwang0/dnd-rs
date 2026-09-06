@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LIFE_DRAIN;
-use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
-use crate::conditions::Condition;
+use crate::actors::actor_template::{
+    CreatureTemplate, INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES, damage_modifiers_from,
+};
 use crate::engine::lighting::SunlightFrailty;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -52,18 +53,12 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        condition_immunities: HashSet::from([
-            // SRD 5.2 "Immunities Necrotic, Poison; Charmed, Exhaustion,
-            // Grappled, Paralyzed, Petrified, Poisoned, Prone,
-            // Restrained, Unconscious".
-            Condition::Exhausted,
-            Condition::Poisoned,
-            Condition::Charmed,
-            Condition::Grappled,
-            Condition::Restrained,
-            Condition::Prone,
-            Condition::Unconscious,
-        ]),
+        // SRD 5.2 "Immunities Necrotic, Poison; Charmed, Exhaustion,
+        // Grappled, Paralyzed, Petrified, Poisoned, Prone, Restrained,
+        // Unconscious" — the incorporeal-undead envelope, and this is
+        // one of the four stat blocks whose name is in its docstring.
+        // It had been open-coded here and had drifted: Paralyzed and Petrified were missing.
+        condition_immunities: INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES.clone(),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

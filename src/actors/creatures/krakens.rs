@@ -117,10 +117,15 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Cold, DamageModifier::Immunity),
             (DamageType::Lightning, DamageModifier::Immunity),
         ]),
+        // SRD 5.2 "Immunities Cold, Lightning; Frightened, Grappled,
+        // Paralyzed, Restrained". Too primal to fear, too vast to
+        // paralyse — and far too big for anything on the board to get
+        // hold of, which is the pair that was missing.
         condition_immunities: HashSet::from([
-            // Too primal to fear, too vast to paralyze.
             Condition::Frightened,
+            Condition::Grappled,
             Condition::Paralyzed,
+            Condition::Restrained,
         ]),
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects. Read by `compute_save_mode`. Combined with the

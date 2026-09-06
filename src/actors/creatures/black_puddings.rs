@@ -121,6 +121,12 @@ pub static BLACK_PUDDING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // immunities — RAW gives oozes Charmed / Blinded / Deafened /
         // Exhausted / Frightened / Prone but the engine collapses the
         // standard ooze envelope to the six we model uniformly.
+        // SRD 5.2 also prints Grappled and Restrained on this row, and
+        // they are deliberately left off — the same call the gelatinous
+        // cube's envelope makes and for the same reason: an ooze no
+        // spell can pin is an ooze no party can control, and Evard's
+        // Black Tentacles has to mean something against the thing it
+        // most obviously should work on.
         condition_immunities: HashSet::from([
             // SRD 5.2 "…Charmed, Deafened, Exhaustion, Frightened,
             // Grappled, Prone, Restrained". A puddle has nothing to tire.

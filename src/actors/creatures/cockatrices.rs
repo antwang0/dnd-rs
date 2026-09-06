@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::COCKATRICE_BITE;
+use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -34,6 +35,10 @@ pub static COCKATRICE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Small,
         creature_type: CreatureType::Monstrosity,
+        // SRD 5.2 "Immunities Petrified" — the one creature in the book
+        // whose own bite is petrification, and the clause that stops two
+        // cockatrices in a coop turning each other to stone.
+        condition_immunities: HashSet::from([Condition::Petrified]),
         actions,
         ..CreatureTemplate::defaults()
     }

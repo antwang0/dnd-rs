@@ -27,7 +27,7 @@ static ETTIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 ///   - **Two Heads**: "advantage on Wisdom (Perception) checks and on
 ///     saving throws against being blinded, charmed, deafened,
 ///     frightened, stunned, and knocked unconscious." The save half is
-///     a `has_two_heads` row on `CONDITION_SAVE_ADVANTAGES` — the
+///     a `has_multiple_heads` row on `CONDITION_SAVE_ADVANTAGES` — the
 ///     cohort that exists because six named conditions could not be
 ///     said any other way. Rounding them up to immunities would have
 ///     given a CR-4 brute a better mind than a Solar's; rounding them
@@ -57,7 +57,7 @@ pub static ETTIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         has_extra_attack: true,
         condition_immunities: HashSet::from([Condition::Surprised]),
-        has_two_heads: true,
+        has_multiple_heads: true,
         ..CreatureTemplate::defaults()
     }
 });

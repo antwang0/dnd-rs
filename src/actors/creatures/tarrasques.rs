@@ -73,8 +73,14 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
+        // SRD 5.2 "Immunities Fire, Poison; Charmed, Deafened,
+        // Frightened, Paralyzed, Poisoned". The deafness matters more
+        // than it looks: five abilities in this engine gate on "that
+        // can hear it", and a tarrasque that could be deafened could be
+        // taken out of a banshee's wail by its own allies.
         condition_immunities: HashSet::from([
             Condition::Charmed,
+            Condition::Deafened,
             Condition::Frightened,
             Condition::Paralyzed,
             Condition::Poisoned,

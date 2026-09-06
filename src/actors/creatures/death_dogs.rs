@@ -72,6 +72,12 @@ pub static DEATH_DOG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.0,
         size: Size::Medium,
         creature_type: CreatureType::Monstrosity,
+        // 5e **Two-Headed**: "advantage on saving throws against being
+        // blinded, charmed, deafened, frightened, stunned, and knocked
+        // unconscious." Same trait as the ettin's and the hydra's, and
+        // the death dog had been shipping without it — see
+        // `CreatureTemplate::has_multiple_heads`.
+        has_multiple_heads: true,
         actions,
         ..CreatureTemplate::defaults()
     }

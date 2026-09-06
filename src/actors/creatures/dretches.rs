@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DRETCH_BITE, DRETCH_CLAWS, DRETCH_FETID_CLOUD, DRETCH_MULTI};
+use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
@@ -74,6 +75,11 @@ pub static DRETCH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.25,
         size: Size::Small,
         creature_type: CreatureType::Fiend,
+        // SRD 5.2 "Immunities Poison; Poisoned" — the poison
+        // immunity on the damage row and the condition on this one are
+        // two halves of the same sentence, and only the first half was
+        // here.
+        condition_immunities: HashSet::from([Condition::Poisoned]),
         actions,
         damage_modifiers: HashMap::from([
             (DamageType::Cold, DamageModifier::Resistance),

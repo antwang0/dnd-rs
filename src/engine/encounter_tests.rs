@@ -81166,7 +81166,7 @@ fn a_fight_nobody_is_steering_still_brings_somebody_down() {
 /// approximation that widened this to "advantage on WIS saves" would
 /// pass the first assertion and fail the second.
 #[test]
-fn two_heads_answers_only_for_the_conditions_it_names() {
+fn multiple_heads_answers_only_for_the_conditions_it_names() {
     use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
     use crate::conditions::Condition;
 

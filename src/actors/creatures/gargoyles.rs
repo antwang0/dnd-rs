@@ -50,6 +50,10 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
+            // SRD 5.2 "Immunities Poison; Exhaustion, Petrified,
+            // Poisoned" — a creature that is already carved out of rock
+            // cannot be turned to stone.
+            Condition::Petrified,
             // Constructs ignore prone (they're not biological).
             Condition::Prone,
         ]),

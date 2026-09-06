@@ -72,6 +72,9 @@ pub static OCHRE_JELLY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Lightning, DamageModifier::Immunity),
             (DamageType::Slashing, DamageModifier::Immunity),
         ]),
+        // SRD 5.2 also prints Grappled and Restrained here, left off
+        // for the reason the whole ooze cohort leaves them off: see
+        // `GELATINOUS_CUBE_TEMPLATE`.
         condition_immunities: HashSet::from([
             Condition::Blinded,
             Condition::Charmed,

@@ -1,5 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HEAVY_CROSSBOW, KNIGHT_MULTI, LANCE, LONGSWORD};
+use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -37,6 +38,10 @@ pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 3.0,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
+        // SRD 5.2 "Immunities Frightened" — the knight's **Brave**, and
+        // the whole reason a knight is the thing a party puts between
+        // itself and a dragon's Frightful Presence.
+        condition_immunities: HashSet::from([Condition::Frightened]),
         actions,
         // Knights are proficient in CON and WIS saves (5e MM); WIS
         // proficiency stands in for the Brave / Bravery features.
