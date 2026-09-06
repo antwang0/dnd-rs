@@ -162,7 +162,7 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // RAW lv14 gate for the same reason Foe Slayer (lv20) does —
     // class templates target a balanced playable level, not lockstep
     // PHB progression.
-    actions.push(&*VANISH);
+    actions.push(&VANISH);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

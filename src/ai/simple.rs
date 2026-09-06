@@ -2024,6 +2024,16 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "fey charm", condition: Some(Condition::Charmed) },
     LockdownPick { name: "succubus charm", condition: Some(Condition::Charmed) },
     LockdownPick { name: "intoxicating touch", condition: Some(Condition::Charmed) },
+    // The two pirate charms. Both last a single round, which makes them
+    // the shortest entries in the tier by an order of magnitude and
+    // still worth the rung: one round of a party's heaviest hitter not
+    // swinging is exactly what a CR-1 stat block is allowed to buy.
+    //
+    // The captain's is a Bonus Action, so the rung costs it nothing —
+    // it charms and then takes its three rapier swings in the same
+    // turn, which is RAW and is the reason the captain is CR 6.
+    LockdownPick { name: "enthralling panache", condition: Some(Condition::Charmed) },
+    LockdownPick { name: "captain's charm", condition: Some(Condition::Charmed) },
     LockdownPick { name: "crown of madness", condition: Some(Condition::Charmed) },
     LockdownPick { name: "suggestion", condition: Some(Condition::Charmed) },
     LockdownPick { name: "charm monster", condition: Some(Condition::Charmed) },

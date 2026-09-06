@@ -1211,20 +1211,112 @@ pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {}
 /// per-rest charge — both gates are purely target-side.
 pub const ASSASSINATE_TAG: &str = "rogue.assassinate";
 
-/// Rogue Cunning Action — bonus-action Dash. 5e gives the rogue a choice
-/// of Dash, Disengage, or Hide as a bonus action; we expose Dash here
-/// (the most universally useful) and leave a follow-up CunningDisengage
-/// / CunningHide pair that mirror the same gating. This is the
-/// signature once-a-turn rogue mobility tool.
-pub struct CunningDash {}
+/// One of the three things RAW lets a bonus action buy in place of a
+/// full Action: cover ground, leave without being hit, or disappear.
+///
+/// A closed set, and it stays closed on purpose. Every bonus-action
+/// mobility feature in the book — the Rogue's Cunning Action, the
+/// goblin's Nimble Escape, the Monk's Step of the Wind, the Ranger's
+/// Vanish, the vampire familiar's Deathless Agility — is spelled out
+/// as some combination of exactly these three, because they are the
+/// three *Actions* the feature is standing in for. A feature that did
+/// something else would not be a cheaper printing of an Action; it
+/// would be a new one, and it belongs in its own impl.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Maneuver {
+    /// Extra movement equal to the creature's speed.
+    Dash,
+    /// Movement this turn doesn't provoke opportunity attacks.
+    Disengage,
+    /// A Dexterity (Stealth) check against the best passive Perception
+    /// watching, for the `Hidden` condition on a pass.
+    Hide,
+}
 
-impl Action for CunningDash {
+/// The chassis every bonus-action mobility feature is built on.
+///
+/// There used to be six of these, hand-written, and the diff between
+/// any two of them was the name and the aliases. `CunningHide`,
+/// `NimbleHide` and `Vanish` were the same forty lines three times over
+/// — same cost, same gate, same payload, different string — and the
+/// cost of that was not the duplication but what the duplication hid:
+/// when the bonus-action Hide was found to be installing `Hidden` with
+/// no roll while the Action-priced Hide rolled for it, the fix had to
+/// be applied at three sites, and one of them nearly got missed.
+///
+/// So the payload moved into data. `maneuvers` is a slice rather than
+/// one variant because RAW's features are not all "or": Cunning Action
+/// offers a choice between three (which is three statics, since the
+/// choice is made at the action list), but Step of the Wind is Dash
+/// **and** Disengage in one activation, which is one static holding
+/// two. The slice is what makes both shapes expressible without a
+/// second chassis.
+///
+/// `gated_on` carries the one thing that genuinely differed: the
+/// Ranger's Vanish is a level-14 feature and checks a passive tag
+/// before it fires, so a template that picked up the action without
+/// the feature can't use it. Everything else passes `None`.
+///
+/// Hide is deliberately never combined with the other two. Hiding has
+/// a precondition — you cannot hide from something standing next to
+/// you — and a combined Dash-and-Hide would have to decide whether the
+/// Dash half survives a failed hideability check. RAW never asks, so
+/// the chassis doesn't answer; `debug_assert` in the constructor keeps
+/// it that way.
+pub struct BonusManeuver {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Everything one activation buys, in the order RAW prints it.
+    pub maneuvers: &'static [Maneuver],
+    /// A passive-feature tag the actor must carry, or `None` for the
+    /// features that are available to anything holding the action.
+    pub gated_on: Option<&'static str>,
+}
+
+impl BonusManeuver {
+    pub const fn new(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        maneuvers: &'static [Maneuver],
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            maneuvers,
+            gated_on: None,
+        }
+    }
+
+    /// Builder tail for the one printing that is a class feature rather
+    /// than a universally-available action — the Ranger's Vanish.
+    pub const fn gated_on(self, tag: &'static str) -> Self {
+        Self {
+            gated_on: Some(tag),
+            ..self
+        }
+    }
+
+    fn does(&self, m: Maneuver) -> bool {
+        // `contains` isn't const-callable on a slice of a non-const-Eq
+        // type, and the slice is three entries long at most.
+        let mut i = 0;
+        while i < self.maneuvers.len() {
+            if self.maneuvers[i] as u8 == m as u8 {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
+impl Action for BonusManeuver {
     fn name(&self) -> &str {
-        "cunning dash"
+        self.display_name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["cdash", "ca-dash"]
+        self.aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -1244,6 +1336,29 @@ impl Action for CunningDash {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if let Some(tag) = self.gated_on
+            && !encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_passive_feature(tag))
+        {
+            return false;
+        }
+        // Every printing of Hide reads the same clause: there has to be
+        // somewhere to hide, which there is not while a hostile is in
+        // contact. The other two maneuvers have no precondition.
+        !self.does(Maneuver::Hide)
+            || crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
     }
 
     fn side_effects(
@@ -1254,66 +1369,45 @@ impl Action for CunningDash {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let speed = encounter.travel_speed(caster_id);
-        encounter.log("  cunning dash: extra movement gained.".to_string());
-        vec![Box::new(GiveResource {
-            actor_id: caster_id,
-            resource: Resource::Movement(speed),
-        })]
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for m in self.maneuvers {
+            match m {
+                Maneuver::Dash => {
+                    let speed = encounter.travel_speed(caster_id);
+                    encounter.log(format!("  {}: extra movement gained.", self.display_name));
+                    effects.push(Box::new(GiveResource {
+                        actor_id: caster_id,
+                        resource: Resource::Movement(speed),
+                    }));
+                }
+                Maneuver::Disengage => {
+                    effects.push(Box::new(crate::engine::side_effects::SetDisengaging {
+                        actor_id: caster_id,
+                        disengaging: true,
+                    }));
+                }
+                // Through the shared helper, so the roll a bonus-action
+                // Hide makes is the roll the Action-priced Hide makes.
+                Maneuver::Hide => effects.extend(bonus_action_hide_effects(encounter, caster_id)),
+            }
+        }
+        effects
     }
 }
 
-pub static CUNNING_DASH: LazyLock<CunningDash> = LazyLock::new(|| CunningDash {});
+/// Rogue **Cunning Action** — bonus-action Dash. RAW offers the rogue a
+/// choice of Dash, Disengage or Hide; the choice lives in the action
+/// list, so it is these three statics rather than one action that asks.
+pub static CUNNING_DASH: BonusManeuver =
+    BonusManeuver::new("cunning dash", &["cdash", "ca-dash"], &[Maneuver::Dash]);
 
-/// Rogue Cunning Disengage — bonus-action Disengage. Same effect as the
-/// regular Disengage action (your movement this turn doesn't provoke
-/// OAs), at the cheaper bonus-action cost.
-pub struct CunningDisengage {}
-
-impl Action for CunningDisengage {
-    fn name(&self) -> &str {
-        "cunning disengage"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cdis", "ca-dis"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(crate::engine::side_effects::SetDisengaging {
-            actor_id: caster_id,
-            disengaging: true,
-        })]
-    }
-}
-
-pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| CunningDisengage {});
+/// Rogue Cunning Action, the Disengage pick — movement this turn
+/// doesn't provoke, at a bonus action instead of an Action.
+pub static CUNNING_DISENGAGE: BonusManeuver = BonusManeuver::new(
+    "cunning disengage",
+    &["cdis", "ca-dis"],
+    &[Maneuver::Disengage],
+);
 
 /// Shared side-effects payload for any bonus-action Hide feature —
 /// rolls one Dexterity (Stealth) check against the best passive
@@ -1325,14 +1419,7 @@ pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| Cunn
 /// to beat, while the Action-priced `Hide` rolled the check. That made
 /// the cheap printing not a cheaper Hide but a better one, and the
 /// difference was invisible because the two lived in different files.
-/// Both go through `default_actions::resolve_hide_attempt` now. Sibling to Cunning Hide (Rogue
-/// Cunning Action) and Vanish (Ranger lv14) — both classes get a
-/// "bonus-action Hide" pick that RAW-agnostically drops the same
-/// one-shot attack-advantage rider on the holder. Extracted so a new
-/// bonus-action Hide feature (Skulker feat, a hypothetical future
-/// Shadow Monk pick) lands as a one-line action `side_effects`
-/// delegating here rather than another hand-copied `ApplyCondition`
-/// literal.
+/// Both go through `default_actions::resolve_hide_attempt` now.
 pub fn bonus_action_hide_effects(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -1340,82 +1427,20 @@ pub fn bonus_action_hide_effects(
     crate::actions::default_actions::resolve_hide_attempt(encounter, caster_id)
 }
 
-/// Rogue Cunning Hide — bonus-action Hide. Same condition as the regular
-/// Hide action (Hidden flag for one-shot attack-advantage), at the
-/// cheaper bonus-action cost. Keeps the rogue's signature cunning-action
-/// trio symmetric (Dash / Disengage / Hide).
-pub struct CunningHide {}
-
-impl Action for CunningHide {
-    fn name(&self) -> &str {
-        "cunning hide"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["chide", "ca-hide"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        // Hidden lasts until the rogue's next attack — same one-shot
-        // attack-advantage rider as the Hide Action. Tracked via the
-        // existing `Hidden` condition. Routed through the shared
-        // `bonus_action_hide_effects` helper so any future bonus-
-        // action Hide feature (Vanish, Skulker feat, ...) lands as a
-        // one-line delegation.
-        bonus_action_hide_effects(encounter, caster_id)
-    }
-}
-
-pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {});
+/// Rogue Cunning Action, the Hide pick.
+pub static CUNNING_HIDE: BonusManeuver =
+    BonusManeuver::new("cunning hide", &["chide", "ca-hide"], &[Maneuver::Hide]);
 
 /// 5e monster trait **Nimble Escape** — "the goblin takes the Disengage
 /// or Hide action" as a Bonus Action.
 ///
-/// Two Actions rather than one, because RAW's "or" is a choice the
+/// Two statics rather than one, because RAW's "or" is a choice the
 /// creature makes each turn and the engine's action list is where a
 /// choice lives. They are the Rogue's Cunning Disengage and Cunning
-/// Hide in everything but the name — same cost, same payload, delegated
-/// to the same helpers — and they are separate statics for the same
-/// reason `bonus_action_hide_effects` was extracted in the first place:
-/// what is shared is the *effect*, and a goblin whose action list reads
-/// "cunning hide" is a goblin claiming a class feature it does not have.
+/// Hide in everything but the name — same cost, same payload, same
+/// chassis — and they are separate statics because what is shared is
+/// the *effect*, and a goblin whose action list reads "cunning hide"
+/// is a goblin claiming a class feature it does not have.
 ///
 /// Six stat blocks carry the trait in SRD 5.2 and they are not the six
 /// anyone would guess: the three goblins, and then the Panther, the
@@ -1427,113 +1452,38 @@ pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {}
 /// Deliberately *not* the third of Cunning Action's three: RAW's Nimble
 /// Escape has no Dash. A goblin's business is leaving without being
 /// hit, not covering ground.
-pub struct NimbleDisengage {}
+pub static NIMBLE_DISENGAGE: BonusManeuver = BonusManeuver::new(
+    "nimble disengage",
+    &["ndis", "ne-dis"],
+    &[Maneuver::Disengage],
+);
 
-impl Action for NimbleDisengage {
-    fn name(&self) -> &str {
-        "nimble disengage"
-    }
+/// The Hide half of **Nimble Escape** — see `NIMBLE_DISENGAGE` above
+/// for why the trait is two actions and why they are not the Rogue's.
+pub static NIMBLE_HIDE: BonusManeuver =
+    BonusManeuver::new("nimble hide", &["nhide", "ne-hide"], &[Maneuver::Hide]);
 
-    fn aliases(&self) -> Vec<&str> {
-        vec!["ndis", "ne-dis"]
-    }
+/// Vampire Familiar **Deathless Agility** — "the familiar takes the Dash
+/// or Disengage action" as a Bonus Action.
+///
+/// Nimble Escape's other half, and the pairing is the point: the goblin
+/// gets Disengage and Hide because a goblin's plan is to not be found,
+/// and the familiar gets Disengage and Dash because a thrall's plan is
+/// to be wherever its master needs a body. Same two-statics-for-one-"or"
+/// shape as the goblins.
+pub static DEATHLESS_DASH: BonusManeuver =
+    BonusManeuver::new("deathless dash", &["ddash", "da-dash"], &[Maneuver::Dash]);
 
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(crate::engine::side_effects::SetDisengaging {
-            actor_id: caster_id,
-            disengaging: true,
-        })]
-    }
-}
-
-pub static NIMBLE_DISENGAGE: LazyLock<NimbleDisengage> = LazyLock::new(|| NimbleDisengage {});
-
-/// The Hide half of **Nimble Escape** — see `NimbleDisengage` above for
-/// why the trait is two actions and why they are not the Rogue's.
-pub struct NimbleHide {}
-
-impl Action for NimbleHide {
-    fn name(&self) -> &str {
-        "nimble hide"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["nhide", "ne-hide"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        bonus_action_hide_effects(encounter, caster_id)
-    }
-}
-
-pub static NIMBLE_HIDE: LazyLock<NimbleHide> = LazyLock::new(|| NimbleHide {});
+/// The Disengage half of **Deathless Agility** — see `DEATHLESS_DASH`.
+pub static DEATHLESS_DISENGAGE: BonusManeuver = BonusManeuver::new(
+    "deathless disengage",
+    &["ddis", "da-dis"],
+    &[Maneuver::Disengage],
+);
 
 /// 5e Ranger **Vanish** (class feature, level 14) — feature tag. Passive
 /// gate on the paired `VANISH` action, which is a bonus-action Hide
-/// (same one-shot attack-advantage rider as CunningHide / the baseline
+/// (same one-shot attack-advantage rider as Cunning Hide / the baseline
 /// Hide action) available to any ranger regardless of subclass. RAW
 /// also states "you can't be tracked by nonmagical means" which is a
 /// pure narrative clause with no combat surface — no mechanical wiring
@@ -1544,83 +1494,19 @@ pub static NIMBLE_HIDE: LazyLock<NimbleHide> = LazyLock::new(|| NimbleHide {});
 ///
 /// Sibling to `CUNNING_ACTION_TAG` on the tag lane — both are
 /// permanent passive class features with no per-rest charge. The
-/// action gates on this tag via `feature_available` inside
-/// `custom_validate_input` so a template that doesn't carry the tag
-/// can't accidentally fire it if the action leaks onto its action list.
+/// action gates on this tag through the chassis's `gated_on` slot so a
+/// template that doesn't carry the tag can't fire it even if the action
+/// leaks onto its action list.
 pub const VANISH_TAG: &str = "ranger.vanish";
 
 /// Ranger Vanish — bonus-action Hide gated on the `VANISH_TAG` passive
-/// feature. Same one-shot attack-advantage rider as Cunning Hide, at
-/// the cheaper bonus-action cost. Ships on `RANGER_TEMPLATE` (and by
-/// inheritance on `HUNTER_RANGER_TEMPLATE`); the RAW "can't be tracked
-/// by nonmagical means" clause is a pure narrative rider with no
-/// mechanical surface in the combat engine.
-pub struct Vanish {}
+/// feature. Ships on `RANGER_TEMPLATE` (and by inheritance on
+/// `HUNTER_RANGER_TEMPLATE`); the RAW "can't be tracked by nonmagical
+/// means" clause is a pure narrative rider with no mechanical surface
+/// in the combat engine.
+pub static VANISH: BonusManeuver =
+    BonusManeuver::new("vanish", &["vnsh", "rvan"], &[Maneuver::Hide]).gated_on(VANISH_TAG);
 
-impl Action for Vanish {
-    fn name(&self) -> &str {
-        "vanish"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["vnsh", "rvan"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // Two gates. The ranger has to have the VANISH_TAG passive —
-        // the action only fires for a template that ships it, so actors
-        // without the tag never see the cost or the effect surface —
-        // and the ranger has to be somewhere it is possible to hide,
-        // which is the same clause every other printing of Hide reads.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_passive_feature(VANISH_TAG))
-            && crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        // Routed through the shared `bonus_action_hide_effects` helper
-        // so any tweak to the Hide install lands once across every
-        // bonus-action-Hide caller (Cunning Hide, Nimble Hide, ...).
-        bonus_action_hide_effects(encounter, caster_id)
-    }
-}
-
-pub static VANISH: LazyLock<Vanish> = LazyLock::new(|| Vanish {});
 
 /// 5e Tasha's Rogue **Steady Aim** (level 3 alternate Cunning Action).
 /// Bonus action: grant the rogue advantage on their next attack roll this
@@ -5856,58 +5742,14 @@ pub static PATIENT_DEFENSE: LazyLock<PatientDefense> = LazyLock::new(|| PatientD
 /// activations, matching the monk's signature "blow past the front line"
 /// flavor. RAW also doubles jump distance for the turn; we don't model
 /// vertical movement so that clause is a no-op.
-pub struct StepOfTheWind {}
-
-impl Action for StepOfTheWind {
-    fn name(&self) -> &str {
-        "step of the wind"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sotw", "step", "wind"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let speed = encounter.travel_speed(caster_id);
-        encounter.log("  step of the wind: monk surges past the front line.".to_string());
-        vec![
-            Box::new(GiveResource {
-                actor_id: caster_id,
-                resource: Resource::Movement(speed),
-            }),
-            Box::new(crate::engine::side_effects::SetDisengaging {
-                actor_id: caster_id,
-                disengaging: true,
-            }),
-        ]
-    }
-}
-
-pub static STEP_OF_THE_WIND: LazyLock<StepOfTheWind> = LazyLock::new(|| StepOfTheWind {});
+pub static STEP_OF_THE_WIND: BonusManeuver = BonusManeuver::new(
+    "step of the wind",
+    &["sotw", "step", "wind"],
+    // Dash **and** Disengage in one activation — the one printing in
+    // the book that is an "and" rather than an "or", and the reason
+    // `maneuvers` is a slice.
+    &[Maneuver::Dash, Maneuver::Disengage],
+);
 
 /// Stillness of Mind — Monk action (5e level 7). At-will: spend an Action
 /// to end one Charmed or Frightened condition currently affecting the

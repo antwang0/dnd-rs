@@ -43,7 +43,7 @@ pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*LAMIA_MULTI);
     actions.push(&LAMIA_CLAWS);
-    actions.push(&*LAMIA_INTOXICATING_TOUCH);
+    actions.push(&LAMIA_INTOXICATING_TOUCH);
     CreatureTemplate {
         name: "Lamia",
         // 'L' (uppercase) — 'l' is taken (Lich), but the lamia is a

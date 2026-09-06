@@ -39,9 +39,9 @@ pub static SPY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SPY_SHORTSWORD);
     actions.push(&SPY_HAND_CROSSBOW);
-    actions.push(&*CUNNING_DASH);
-    actions.push(&*CUNNING_DISENGAGE);
-    actions.push(&*CUNNING_HIDE);
+    actions.push(&CUNNING_DASH);
+    actions.push(&CUNNING_DISENGAGE);
+    actions.push(&CUNNING_HIDE);
     CreatureTemplate {
         name: "Spy",
         // 'y' (lowercase) — an unclaimed letter, and the tail of the

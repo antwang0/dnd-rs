@@ -21,8 +21,8 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // RAW **Nimble Escape**: "the goblin takes the Disengage or Hide
     // action" as a Bonus Action. Two entries because RAW's "or" is a
     // choice the creature makes each turn.
-    actions.push(&*NIMBLE_DISENGAGE);
-    actions.push(&*NIMBLE_HIDE);
+    actions.push(&NIMBLE_DISENGAGE);
+    actions.push(&NIMBLE_HIDE);
     actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Goblin",
@@ -68,8 +68,8 @@ pub static GOBLIN_MINION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // RAW **Nimble Escape**: "the goblin takes the Disengage or Hide
     // action" as a Bonus Action. Two entries because RAW's "or" is a
     // choice the creature makes each turn.
-    actions.push(&*NIMBLE_DISENGAGE);
-    actions.push(&*NIMBLE_HIDE);
+    actions.push(&NIMBLE_DISENGAGE);
+    actions.push(&NIMBLE_HIDE);
     CreatureTemplate {
         name: "Goblin Minion",
         // 'g' (lowercase) beside the Warrior's 'G' — the same

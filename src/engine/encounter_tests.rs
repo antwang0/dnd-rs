@@ -83850,7 +83850,7 @@ fn the_cheap_printings_of_hide_answer_to_the_same_rules_as_the_expensive_one() {
         .unwrap();
 
     // Across the room, both printings are legal.
-    for action in [&*HIDE as &dyn Action, &*CUNNING_HIDE as &dyn Action] {
+    for action in [&*HIDE as &dyn Action, &CUNNING_HIDE as &dyn Action] {
         assert!(
             action.custom_validate_input(&e, rogue, None, None, None),
             "{} should be available at range",
@@ -83860,7 +83860,7 @@ fn the_cheap_printings_of_hide_answer_to_the_same_rules_as_the_expensive_one() {
 
     // Toe to toe with the ogre, neither is.
     e.relocate_actor(ogre, Coordinate::new(5, 4), false).ok();
-    for action in [&*HIDE as &dyn Action, &*CUNNING_HIDE as &dyn Action] {
+    for action in [&*HIDE as &dyn Action, &CUNNING_HIDE as &dyn Action] {
         assert!(
             !action.custom_validate_input(&e, rogue, None, None, None),
             "{} should refuse with something inside the rogue's reach",
@@ -83907,5 +83907,103 @@ fn a_bonus_action_hide_can_fail_its_stealth_check() {
     assert!(
         spotted > 0,
         "the rogue never once failed — the cheap printing is not rolling"
+    );
+}
+
+/// The two pirate charms differ in the only way that matters.
+///
+/// Both are one round of Charmed off a Wisdom save at 30 feet, and if
+/// that were the whole story the captain's would be the pirate's with a
+/// bigger number. It is not: the captain's is a Bonus Action, so it is
+/// free, so it happens every turn on top of three rapier swings, and
+/// that is the difference between CR 1 and CR 6.
+///
+/// Pinned because the cost is one field on a chassis now shared with
+/// four other charms, and a chassis-wide "charms cost an Action" tidy-up
+/// would silently remove the reason the captain is priced where it is.
+#[test]
+fn the_captain_charms_for_free_and_the_crew_pays_for_it() {
+    use crate::actions::monster_attacks::{CAPTAINS_CHARM, ENTHRALLING_PANACHE};
+    use crate::actors::creatures::pirates::{PIRATE_CAPTAIN_TEMPLATE, PIRATE_TEMPLATE};
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pirate = e
+        .instantiate_creature(&PIRATE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let captain = e
+        .instantiate_creature(&PIRATE_CAPTAIN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+
+    assert_eq!(
+        ENTHRALLING_PANACHE.cost(&e, pirate, None, None, None),
+        vec![Resource::Action],
+        "RAW prints the panache under Actions — it replaces a dagger swing"
+    );
+    assert_eq!(
+        CAPTAINS_CHARM.cost(&e, captain, None, None, None),
+        vec![Resource::BonusAction],
+        "RAW prints the captain's charm under Bonus Actions — it costs nothing it was going to spend"
+    );
+}
+
+/// A charm the target cannot see is a charm that does not land.
+///
+/// RAW is "one creature the {monster} can see within 30 feet", and the
+/// clause is the party's only counterplay against a bonus-action charm:
+/// break line of sight and the captain has to spend its turn finding
+/// you. Pinned on the chassis rather than on one stat block, because
+/// `requires_los` lives there and every printing reads it.
+#[test]
+fn a_charm_needs_to_see_what_it_is_charming() {
+    use crate::actions::monster_attacks::{
+        CAPTAINS_CHARM, DRYAD_FEY_CHARM, ENTHRALLING_PANACHE, LAMIA_INTOXICATING_TOUCH,
+        VAMPIRE_CHARMING_GAZE,
+    };
+    for charm in [
+        &ENTHRALLING_PANACHE,
+        &CAPTAINS_CHARM,
+        &VAMPIRE_CHARMING_GAZE,
+        &DRYAD_FEY_CHARM,
+        &LAMIA_INTOXICATING_TOUCH,
+    ] {
+        assert!(
+            charm.requires_los(),
+            "{} charms a creature it can see",
+            charm.name()
+        );
+        assert!(
+            !charm.deals_damage(),
+            "{} is a pure install — costing it as damage would misprice it",
+            charm.name()
+        );
+    }
+}
+
+/// Deathless Agility is Nimble Escape's other half, and the pairing is
+/// the whole characterisation.
+///
+/// The goblin gets Disengage and Hide because a goblin's plan is to not
+/// be found; the vampire familiar gets Disengage and Dash because a
+/// thrall's plan is to be wherever its master needs a body. Both are
+/// the same chassis with a different pair of maneuvers, so the test
+/// that keeps them honest is the one that checks they are *different*
+/// pairs — a chassis refactor that defaulted every printing to the
+/// rogue's three would pass every other test in the file.
+#[test]
+fn the_goblin_hides_and_the_thrall_runs() {
+    use crate::actions::class_features::{
+        DEATHLESS_DASH, DEATHLESS_DISENGAGE, Maneuver, NIMBLE_DISENGAGE, NIMBLE_HIDE,
+        STEP_OF_THE_WIND,
+    };
+    assert_eq!(NIMBLE_HIDE.maneuvers, &[Maneuver::Hide]);
+    assert_eq!(NIMBLE_DISENGAGE.maneuvers, &[Maneuver::Disengage]);
+    assert_eq!(DEATHLESS_DASH.maneuvers, &[Maneuver::Dash]);
+    assert_eq!(DEATHLESS_DISENGAGE.maneuvers, &[Maneuver::Disengage]);
+    // The one printing in the book that is an "and" rather than an
+    // "or", and the reason the field is a slice.
+    assert_eq!(
+        STEP_OF_THE_WIND.maneuvers,
+        &[Maneuver::Dash, Maneuver::Disengage]
     );
 }

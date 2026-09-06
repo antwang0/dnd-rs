@@ -296,6 +296,142 @@ pub fn save_or_charmed_by_caster(
     install_condition_with_link(Condition::Charmed, target_id, caster_id, timer)
 }
 
+/// The chassis for a single-target save-or-charm — a whole action whose
+/// entire payload is one saving throw and, on a failure, the `Charmed`
+/// condition pointing back at whoever cast it.
+///
+/// Five stat blocks print this and the only things that differ between
+/// them are the name, the range, the DC and how long it lasts. The
+/// vampire's Charming Gaze, the dryad's Fey Charm and the lamia's
+/// Intoxicating Touch each used to be forty lines of trait impl around
+/// one call to `save_or_charmed_by_caster`, and the pirates' two are
+/// what made that indefensible: the same forty lines a fourth and a
+/// fifth time would have been most of what those stat blocks are.
+///
+/// `bonus_action` is the one field that is about tempo rather than
+/// flavour, and it earns its place: the Pirate Captain's Captain's
+/// Charm is printed under **Bonus Actions**, which means the captain
+/// charms *and* takes three swings in the same turn, and a charm that
+/// cost it the Action would be a different and much weaker creature.
+///
+/// No to-hit roll, by RAW and by choice — every printing of this in the
+/// book is "Wisdom Saving Throw: DC N, one creature the {monster} can
+/// see within {range} feet", one roll and one outcome. The touch-range
+/// printings (the lamia) are the same clause with a smaller number, not
+/// a melee attack; giving them an attack roll would double-gate a
+/// single-payload effect.
+pub struct SaveOrCharm {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Range in tiles. RAW's "within 30 feet" is 12 of them; a touch
+    /// printing passes `MELEE_REACH`.
+    pub reach: isize,
+    pub save_ability: AbilityScoreType,
+    pub save_dc: i32,
+    pub timer: ConditionTimer,
+    /// Log tag for the install line, so the log reads "fey charm:
+    /// target is enthralled" rather than naming the chassis.
+    pub rider_name: &'static str,
+    pub bonus_action: bool,
+}
+
+impl SaveOrCharm {
+    /// The common shape: an Action, a Wisdom save, a range in tiles.
+    pub const fn action(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        reach: isize,
+        save_dc: i32,
+        timer: ConditionTimer,
+        rider_name: &'static str,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            reach,
+            save_ability: AbilityScoreType::Wisdom,
+            save_dc,
+            timer,
+            rider_name,
+            bonus_action: false,
+        }
+    }
+
+    /// Builder tail for the printings filed under **Bonus Actions**.
+    pub const fn as_bonus_action(self) -> Self {
+        Self {
+            bonus_action: true,
+            ..self
+        }
+    }
+}
+
+impl Action for SaveOrCharm {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "one creature the {monster} **can see**". Load-bearing —
+        // a charm through a wall is the difference between a lockdown
+        // the party can break line of sight to escape and one it can't.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        // Pure install — no HP loss. Keeps the AI's focus-fire pipeline
+        // from costing the charm out as a damage lane and reaching for
+        // it when whittling would serve better.
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            crate::actions::action_template::bonus_action_only()
+        } else {
+            crate::actions::action_template::action_only()
+        }
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        save_or_charmed_by_caster(
+            encounter,
+            caster_id,
+            target_id,
+            self.save_ability,
+            self.save_dc,
+            self.timer,
+            self.rider_name,
+        )
+    }
+}
+
+
 /// On an Action-cost weapon swing, conditionally run a second swing if
 /// the caster has Extra Attack and this invocation isn't already inside
 /// a `Multiattack` / `CompoundAttack` expansion. Logs `"  Extra Attack:"`
@@ -1493,6 +1629,38 @@ impl WeaponWithRider {
             rider_dice,
             rider_type,
             rider_name,
+        }
+    }
+
+    /// Builder tail turning a swing into the same weapon in flight —
+    /// the sibling of `SimpleWeapon::thrown`, and here for the same
+    /// reason.
+    ///
+    /// RAW's "Melee or Ranged Attack Roll" weapons are one weapon with
+    /// two ranges, and everything else about them — the ability, the
+    /// die, the damage type, and on this chassis the rider — is shared
+    /// by definition. Writing the throw as a second literal is writing
+    /// those facts twice, and a vampire familiar's thrown Umbral Dagger
+    /// that had quietly lost its necrotic rider would read as correct
+    /// in either half taken alone.
+    ///
+    /// Consumes `self`, so the source is a `const` profile rather than
+    /// a `static`; see `DAGGER_PROFILE` for why that distinction is
+    /// what makes the two statics two distinct objects.
+    pub const fn thrown(
+        self,
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        normal_range: isize,
+        long_range: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            reach: long_range,
+            is_melee: false,
+            normal_range: Some(normal_range),
+            ..self
         }
     }
 }
@@ -6534,53 +6702,15 @@ pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
 /// of AoE. RAW gives a "no save again until damaged" clause; we honor
 /// it via the 10-round duration and let damage / dispel break the
 /// condition naturally.
-pub struct VampireCharmingGaze {}
-
-impl Action for VampireCharmingGaze {
-    fn name(&self) -> &str {
-        "charming gaze"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cg", "gaze"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 30ft RAW = 12 tiles.
-        Some(12)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        save_or_charmed_by_caster(
-            encounter,
-            caster_id,
-            target_id,
-            AbilityScoreType::Wisdom,
-            17,
-            ConditionTimer::Rounds(10),
-            "charming gaze",
-        )
-    }
-}
-
-pub static VAMPIRE_CHARMING_GAZE: LazyLock<VampireCharmingGaze> =
-    LazyLock::new(|| VampireCharmingGaze {});
+pub static VAMPIRE_CHARMING_GAZE: SaveOrCharm = SaveOrCharm::action(
+    "charming gaze",
+    &["cg", "gaze"],
+    // 30 ft RAW = 12 tiles.
+    12,
+    17,
+    ConditionTimer::Rounds(10),
+    "charming gaze",
+);
 
 /// Vampire Multiattack — Action: two vampiric bites at the same target.
 /// Re-uses the generic `Multiattack` wrapper around the existing
@@ -11137,55 +11267,15 @@ pub static DRYAD_CLUB: SimpleWeapon = SimpleWeapon::melee(
 /// against the dryad. Charm-immune creatures (constructs / undead /
 /// fey themselves per RAW) shrug it off via the standard add_condition
 /// gate.
-pub struct DryadFeyCharm {}
-
-impl Action for DryadFeyCharm {
-    fn name(&self) -> &str {
-        "fey charm"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fc", "charm"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 30 ft RAW = 12 tiles.
-        Some(12)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        save_or_charmed_by_caster(
-            encounter,
-            caster_id,
-            target_id,
-            AbilityScoreType::Wisdom,
-            14,
-            ConditionTimer::Rounds(10),
-            "fey charm",
-        )
-    }
-}
-
-pub static DRYAD_FEY_CHARM: LazyLock<DryadFeyCharm> = LazyLock::new(|| DryadFeyCharm {});
+pub static DRYAD_FEY_CHARM: SaveOrCharm = SaveOrCharm::action(
+    "fey charm",
+    &["fc", "charm"],
+    // 30 ft RAW = 12 tiles.
+    12,
+    14,
+    ConditionTimer::Rounds(10),
+    "fey charm",
+);
 
 // ─── Bullywug ────────────────────────────────────────────────────────
 
@@ -13811,56 +13901,14 @@ pub static LAMIA_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// would double-gate the curse install for what's essentially a single-
 /// payload effect; one roll keeps the per-Action tempo legible and the
 /// curse-vs-claws lane distinction cleaner.
-pub struct LamiaIntoxicatingTouch {}
-
-impl Action for LamiaIntoxicatingTouch {
-    fn name(&self) -> &str {
-        "intoxicating touch"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["it", "touch", "lamia-touch"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn deals_damage(&self) -> bool {
-        // Pure curse install — no HP loss on the target. The AI's
-        // focus-fire pipeline should prefer the claws for whittling and
-        // only reach for the touch when the lockout is more valuable
-        // than raw damage tempo.
-        false
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        save_or_charmed_by_caster(
-            encounter,
-            caster_id,
-            target_id,
-            AbilityScoreType::Wisdom,
-            13,
-            ConditionTimer::Rounds(10),
-            "lamia curse",
-        )
-    }
-}
-
-pub static LAMIA_INTOXICATING_TOUCH: LazyLock<LamiaIntoxicatingTouch> =
-    LazyLock::new(|| LamiaIntoxicatingTouch {});
+pub static LAMIA_INTOXICATING_TOUCH: SaveOrCharm = SaveOrCharm::action(
+    "intoxicating touch",
+    &["it", "touch", "lamia-touch"],
+    MELEE_REACH,
+    13,
+    ConditionTimer::Rounds(10),
+    "lamia curse",
+);
 
 /// Lamia Multiattack — 1 claws + 1 intoxicating touch per Action via
 /// `CompoundAttack`. RAW: "Multiattack. The lamia makes two attacks:
@@ -13873,7 +13921,7 @@ pub static LAMIA_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
     display_name: "lamia multiattack",
     parts: vec![
         (&LAMIA_CLAWS, 1),
-        (&*LAMIA_INTOXICATING_TOUCH, 1),
+        (&LAMIA_INTOXICATING_TOUCH, 1),
     ],
 });
 
@@ -19818,3 +19866,185 @@ pub static SWARM_OF_RAVENS_BEAKS: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Piercing,
 );
+
+// ─── Pirates ─────────────────────────────────────────────────────────
+
+/// Pirate Multiattack — two Dagger attacks.
+///
+/// RAW: "The pirate makes two Dagger attacks. It can replace one attack
+/// with a use of Enthralling Panache." The replacement clause is not a
+/// third entry on the action list — it is the reason the panache is its
+/// own Action-priced entry rather than a rider, so the pirate's turn is
+/// a genuine choice between two swings and one swing's worth of charm.
+/// The AI reads both off the list and prices them the way it prices
+/// every other damage-versus-lockdown pick.
+///
+/// The dagger itself is the shared `DAGGER` static, which is already
+/// exactly what the stat block prints: DEX, 1d4, piercing, finesse.
+/// RAW's "+5, reach 5 ft. or range 20/60 ft." is DEX 16 plus a +2
+/// proficiency bonus, and the throw is `THROWN_DAGGER` at the same
+/// 8/24 tiles every other short throw uses.
+pub static PIRATE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double dagger",
+    sub_attack: &DAGGER,
+    count: 2,
+});
+
+/// Pirate **Enthralling Panache** — WIS save DC 12 within 30 ft, or the
+/// target is Charmed until the start of the pirate's next turn.
+///
+/// One round, which is the shortest charm in the bestiary and the whole
+/// character of the stat block. A vampire's gaze takes somebody out of
+/// the fight for a minute; a pirate's swagger takes them out for their
+/// next turn, and then they are back and annoyed. It is a tempo tax
+/// rather than a lockout, which is what a CR-1 charm should be, and it
+/// is why the pirate would rather spend the panache on the party's
+/// heaviest hitter than on whoever is closest.
+pub static ENTHRALLING_PANACHE: SaveOrCharm = SaveOrCharm::action(
+    "enthralling panache",
+    &["ep", "panache"],
+    // RAW 30 ft = 12 tiles.
+    12,
+    12,
+    // "Until the start of the pirate's next turn" — one round.
+    ConditionTimer::Rounds(1),
+    "enthralling panache",
+);
+
+/// Pirate Captain Rapier — DEX-based 2d8+DEX piercing melee that vexes.
+///
+/// RAW: "Hit: 13 (2d8 + 4) Piercing damage, and the pirate has Advantage
+/// on the next attack roll it makes before the end of this turn." That
+/// clause is the Vex mastery, word for word, and the engine already has
+/// it — so the captain's signature "first cut sets up the second" reads
+/// off the shared mastery lane rather than a bespoke rider, and it
+/// chains inside the three-attack Multiattack the way RAW intends.
+pub static PIRATE_CAPTAIN_RAPIER: SimpleWeapon = SimpleWeapon::melee(
+    "captain's rapier",
+    &["cr", "rapier"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+)
+.mastery(WeaponMastery::Vex);
+
+/// Pirate Captain Pistol — DEX-based 2d10+DEX piercing at range.
+///
+/// RAW 30/90 ft. The bestiary's only firearm, and it is priced like
+/// one: the biggest single die on any CR-6 ranged attack, on a stat
+/// block that would rather be in melee. Compressed to 12 tiles normal
+/// and 20 long, the same band the drow's hand crossbow reads, so the
+/// captain's choice between rapier and pistol is a real one on a board
+/// two dozen tiles wide rather than a formality.
+pub static PIRATE_CAPTAIN_PISTOL: SimpleWeapon = SimpleWeapon::ranged(
+    "pistol",
+    &["pist"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 10),
+    DamageType::Piercing,
+    20,
+    12,
+);
+
+/// Pirate Captain Multiattack — three attacks per Action.
+///
+/// RAW: "three attacks, using Rapier or Pistol in any combination."
+/// Three rapiers, because the free choice is one the action list
+/// already offers: the pistol is its own entry, and a captain that
+/// wants to shoot takes it. What a mixed chassis would buy is the
+/// ability to shoot twice and stab once in the same Action, which is
+/// worth less than it sounds — the pistol out-damages the rapier only
+/// at range the captain is trying to close — and would cost the AI a
+/// combinatorial pick it has no way to price.
+///
+/// Three swings with Vex on each is the point: the first sets up the
+/// second, the second sets up the third, and a captain that connects
+/// once is very likely to connect three times.
+pub static PIRATE_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "triple rapier",
+    sub_attack: &PIRATE_CAPTAIN_RAPIER,
+    count: 3,
+});
+
+/// Pirate Captain **Captain's Charm** — WIS save DC 14 within 30 ft, or
+/// the target is Charmed until the start of the captain's next turn.
+///
+/// A **Bonus Action**, which is the whole difference between this and
+/// the Pirate's panache and is worth more than the two points of DC.
+/// The captain charms *and* takes three swings in the same turn: the
+/// charm costs it nothing it was going to spend, so there is never a
+/// turn where charming is the wrong call. That is a genuinely nastier
+/// stat block than one with a stronger charm that cost an Action.
+pub static CAPTAINS_CHARM: SaveOrCharm = SaveOrCharm::action(
+    "captain's charm",
+    &["cc", "captains-charm"],
+    // RAW 30 ft = 12 tiles.
+    12,
+    14,
+    ConditionTimer::Rounds(1),
+    "captain's charm",
+)
+.as_bonus_action();
+
+// ─── Vampire Familiar ────────────────────────────────────────────────
+
+/// The familiar's dagger, as a profile — see `DAGGER_PROFILE` for why
+/// the swing and the throw come from one const rather than two
+/// literals. Here the shared fact is the necrotic rider, which is
+/// larger than the weapon damage it rides on and is the entire reason
+/// the stat block is CR 3.
+const UMBRAL_DAGGER_PROFILE: WeaponWithRider = WeaponWithRider::melee(
+    "umbral dagger",
+    &["ud", "umbral"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    Dice::new(3, 4),
+    DamageType::Necrotic,
+    "umbral chill",
+);
+
+/// Vampire Familiar Umbral Dagger — DEX 1d4 piercing plus a flat 3d4
+/// necrotic, no save.
+///
+/// RAW: "Hit: 5 (1d4 + 3) Piercing damage plus 7 (3d4) Necrotic
+/// damage." The rider is half again the swing and it is unconditional,
+/// which is what a thrall's borrowed power looks like — the familiar
+/// cannot fight, so its master lent it something that does not need to.
+///
+/// The clause that is **not** modeled is the tail: "If the target is
+/// reduced to 0 Hit Points by this attack, the target becomes Stable
+/// but has the Poisoned condition for 1 hour. While it has the
+/// Poisoned condition, the target has the Paralyzed condition." That is
+/// a kidnapping, not a kill — the vampire wants the body — and it needs
+/// a side-effect lane that fires *on the downing blow specifically*,
+/// which the damage pipeline does not currently hand to the weapon that
+/// dealt it. Two conditions with a shared one-hour timer and an
+/// auto-stabilise would be straightforward once that hook exists; the
+/// hook is the work. Until then the familiar's dagger drops people the
+/// ordinary way, which is strictly worse for the familiar and strictly
+/// better for the party, so the omission errs in the safe direction.
+pub static UMBRAL_DAGGER: WeaponWithRider = UMBRAL_DAGGER_PROFILE;
+
+/// The umbral dagger in flight — RAW 20/60 ft, which is 8/24 tiles.
+///
+/// The same 8/24 band every other short throw on the roster reads, and
+/// the same weapon: ability, die, damage type and the necrotic rider
+/// all come from the profile, so the throw cannot quietly become a
+/// mundane dagger.
+pub static THROWN_UMBRAL_DAGGER: WeaponWithRider = UMBRAL_DAGGER_PROFILE.thrown(
+    "thrown umbral dagger",
+    &["tud", "hurl umbral"],
+    THROWN_SHORT_NORMAL,
+    THROWN_SHORT_LONG,
+);
+
+/// Vampire Familiar Multiattack — two Umbral Dagger attacks.
+///
+/// Fourteen necrotic before the piercing is counted, which is most of
+/// what a CR-3 stat block is allowed and all of what this one has.
+pub static VAMPIRE_FAMILIAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double umbral dagger",
+    sub_attack: &UMBRAL_DAGGER,
+    count: 2,
+});

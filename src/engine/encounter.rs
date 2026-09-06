@@ -146,7 +146,7 @@ use crate::actors::creatures::skeletons::{MINOTAUR_SKELETON_TEMPLATE, SKELETON_T
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
 use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
-use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+use crate::actors::creatures::vampires::{VAMPIRE_FAMILIAR_TEMPLATE, VAMPIRE_TEMPLATE};
 use crate::actors::creatures::zombies::{OGRE_ZOMBIE_TEMPLATE, ZOMBIE_TEMPLATE};
 use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
 use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
@@ -242,6 +242,7 @@ use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
 use crate::actors::creatures::giant_octopuses::GIANT_OCTOPUS_TEMPLATE;
 use crate::actors::creatures::plesiosauruses::PLESIOSAURUS_TEMPLATE;
 use crate::actors::creatures::pteranodons::PTERANODON_TEMPLATE;
+use crate::actors::creatures::pirates::{PIRATE_CAPTAIN_TEMPLATE, PIRATE_TEMPLATE};
 use crate::actors::creatures::thugs::{THUG_TEMPLATE, TOUGH_BOSS_TEMPLATE};
 use crate::actors::creatures::tribal_warriors::TRIBAL_WARRIOR_TEMPLATE;
 use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
@@ -9809,6 +9810,7 @@ impl EncounterInstance {
             &SPECTATOR_TEMPLATE,
             &WRAITH_TEMPLATE,
             &VAMPIRE_TEMPLATE,
+            &VAMPIRE_FAMILIAR_TEMPLATE,
             // Low-CR undead / fiend / ooze staples. These templates have
             // existed for a while but were never added to the pool, so
             // the random encounter generator could never roll them — a
@@ -10364,6 +10366,8 @@ impl EncounterInstance {
             //     ladder; the paralysis-auto-crit envelope is the load-
             //     bearing threat.
             &THUG_TEMPLATE,
+            &PIRATE_TEMPLATE,
+            &PIRATE_CAPTAIN_TEMPLATE,
             &TOUGH_BOSS_TEMPLATE,
             &TRIBAL_WARRIOR_TEMPLATE,
             &SCOUT_TEMPLATE,

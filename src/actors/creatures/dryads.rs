@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 pub static DRYAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DRYAD_CLUB);
-    actions.push(&*DRYAD_FEY_CHARM);
+    actions.push(&DRYAD_FEY_CHARM);
     CreatureTemplate {
         name: "Dryad",
         // 'r' for dryad — lowercase tree-spirit glyph. Distinct from 'D'

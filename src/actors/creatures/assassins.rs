@@ -56,9 +56,9 @@ pub static ASSASSIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*ASSASSIN_MULTI);
     actions.push(&ASSASSIN_SHORTSWORD);
     actions.push(&ASSASSIN_LIGHT_CROSSBOW);
-    actions.push(&*CUNNING_DASH);
-    actions.push(&*CUNNING_DISENGAGE);
-    actions.push(&*CUNNING_HIDE);
+    actions.push(&CUNNING_DASH);
+    actions.push(&CUNNING_DISENGAGE);
+    actions.push(&CUNNING_HIDE);
     CreatureTemplate {
         name: "Assassin",
         // 'A' (uppercase) — shared with the Assassin Rogue PC template,

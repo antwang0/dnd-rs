@@ -41,7 +41,7 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*PATIENT_DEFENSE);
     actions.push(&*FLURRY_OF_BLOWS);
     actions.push(&*STILLNESS_OF_MIND);
-    actions.push(&*STEP_OF_THE_WIND);
+    actions.push(&STEP_OF_THE_WIND);
     // Empty Body — RAW level 18 monk capstone-adjacent, once per long
     // rest. Ships on the CR-1.5 monk template above its strict RAW
     // level gate for the same reason Diamond Soul / Purity of Body do

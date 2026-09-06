@@ -22,9 +22,9 @@ use std::sync::LazyLock;
 pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*ROGUE_SHORTSWORD);
-    actions.push(&*CUNNING_DASH);
-    actions.push(&*CUNNING_DISENGAGE);
-    actions.push(&*CUNNING_HIDE);
+    actions.push(&CUNNING_DASH);
+    actions.push(&CUNNING_DISENGAGE);
+    actions.push(&CUNNING_HIDE);
     // 5e 2024 Rogue Cunning Strike (lv5): mirror the rogue chassis.
     actions.push(&*CUNNING_STRIKE_POISON);
     actions.push(&*CUNNING_STRIKE_TRIP);

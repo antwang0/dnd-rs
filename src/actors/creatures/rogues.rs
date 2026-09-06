@@ -23,9 +23,9 @@ use std::sync::LazyLock;
 pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*ROGUE_SHORTSWORD);
-    actions.push(&*CUNNING_DASH);
-    actions.push(&*CUNNING_DISENGAGE);
-    actions.push(&*CUNNING_HIDE);
+    actions.push(&CUNNING_DASH);
+    actions.push(&CUNNING_DISENGAGE);
+    actions.push(&CUNNING_HIDE);
     // 5e Tasha's Rogue Steady Aim (lv3): bonus action; advantage on next
     // attack at the cost of zeroing speed for the rest of the turn.
     // Pairs naturally with Sneak Attack's advantage trigger so a sniping

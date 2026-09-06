@@ -300,6 +300,7 @@ pub mod acolytes;
 pub mod cultists;
 pub mod nobles;
 pub mod spies;
+pub mod pirates;
 pub mod priests;
 pub mod gladiators;
 pub mod assassins;
@@ -1186,6 +1187,7 @@ mod tests {
         (&*bulettes::BULETTE_TEMPLATE, 17, "9d10+45", [19, 11, 21, 2, 10, 5], 40, 0, 5.0),
         (&*wraiths::WRAITH_TEMPLATE, 13, "9d8+27", [6, 16, 16, 12, 14, 15], 5, 60, 5.0),
         (&*vampires::VAMPIRE_TEMPLATE, 16, "23d8+92", [18, 18, 18, 17, 15, 18], 40, 0, 13.0),
+        (&*vampires::VAMPIRE_FAMILIAR_TEMPLATE, 15, "10d8+20", [17, 16, 15, 10, 10, 14], 30, 0, 3.0),
         (&*skeletons::SKELETON_TEMPLATE, 14, "2d8+4", [10, 16, 15, 6, 8, 5], 30, 0, 0.25),
         (&*skeletons::MINOTAUR_SKELETON_TEMPLATE, 12, "6d10+12", [18, 11, 15, 6, 8, 5], 40, 0, 2.0),
         (&*zombies::ZOMBIE_TEMPLATE, 8, "2d8+6", [13, 6, 16, 3, 6, 5], 20, 0, 0.25),
@@ -1274,6 +1276,8 @@ mod tests {
         (&*plesiosauruses::PLESIOSAURUS_TEMPLATE, 13, "8d10+24", [18, 15, 16, 2, 12, 5], 20, 0, 2.0),
         (&*pteranodons::PTERANODON_TEMPLATE, 13, "3d8", [12, 15, 10, 2, 9, 5], 10, 60, 0.25),
         (&*thugs::THUG_TEMPLATE, 12, "5d8+10", [15, 12, 14, 10, 10, 11], 30, 0, 0.5),  // SRD 5.2: Tough
+        (&*pirates::PIRATE_TEMPLATE, 14, "6d8+6", [10, 16, 12, 8, 12, 14], 30, 0, 1.0),
+        (&*pirates::PIRATE_CAPTAIN_TEMPLATE, 17, "13d8+26", [10, 18, 14, 10, 14, 17], 30, 0, 6.0),
         (&*thugs::TOUGH_BOSS_TEMPLATE, 16, "11d8+33", [17, 14, 16, 11, 10, 11], 30, 0, 4.0),  // SRD 5.2: Tough Boss
         (&*tribal_warriors::TRIBAL_WARRIOR_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),  // SRD 5.2: Warrior Infantry
         (&*scouts::SCOUT_TEMPLATE, 13, "3d8+3", [11, 14, 12, 11, 13, 11], 30, 0, 0.5),

@@ -22,8 +22,8 @@ pub static TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // RAW **Nimble Escape**: "the cat takes the Disengage or Hide
     // action" as a Bonus Action — the trait that lets it close, maul
     // and step back out of reach in one turn.
-    actions.push(&*NIMBLE_DISENGAGE);
-    actions.push(&*NIMBLE_HIDE);
+    actions.push(&NIMBLE_DISENGAGE);
+    actions.push(&NIMBLE_HIDE);
     CreatureTemplate {
         name: "Tiger",
         // 'T' for Tiger — capital because Large; collides with Troll
