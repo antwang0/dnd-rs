@@ -1807,6 +1807,59 @@ pub enum Condition {
     /// normal range with a bow, and no resistance to fire, which a
     /// creature standing on the surface has no business claiming.
     WaterWalking,
+    /// Water-Breathing (5e **Water Breathing**, level-3 transmutation,
+    /// 24 hours). "This spell grants up to ten willing creatures of
+    /// your choice within range the ability to breathe underwater until
+    /// the spell ends."
+    ///
+    /// One row, on `UNDERWATER_BREATH_SOURCES`, and that row is the
+    /// whole spell: the breath clock in `engine::breath` reads
+    /// `ActorInstance::breathes_underwater` once per round and a
+    /// creature holding this is simply never on it.
+    ///
+    /// Deliberately *not* on any of the water-surcharge or Underwater
+    /// Combat lanes, which is exactly what separates it from
+    /// `WaterWalking` beside it. A creature under this spell is still
+    /// in the lake — it still swims at double cost, still swings at
+    /// disadvantage down there, and still resists fire. What it has
+    /// stopped doing is drowning, and RAW's sentence grants nothing
+    /// else.
+    WaterBreathing,
+    /// Gaseous (5e **Gaseous Form**, level-3 transmutation,
+    /// concentration up to 1 hour). "A willing creature you touch
+    /// shape-shifts, along with everything it's wearing and carrying,
+    /// into a misty cloud for the duration."
+    ///
+    /// Six rows, and between them they are the whole spell:
+    ///
+    ///   - `TYPED_RESISTANCE_CONDITIONS` — Resistance to Bludgeoning,
+    ///     Piercing and Slashing, which is most of what is swung on
+    ///     this board.
+    ///   - `CONDITION_DRIVEN_IMMUNITIES` — Immunity to Prone. You
+    ///     cannot knock over a cloud.
+    ///   - `PHYSICAL_SAVE_MODE_CONDITIONS` — Advantage on Strength,
+    ///     Dexterity and Constitution saves.
+    ///   - `CONDITION_SPEED_OVERRIDES` — RAW's "the target's only
+    ///     method of movement is a Fly Speed of 10 feet", which is the
+    ///     price of the other five.
+    ///   - `blocks_spellcasting` / `blocks_spell_slots` — "the target
+    ///     can't … cast spells".
+    ///   - `blocks_attacking` — "the target can't attack".
+    ///
+    /// The two clauses deliberately left out are both about geometry
+    /// the board does not have: "can enter and occupy the space of
+    /// another creature" and "can pass through narrow openings" need a
+    /// tile layer that distinguishes a crack from a wall, and this one
+    /// does not have one. Nothing else about the spell depends on
+    /// either, and both are cuts in the safe direction — a mist that
+    /// still has to walk around people is worse than RAW, not better.
+    ///
+    /// The *flight* half of the speed line is a cut for a different
+    /// reason: the engine's flight lane carries a thirty-foot altitude
+    /// and a fall at the end of it, and a cloud drifting a foot off the
+    /// floor is not that. What the clause costs a creature is the
+    /// speed, and the speed is what is modeled.
+    Gaseous,
     /// True-Sighted (5e True Seeing, level-6 divination). The holder
     /// perceives things as they actually are: invisible creatures, magical
     /// blur, and displacement illusions all stop hiding the truth from
@@ -2700,6 +2753,8 @@ impl Condition {
             Condition::WeaponEnchanted => "wielding an enchanted weapon",
             Condition::Darkvisioned => "seeing in the dark",
             Condition::WaterWalking => "walking on water",
+            Condition::WaterBreathing => "breathing water",
+            Condition::Gaseous => "gaseous",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",
             Condition::Immolated => "immolated",
@@ -3309,7 +3364,10 @@ impl Condition {
         // expending a slot rather than casting, and `WildHeal` drains
         // the slot manager directly rather than routing a `SpellSlot`
         // cost through here.
-        matches!(self, Condition::Silenced | Condition::WildShaped)
+        matches!(
+            self,
+            Condition::Silenced | Condition::WildShaped | Condition::Gaseous
+        )
     }
 
     /// True if the holder can't cast **any** spell while this condition
@@ -3338,7 +3396,35 @@ impl Condition {
     /// on `blocks_spell_slots` alone, which is why the narrower gate
     /// stays meaningful.
     pub fn blocks_spellcasting(&self) -> bool {
-        matches!(self, Condition::Silenced | Condition::WildShaped)
+        // Gaseous Form joins from a third direction again: not a hush
+        // and not a borrowed body, but no hands and no throat. RAW is
+        // "the target can't talk or manipulate objects … can't attack
+        // or cast spells", which is as unqualified as the other two.
+        matches!(
+            self,
+            Condition::Silenced | Condition::WildShaped | Condition::Gaseous
+        )
+    }
+
+    /// True if the holder can't take a hostile action at all while this
+    /// condition is up — 5e's flat *"the target can't attack"*.
+    ///
+    /// Read at the action layer by `Action::validate_input`, gated on
+    /// `Action::is_harmful`, which is the engine's marker for "this is
+    /// aimed at somebody". Deliberately wider than weapon swings: a
+    /// creature that has turned into a cloud cannot shove, grapple or
+    /// bite either, and every one of those is an attack in the sense
+    /// RAW's sentence means. Deliberately narrower than
+    /// `Incapacitated`: a gaseous creature still has its Action, and
+    /// can Dash, Dodge, Disengage and Hide with it, which is the whole
+    /// point of being a cloud.
+    ///
+    /// Its sibling `blocks_spellcasting` covers the other half of the
+    /// same sentence, and the two stay separate because the conditions
+    /// on them are not the same set: a Silenced fighter swings fine,
+    /// and a gaseous wizard does neither.
+    pub fn blocks_attacking(&self) -> bool {
+        matches!(self, Condition::Gaseous)
     }
 
     /// True if the holder auto-fails STR and DEX saving throws.

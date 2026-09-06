@@ -855,6 +855,24 @@ const MENTAL_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     (Condition::IntellectFortified, RollMode::Advantage),
 ];
 
+/// The mirror of `MENTAL_SAVE_MODE_CONDITIONS` on the other three
+/// abilities: conditions that flip the save-roll mode on **Strength,
+/// Dexterity and Constitution** together and leave the mental saves
+/// alone.
+///
+/// The cluster 5e keeps writing and the engine had no lane for. STR had
+/// one (shared with checks, because every row on it says "checks and
+/// saving throws"), DEX had four clauses inlined at the call site, and
+/// CON had none at all — so a feature whose text is the physical trio
+/// as a unit had to be entered three times or not at all.
+///
+/// Rows:
+///   - **Gaseous Form**: "it has Advantage on Strength, Dexterity, and
+///     Constitution saving throws" — a cloud is hard to grab, hard to
+///     catch and hard to poison, and the sentence names all three.
+const PHYSICAL_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] =
+    &[(Condition::Gaseous, RollMode::Advantage)];
+
 /// Conditions whose presence combines a blanket **disadvantage** into
 /// the actor's *ability check* mode. Sibling of
 /// `BLANKET_SAVE_DISADVANTAGE_CONDITIONS` one lane over — same row
@@ -4786,6 +4804,23 @@ impl EncounterInstance {
         // you were" effect lands as one row.
         if matches!(ability, AbilityScoreType::Strength) {
             for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
+                if actor.has_condition(*condition) {
+                    tally.add(*effect);
+                }
+            }
+        }
+        // Physical-save cluster — the clauses 5e writes as "Strength,
+        // Dexterity, and Constitution saving throws", which is a unit
+        // the STR and DEX clusters above cannot express between them
+        // and which CON had no lane for at all. Same branch-once shape
+        // as the mental cluster below it.
+        if matches!(
+            ability,
+            AbilityScoreType::Strength
+                | AbilityScoreType::Dexterity
+                | AbilityScoreType::Constitution
+        ) {
+            for (condition, effect) in PHYSICAL_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
                     tally.add(*effect);
                 }

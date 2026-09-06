@@ -25921,6 +25921,160 @@ impl Action for ProtectionFromEnergy {
 pub static PROTECTION_FROM_ENERGY: LazyLock<ProtectionFromEnergy> =
     LazyLock::new(|| ProtectionFromEnergy {});
 
+/// **Gaseous Form** — SRD 5.2 level-3 transmutation (Sorcerer,
+/// Warlock, Wizard), action, touch, concentration up to 1 hour.
+///
+/// > A willing creature you touch shape-shifts, along with everything
+/// > it's wearing and carrying, into a misty cloud for the duration.
+/// > […] the target has Resistance to Bludgeoning, Piercing, and
+/// > Slashing damage; it has Immunity to the Prone condition; and it
+/// > has Advantage on Strength, Dexterity, and Constitution saving
+/// > throws. […] the target can't attack or cast spells.
+/// >
+/// > *Using a Higher-Level Spell Slot.* You can target one additional
+/// > creature for each spell slot level above 3.
+///
+/// A spell that is entirely a trade, and the engine's first one shaped
+/// like this: the target becomes very hard to kill and stops being able
+/// to do anything about the fight. Every clause on both sides of that
+/// trade lands on a cohort — see `Condition::Gaseous` for the six rows
+/// and for the two clauses about tile geometry that are deliberately
+/// left out.
+///
+/// **It is deliberately castable on an enemy's face and deliberately
+/// not aimed there.** RAW says "a willing creature", and the engine's
+/// validator holds the caster to their own side of the board — a
+/// gaseous enemy would be a hostile creature that cannot attack, which
+/// is a better save-or-suck than anything on the sorcerer's list and
+/// is not what the spell says.
+///
+/// The AI is not taught to reach for it, and that is the honest state
+/// rather than an omission: "turn a friend into a cloud so they survive
+/// the next two rounds" is a decision about a fight the AI cannot see
+/// the end of, and a rung that fired on low hit points would spend a
+/// 3rd-level slot to take an ally out of the fight it was losing. It is
+/// on the caster's action list for a player to type.
+pub struct GaseousForm {}
+
+impl GaseousForm {
+    /// RAW's base slot level; each level above adds one target.
+    const BASE_LEVEL: u32 = 3;
+}
+
+impl Action for GaseousForm {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "gaseous form"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gf", "gaseous", "mist form"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch. Checked against the first named target only, which is
+        // the engine's shape for every multi-target spell — a caster
+        // upcasting this is touching a huddle, not a firing line.
+        Some(0)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(crate::engine::action_overrides::cast_level(
+            overrides,
+            Self::BASE_LEVEL,
+        ))
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if caster.is_concentrating() {
+            return false;
+        }
+        let team = caster.team();
+        let Some(targets) = target_ids else {
+            return false;
+        };
+        // "A willing creature": the caster's own side, still standing,
+        // and not already a cloud. Every named target has to clear it,
+        // not just the first — a cast that would silently drop half its
+        // list is a cast the player did not mean to make.
+        targets.iter().all(|id| {
+            encounter.actors.get(id).is_some_and(|t| {
+                t.team() == team
+                    && t.is_combat_active()
+                    && !t.has_condition(Condition::Gaseous)
+            })
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(targets) = target_ids else {
+            return Vec::new();
+        };
+        let level = crate::engine::action_overrides::cast_level(overrides, Self::BASE_LEVEL);
+        // One target at the base level, one more per level above it.
+        let allowed = 1 + level.saturating_sub(Self::BASE_LEVEL) as usize;
+        let chosen: Vec<usize> = targets.iter().copied().take(allowed).collect();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for &id in &chosen {
+            let name = encounter.actor_name(id);
+            encounter.log(format!("  {} thins into a drifting mist.", name));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Gaseous,
+                // RAW 1 hour; the same `Rounds(100)` stand-in every
+                // other hour-long concentration buff in this file uses.
+                timer: ConditionTimer::Rounds(100),
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Gaseous Form",
+                chosen
+                    .into_iter()
+                    .map(|id| (id, Condition::Gaseous))
+                    .collect(),
+            ),
+        }));
+        effects
+    }
+}
+
+pub static GASEOUS_FORM: LazyLock<GaseousForm> = LazyLock::new(|| GaseousForm {});
+
 /// Remove Curse — level-3 abjuration, touch range. Remove all curses
 /// from one creature. We model by stripping the most impactful debuff
 /// conditions: Hexed, Bestow Curse variants (modeled as Poisoned in our
@@ -33117,24 +33271,154 @@ pub static DARKVISION: LazyLock<DarkvisionSpell> = LazyLock::new(|| DarkvisionSp
 /// uses for its six, and for the same reason: a party crossing a lake
 /// crosses it together or not at all, and asking the player to name ten
 /// friends one at a time is not a decision, it is typing.
-pub struct WaterWalk {}
+///
+/// Built on the shared `PartyBuffSpell` chassis; see it for what the
+/// two water spells turned out to have in common.
+pub static WATER_WALK: LazyLock<PartyBuffSpell> = LazyLock::new(|| PartyBuffSpell {
+    display_name: "water walk",
+    aliases: &["ww", "water-walk", "waterwalk"],
+    school: SpellSchool::Transmutation,
+    slot_level: 3,
+    condition: Condition::WaterWalking,
+    // RAW 1 hour; the same `Rounds(100)` stand-in every other
+    // hour-long buff in this file uses.
+    timer: ConditionTimer::Rounds(100),
+    board_gate: EncounterInstance::has_water,
+    // Already walking on it, or already unbothered by it — a shark, a
+    // hovering wizard, anyone under Freedom of Movement.
+    // `swims_freely` is the engine's own answer to "does the water
+    // charge this creature", so anyone it says yes to has nothing to
+    // gain.
+    redundant_for: |a| a.has_condition(Condition::WaterWalking) || a.swims_freely(),
+});
 
-impl WaterWalk {
+/// **Water Breathing** — SRD 5.2 level-3 transmutation (Druid, Ranger,
+/// Sorcerer, Wizard), action or ritual, 30 ft, 24 hours, no
+/// concentration.
+///
+/// > This spell grants up to ten willing creatures of your choice
+/// > within range the ability to breathe underwater until the spell
+/// > ends. Affected creatures also retain their normal mode of
+/// > respiration.
+///
+/// The party's answer to the breath clock in `engine::breath`, and the
+/// half of the water layer that Water Walk deliberately does not
+/// cover. The two spells look identical on the sheet and answer
+/// opposite questions: Water Walk is for the lake you would rather not
+/// enter, and this is for the one you have decided to fight in. A
+/// party under this still swims at double cost, still swings at
+/// disadvantage down there and still resists fire — the whole of what
+/// changes is that the exhaustion ladder never starts.
+///
+/// RAW's 24 hours is longer than any encounter, so the timer is the
+/// engine's `Permanent` rather than a large round count that would be
+/// a lie about when it ends.
+///
+/// The per-creature refusal is `breathes_underwater`, which is the same
+/// predicate the breath clock reads — so the spell declines to land on
+/// the lizardfolk and the sahuagin who came with the clause on their
+/// stat block, and declines to be cast at all if that is everybody.
+pub static WATER_BREATHING: LazyLock<PartyBuffSpell> = LazyLock::new(|| PartyBuffSpell {
+    display_name: "water breathing",
+    aliases: &["wb", "water-breathing", "waterbreathing"],
+    school: SpellSchool::Transmutation,
+    slot_level: 3,
+    condition: Condition::WaterBreathing,
+    timer: ConditionTimer::Permanent,
+    board_gate: EncounterInstance::has_water,
+    redundant_for: crate::actors::actor_template::ActorInstance::breathes_underwater,
+});
+
+/// The **"up to ten willing creatures of your choice within 30 feet"**
+/// chassis: a party-wide buff that installs one condition on the
+/// caster's side of the board and does nothing else.
+///
+/// 5e writes a lot of spells this way and the engine had one of them,
+/// open-coded — Water Walk, whose whole implementation was a slot
+/// cost, a board gate, a target sweep and an `ApplyCondition`. Water
+/// Breathing is the same four things with two of them swapped, and
+/// writing it out again would have duplicated the sweep, the RAW cap,
+/// the closest-first ordering and the "would this land on anybody"
+/// question that the validator and the resolver have to answer
+/// identically or disagree.
+///
+/// What varies is data:
+///
+///   - **`board_gate`** — the "is this spell worth anything on this
+///     map" refusal. Both current members ask `has_water`, and both
+///     ask it about the *board* rather than about the caster's own
+///     footing: the point of either spell is the lake you are about to
+///     be in, not the one you are in.
+///   - **`redundant_for`** — the per-creature version of the same
+///     question. A creature that already has what the spell grants is
+///     skipped, which is what keeps a party of lizardfolk from
+///     consuming a 3rd-level slot for nothing.
+///
+/// The two gates are why the target sweep is shared between the
+/// validator and the resolver rather than computed twice: "the spell
+/// would land on nobody" and "the spell lands on nobody" are the same
+/// sentence, and a chassis with two copies of it is a chassis where
+/// they can drift.
+pub struct PartyBuffSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub school: SpellSchool,
+    pub slot_level: u32,
+    /// What lands on every beneficiary.
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    /// Board-level refusal — `false` means the spell is worth nothing
+    /// on this map and should not be offered at all.
+    pub board_gate: fn(&EncounterInstance) -> bool,
+    /// Per-creature refusal — `true` means this creature already has
+    /// what the spell grants.
+    pub redundant_for: fn(&crate::actors::actor_template::ActorInstance) -> bool,
+}
+
+impl PartyBuffSpell {
     /// RAW's "up to ten willing creatures".
     const MAX_TARGETS: usize = 10;
     /// RAW's 30-foot range, in tiles on the 2.5-ft grid.
     const RANGE_TILES: isize = 12;
+
+    /// The caster's side of the board within range, closest first, up
+    /// to RAW's ten — minus anyone the spell would do nothing for.
+    fn beneficiaries(&self, encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let (team, loc, size) = (
+            caster.team(),
+            caster.location(),
+            get_tiles_from_size(caster.size()),
+        );
+        let mut candidates: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter(|(_, a)| a.team() == team && a.is_combat_active())
+            .filter(|(_, a)| !(self.redundant_for)(a))
+            .filter_map(|(id, a)| {
+                let dist =
+                    footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size()));
+                (dist <= Self::RANGE_TILES).then_some((dist, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(Self::MAX_TARGETS);
+        candidates.into_iter().map(|(_, id)| id).collect()
+    }
 }
 
-impl Action for WaterWalk {
+impl Action for PartyBuffSpell {
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Transmutation)
+        Some(self.school)
     }
     fn name(&self) -> &str {
-        "water walk"
+        self.display_name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["ww", "water-walk", "waterwalk"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
@@ -33153,7 +33437,7 @@ impl Action for WaterWalk {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(3)
+        action_and_slot(self.slot_level)
     }
     fn custom_validate_input(
         &self,
@@ -33163,15 +33447,7 @@ impl Action for WaterWalk {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // A board with no water on it is a board this spell does
-        // nothing on, and the AI should not spend a 3rd-level slot to
-        // find that out. Gated on the *board* rather than on the
-        // caster's footing on purpose: the point of the spell is the
-        // lake you are about to cross, not the one you are standing in.
-        if !encounter.has_water() {
-            return false;
-        }
-        !self.beneficiaries(encounter, caster_id).is_empty()
+        (self.board_gate)(encounter) && !self.beneficiaries(encounter, caster_id).is_empty()
     }
     fn side_effects(
         &self,
@@ -33186,53 +33462,10 @@ impl Action for WaterWalk {
             .map(|id| {
                 Box::new(ApplyCondition {
                     actor_id: id,
-                    condition: Condition::WaterWalking,
-                    // RAW 1 hour; the same `Rounds(100)` stand-in every
-                    // other hour-long buff in this file uses.
-                    timer: ConditionTimer::Rounds(100),
+                    condition: self.condition,
+                    timer: self.timer,
                 }) as Box<dyn ApplicableSideEffect>
             })
             .collect()
     }
 }
-
-impl WaterWalk {
-    /// The caster's side of the board within range, closest first, up
-    /// to RAW's ten — minus anyone the spell would do nothing for.
-    ///
-    /// Shared by the validator and the resolver rather than computed
-    /// twice, so "the spell would land on nobody" and "the spell lands
-    /// on nobody" can never disagree.
-    fn beneficiaries(&self, encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let (team, loc, size) = (
-            caster.team(),
-            caster.location(),
-            get_tiles_from_size(caster.size()),
-        );
-        let mut candidates: Vec<(isize, usize)> = encounter
-            .actors
-            .iter()
-            .filter(|(_, a)| a.team() == team && a.is_combat_active())
-            // Already walking on it, or already unbothered by it — a
-            // shark, a hovering wizard, anyone under Freedom of
-            // Movement. `swims_freely` is the engine's own answer to
-            // "does the water charge this creature", so anyone it says
-            // yes to has nothing to gain.
-            .filter(|(_, a)| !a.has_condition(Condition::WaterWalking) && !a.swims_freely())
-            .filter_map(|(id, a)| {
-                let dist =
-                    footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size()));
-                (dist <= Self::RANGE_TILES).then_some((dist, *id))
-            })
-            .collect();
-        candidates.sort_unstable();
-        candidates.truncate(Self::MAX_TARGETS);
-        candidates.into_iter().map(|(_, id)| id).collect()
-    }
-}
-
-pub static WATER_WALK: LazyLock<WaterWalk> = LazyLock::new(|| WaterWalk {});

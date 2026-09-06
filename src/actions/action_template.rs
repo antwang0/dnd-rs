@@ -1403,6 +1403,22 @@ pub trait Action {
         {
             return false;
         }
+        // The other half of the same sentence: 5e's flat "the target
+        // can't attack", which Gaseous Form prints beside "or cast
+        // spells". Gated on `is_harmful` rather than on a weapon
+        // marker, because a creature that has turned into a cloud
+        // cannot shove or grapple either, and both are attacks in the
+        // sense RAW means. It leaves Dash, Dodge, Disengage and Hide
+        // alone, which is what separates the clause from
+        // `Incapacitated`.
+        if self.is_harmful()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.blocked_from_attacking())
+        {
+            return false;
+        }
         // 5e Antimagic Field: "spells and other magical effects … are
         // suppressed in the sphere and can't protrude into it." Same
         // lane as the `blocked_from_casting` gate above and for the

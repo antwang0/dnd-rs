@@ -148,6 +148,19 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
         source: Condition::Purified,
         types: &[DamageType::Poison],
     },
+    // 5e Gaseous Form: "the target has Resistance to Bludgeoning,
+    // Piercing, and Slashing damage." The same three types Investiture
+    // of Stone above it covers, reached from the opposite direction —
+    // one creature is too hard to cut and the other is not there to
+    // cut.
+    ConditionDrivenTypedResistance {
+        source: Condition::Gaseous,
+        types: &[
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ],
+    },
     ConditionDrivenTypedResistance {
         source: Condition::Raging,
         types: &[
@@ -859,6 +872,14 @@ const CONDITION_DRIVEN_IMMUNITIES: &[ConditionDrivenConditionImmunity] = &[
     ConditionDrivenConditionImmunity {
         source: Condition::Petrified,
         suppressed: &[Condition::Poisoned],
+    },
+    // 5e Gaseous Form: "it has Immunity to the Prone condition."
+    // Nothing on this board knocks over a cloud, and the row is what
+    // makes every Prone rider in the game — a shove, a trip attack,
+    // Earth Tremor, a bulette's charge — glance off one.
+    ConditionDrivenConditionImmunity {
+        source: Condition::Gaseous,
+        suppressed: &[Condition::Prone],
     },
     // 5e Aura of Purity install rider: immune to Charmed, Frightened,
     // and Poisoned for the duration.
@@ -1880,12 +1901,20 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
 ///     for want of anything to read it; this is that clause arriving.
 ///     A flag on the item rather than a condition, because the necklace
 ///     grants it by being worn.
+///   - **The Water Breathing spell** (`Condition::WaterBreathing`) —
+///     RAW's "grants up to ten willing creatures … the ability to
+///     breathe underwater". A condition rather than a flag, because
+///     unlike the other two rows it is something done *to* a creature
+///     and can be taken back off it.
 const UNDERWATER_BREATH_SOURCES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::UNDERWATER_BREATHING_TAG),
     },
     ActorFlagRow {
         flag: ActorInstance::wears_unfettered_breathing,
+    },
+    ActorFlagRow {
+        flag: |a| a.has_condition(Condition::WaterBreathing),
     },
 ];
 
@@ -2067,6 +2096,47 @@ const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
     ConditionSpeedMultiplier {
         flag: |a| a.exhaustion_level() >= EXHAUSTION_HALF_SPEED_TIER,
         factor: 0.5,
+    },
+];
+
+/// One row in the `CONDITION_SPEED_OVERRIDES` cohort — a condition
+/// that *replaces* the holder's speed line rather than adjusting it.
+///
+/// The third composition axis beside `ConditionSpeedBonus` (add) and
+/// `ConditionSpeedMultiplier` (multiply), and the one neither of them
+/// can express: 5e has a small family of effects whose text is "your
+/// speed **is** N" rather than "your speed increases / halves", and a
+/// bonus or a factor tuned to produce N on one stat block produces
+/// something else on the next. Gaseous Form is the case — RAW's "the
+/// target's only method of movement is a Fly Speed of 10 feet" has to
+/// come out at ten whether it landed on a halfling or a warhorse.
+///
+/// An override replaces the *base*, so the additive and multiplicative
+/// cohorts still compose on top of it — a hasted cloud moves twice as
+/// fast as a still one, which is the reading that keeps every other
+/// speed effect in the game meaningful while the spell is up.
+struct ConditionSpeedOverride {
+    source: Condition,
+    speed_ft: f32,
+}
+
+/// Conditions that replace the holder's base speed outright, read by
+/// `base_speed_now` before either of the adjusting cohorts.
+///
+/// The **lowest** matching row wins, which is the conservative
+/// direction and the only one that reads right: every member of this
+/// family is a transformation that takes something away, and a
+/// creature under two of them is not entitled to the better half of
+/// each.
+const CONDITION_SPEED_OVERRIDES: &[ConditionSpeedOverride] = &[
+    // 5e Gaseous Form: "the target's only method of movement is a Fly
+    // Speed of 10 feet, and it can hover." The flight half is not
+    // modeled — see `Condition::Gaseous` for why a cloud a foot off the
+    // floor is not the engine's flight lane — but the number is, and
+    // the number is what the spell costs you.
+    ConditionSpeedOverride {
+        source: Condition::Gaseous,
+        speed_ft: 10.0,
     },
 ];
 
@@ -7973,11 +8043,29 @@ impl ActorInstance {
     /// whose walk beats its flap should not be slowed down by taking
     /// off.
     fn base_speed_now(&self) -> f32 {
+        // A transformation that *sets* the speed line wins over both of
+        // them — see `CONDITION_SPEED_OVERRIDES`. Asked before the
+        // walk / fly pick rather than after, because the override
+        // replaces the line the pick is choosing between.
+        if let Some(fixed) = self.overridden_base_speed() {
+            return fixed;
+        }
         if self.is_airborne() {
             self.base_speed.max(self.base_fly_speed)
         } else {
             self.base_speed
         }
+    }
+
+    /// The base speed a held transformation pins this actor to, or
+    /// `None` for everything that still moves under its own stat block.
+    /// Lowest matching row wins; see `CONDITION_SPEED_OVERRIDES`.
+    fn overridden_base_speed(&self) -> Option<f32> {
+        CONDITION_SPEED_OVERRIDES
+            .iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| row.speed_ft)
+            .min_by(f32::total_cmp)
     }
 
     /// How high off the floor this actor currently is, in feet, and so
@@ -10335,6 +10423,14 @@ impl ActorInstance {
     /// cantrips at all.
     pub fn blocked_from_casting(&self) -> bool {
         self.conditions.keys().any(|c| c.blocks_spellcasting())
+    }
+
+    /// True when a held condition forbids this actor any hostile action
+    /// — 5e's flat "the target can't attack". Read at the action layer
+    /// by `Action::validate_input`, gated on `Action::is_harmful`; see
+    /// `Condition::blocks_attacking` for the cohort and its scope.
+    pub fn blocked_from_attacking(&self) -> bool {
+        self.conditions.keys().any(|c| c.blocks_attacking())
     }
 
     pub fn lowest_available_spell_slot(&self) -> Option<u32> {

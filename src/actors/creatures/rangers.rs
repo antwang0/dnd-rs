@@ -42,6 +42,11 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // decides the party can cross here.
     actions.push(&*crate::actions::spells::DARKVISION);
     actions.push(&*crate::actions::spells::WATER_WALK);
+    // Water Breathing — the other half of the water layer, and the
+    // one that answers the breath clock rather than the movement
+    // surcharge. Declines to cast on a dry board, and skips anyone
+    // whose stat block already says they breathe down there.
+    actions.push(&*crate::actions::spells::WATER_BREATHING);
     // Fog Cloud — lv1 conjuration on the ranger's RAW spell list. The
     // ranger uses it as a kite-cover: drop a 20-ft sphere of heavy
     // obscurement on advancing melee threats, then fall back behind it

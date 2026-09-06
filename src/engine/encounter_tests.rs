@@ -36095,7 +36095,7 @@ fn an_exploding_pool_never_outspends_its_budget() {
             .unwrap();
         let rolled = e.roll_exploding_spell_damage(g, POOL, FACES, CAP);
         assert!(
-            rolled >= POOL && rolled <= (POOL + CAP) * FACES,
+            (POOL..=(POOL + CAP) * FACES).contains(&rolled),
             "seed {}: {} is outside the {}..={} an exploding {}d{} pool can produce",
             seed,
             rolled,
@@ -79748,6 +79748,274 @@ fn water_walk_declines_a_dry_board_and_a_party_that_already_swims() {
         !WATER_WALK.custom_validate_input(&wet, lone_druid, None, None, None),
         "a creature the water does not charge has nothing to gain"
     );
+}
+
+/// Gaseous Form is a trade, and both halves of it are real: the cloud
+/// is hard to hurt, hard to knock over and hard to catch, and it cannot
+/// swing, cast, or cross the room.
+#[test]
+fn gaseous_form_buys_a_defence_with_the_whole_offence() {
+    use crate::actions::spells::GASEOUS_FORM;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(6, 2),
+            1,
+            0,
+        )
+        .unwrap();
+
+    let walking_speed = e.actors[&fighter].speed();
+    assert!(walking_speed > 10.0, "a fighter outruns a cloud to begin with");
+
+    assert!(GASEOUS_FORM.validate_input(&e, wizard, Some(&vec![fighter]), None, None));
+    for ef in GASEOUS_FORM.side_effects(&mut e, wizard, Some(&vec![fighter]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&fighter].has_condition(Condition::Gaseous));
+    assert!(
+        e.actors[&wizard].is_concentrating(),
+        "the spell is concentration and the caster is holding it"
+    );
+
+    // The defensive half.
+    let mist = &e.actors[&fighter];
+    for dt in [
+        DamageType::Bludgeoning,
+        DamageType::Piercing,
+        DamageType::Slashing,
+    ] {
+        assert!(
+            mist.has_condition_resistance(dt),
+            "a cloud halves {:?}",
+            dt
+        );
+    }
+    assert!(
+        mist.effectively_immune_to_condition(Condition::Prone),
+        "nothing knocks over a cloud"
+    );
+    assert_eq!(
+        e.actors[&fighter].speed(),
+        10.0,
+        "and the speed line is replaced outright rather than adjusted"
+    );
+    for ability in [
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+    ] {
+        assert_eq!(
+            e.compute_save_mode(fighter, ability),
+            RollMode::Advantage,
+            "{:?} saves are at advantage",
+            ability
+        );
+    }
+    assert_eq!(
+        e.compute_save_mode(fighter, AbilityScoreType::Wisdom),
+        RollMode::Normal,
+        "and the mental saves are not — the clause names three abilities"
+    );
+
+    // The offensive half. A gaseous fighter can still Dodge; it just
+    // cannot point anything at anybody.
+    let swing = &crate::actions::monster_attacks::LONGSWORD;
+    assert!(
+        !swing.validate_input(&e, fighter, Some(&vec![goblin]), None, None),
+        "a cloud does not swing a longsword"
+    );
+    assert!(
+        crate::actions::default_actions::DODGE.validate_input(&e, fighter, None, None, None),
+        "but it can still take cover behind being a cloud"
+    );
+}
+
+/// Concentration is what holds the trade open: drop it and the fighter
+/// is a fighter again, speed and swing and all.
+#[test]
+fn losing_concentration_condenses_the_cloud_back_into_a_fighter() {
+    use crate::actions::spells::GASEOUS_FORM;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+        .unwrap();
+    let walking_speed = e.actors[&fighter].speed();
+    for ef in GASEOUS_FORM.side_effects(&mut e, wizard, Some(&vec![fighter]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&fighter].has_condition(Condition::Gaseous));
+
+    e.drop_concentration(wizard);
+    assert!(!e.actors[&fighter].has_condition(Condition::Gaseous));
+    assert_eq!(e.actors[&fighter].speed(), walking_speed);
+    assert!(!e.actors[&fighter].blocked_from_attacking());
+}
+
+/// The upcast clause: "one additional creature for each spell slot
+/// level above 3", and nobody beyond that however many are named.
+#[test]
+fn an_upcast_gaseous_form_reaches_one_more_friend_per_level() {
+    use crate::actions::spells::GASEOUS_FORM;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let party: Vec<usize> = (0..3)
+        .map(|i| {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(4 + 2 * i as isize, 2),
+                0,
+                i,
+            )
+            .unwrap()
+        })
+        .collect();
+
+    // At level 4 the spell reaches two of the three named.
+    let overrides = std::collections::HashSet::from([ActionOverride::CastLevel(4)]);
+    let party_arg = party.clone();
+    for ef in GASEOUS_FORM.side_effects(
+        &mut e,
+        wizard,
+        Some(&party_arg),
+        None,
+        Some(&overrides),
+    ) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&party[0]].has_condition(Condition::Gaseous));
+    assert!(e.actors[&party[1]].has_condition(Condition::Gaseous));
+    assert!(
+        !e.actors[&party[2]].has_condition(Condition::Gaseous),
+        "a level-4 slot buys one extra target, not the whole party"
+    );
+    // And the slot the cast asks for is the one it was upcast to.
+    let costs = GASEOUS_FORM.cost(&e, wizard, Some(&party_arg), None, Some(&overrides));
+    assert!(costs.iter().any(|c| matches!(
+        c,
+        crate::engine::side_effects::Resource::SpellSlot(4)
+    )));
+}
+
+/// Water Breathing stops the breath clock and does nothing else. The
+/// druid under it is still in the lake — still charged double to swim
+/// through it, still immersed for every Underwater Combat clause — and
+/// simply never starts the exhaustion ladder.
+#[test]
+fn water_breathing_stops_the_clock_without_taking_anybody_out_of_the_lake() {
+    use crate::actions::spells::WATER_BREATHING;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(e.is_immersed(druid));
+    assert!(
+        !e.can_breathe(druid),
+        "a druid at the bottom of a pool is on the clock"
+    );
+
+    for ef in WATER_BREATHING.side_effects(&mut e, druid, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&druid].has_condition(Condition::WaterBreathing),
+        "the spell lands on the caster's own side of the board"
+    );
+    assert!(e.can_breathe(druid), "and the clock stops");
+    // The three things it deliberately does not do. A creature under
+    // this spell has not left the water, which is the whole difference
+    // between it and Water Walk.
+    assert!(
+        e.is_immersed(druid),
+        "breathing water is not standing on it"
+    );
+    assert!(
+        !e.actors[&druid].swims_freely(),
+        "the movement surcharge is untouched"
+    );
+    assert!(
+        !e.actors[&druid].has_condition(Condition::WaterWalking),
+        "and the spell is not quietly its neighbour"
+    );
+}
+
+/// The party-buff chassis' two refusals, exercised through Water
+/// Breathing: a dry board is not worth a 3rd-level slot, and neither is
+/// a party that already breathes down there.
+#[test]
+fn water_breathing_declines_a_dry_board_and_a_party_of_lizardfolk() {
+    use crate::actions::spells::WATER_BREATHING;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
+
+    let mut dry = ei_with_terrain(20, 20, &[]);
+    let druid = dry
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    assert!(
+        !WATER_BREATHING.custom_validate_input(&dry, druid, None, None, None),
+        "no lake, no spell"
+    );
+
+    let mut wet = ei_with_terrain(20, 20, &[]);
+    for x in 2..=5isize {
+        for y in 2..=5isize {
+            wet.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let lizard = wet
+        .instantiate_creature(&LIZARDFOLK_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+        .unwrap();
+    assert!(
+        !WATER_BREATHING.custom_validate_input(&wet, lizard, None, None, None),
+        "a lizardfolk casting it on other lizardfolk gains nothing"
+    );
+    // One creature on the same side that does need it is enough.
+    let druid = wet
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(9, 8), 0, 0)
+        .unwrap();
+    assert!(
+        WATER_BREATHING.custom_validate_input(&wet, lizard, None, None, None),
+        "and one drowning friend is the whole case for casting it"
+    );
+    assert_eq!(
+        WATER_BREATHING
+            .side_effects(&mut wet, lizard, None, None, None)
+            .len(),
+        1,
+        "the lizardfolk caster is skipped and the druid is not"
+    );
+    assert!(!wet.actors[&druid].has_condition(Condition::WaterBreathing));
 }
 
 /// The Darkvision spell raises a human's night vision to 60 feet and

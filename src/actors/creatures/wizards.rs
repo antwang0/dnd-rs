@@ -400,6 +400,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::INFESTATION);
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
+    // Gaseous Form — the trade: Resistance to the physical trio,
+    // Immunity to Prone, Advantage on every physical save, and in
+    // exchange a 10 ft speed and no attacking or casting at all. Not on
+    // any AI rung; it is a decision about a fight, and the rungs cannot
+    // see the end of one.
+    actions.push(&*crate::actions::spells::GASEOUS_FORM);
+    // Water Breathing — the other half of the water layer, and the
+    // one that answers the breath clock rather than the movement
+    // surcharge. Declines to cast on a dry board, and skips anyone
+    // whose stat block already says they breathe down there.
+    actions.push(&*crate::actions::spells::WATER_BREATHING);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
     // Arcane Recovery — Wizard signature once-per-rest spell-slot
     // recovery. Slot-restoration on short rest gives the wizard a clean

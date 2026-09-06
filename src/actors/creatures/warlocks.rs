@@ -237,6 +237,12 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::FAR_STEP);
     actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
     actions.push(&*crate::actions::spells::SHADOW_OF_MOIL);
+    // Gaseous Form — the trade: Resistance to the physical trio,
+    // Immunity to Prone, Advantage on every physical save, and in
+    // exchange a 10 ft speed and no attacking or casting at all. RAW
+    // has it on the warlock list, where it reads as the escape hatch a
+    // class with one slot needs.
+    actions.push(&*crate::actions::spells::GASEOUS_FORM);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

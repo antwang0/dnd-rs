@@ -69,6 +69,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // any list here that answers a lake without a 4th-level slot.
     actions.push(&*crate::actions::spells::DARKVISION);
     actions.push(&*crate::actions::spells::WATER_WALK);
+    // Water Breathing — the other half of the water layer, and the
+    // one that answers the breath clock rather than the movement
+    // surcharge. Declines to cast on a dry board, and skips anyone
+    // whose stat block already says they breathe down there.
+    actions.push(&*crate::actions::spells::WATER_BREATHING);
     actions.push(&*DISPEL_MAGIC);
     actions.push(&*PLANT_GROWTH);
     actions.push(&*FLY);
