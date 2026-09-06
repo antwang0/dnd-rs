@@ -1,4 +1,4 @@
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_SEAHORSE_CHARGE, GIANT_SEAHORSE_RAM};
 use crate::actors::actor_template::CreatureTemplate;
@@ -55,7 +55,7 @@ pub static SEAHORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // The default roster only — Move, Dodge, Dash and the rest. No
         // weapon is pushed on top, which is the point.
         actions: DEFAULT_ACTIONS.clone(),
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -98,7 +98,7 @@ pub static GIANT_SEAHORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         creature_type: CreatureType::Beast,
         actions,
         charge: Some(GIANT_SEAHORSE_CHARGE),
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -3,6 +3,7 @@ pub mod actor_gen;
 pub mod attachment;
 pub mod attack;
 pub mod banishment;
+pub mod breath;
 pub mod conjured_terrain;
 pub mod dice;
 pub mod encounter;

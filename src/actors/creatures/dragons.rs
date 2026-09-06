@@ -56,7 +56,7 @@
 //! one failed save, and because a dragon that can be frightened by an
 //! adventurer is a strange thing to have written down.
 
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     BreathWeapon, FRIGHTFUL_PRESENCE, Multiattack, WeaponWithRider,
@@ -110,6 +110,29 @@ impl DragonColor {
             DragonColor::Green => DamageType::Poison,
             DragonColor::Silver | DragonColor::White => DamageType::Cold,
         }
+    }
+
+    /// True for the colours whose stat block carries **Amphibious** —
+    /// "the dragon can breathe air and water". Black, bronze, gold and
+    /// green, at every rung of the ladder.
+    ///
+    /// A property of the colour rather than a column on `DragonRow`,
+    /// because SRD 5.2 prints it the same way for all four rungs of
+    /// each colour and a per-row bool would be the same value written
+    /// out four times with four chances to mistype it. `swims` is a row
+    /// for the opposite reason — a wyrmling and an ancient of the same
+    /// colour genuinely differ on the Speed line.
+    ///
+    /// The two are *not* the same set, which is the whole reason this
+    /// exists: the white dragon has a swim speed and no Amphibious
+    /// trait, so it crosses a lake for free and drowns under one. That
+    /// is RAW, and the difference used to be invisible because nothing
+    /// read it.
+    fn amphibious(self) -> bool {
+        matches!(
+            self,
+            DragonColor::Black | DragonColor::Bronze | DragonColor::Gold | DragonColor::Green
+        )
     }
 
     /// Map glyph. Every letter of the alphabet is already spoken for
@@ -2016,6 +2039,9 @@ fn dragon_template(index: usize) -> CreatureTemplate {
     if row.swims {
         features.insert(SWIM_SPEED_TAG);
     }
+    if row.color.amphibious() {
+        features.insert(UNDERWATER_BREATHING_TAG);
+    }
     let element = row.color.damage_type();
     let mut condition_immunities = HashSet::new();
     if row.age.is_legendary() {
@@ -2210,6 +2236,26 @@ pub fn swimming_dragon_templates() -> Vec<&'static CreatureTemplate> {
         .into_iter()
         .zip(DRAGONS.iter())
         .filter(|(_, row)| row.swims)
+        .map(|(template, _)| template)
+        .collect()
+}
+
+/// The dragons whose SRD stat block prints **Amphibious** — every
+/// black, bronze, gold and green, at all four rungs.
+///
+/// Derived from `DragonColor::amphibious` for the same reason
+/// `swimming_dragon_templates` is derived from `DragonRow::swims`: the
+/// fact is already on the template and a sixteen-name list would be a
+/// second copy of it that could drift.
+///
+/// Deliberately not the same set as the swimmers. The white dragon has
+/// a swim speed and no Amphibious trait, so it is on that list and not
+/// on this one — it crosses a lake for free and drowns under it.
+pub fn amphibious_dragon_templates() -> Vec<&'static CreatureTemplate> {
+    all_dragon_templates()
+        .into_iter()
+        .zip(DRAGONS.iter())
+        .filter(|(_, row)| row.color.amphibious())
         .map(|(template, _)| template)
         .collect()
 }

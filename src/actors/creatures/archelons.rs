@@ -1,4 +1,4 @@
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ARCHELON_BITE, ARCHELON_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
@@ -59,7 +59,7 @@ pub static ARCHELON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Beast,
         actions,
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

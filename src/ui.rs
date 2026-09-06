@@ -836,6 +836,38 @@ pub fn render_sideinfo(
             Style::default().fg(Color::LightBlue),
         )));
     }
+    // 5e Suffocation — the breath clock, rendered only when it is
+    // running. Every creature spends nearly every round of nearly every
+    // fight pinned at full breath, and a line saying so on every panel
+    // would be noise of exactly the kind the Airborne row above avoids.
+    //
+    // Two shapes, because the two states need different numbers. While
+    // the creature still has breath, what matters is how many rounds of
+    // it are left — that is the window to get out of the water, and it
+    // is the only place the number is visible at all. Once it is out,
+    // the countdown is over and the number that matters is the ladder:
+    // one rung per round, six is death, and `Exhaustion` is already on
+    // the conditions row below with its tier. So the second line says
+    // what is happening rather than restating that.
+    //
+    // Read `can_breathe` rather than a bare immersion check so the
+    // panel and the round-end tick can never disagree about whether the
+    // clock is running — it is the same predicate, asked once here.
+    if !encounter.can_breathe(curr_actor_id) {
+        let held = curr_actor.breath_rounds();
+        stats_lines.push(Line::from(Span::styled(
+            if held > 0 {
+                format!(
+                    "Breath: {} round{} held",
+                    held,
+                    if held == 1 { "" } else { "s" }
+                )
+            } else {
+                "Breath: none \u{2014} 1 exhaustion per round".to_string()
+            },
+            Style::default().fg(Color::LightRed),
+        )));
+    }
     // Concentration target — the spell name is enough; full effect tree
     // already lives in the log.
     if let Some(conc) = curr_actor.concentration() {
@@ -1268,6 +1300,70 @@ mod tests {
             panel.contains("feather fall") && !panel.contains("3d6"),
             "a feathered flier owes nothing:\n{}",
             panel
+        );
+    }
+
+    /// The panel counts down the breath of a creature that has none
+    /// coming, and says nothing at all for everybody standing in air.
+    ///
+    /// The countdown is the half worth pinning. A player whose fighter
+    /// has waded into a pool has one decision to make and one number to
+    /// make it on — how many rounds are left before the exhaustion
+    /// starts — and that number lives nowhere else: the conditions row
+    /// below cannot show it, because until the clock runs out there is
+    /// no condition to show.
+    #[test]
+    fn the_panel_counts_down_the_breath_of_a_creature_under_water() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel_tall(&e, 90).contains("Breath"),
+            "a creature with air around it gets no breath line"
+        );
+
+        // Flood the whole of the current actor's footprint — RAW's
+        // "fully immersed" is all of it or none of it.
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        let anchor = e.actors[&id].location();
+        for dx in -1..=2isize {
+            for dy in -1..=2isize {
+                e.set_terrain_at(
+                    Coordinate::new(anchor.x + dx, anchor.y + dy),
+                    TerrainType::Water,
+                );
+            }
+        }
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("Breath:") && panel.contains("held"),
+            "a submerged creature should be told how long it has:\n{}",
+            panel
+        );
+
+        // Once the clock is spent the countdown is over, and the line
+        // stops quoting a number that would only ever read zero.
+        while e.actors[&id].breath_rounds() > 0 {
+            e.actors.get_mut(&id).unwrap().spend_breath(false);
+        }
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("1 exhaustion per round") && !panel.contains("held"),
+            "an out-of-breath creature should be told what it is paying:\n{}",
+            panel
+        );
+
+        // And a creature that can breathe the water it is standing in
+        // has no clock at all.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .grant_feature_for_test(crate::actions::class_features::UNDERWATER_BREATHING_TAG);
+        assert!(
+            !rendered_panel_tall(&e, 90).contains("Breath"),
+            "gills are not a status effect"
         );
     }
 

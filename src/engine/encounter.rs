@@ -6336,6 +6336,45 @@ impl EncounterInstance {
         })
     }
 
+    /// True if `actor_id` is drawing breath this round — the single
+    /// gate on 5e's **Suffocation** hazard, read once per actor per
+    /// round by `tick_breath`. See `engine::breath` for the rule.
+    ///
+    /// Three questions in a deliberate order, and the order is the
+    /// rule rather than an optimisation:
+    ///
+    ///   1. **Is the airway blocked?** `Condition::Choking` — the
+    ///      darkmantle over the face, the rug wrapped around the body.
+    ///      Asked first because nothing waives it: RAW's Necklace of
+    ///      Adaptation lets you breathe in any *environment*, and a
+    ///      darkmantle is not an environment.
+    ///   2. **Is the creature under water at all?** `is_immersed`,
+    ///      which already answers correctly for a flier, a
+    ///      water-walker, and a rider on a swimming mount. On a map
+    ///      with no lake on it — which is most of them — this is where
+    ///      every actor leaves, at the cost of one terrain read.
+    ///   3. **Does it have the lungs for it?** `breathes_underwater` —
+    ///      the stat-block line, and the necklace.
+    ///
+    /// Air is free, which is a scope cut and not a rule: RAW's nine
+    /// water-breathing stat blocks suffocate out of the water and this
+    /// engine lets them walk around. See `engine::breath` for why.
+    ///
+    /// Defaults to `true` for an id that is not on the board. An actor
+    /// the map has lost is not one this rule should be quietly killing.
+    pub fn can_breathe(&self, actor_id: usize) -> bool {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return true;
+        };
+        if actor.has_condition(Condition::Choking) {
+            return false;
+        }
+        if !self.is_immersed(actor_id) {
+            return true;
+        }
+        actor.breathes_underwater()
+    }
+
     /// True if any tile on the board is water.
     ///
     /// Read by Water Walk's validator, which has no business spending a
@@ -14254,6 +14293,91 @@ impl EncounterInstance {
         None
     }
 
+    /// 5e **Suffocation**, one actor, one round — RAW: *"when a
+    /// creature runs out of breath or is choking, it gains 1 Exhaustion
+    /// level at the end of each of its turns. When a creature can
+    /// breathe again, it removes all levels of Exhaustion it gained
+    /// from suffocating."* See `engine::breath` for the rule in full.
+    ///
+    /// Both halves of that sentence live here because they are one
+    /// decision: `can_breathe` is asked once and the answer sends the
+    /// actor down one branch or the other. Splitting them would mean
+    /// two sweeps asking the same question of the same actor in the
+    /// same round and having to agree.
+    ///
+    /// Runs from `round_end`, which is where this engine keeps "at the
+    /// end of each of its turns" for every effect that has one — the
+    /// initiative order has already been walked, so every actor gets
+    /// exactly one tick per round in a deterministic order.
+    ///
+    /// Gated on the body being present and not already a corpse, which
+    /// is deliberately *wider* than the `is_combat_active()` every
+    /// other round-end sweep uses: a creature face-down at the bottom
+    /// of a pool is the case the drowning rule exists for, and RAW
+    /// keeps counting. What it excludes is the dead and the
+    /// banished — one has nothing left to lose and the other is not in
+    /// the water.
+    fn tick_breath(&mut self, actor_id: usize) {
+        let present = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| {
+                !a.is_off_board()
+                    && !matches!(
+                        a.hp_state(),
+                        crate::actors::actor_template::HpState::Dead
+                    )
+            });
+        if !present {
+            return;
+        }
+        if self.can_breathe(actor_id) {
+            let shed = self
+                .actors
+                .get_mut(&actor_id)
+                .map(|a| a.refill_breath())
+                .unwrap_or(0);
+            if shed > 0 {
+                let name = self.actor_name(actor_id);
+                self.log(format!(
+                    "  {} gets its breath back and sheds {} level{} of exhaustion.",
+                    name,
+                    shed,
+                    if shed == 1 { "" } else { "s" }
+                ));
+            }
+            return;
+        }
+        // Two ways to be out of breath, and they are two different
+        // rules rather than two flavours of one: RAW's "runs out of
+        // breath **or** is choking" gives the second no grace period,
+        // so a blocked airway skips the held-breath clock entirely.
+        // See `ActorInstance::spend_breath`.
+        let choking = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Choking));
+        let Some(tier) = self
+            .actors
+            .get_mut(&actor_id)
+            .and_then(|a| a.spend_breath(choking))
+        else {
+            return;
+        };
+        let name = self.actor_name(actor_id);
+        // …and two different pictures. The log is the only place a
+        // player can tell them apart, since the rung is the same either
+        // way.
+        let how = if choking { "is choking" } else { "is drowning" };
+        self.log(format!("  {} {} \u{2014} exhaustion {}.", name, how, tier));
+        // Tier 6 is death, and `gain_exhaustion` has already set the
+        // state; `round_end`'s own `cleanup_dead_actors` sweeps the body
+        // a few lines later, the same as for any other round-end kill.
+        if tier >= crate::actors::actor_template::EXHAUSTION_DEATH_TIER {
+            self.log(format!("  {} stops breathing.", name));
+        }
+    }
+
     /// 5e Spirit Guardians aura: if `actor_id` has the `SpiritGuarding`
     /// condition, every hostile creature within 6 tiles takes 3d8 radiant
     /// damage (WIS save for half). Called at round-end for each actor.
@@ -14335,6 +14459,12 @@ impl EncounterInstance {
             // as many — a round-end sweep catches all of them without
             // any of them having to know grapples exist.
             self.release_broken_grapples(id);
+            // 5e Suffocation. After the sweeps above rather than before,
+            // and the order is load-bearing in one direction: a rug
+            // whose grapple broke this round has stopped smothering its
+            // victim, and the victim should not pay a rung of exhaustion
+            // for a hold that is already over.
+            self.tick_breath(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).

@@ -2198,7 +2198,21 @@ pub struct WeaponWithCondition {
     pub damage_type: DamageType,
     pub reach: isize,
     pub is_melee: bool,
-    pub condition: Condition,
+    /// What a hit installs, in the order the stat block prints it.
+    ///
+    /// A slice rather than one `Condition`, because RAW's hold-and-hurt
+    /// clauses routinely name more than one: the Rug of Smothering's
+    /// victim "is restrained, blinded, and is suffocating", and the
+    /// three are one sentence with one duration. A single-condition
+    /// field forced those onto three chassis or onto none, and the
+    /// bestiary chose none — the rug shipped with the strongest of the
+    /// three and a comment about the other two.
+    ///
+    /// Every entry shares `timer`, which is what makes the slice honest
+    /// rather than a bag: these are the conditions that arrive together
+    /// and leave together because RAW ends them on the same event.
+    /// A rider with its own duration is a different rider.
+    pub conditions: &'static [Condition],
     pub timer: ConditionTimer,
     /// Log-friendly tag for the install line ("auto-grapple", "adhesive",
     /// ...). Mirrors the `rider_name` slot on the sibling chassis so log
@@ -2219,7 +2233,7 @@ impl WeaponWithCondition {
         attack_ability: AbilityScoreType,
         damage_dice: Dice,
         damage_type: DamageType,
-        condition: Condition,
+        conditions: &'static [Condition],
         timer: ConditionTimer,
         rider_name: &'static str,
     ) -> Self {
@@ -2229,7 +2243,7 @@ impl WeaponWithCondition {
             attack_ability,
             damage_dice,
             damage_type,
-            condition,
+            conditions,
             timer,
             rider_name,
             MELEE_REACH,
@@ -2249,7 +2263,7 @@ impl WeaponWithCondition {
         attack_ability: AbilityScoreType,
         damage_dice: Dice,
         damage_type: DamageType,
-        condition: Condition,
+        conditions: &'static [Condition],
         timer: ConditionTimer,
         rider_name: &'static str,
         reach: isize,
@@ -2262,7 +2276,7 @@ impl WeaponWithCondition {
             damage_type,
             reach,
             is_melee: true,
-            condition,
+            conditions,
             timer,
             rider_name,
         }
@@ -2364,7 +2378,16 @@ impl Action for WeaponWithCondition {
             if effects.is_empty() {
                 return effects;
             }
-            e.log(format!("  {}: target is now {}", self.rider_name, self.condition));
+            let named: Vec<String> = self
+                .conditions
+                .iter()
+                .map(|c| c.to_string())
+                .collect();
+            e.log(format!(
+                "  {}: target is now {}",
+                self.rider_name,
+                named.join(" and ")
+            ));
             // Through the linked installer rather than a bare
             // `ApplyCondition`, so a rider whose condition carries a
             // back-link records who applied it. For everything on
@@ -2374,12 +2397,14 @@ impl Action for WeaponWithCondition {
             // it is a contest against that creature and stunning the
             // chuul lets go. Unlinked conditions come back as the same
             // one-element vec this used to push.
-            effects.extend(crate::engine::side_effects::install_condition_with_link(
-                self.condition,
-                target_id,
-                caster_id,
-                self.timer,
-            ));
+            for &condition in self.conditions {
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    condition,
+                    target_id,
+                    caster_id,
+                    self.timer,
+                ));
+            }
             effects
         };
         let mut effects = swing(encounter);
@@ -5765,11 +5790,20 @@ pub static FIRE_ELEMENTAL_TOUCH: LazyLock<FireElementalTouch> =
     LazyLock::new(|| FireElementalTouch {});
 
 /// Gelatinous Cube Pseudopod — melee, slow attack, 3d6 acid on hit and
-/// on a failed DC 12 STR save the target is Restrained (the cube has
-/// engulfed them). The Restrained ends when the cube dies or the target
-/// breaks free — modeled by a 5-round timer here, long enough to mimic
-/// the engulf duration without locking the target forever if the cube
-/// can't be killed in time.
+/// on a failed DC 12 STR save the target is engulfed. The engulf ends
+/// when the cube dies or the target breaks free — modeled by a 5-round
+/// timer here, long enough to mimic the engulf duration without locking
+/// the target forever if the cube can't be killed in time.
+///
+/// RAW: *"an engulfed target is suffocating, can't cast spells with a
+/// Verbal component, has the Restrained condition, and takes 10 (3d6)
+/// Acid damage at the start of each of the cube's turns."* Two of those
+/// four clauses ship — the Restrained, and the suffocation as
+/// `Condition::Choking`, which is what makes being inside a cube
+/// something other than a slow stand-still. The verbal-component clause
+/// has no lane (the engine's spellcasting gate is per-caster, not
+/// per-component) and the per-turn acid tick is folded into the swing's
+/// own 3d6, the same compression the Rug of Smothering uses below.
 pub struct GelatinousCubeEngulf {}
 
 impl Action for GelatinousCubeEngulf {
@@ -5815,12 +5849,20 @@ impl Action for GelatinousCubeEngulf {
         }
         let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 12);
         if !save.passed() {
-            encounter.log("  pseudopod: target is engulfed and restrained");
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Restrained,
-                timer: ConditionTimer::Rounds(5),
-            }));
+            encounter.log("  pseudopod: target is engulfed, restrained and suffocating");
+            // Both conditions on the same timer, because RAW ends them
+            // both on the same event: they last "until the grapple
+            // ends" and the engine's stand-in for that is the five
+            // rounds below. Two installs rather than one loop over a
+            // slice, so each carries its own RAW clause in the log
+            // above it.
+            for condition in [Condition::Restrained, Condition::Choking] {
+                effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                    actor_id: target_id,
+                    condition,
+                    timer: ConditionTimer::Rounds(5),
+                }));
+            }
         }
         effects
     }
@@ -9147,7 +9189,7 @@ pub static CHUUL_PINCER: WeaponWithCondition = WeaponWithCondition::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
-    Condition::Grappled,
+    &[Condition::Grappled],
     ConditionTimer::Rounds(10),
     "chuul pincer",
 );
@@ -9352,7 +9394,7 @@ pub static GIANT_SCORPION_CLAW: WeaponWithCondition = WeaponWithCondition::melee
     AbilityScoreType::Strength,
     Dice::new(1, 8),
     DamageType::Bludgeoning,
-    Condition::Grappled,
+    &[Condition::Grappled],
     ConditionTimer::Rounds(10),
     "scorpion claw",
 );
@@ -10445,8 +10487,10 @@ pub static WATER_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multi
 /// Water Elemental Whelm — STR save burst around the elemental: every
 /// hostile in a 1-tile radius (RAW: each creature in the elemental's
 /// space) makes a STR save vs DC 15 or takes 2d8 + STR bludgeoning
-/// (half on save) and is knocked Prone (only on fail — the surge
-/// staggers off-balance victims into the muck). Recharge 4-6 per RAW;
+/// (half on save), is knocked Prone (only on fail — the surge staggers
+/// off-balance victims into the muck), and — RAW's own clause, not the
+/// engine's compression — *"is suffocating unless it can breathe
+/// water"*. Recharge 4-6 per RAW;
 /// the recharge key plugs into the shared `"whelm"` slot on the
 /// template's recharge_abilities so the start-of-turn roller flips it
 /// back on a 4+. The 1-tile radius keeps the burst small (a 5-ft
@@ -10557,6 +10601,34 @@ impl Action for WaterElementalWhelm {
                     condition: Condition::Prone,
                     timer: ConditionTimer::Permanent,
                 }));
+                // RAW: "the target has the Restrained condition, **is
+                // suffocating unless it can breathe water**, and takes
+                // 9 (2d8) Bludgeoning damage at the start of each of
+                // the elemental's turns."
+                //
+                // The "unless" is asked here rather than inside
+                // `Condition::Choking`, which is where RAW puts it: a
+                // merfolk held under a wave is breathing, and the same
+                // merfolk with a darkmantle over its face is not. The
+                // condition means the airway is blocked; who gets one
+                // is this attack's business. See `engine::breath`.
+                let drowns = encounter
+                    .actors
+                    .get(&vid)
+                    .is_some_and(|a| !a.breathes_underwater());
+                if drowns {
+                    effects.push(Box::new(ApplyCondition {
+                        actor_id: vid,
+                        condition: Condition::Choking,
+                        // Two rounds, the same window the engine's
+                        // other hold-and-crush riders use. RAW's is
+                        // "until the grapple ends" and the grapple
+                        // itself is compressed into the knockdown
+                        // above, so the timer is what stands in for the
+                        // victim pulling free.
+                        timer: ConditionTimer::Rounds(2),
+                    }));
+                }
             }
         }
         effects
@@ -16116,7 +16188,7 @@ pub static GIANT_FROG_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Piercing,
-    Condition::Grappled,
+    &[Condition::Grappled],
     ConditionTimer::Permanent,
     "tongue grab",
 );
@@ -17503,16 +17575,20 @@ pub static CHAIN_DEVIL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// roll, it covers the target, which has the Blinded condition and is
 /// suffocating while the darkmantle is attached in this way."
 ///
-/// The blindness is the darkmantle's `AttachProfile` now rather than a
-/// two-round `Blinded` install on this weapon, which is the difference
-/// between a creature that smothers you and one that flashes your eyes
-/// and lets go. Two clauses are still dropped and both were dropped
-/// before: the suffocation (the engine has no breath clock) and RAW's
-/// advantage gate on covering (the darkmantle earns that advantage by
-/// dropping from a ceiling the engine has no vertical axis to hang it
-/// from, so gating on it would mean the signature clause of the
-/// creature almost never fired). The *size* half of that gate is kept,
-/// as `host_conditions_max_size`.
+/// The blindness *and* the suffocation are the darkmantle's
+/// `AttachProfile` now rather than a two-round `Blinded` install on
+/// this weapon, which is the difference between a creature that
+/// smothers you and one that flashes your eyes and lets go. The
+/// suffocation half spent a long time struck out for want of a breath
+/// clock; `engine::breath` is that clock, and the clause rides
+/// `Condition::Choking` on the same `host_conditions_max_size` gate the
+/// blindness does.
+///
+/// One clause is still dropped, and was dropped before: RAW's advantage
+/// gate on covering. The darkmantle earns that advantage by dropping
+/// from a ceiling the engine has no vertical axis to hang it from, so
+/// gating on it would mean the signature clause of the creature almost
+/// never fired. The *size* half of RAW's two-part gate is kept.
 pub static DARKMANTLE_CRUSH: AttachingWeapon = AttachingWeapon::melee(
     "darkmantle crush",
     &["dm-crush", "darkmantle-crush"],
@@ -17830,7 +17906,7 @@ pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::rea
     AbilityScoreType::Strength,
     Dice::new(3, 6),
     DamageType::Bludgeoning,
-    Condition::Restrained,
+    &[Condition::Restrained],
     ConditionTimer::Rounds(2),
     "coiling water",
     2,
@@ -17839,32 +17915,41 @@ pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::rea
 // ─── Rug of Smothering ──────────────────────────────────────────────
 
 /// Rug of Smothering Smother — STR-based 2d6+STR bludgeoning melee
-/// whose hit Blinds and Restrains at once. RAW: "Smother. Melee Weapon
-/// Attack: +5 to hit, reach 5 ft., one Medium or smaller creature. Hit:
-/// the creature is grappled (escape DC 13). Until this grapple ends,
-/// the target is restrained, blinded, and at risk of suffocating, and
-/// the rug can't smother another target. In addition, at the start of
-/// each of the target's turns, the target takes 10 (2d6 + 3)
-/// bludgeoning damage."
+/// whose hit pins and smothers at once. RAW: "Smother. Melee Attack
+/// Roll: +5, reach 5 ft. Hit: 10 (2d6 + 3) Bludgeoning damage. If the
+/// target is a Medium or smaller creature, the rug can give it the
+/// Grappled condition (escape DC 13) instead of dealing damage. Until
+/// the grapple ends, the target has the Blinded and Restrained
+/// conditions, **is suffocating**, and takes 10 (2d6 + 3) Bludgeoning
+/// damage at the start of each of its turns."
 ///
-/// RAW's hit deals no damage at all — the crushing is a per-turn tick
-/// on the grapple, which the weapon chassis has no lane for. Folding
-/// one round of it into the swing is the honest compression: the rug
-/// still trades a hit for roughly ten bludgeoning and a smothered
-/// victim, and the arithmetic across a two-round hold comes out close.
+/// RAW's grapple deals no damage on the hit that lands it — the
+/// crushing is a per-turn tick, which the weapon chassis has no lane
+/// for. Folding one round of it into the swing is the honest
+/// compression: the rug still trades a hit for roughly ten bludgeoning
+/// and a smothered victim, and the arithmetic across a two-round hold
+/// comes out close.
 ///
 /// Restrained rather than Blinded, because the engine reads Restrained
 /// as the stronger of the two and installing both would be one
 /// condition doing the other's work — a Restrained creature already
 /// hands out advantage and attacks at disadvantage, which is where the
 /// blinding was going.
+///
+/// The suffocation is not a rephrasing of either, and it ships now that
+/// there is a clock to read it. It was the clause this stat block was
+/// named for and the one it did not have: a rug that pins you is a
+/// wolf, and a rug that pins you and stops your breathing is a rug of
+/// smothering. Two rounds under the weave is two rungs of exhaustion —
+/// half speed and disadvantage on every check — bought without rolling
+/// a single point of damage for it. See `engine::breath`.
 pub static RUG_OF_SMOTHERING_SMOTHER: WeaponWithCondition = WeaponWithCondition::melee(
     "rug of smothering smother",
     &["rug-smother", "smother"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
-    Condition::Restrained,
+    &[Condition::Restrained, Condition::Choking],
     ConditionTimer::Rounds(2),
     "smothering weave",
 );

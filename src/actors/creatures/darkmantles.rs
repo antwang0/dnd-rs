@@ -27,9 +27,18 @@ use std::sync::LazyLock;
 ///
 /// No drain and no damage split: a darkmantle holds on and hits you, it
 /// does not feed.
+///
+/// Both halves of RAW's covering clause are on `host_conditions` — the
+/// Blinded, and the `Choking` that is RAW's "and is suffocating". The
+/// second one used to be struck out with a note saying the engine had
+/// no breath clock; `engine::breath` is that clock, and the darkmantle
+/// is the cheapest creature in the bestiary that can kill by it. Both
+/// ride the same `host_conditions_max_size` gate, which is right: RAW
+/// grants the blindness and the suffocation in one sentence, to one
+/// size of target, for one reason — the thing is over your face.
 static DARKMANTLE_ATTACH: AttachProfile = AttachProfile {
     verb: "wraps itself around",
-    host_conditions: &[Condition::Blinded],
+    host_conditions: &[Condition::Blinded, Condition::Choking],
     host_conditions_max_size: Some(Size::Medium),
     advantage_on_host: true,
     pry_dc: Some(13),

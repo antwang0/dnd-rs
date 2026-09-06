@@ -1,4 +1,4 @@
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_OCTOPUS_TENTACLES;
 use crate::actors::actor_template::CreatureTemplate;
@@ -74,7 +74,7 @@ pub static GIANT_OCTOPUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         actions,
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

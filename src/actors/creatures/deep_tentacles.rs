@@ -1,5 +1,5 @@
 use crate::actions::action_template::{Action, TargetingSchema, action_only, first_target_id};
-use crate::actions::class_features::{SWIM_SPEED_TAG, TENTACLE_OF_THE_DEEP_TAG};
+use crate::actions::class_features::{SWIM_SPEED_TAG, TENTACLE_OF_THE_DEEP_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::simple_weapon_attack;
 use crate::actors::actor_template::CreatureTemplate;
@@ -176,7 +176,7 @@ pub static TENTACLE_OF_THE_DEEP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         // The second tag is the "of the Deep" half taken literally: the
         // thing the invocation calls up is a tentacle out of the ocean,
         // and a pool on the board is the only water it will ever see.
-        features: HashSet::from([TENTACLE_OF_THE_DEEP_TAG, SWIM_SPEED_TAG]),
+        features: HashSet::from([TENTACLE_OF_THE_DEEP_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

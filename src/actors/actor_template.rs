@@ -1854,6 +1854,41 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
     },
 ];
 
+/// Sources of "the water is not going to drown this creature", read by
+/// `ActorInstance::breathes_underwater` and, through it, by
+/// `EncounterInstance::can_breathe` — the gate on the round-end
+/// suffocation tick in `engine::breath`.
+///
+/// A third water cohort beside `WATER_SURCHARGE_IMMUNITIES` and
+/// `SWIM_SPEED_SOURCES`, and a genuinely different question from
+/// either: 5e's three water rules are *what does crossing it cost*,
+/// *does your sword work down there*, and *can you breathe*, and no
+/// two of them have the same answer for the same creature. A Reef
+/// Shark swims and cannot breathe air at all; a Green Hag breathes
+/// water and has no swim line; a wizard under Freedom of Movement is
+/// exempt from both surcharge and disadvantage and drowns exactly as
+/// fast as anybody else.
+///
+/// Entries (in order):
+///   - **The stat-block line** (`UNDERWATER_BREATHING_TAG`): RAW's
+///     Amphibious, Water Breathing, Hold Breath and Limited
+///     Amphibiousness, which come out the same on a battle map. See
+///     the tag's docstring for why the four are one row.
+///   - **Necklace of Adaptation** — RAW: "you can breathe normally in
+///     any environment". The item's own docstring used to note that the
+///     breathing clause had been collapsed onto its Poisoned immunity
+///     for want of anything to read it; this is that clause arriving.
+///     A flag on the item rather than a condition, because the necklace
+///     grants it by being worn.
+const UNDERWATER_BREATH_SOURCES: &[ActorFlagRow] = &[
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::UNDERWATER_BREATHING_TAG),
+    },
+    ActorFlagRow {
+        flag: ActorInstance::wears_unfettered_breathing,
+    },
+];
+
 /// Sources of a swimming speed, read by `ActorInstance::has_swim_speed`.
 ///
 /// Split out from `WATER_SURCHARGE_IMMUNITIES` rather than folded into
@@ -4786,6 +4821,30 @@ pub struct ActorInstance {
     /// maximum), `EXHAUSTION_ZERO_SPEED_TIER` (speed again), and
     /// `EXHAUSTION_DEATH_TIER`.
     exhaustion: u32,
+    /// Rounds of held breath left before 5e's **Suffocation** hazard
+    /// starts charging exhaustion — see `engine::breath`.
+    ///
+    /// Refilled to `hold_breath_capacity()` at every round-end the
+    /// creature can breathe, which is nearly every round-end for nearly
+    /// every creature, so the number spends most of its life pinned at
+    /// full. It only ever means something while an actor is under water
+    /// without the lungs for it, or has something wrapped around its
+    /// face.
+    ///
+    /// Starts full rather than at zero: a creature that walks into the
+    /// encounter has been breathing up to now.
+    breath_rounds: u32,
+    /// How many rungs of the exhaustion ladder this creature is
+    /// standing on because of suffocation specifically, so that RAW's
+    /// *"it removes all levels of Exhaustion it gained from
+    /// suffocating"* can give back exactly those and not the ones the
+    /// creature arrived with.
+    ///
+    /// A second number beside `exhaustion` rather than a tagged stack
+    /// of sources, because suffocation is the only effect in the game
+    /// that takes its own levels back. Everything else that hands out a
+    /// rung hands it out for good.
+    suffocation_exhaustion: u32,
     /// 5e Fighter Indomitable — one-shot "reroll the next failed save"
     /// marker. Set by the Indomitable action; consumed at the save
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
@@ -5030,7 +5089,7 @@ impl ActorInstance {
             ct.name
         );
         let name: String = format!("{} {}", ct.name, instance_n);
-        Ok(ActorInstance {
+        let mut actor = ActorInstance {
             name,
             location,
             movement_spent_this_turn: 0.0,
@@ -5128,6 +5187,10 @@ impl ActorInstance {
             legendary_actions: ct.legendary_actions,
             last_lair_action: None,
             exhaustion: 0,
+            // Overwritten immediately below the literal, once the sheet
+            // this is measured off exists.
+            breath_rounds: 0,
+            suffocation_exhaustion: 0,
             indomitable_pending: false,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
@@ -5198,7 +5261,15 @@ impl ActorInstance {
             sorcery_points_max: ct.sorcery_points,
             death_burst: ct.death_burst,
             natural_melee_reflect: ct.natural_melee_reflect,
-        })
+        };
+        // The breath clock starts full — a creature that walks into an
+        // encounter has been breathing up to now. Filled after the
+        // literal rather than inside it because the capacity is read
+        // off the finished sheet: `hold_breath_capacity` goes through
+        // `ability_modifier`, which folds in whatever the template's own
+        // item list has already done to the creature's Constitution.
+        actor.breath_rounds = actor.hold_breath_capacity();
+        Ok(actor)
     }
 
     /// On-death burst this actor fires when reduced to 0 HP, if any. `None`
@@ -8460,6 +8531,128 @@ impl ActorInstance {
     /// `MOVER_OA_SUPPRESSORS`.
     pub fn suppresses_opportunity_attacks(&self) -> bool {
         self.matches_any(MOVER_OA_SUPPRESSORS)
+    }
+
+    /// True while the actor carries an item that lets them breathe
+    /// wherever they are — the Necklace of Adaptation, and nothing else
+    /// on the loot table. Read by `UNDERWATER_BREATH_SOURCES`.
+    pub fn wears_unfettered_breathing(&self) -> bool {
+        self.items.iter().any(|i| i.grants_unfettered_breathing)
+    }
+
+    /// True if the water will never drown this actor — RAW's
+    /// Amphibious, Hold Breath and Limited Amphibiousness traits, plus
+    /// the one item that grants the same thing.
+    ///
+    /// The third of the engine's three water questions, and the one
+    /// that asks about the creature's lungs rather than its legs or its
+    /// sword. Read by `EncounterInstance::can_breathe`; see
+    /// `UNDERWATER_BREATH_SOURCES` for why it is not derivable from
+    /// either of the other two.
+    pub fn breathes_underwater(&self) -> bool {
+        self.matches_any(UNDERWATER_BREATH_SOURCES)
+    }
+
+    /// How long this actor could hold its breath from full, in rounds —
+    /// RAW's *"1 plus its Constitution modifier"* minutes, floored at
+    /// thirty seconds.
+    ///
+    /// Recomputed on demand rather than snapshotted at spawn, because
+    /// the Constitution it is measured in moves: an Amulet of Health
+    /// sets the score outright, a Belt of Giant Strength does not, and
+    /// exhaustion tier 4 has already halved this creature's hit points
+    /// by the time anybody asks. The refill in `refill_breath` reads
+    /// this each round, so the clock is always sized to the sheet as it
+    /// stands.
+    pub fn hold_breath_capacity(&self) -> u32 {
+        crate::engine::breath::hold_breath_rounds(
+            self.ability_modifier(AbilityScoreType::Constitution),
+        )
+    }
+
+    /// Rounds of held breath left before suffocation begins.
+    pub fn breath_rounds(&self) -> u32 {
+        self.breath_rounds
+    }
+
+    /// How many rungs of the exhaustion ladder this actor is currently
+    /// standing on *because it could not breathe* — the ledger RAW's
+    /// "it removes all levels of Exhaustion it gained from suffocating"
+    /// is measured against.
+    ///
+    /// Never larger than `exhaustion_level()`, and the difference
+    /// between the two is what the creature walked in with. A barbarian
+    /// who arrived tired and then drowned a little sheds only the
+    /// drowning.
+    pub fn suffocation_exhaustion(&self) -> u32 {
+        self.suffocation_exhaustion
+    }
+
+    /// Refill the breath clock and shed whatever suffocation has cost
+    /// so far — RAW's *"when a creature can breathe again"*. Returns
+    /// the number of exhaustion levels actually shed, which is zero on
+    /// the overwhelming majority of the rounds this is called on.
+    ///
+    /// Called every round-end for every actor that can breathe, which
+    /// is nearly all of them nearly always, so the no-op path is one
+    /// comparison and one store.
+    pub fn refill_breath(&mut self) -> u32 {
+        self.breath_rounds = self.hold_breath_capacity();
+        let owed = self.suffocation_exhaustion;
+        if owed == 0 {
+            return 0;
+        }
+        self.suffocation_exhaustion = 0;
+        // `reduce_exhaustion` saturates and clears the flag at zero, so
+        // a ledger that has somehow outrun the ladder (a Greater
+        // Restoration between the drowning and the surfacing) costs
+        // nothing extra.
+        let before = self.exhaustion;
+        self.reduce_exhaustion(owed);
+        before - self.exhaustion
+    }
+
+    /// Spend one round of held breath, or — when there is none to spend
+    /// — climb a rung of the exhaustion ladder and record that this
+    /// module owes it back.
+    ///
+    /// `airway_blocked` is RAW's *"when a creature runs out of breath
+    /// **or is choking**"*, and it is what separates the hazard's two
+    /// halves. A creature under water is holding the breath it took on
+    /// the way down, so it spends the clock a round at a time and pays
+    /// nothing until the clock is empty. A creature with something over
+    /// its face has no such breath to hold: the "or" makes choking a
+    /// second, independent trigger, so it skips the clock entirely and
+    /// pays on the first round-end.
+    ///
+    /// The clock is not *drained* by choking, only bypassed. A victim
+    /// pulled out from under a rug of smothering has its own lungs
+    /// back, and the refill in `refill_breath` would reset the number
+    /// on the next breathable round in any case; leaving it alone means
+    /// a creature that is choking *and* under water pays once, not
+    /// twice, and comes up with the clock the water left it.
+    ///
+    /// Returns the new exhaustion tier when a level actually landed,
+    /// and `None` while the creature is still holding its breath or is
+    /// immune to exhaustion. The immunity is not checked here: the
+    /// level is installed through `add_condition`, which bounces an
+    /// immune creature before the ladder sees it, and the ledger is
+    /// only credited for a rung that really arrived. That is what keeps
+    /// a zombie at the bottom of a pool from accruing an invisible debt
+    /// that a later surfacing would "repay" out of somebody's Greater
+    /// Restoration.
+    pub fn spend_breath(&mut self, airway_blocked: bool) -> Option<u32> {
+        if !airway_blocked && self.breath_rounds > 0 {
+            self.breath_rounds -= 1;
+            return None;
+        }
+        let before = self.exhaustion;
+        self.add_condition(Condition::Exhausted, ConditionTimer::Permanent);
+        if self.exhaustion == before {
+            return None;
+        }
+        self.suffocation_exhaustion += self.exhaustion - before;
+        Some(self.exhaustion)
     }
 
     /// True if this actor crosses `TerrainType::Water` at no movement

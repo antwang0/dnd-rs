@@ -472,6 +472,44 @@ pub enum Condition {
     /// down rather than clearing outright — which is what both of RAW's
     /// cleanses (Greater Restoration, a long rest) actually say.
     Exhausted,
+    /// Choking — the fast half of 5e's **Suffocation** hazard: *"when a
+    /// creature runs out of breath **or is choking**, it gains 1
+    /// Exhaustion level at the end of each of its turns."*
+    ///
+    /// The airway is blocked, so the holder's breath clock is not
+    /// running down — it is already spent, and the first round-end
+    /// costs a rung of exhaustion. Read by
+    /// `EncounterInstance::can_breathe`, which is the single gate the
+    /// round-end tick in `engine::breath` consults; nothing else looks
+    /// at it.
+    ///
+    /// Four SRD stat blocks install it, and all four spell the clause
+    /// *"is suffocating"* rather than "is choking" — the Darkmantle's
+    /// covered victim, the Rug of Smothering's, the Gelatinous Cube's
+    /// engulfed one, and the Water Elemental's whelmed one. The
+    /// variant is named for the hazard's own wording instead, because
+    /// "suffocating" in that paragraph is the *outcome* both halves
+    /// share and this is specifically the half that is not a timer.
+    ///
+    /// Deliberately carries no mechanics of its own beyond that gate.
+    /// It is not on the incapacitation cohorts, not on the roll-mode
+    /// cohorts, and does not block spellcasting: RAW's suffocating
+    /// creature acts normally right up until the exhaustion it is
+    /// accruing starts to bite. The Gelatinous Cube's neighbouring
+    /// "can't cast spells with a Verbal component" clause is a separate
+    /// sentence of that stat block and not part of this condition.
+    ///
+    /// The Water Elemental's *"unless it can breathe water"* rider is
+    /// asked at the install site rather than here, for the reason
+    /// `engine::breath`'s module docs give: a merfolk held under water
+    /// is breathing, and a merfolk with a darkmantle over its face is
+    /// not. The condition means the airway is blocked; who gets one is
+    /// the attack's business.
+    ///
+    /// Not a dispellable buff, for the obvious reason, and not on any
+    /// timer cohort — every source ends it by ending the hold that
+    /// caused it.
+    Choking,
     /// Spirit Shroud (5e level-3, concentration). The holder wraps
     /// themselves in deathly mist: every melee weapon attack the holder
     /// lands deals an extra 1d8 cold damage, and the target's speed is
@@ -2515,6 +2553,7 @@ impl Condition {
             Condition::Inspired => "inspired",
             Condition::Countercharmed => "steadied by countercharm",
             Condition::Exhausted => "exhausted",
+            Condition::Choking => "choking",
             Condition::SpiritShrouded => "wreathed in spirits",
             Condition::SymbioticEntity => "bonded to a spore symbiote",
             Condition::AncestrallyHaunted => "haunted by ancestral spirits",

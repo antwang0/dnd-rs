@@ -1,4 +1,4 @@
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     WATER_ELEMENTAL_MULTI, WATER_ELEMENTAL_SLAM, WATER_ELEMENTAL_WHELM,
@@ -81,7 +81,7 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         recharge_abilities: vec![("whelm", 4)],
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..elemental_body_defaults([(
             DamageType::Acid,
             DamageModifier::Resistance,

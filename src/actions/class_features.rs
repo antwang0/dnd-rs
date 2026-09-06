@@ -12898,6 +12898,56 @@ pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const SWIM_SPEED_TAG: &str = "shared.swim_speed";
 
+/// **Breathes underwater** — the stat-block line that says the water
+/// will not drown this creature, on the same `shared.` namespace as the
+/// swimming speed beside it and for the same reason: it is a fact about
+/// a monster sheet, not a class feature.
+///
+/// Read by `ActorInstance::breathes_underwater`, and through it by the
+/// one rule that asks — `EncounterInstance::can_breathe`, the gate on
+/// the round-end suffocation tick in `engine::breath`. A creature
+/// carrying this tag can stand at the bottom of a lake indefinitely;
+/// one without it is on a clock the moment it goes under.
+///
+/// Named for what it *does* rather than after any one RAW trait,
+/// because four different SRD 5.2 clauses grant it and no one of their
+/// names is right for the other three:
+///
+///   - **Amphibious** — "the aboleth can breathe air and water".
+///     Twenty-two stat blocks, counting the sixteen amphibious dragons.
+///   - **Water Breathing** — "the shark can breathe only underwater".
+///     The exact opposite trait in flavour and the same answer to this
+///     question. Nine stat blocks: the three sharks, the two octopuses,
+///     the two seahorses, the piranha and its swarm.
+///   - **Hold Breath** — "the crocodile can hold its breath for 15
+///     minutes", "the hydra can hold its breath for 1 hour". Fifteen
+///     minutes is 150 rounds; no encounter this engine has run is a
+///     tenth of that, so within a fight the creature does not run out.
+///   - **Limited Amphibiousness** — the Sahuagin's "it needs to be
+///     submerged at least once every 4 hours to avoid suffocating
+///     outside water". Four hours is 2,400 rounds.
+///
+/// Splitting those would mean four tags, four template lists and four
+/// sweeps, all feeding one predicate that cannot tell them apart. The
+/// honest summary of all four is "being under water is never this
+/// creature's problem", which is what the tag is named for.
+///
+/// The clause it deliberately does **not** carry is the sharks' other
+/// half — "*only* underwater", which RAW says makes them suffocate in
+/// air. See `engine::breath` for why that half is a scope cut and what
+/// it would take to ship.
+///
+/// What this is *not* is a swimming speed: the Crocodile and the
+/// Hippopotamus hold their breath and cross water at the ordinary
+/// surcharge, and the Green Hag breathes water without a swim line at
+/// all. `SWIM_SPEED_TAG` and this one overlap heavily and neither
+/// implies the other — see `creatures::underwater_breathing_templates`
+/// for the roster.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const UNDERWATER_BREATHING_TAG: &str = "shared.underwater_breathing";
+
+
 /// Monster trait: "its weapon attacks are magical".
 ///
 /// RAW writes this line onto the celestials, the greater fiends and a

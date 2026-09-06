@@ -83096,3 +83096,430 @@ fn a_latched_creature_rides_the_saddle_its_host_climbs_into() {
         "and the stirge came down with them"
     );
 }
+
+// ─── 5e Suffocation: the breath clock (`engine::breath`) ─────────────
+
+/// Drive `n` round-ends without touching anything else.
+///
+/// The engine's "at the end of each of its turns" is `round_end`, which
+/// walks every actor once per round — so a test that wants the breath
+/// clock to advance five rounds wants exactly this and none of the
+/// initiative machinery around it. Calling the sweep directly keeps
+/// these tests measuring the rule rather than the turn loop.
+fn pass_rounds(e: &mut EncounterInstance, n: u32) {
+    for _ in 0..n {
+        e.round_end();
+    }
+}
+
+/// A creature with air-breathing lungs standing at the bottom of a pool
+/// holds its breath for `1 + CON` minutes and then starts up the
+/// exhaustion ladder, a rung a round.
+///
+/// The two boundaries are what the test is for. One round before the
+/// clock runs out the creature is untouched — a fighter who wades in
+/// and out is fine, which is what stops this rule from taxing every
+/// water map in the engine. One round after, it is on the ladder, and
+/// stays on it for as long as it is under.
+#[test]
+fn a_creature_underwater_runs_out_of_breath_and_then_starts_drowning() {
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+    let capacity = e.actors[&swimmer].hold_breath_capacity();
+    assert!(capacity >= crate::engine::breath::MIN_HOLD_BREATH_ROUNDS);
+    assert!(!e.can_breathe(swimmer), "a fighter has no gills");
+    assert!(e.can_breathe(bystander), "and the bank has air on it");
+
+    pass_rounds(&mut e, capacity);
+    assert_eq!(
+        e.actors[&swimmer].exhaustion_level(),
+        0,
+        "the last round of held breath is still free"
+    );
+    assert_eq!(e.actors[&swimmer].breath_rounds(), 0, "and it is the last one");
+
+    pass_rounds(&mut e, 1);
+    assert_eq!(
+        e.actors[&swimmer].exhaustion_level(),
+        1,
+        "the round after that costs a rung"
+    );
+    pass_rounds(&mut e, 2);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 3, "and keeps costing");
+
+    // The bystander on the dry bank has been standing beside all of
+    // this for the same number of rounds and is untouched.
+    assert_eq!(e.actors[&bystander].exhaustion_level(), 0);
+}
+
+/// RAW: *"when a creature can breathe again, it removes all levels of
+/// Exhaustion it gained from suffocating."* All of those, and none of
+/// the others.
+///
+/// The distinction is the whole reason `ActorInstance` carries a second
+/// number beside its exhaustion tier. A creature that arrived at the
+/// fight already tired and then nearly drowned must come up owing what
+/// it walked in with — otherwise drowning would be a way to shed a rung
+/// of exhaustion, which is a strange thing for a rule to make true.
+#[test]
+fn surfacing_gives_back_what_the_water_took_and_nothing_else() {
+    use crate::engine::terrain::TerrainType;
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    // Two rungs from somewhere else — a forced march, a Sickening
+    // Radiance, whatever put them there.
+    e.actors.get_mut(&swimmer).unwrap().gain_exhaustion(2);
+    let capacity = e.actors[&swimmer].hold_breath_capacity();
+    pass_rounds(&mut e, capacity + 2);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 4, "two owed, two drowned");
+    assert_eq!(e.actors[&swimmer].suffocation_exhaustion(), 2);
+
+    // Drain one tile of the footprint: RAW's "fully immersed" is false
+    // and the creature has air again.
+    e.set_terrain_at(Coordinate::new(4, 4), TerrainType::Floor);
+    pass_rounds(&mut e, 1);
+    assert_eq!(
+        e.actors[&swimmer].exhaustion_level(),
+        2,
+        "the water gives back its two and keeps its hands off the rest"
+    );
+    assert_eq!(e.actors[&swimmer].suffocation_exhaustion(), 0);
+    assert!(
+        e.messages().iter().any(|m| m.contains("gets its breath back")),
+        "and says so"
+    );
+    // The clock is refilled, so a second dunking costs the full wait
+    // again rather than resuming where the first left off.
+    assert_eq!(e.actors[&swimmer].breath_rounds(), capacity);
+}
+
+/// The stat-block line does what it says: a creature that breathes
+/// underwater is never on the clock at all, however long it stays down.
+///
+/// Run well past the longest hold-breath capacity on the roster, so the
+/// test would fail if the tag were merely buying time rather than
+/// switching the rule off.
+#[test]
+fn a_creature_that_breathes_water_never_starts_the_clock() {
+    use crate::actions::class_features::UNDERWATER_BREATHING_TAG;
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    assert!(!e.can_breathe(swimmer));
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .grant_feature_for_test(UNDERWATER_BREATHING_TAG);
+    assert!(e.can_breathe(swimmer), "the tag is the whole of the gate");
+    pass_rounds(&mut e, 120);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 0);
+    assert_eq!(
+        e.actors[&swimmer].breath_rounds(),
+        e.actors[&swimmer].hold_breath_capacity(),
+        "and its breath was never spent, so it is still full"
+    );
+}
+
+/// Choking is the fast half of the hazard: RAW's "runs out of breath
+/// **or is choking**" gives the second no grace period at all, so the
+/// very first round-end costs a rung.
+///
+/// Also the one place the two halves are visibly different rules: the
+/// creature is standing on dry land with a full breath clock, and pays
+/// anyway.
+#[test]
+fn something_over_your_face_costs_a_rung_on_the_first_round_end() {
+    let (mut e, _, bystander) = swimmer_and_bystander();
+    assert!(e.can_breathe(bystander));
+    let full = e.actors[&bystander].hold_breath_capacity();
+    assert_eq!(e.actors[&bystander].breath_rounds(), full);
+
+    e.actors
+        .get_mut(&bystander)
+        .unwrap()
+        .add_condition(Condition::Choking, ConditionTimer::Rounds(2));
+    assert!(!e.can_breathe(bystander), "the airway is what matters");
+    pass_rounds(&mut e, 1);
+    assert_eq!(
+        e.actors[&bystander].exhaustion_level(),
+        1,
+        "a blocked airway does not spend the breath clock, it skips it"
+    );
+    assert!(e.messages().iter().any(|m| m.contains("is choking")));
+
+    // The condition's own timer is what lets go, and the round it does
+    // is the round the ladder stops climbing and starts unwinding.
+    pass_rounds(&mut e, 2);
+    assert!(!e.actors[&bystander].has_condition(Condition::Choking));
+    assert_eq!(
+        e.actors[&bystander].exhaustion_level(),
+        0,
+        "everything the choke cost comes back when it lets go"
+    );
+}
+
+/// A creature immune to Exhaustion — every construct, ooze and undead
+/// on the roster — accrues nothing underwater, and accrues no hidden
+/// debt either.
+///
+/// The second half is the one worth pinning. `spend_breath` credits its
+/// ledger only for a rung that actually landed, so a zombie that spends
+/// a fight at the bottom of a pool cannot surface and "repay" levels it
+/// never had — which would come out of somebody else's Greater
+/// Restoration.
+#[test]
+fn a_creature_that_never_gets_tired_cannot_drown() {
+    let (mut e, _, bystander) = swimmer_and_bystander();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    assert!(e.actors[&zombie].is_immune_to_condition(Condition::Exhausted));
+    assert!(!e.can_breathe(zombie), "it is under water like anything else");
+    pass_rounds(&mut e, 60);
+    assert_eq!(e.actors[&zombie].exhaustion_level(), 0);
+    assert_eq!(
+        e.actors[&zombie].suffocation_exhaustion(),
+        0,
+        "no rung landed, so nothing is owed back"
+    );
+    assert_eq!(e.actors[&bystander].exhaustion_level(), 0);
+}
+
+/// Six rungs is death, and the breath clock has no shortcut to it —
+/// which means a creature held under from full needs its whole hold
+/// plus six rounds, and dies of the ladder rather than of the water.
+#[test]
+fn holding_a_creature_under_long_enough_kills_it_by_the_ladder() {
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    let capacity = e.actors[&swimmer].hold_breath_capacity();
+    pass_rounds(&mut e, capacity + 5);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 5, "one rung short");
+    assert!(e.actors.contains_key(&swimmer));
+
+    pass_rounds(&mut e, 1);
+    assert!(
+        e.messages().iter().any(|m| m.contains("stops breathing")),
+        "the sixth rung is death and the log says so"
+    );
+    assert!(
+        !e.actors.contains_key(&swimmer),
+        "and round-end's own cleanup sweeps the body"
+    );
+}
+
+/// The Necklace of Adaptation's RAW breathing clause — "you can breathe
+/// normally in any environment" — reaches the water, and stops at the
+/// darkmantle.
+///
+/// Both halves matter. The clause spent a long time collapsed onto the
+/// necklace's Poisoned immunity because nothing in the engine could
+/// tell the difference; this is the difference. And an environment is
+/// not a creature: a necklace that also defeated a windpipe held shut
+/// would be a strictly better item than the one RAW prints.
+#[test]
+fn the_necklace_of_adaptation_beats_the_water_and_not_the_darkmantle() {
+    use crate::items::item_template::NECKLACE_OF_ADAPTATION;
+    let (mut e, swimmer, _) = swimmer_and_bystander();
+    assert!(!e.can_breathe(swimmer));
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .pickup_item(&NECKLACE_OF_ADAPTATION);
+    assert!(e.can_breathe(swimmer), "the wearer breathes the lake");
+    pass_rounds(&mut e, 60);
+    assert_eq!(e.actors[&swimmer].exhaustion_level(), 0);
+
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .add_condition(Condition::Choking, ConditionTimer::Permanent);
+    assert!(
+        !e.can_breathe(swimmer),
+        "an environment is not a thing wrapped around your head"
+    );
+}
+
+/// The darkmantle's whole stat block, end to end: it wraps around a
+/// head, and the head stops breathing.
+///
+/// RAW's covering clause grants the Blinded condition and the
+/// suffocation in one sentence, to one size of target, for one reason.
+/// The suffocation half was struck out for want of a clock; this is the
+/// clause arriving, measured through the attach lane rather than by
+/// installing the condition by hand.
+#[test]
+fn a_darkmantle_over_the_face_stops_the_face_breathing() {
+    use crate::actors::creatures::darkmantles::DARKMANTLE_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let mantle = e
+        .instantiate_creature(&DARKMANTLE_TEMPLATE, Coordinate::new(6, 3), 1, 0)
+        .unwrap();
+    assert!(e.can_breathe(victim), "the room is full of air");
+
+    assert!(e.attach(mantle, victim).is_ok());
+    assert!(
+        e.actors[&victim].has_condition(Condition::Blinded),
+        "RAW's first clause"
+    );
+    assert!(
+        e.actors[&victim].has_condition(Condition::Choking),
+        "and its second, in the same sentence"
+    );
+    assert!(!e.can_breathe(victim));
+    pass_rounds(&mut e, 1);
+    assert_eq!(e.actors[&victim].exhaustion_level(), 1);
+
+    // Pried loose, the victim gets both back once the attach lane's
+    // short refreshed timer lapses. That lag is `HOST_CONDITION_TIMER`
+    // and is deliberate — see its docstring for why a release refreshes
+    // rather than strips — so the breath comes back a round behind the
+    // hands coming off, exactly as the sight does.
+    e.detach(mantle, crate::engine::attachment::DetachCause::Pried);
+    pass_rounds(&mut e, 2);
+    assert!(!e.actors[&victim].has_condition(Condition::Choking));
+    assert!(e.can_breathe(victim));
+    pass_rounds(&mut e, 1);
+    assert_eq!(
+        e.actors[&victim].exhaustion_level(),
+        0,
+        "the rung the darkmantle cost comes back with the air"
+    );
+}
+
+/// The Water Elemental's Whelm carries RAW's own "unless" — *"the
+/// target … is suffocating **unless it can breathe water**"* — and the
+/// two victims either side of that clause come out of the same surge
+/// with different conditions on them.
+///
+/// The merfolk is the case the clause was written for and the reason
+/// the exemption lives at the install site rather than inside
+/// `Condition::Choking`: it is drowning-specific, and the same merfolk
+/// with a darkmantle over its face is choking like anybody else.
+///
+/// The save has to fail for either rider to land, so both victims are
+/// stunned first — `auto_fails_str_dex_saves` is the engine's own
+/// deterministic way to lose a Strength save, and this test is about
+/// which condition the failure installs, not about the roll.
+#[test]
+fn the_whelm_spares_the_lungs_that_do_not_need_the_air() {
+    use crate::actions::monster_attacks::WATER_ELEMENTAL_WHELM;
+    use crate::actors::creatures::merfolk::MERFOLK_TEMPLATE;
+    use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let elemental = e
+        .instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let merfolk = e
+        .instantiate_creature(&MERFOLK_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    let landlubber = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(5, 7),
+            1,
+            0,
+        )
+        .unwrap();
+    for id in [merfolk, landlubber] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+    }
+    assert!(e.actors[&merfolk].breathes_underwater());
+    assert!(!e.actors[&landlubber].breathes_underwater());
+
+    let origin = vec![e.actors[&elemental].location()];
+    let effects =
+        WATER_ELEMENTAL_WHELM.side_effects(&mut e, elemental, None, Some(&origin), None);
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&landlubber].has_condition(Condition::Choking),
+        "the fighter is held under a wave with no way to breathe it"
+    );
+    assert!(
+        !e.actors[&merfolk].has_condition(Condition::Choking),
+        "and the merfolk is simply at home"
+    );
+    // Both are still knocked down by the same surge, so the exemption
+    // is scoped to the breathing clause and has not spared them the
+    // rest of the ability.
+    assert!(e.actors[&merfolk].has_condition(Condition::Prone));
+    assert!(e.actors[&landlubber].has_condition(Condition::Prone));
+}
+
+/// The rug of smothering finally smothers. RAW gives its victim three
+/// conditions in one sentence — Blinded, Restrained and suffocating —
+/// and the stat block shipped with the first two collapsed into one and
+/// the third struck out for want of a breath clock.
+///
+/// What the third one buys is the difference between the rug and every
+/// other creature that pins: two rounds under the weave is two rungs of
+/// exhaustion, bought without rolling a point of damage for it.
+#[test]
+fn the_rug_of_smothering_takes_the_breath_as_well_as_the_footing() {
+    use crate::actions::monster_attacks::RUG_OF_SMOTHERING_SMOTHER;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let rug = e
+        .instantiate_creature(&RUG_OF_SMOTHERING_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    // Nail the swing: an unhittable AC would make this a test of the
+    // die rather than of the rider.
+    e.actors.get_mut(&victim).unwrap().set_base_ac(1);
+    let targets = vec![victim];
+    let effects = RUG_OF_SMOTHERING_SMOTHER.side_effects(&mut e, rug, Some(&targets), None, None);
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&victim].has_condition(Condition::Restrained));
+    assert!(e.actors[&victim].has_condition(Condition::Choking));
+    assert!(!e.can_breathe(victim));
+
+    pass_rounds(&mut e, 2);
+    assert_eq!(
+        e.actors[&victim].exhaustion_level(),
+        2,
+        "a rung for each round under the weave"
+    );
+}
+
+/// Being inside a gelatinous cube is RAW's "an engulfed target is
+/// suffocating … has the Restrained condition", and both halves land
+/// off one failed save.
+#[test]
+fn being_inside_a_gelatinous_cube_is_not_only_inconvenient() {
+    use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cube = e
+        .instantiate_creature(&GELATINOUS_CUBE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+    // A hittable AC and a save it cannot make: the test is about what
+    // the failure installs, not about either roll.
+    e.actors.get_mut(&victim).unwrap().set_base_ac(1);
+    e.actors
+        .get_mut(&victim)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+    let targets = vec![victim];
+    let effects = GELATINOUS_CUBE_ENGULF.side_effects(&mut e, cube, Some(&targets), None, None);
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&victim].has_condition(Condition::Restrained));
+    assert!(
+        e.actors[&victim].has_condition(Condition::Choking),
+        "there is no air inside a cube"
+    );
+}

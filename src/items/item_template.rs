@@ -148,6 +148,28 @@ pub struct Item {
     /// before they have found a magic weapon, and it stops being
     /// relevant the moment they have.
     pub grants_silvered_attacks: bool,
+    /// True when carrying this item lets the holder breathe wherever
+    /// they are — 5e's Necklace of Adaptation, "you can breathe
+    /// normally in any environment", and nothing else on the roster.
+    ///
+    /// Read through `ActorInstance::breathes_underwater` by the
+    /// `UNDERWATER_BREATH_SOURCES` cohort, which is what
+    /// `EncounterInstance::can_breathe` consults before the round-end
+    /// suffocation tick in `engine::breath`.
+    ///
+    /// A third `grants_*` flag rather than a row on
+    /// `passive_conditions`, and the reason is the same one that keeps
+    /// the magical and silvered flags apart from the bonus fields: the
+    /// necklace grants this by being *worn*, so a Dispel Magic has
+    /// nothing to strip and a long rest has nothing to reinstall. A
+    /// condition would be strippable, which would be a different item.
+    ///
+    /// It does not stop the airway being blocked. The necklace's RAW is
+    /// about the environment — gas, vacuum, deep water — and a
+    /// darkmantle wrapped around your head is not an environment; see
+    /// `EncounterInstance::can_breathe` for the order the two are asked
+    /// in.
+    pub grants_unfettered_breathing: bool,
 }
 
 impl Item {
@@ -170,6 +192,7 @@ impl Item {
         passive_conditions: &[],
         grants_magical_attacks: false,
         grants_silvered_attacks: false,
+        grants_unfettered_breathing: false,
     };
 }
 
@@ -382,17 +405,34 @@ pub static STONE_OF_GOOD_LUCK: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Necklace of Adaptation — passive trinket. Grants immunity to the
-/// Poisoned condition while worn. 5e RAW: "you are immune to harmful
-/// gases" plus you can breathe freely; we collapse the breath / gas
-/// clause onto Poisoned-immunity (the only in-engine consequence of
-/// "harmful gas"). Uses the new `condition_immunities` lane on `Item`
-/// so the install gate in `add_condition` skips Poisoned silently
-/// while the necklace is carried.
+/// Necklace of Adaptation — passive trinket. 5e RAW: *"While wearing
+/// this necklace, you can breathe normally in any environment, and you
+/// have Advantage on saving throws made to avoid or resist harmful
+/// gases and vapors."*
+///
+/// Both clauses ship, on two different lanes:
+///
+///   - The **gas** half is Poisoned-immunity through the
+///     `condition_immunities` lane, so the install gate in
+///     `add_condition` skips it silently while the necklace is carried.
+///     RAW's advantage-on-the-save is rounded up to immunity because
+///     the only in-engine consequence of a harmful gas is the Poisoned
+///     condition, and an advantage that fires on one save shape and
+///     nothing else would be most of a rule.
+///   - The **breathing** half is `grants_unfettered_breathing`, which
+///     is a row on `UNDERWATER_BREATH_SOURCES` and keeps the wearer off
+///     the suffocation clock at the bottom of a lake. This clause spent
+///     a long time collapsed onto the one above it with a comment
+///     saying so, for want of anything in the engine that could tell
+///     the difference; `engine::breath` is what could.
+///
+/// It is breathing, not an unblockable windpipe: a darkmantle over the
+/// wearer's face still chokes them. See `Condition::Choking`.
 pub static NECKLACE_OF_ADAPTATION: Item = Item {
     name: "Necklace of Adaptation",
     glyph: 'n',
     condition_immunities: &[crate::conditions::Condition::Poisoned],
+    grants_unfettered_breathing: true,
     ..Item::DEFAULTS
 };
 

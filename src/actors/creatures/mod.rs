@@ -675,6 +675,91 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
     aquatic
 }
 
+/// Every template the water will not drown — the creatures whose RAW
+/// stat block carries Amphibious, Water Breathing, Hold Breath or
+/// Limited Amphibiousness, and so the creatures that can stand at the
+/// bottom of a pool without the suffocation clock in `engine::breath`
+/// ever starting.
+///
+/// The sibling of `aquatic_templates` above, written down for the same
+/// reason and enforced by the same kind of two-way sweep. What makes it
+/// a *separate* list rather than a second use of that one is that the
+/// two genuinely disagree in both directions, which is the whole reason
+/// `UNDERWATER_BREATHING_TAG` is not derived from `SWIM_SPEED_TAG`:
+///
+///   - **Swims and drowns.** The constrictor snakes and the venomous
+///     snakes have a swim line and no breathing clause; so does the
+///     white dragon, alone among the five swimming colours. Each of
+///     them crosses a lake for free and suffocates under it.
+///   - **Breathes and cannot swim.** The Green Hag is Amphibious with
+///     no swim speed at all, and the Crocodile, Hippopotamus and
+///     Killer Whale hold their breath for a quarter of an hour without
+///     RAW granting them anything about the surcharge.
+///
+/// The last four entries are not on the SRD roster at all — a
+/// lizardfolk, a bullywug, a marid and a Fathomless warlock's tentacle
+/// — and are here on the same reading their 2014 stat blocks give
+/// them. The water elemental and water weird are here because they are
+/// made of the stuff; both are also immune to Exhaustion, so the tag
+/// changes nothing for them today and says why they are safe rather
+/// than leaving it to a coincidence on another line.
+pub fn underwater_breathing_templates() -> Vec<&'static CreatureTemplate> {
+    let mut breathers: Vec<&'static CreatureTemplate> = vec![
+        // RAW **Amphibious**.
+        &aboleths::ABOLETH_TEMPLATE,
+        &archelons::ARCHELON_TEMPLATE,
+        &chuuls::CHUUL_TEMPLATE,
+        &crabs::CRAB_TEMPLATE,
+        &dragon_turtles::DRAGON_TURTLE_TEMPLATE,
+        &frogs::FROG_TEMPLATE,
+        &giant_crabs::GIANT_CRAB_TEMPLATE,
+        &giant_frogs::GIANT_FROG_TEMPLATE,
+        &giant_toads::GIANT_TOAD_TEMPLATE,
+        &green_hags::GREEN_HAG_TEMPLATE,
+        &krakens::KRAKEN_TEMPLATE,
+        &merfolk::MERFOLK_TEMPLATE,
+        &merrow::MERROW_TEMPLATE,
+        &sea_hags::SEA_HAG_TEMPLATE,
+        &storm_giants::STORM_GIANT_TEMPLATE,
+        // RAW **Limited Amphibiousness** — four hours is 2,400 rounds.
+        &sahuagins::SAHUAGIN_TEMPLATE,
+        // RAW **Hold Breath**, fifteen minutes or an hour.
+        &crocodiles::CROCODILE_TEMPLATE,
+        &crocodiles::GIANT_CROCODILE_TEMPLATE,
+        &hippopotamuses::HIPPOPOTAMUS_TEMPLATE,
+        &hydras::HYDRA_TEMPLATE,
+        &killer_whales::KILLER_WHALE_TEMPLATE,
+        &plesiosauruses::PLESIOSAURUS_TEMPLATE,
+        // RAW **Water Breathing** — "can breathe only underwater". The
+        // engine reads the half that keeps them alive down there; see
+        // `engine::breath` for the half it does not.
+        &giant_octopuses::GIANT_OCTOPUS_TEMPLATE,
+        &giant_sharks::GIANT_SHARK_TEMPLATE,
+        &hunter_sharks::HUNTER_SHARK_TEMPLATE,
+        &octopuses::OCTOPUS_TEMPLATE,
+        &piranhas::PIRANHA_TEMPLATE,
+        &reef_sharks::REEF_SHARK_TEMPLATE,
+        &seahorses::GIANT_SEAHORSE_TEMPLATE,
+        &seahorses::SEAHORSE_TEMPLATE,
+        &swarms::SWARM_OF_PIRANHAS_TEMPLATE,
+        // Off the SRD roster, on their 2014 stat blocks' reading, and
+        // on the plain fact of being made of water.
+        &bullywugs::BULLYWUG_TEMPLATE,
+        &deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+        &lizardfolk::LIZARDFOLK_TEMPLATE,
+        &marids::MARID_TEMPLATE,
+        &water_elementals::WATER_ELEMENTAL_TEMPLATE,
+        &water_weirds::WATER_WEIRD_TEMPLATE,
+    ];
+    // The sixteen dragons whose stat block prints Amphibious — every
+    // black, bronze, gold and green, at all four rungs. Extended rather
+    // than listed for the same reason `aquatic_templates` extends with
+    // the swimmers: `creatures::dragons` stores the fact per colour and
+    // can answer it itself.
+    breathers.extend(dragons::amphibious_dragon_templates());
+    breathers
+}
+
 #[cfg(test)]
 mod tests {
     use crate::actors::actor_template::CreatureTemplate;
@@ -1061,6 +1146,90 @@ mod tests {
                 t.name
             );
         }
+    }
+
+    /// `underwater_breathing_templates` is the whole truth about who
+    /// carries `UNDERWATER_BREATHING_TAG` — every entry does, and no
+    /// template anywhere else in the engine does.
+    ///
+    /// The twin of the swimming sweep above, and it earns its keep in
+    /// the same two directions and for a sharper reason: the failure it
+    /// guards is *fatal* rather than merely wrong. A creature that
+    /// loses this tag drowns in a pool it lives in — six rungs of
+    /// exhaustion and a corpse, with nothing in the log but the rule
+    /// working correctly. A creature that gains one wades into a lake
+    /// and never comes out, because it has no reason to.
+    ///
+    /// Swept across the encounter pool plus every player template, so
+    /// the interesting failure — a tag copy-pasted onto the next stat
+    /// block down the file — is caught where no list would look.
+    #[test]
+    fn the_underwater_breathing_tag_is_carried_by_exactly_the_breathers() {
+        use crate::actions::class_features::UNDERWATER_BREATHING_TAG;
+        use crate::engine::encounter::EncounterInstance;
+
+        let breathers = super::underwater_breathing_templates();
+        for t in &breathers {
+            assert!(
+                t.features.contains(UNDERWATER_BREATHING_TAG),
+                "{} is on the breathing list without the tag",
+                t.name
+            );
+        }
+        let names: Vec<&str> = breathers.iter().map(|t| t.name).collect();
+
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            super::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.features.contains(UNDERWATER_BREATHING_TAG) {
+                continue;
+            }
+            assert!(
+                names.contains(&t.name),
+                "{} breathes underwater but is not on the breathing list",
+                t.name
+            );
+        }
+    }
+
+    /// The two water rosters are neither the same list nor nested one
+    /// inside the other, and both disagreements are RAW.
+    ///
+    /// Written as a test rather than left in a docstring because the
+    /// tempting simplification — "aquatic creatures breathe water,
+    /// derive one from the other" — is wrong in a way that reads as
+    /// right, and would delete a list rather than break a build. The
+    /// two named witnesses are the cheapest possible proof that the
+    /// derivation is unavailable in either direction.
+    #[test]
+    fn swimming_and_breathing_are_two_different_rosters() {
+        let swimmers: Vec<&str> = super::aquatic_templates().iter().map(|t| t.name).collect();
+        let breathers: Vec<&str> = super::underwater_breathing_templates()
+            .iter()
+            .map(|t| t.name)
+            .collect();
+
+        // Swims, drowns. The white dragon's Speed line carries a swim
+        // and its stat block carries no Amphibious trait — the only one
+        // of the five swimming colours that doesn't.
+        let white = &*super::dragons::ANCIENT_WHITE_DRAGON_TEMPLATE;
+        assert!(swimmers.contains(&white.name));
+        assert!(
+            !breathers.contains(&white.name),
+            "the white dragon swims; RAW does not let it breathe down there"
+        );
+
+        // Breathes, cannot swim. The green hag is Amphibious with no
+        // swim line at all.
+        let hag = &*super::green_hags::GREEN_HAG_TEMPLATE;
+        assert!(breathers.contains(&hag.name));
+        assert!(
+            !swimmers.contains(&hag.name),
+            "the green hag breathes water; RAW gives her no grace in it"
+        );
     }
 
     /// The tag reaches the two predicates that read it, on a real

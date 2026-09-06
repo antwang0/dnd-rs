@@ -1,4 +1,4 @@
-use crate::actions::class_features::SWIM_SPEED_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -61,7 +61,7 @@ pub static FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Beast,
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
-        features: HashSet::from([SWIM_SPEED_TAG]),
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
