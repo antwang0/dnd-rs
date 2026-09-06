@@ -15,7 +15,8 @@ use std::sync::LazyLock;
 /// the giant one is a fight.
 ///
 /// Stat shape per the SRD: AC 10, 5 HP (1d8+1), STR 7 / DEX 10 / CON 13
-/// / INT 2 / WIS 12 / CHA 4. Speed 50 (flying). Skills: Perception.
+/// / INT 2 / WIS 12 / CHA 4. Speed 10 walking, fly 50. Skills:
+/// Perception.
 /// CR 0.
 pub static VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -28,7 +29,10 @@ pub static VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 10,
         // 1d8+1 ≈ 5 average per the SRD (CR 0).
         hitpoints: "1d8+1".parse().unwrap(),
-        speed: 50.,
+        speed: 10.,
+        // RAW speed line: Speed 10 ft., Fly 50 ft. The bird walks like a
+        // bird and flies like one, and the engine has a lane for each.
+        fly_speed: 50.,
         strength: 7,
         dexterity: 10,
         constitution: 13,

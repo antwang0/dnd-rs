@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 ///
 /// Stat shape: AC 9 (the wretched, formless body — the lowest AC in
 /// the bestiary), ~9 HP (2d8), STR 10, DEX 5, CON 11, INT 1, WIS 11,
-/// CHA 3. Speed 15 (the petitioner shuffle). Senses: Darkvision 120.
+/// CHA 3. Speed 20 (the petitioner shuffle). Senses: Darkvision 120.
 /// Languages: understanding of Infernal but cannot speak (we drop the
 /// listener-only flag and use an empty language set since the engine
 /// doesn't track comprehension-only languages). Size Medium. CR 0.
@@ -49,7 +49,7 @@ pub static LEMURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 9,
         // 2d8 ≈ 9 average per MM (CR 0).
         hitpoints: "2d8".parse().unwrap(),
-        speed: 15.,
+        speed: 20.,
         strength: 10,
         intelligence: 1,
         dexterity: 5,

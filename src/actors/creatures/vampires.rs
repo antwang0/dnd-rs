@@ -29,6 +29,9 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'v' (lowercase) to avoid clashing with 'V' (Vampire Spawn).
         glyph: 'v',
         ac: 16,
+        // RAW speed line: Speed 40 ft., Climb 40 ft. The climb has no
+        // lane on a flat board; the walking half is the number.
+        speed: 40.,
         // 23d8+92 ≈ 195 average per the MM Vampire stat block.
         hitpoints: "23d8+92".parse().unwrap(),
         strength: 18,

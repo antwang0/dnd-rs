@@ -46,10 +46,13 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ac: 12,
         // 5d10 ≈ 27 average per the SRD (CR 2).
         hitpoints: "5d10".parse().unwrap(),
-        // RAW speed line: Speed 10 ft., fly 10 ft. (hover)
+        // RAW speed line: Speed 10 ft., and nothing else. SRD 5.2 gives
+        // the rug no fly speed; the older printing's "fly 10 ft.
+        // (hover)" had come across with the template, and the hover
+        // annotation with it. A rug that hovers over a floor is a rug
+        // that never lies still on one, which is the opposite of what
+        // it is for.
         speed: 10.0,
-        fly_speed: 10.0,
-        hovers: true,
         strength: 17,
         dexterity: 14,
         constitution: 10,

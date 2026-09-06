@@ -32,7 +32,7 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ac: 15,
         // 13d10+39 ≈ 80 HP — matches MM CR 5 plant envelope.
         hitpoints: "13d10+39".parse().unwrap(),
-        speed: 20.,
+        speed: 30.,
         strength: 18,
         dexterity: 8,
         constitution: 16,

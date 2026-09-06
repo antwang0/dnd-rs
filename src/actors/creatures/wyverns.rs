@@ -26,8 +26,8 @@ pub static WYVERN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 14,
         // 15d10+45 = ~127 average per MM (CR 6).
         hitpoints: "15d10+45".parse().unwrap(),
-        // RAW speed line: Speed 20 ft., fly 80 ft.
-        speed: 20.0,
+        // RAW speed line: Speed 30 ft., Fly 80 ft.
+        speed: 30.0,
         fly_speed: 80.0,
         strength: 19,
         dexterity: 10,

@@ -197,7 +197,7 @@ pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
             'ß',
             12,
             "2d10",
-            0.,
+            5.,
             [5, 15, 10, 2, 12, 4],
             HashSet::from([SpecialSense::Blindsight(60)]),
             0.25,

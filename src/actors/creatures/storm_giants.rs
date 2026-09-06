@@ -33,6 +33,11 @@ pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 20d12+100 ≈ 230 average per MM (CR 13).
         hitpoints: "20d12+100".parse().unwrap(),
         speed: 50.,
+        // RAW speed line: Speed 50 ft., Fly 25 ft. (hover), Swim 50 ft.
+        // The fly is half the walk and hovers — a storm giant does not
+        // outrun anything in the air, it simply cannot be reached.
+        fly_speed: 25.,
+        hovers: true,
         strength: 29,
         intelligence: 16,
         dexterity: 14,

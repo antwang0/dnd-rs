@@ -36,9 +36,9 @@ use std::sync::LazyLock;
 /// dungeon biomes.
 ///
 /// Stat shape: AC 14, ~11 HP (2d8+2), STR 10, DEX 18, CON 13,
-/// INT 2, WIS 10, CHA 3. Speed 30 walking + swim 30 (magnitudes
-/// collapsed to walking 30 since the engine doesn't track a swimming
-/// separately). Senses: Blindsight 10, Darkvision 60. Size Medium.
+/// INT 2, WIS 10, CHA 3. Speed 40 — RAW's walk and its swim are the
+/// same number, so the single magnitude costs the snake nothing.
+/// Senses: Blindsight 10, Darkvision 60. Size Medium.
 /// CR ¼. XP: 50 per RAW.
 pub static GIANT_VENOMOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -53,7 +53,7 @@ pub static GIANT_VENOMOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         ac: 14,
         // 2d8+2 = 11 average per MM (CR ¼).
         hitpoints: "2d8+2".parse().unwrap(),
-        speed: 30.,
+        speed: 40.,
         strength: 10,
         intelligence: 2,
         dexterity: 18,

@@ -23,11 +23,13 @@ use std::sync::LazyLock;
 ///    end of next turn. Recharge 5-6 via the standard `("blinding
 ///    spittle", 5)` entry; the engine's recharge-d6 chokepoint handles
 ///    refresh at turn-start.
-/// 3. Aberrant Ground: collapsed to a flat speed reduction via the
-///    template's low `speed` field (10 ft / 4 tiles RAW). We don't model
-///    the per-tick "creatures in 10 ft save or speed halved" aura since
-///    the engine has no per-other-turn aura hook — the mouther's slow
-///    speed reads as the "swampy ground" envelope on its own.
+/// 3. Aberrant Ground: not modeled. RAW's "creatures in a 10-foot
+///    Emanation save or their speed is halved" needs a per-other-turn
+///    aura hook the engine does not have. The mouther's own 20-foot
+///    speed is slow enough that it reads as the swampy-ground
+///    creature it is without borrowing the aura's job — which is what
+///    this note used to claim, on a template whose speed had been cut
+///    to 10 to make the claim true.
 ///
 /// Stats roughly track MM Gibbering Mouther at CR 2 — STR 10, DEX 8
 /// (the shambling clumsy mass), CON 16, INT 3 (instinct-driven), WIS 10,
@@ -47,7 +49,7 @@ pub static GIBBERING_MOUTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         hitpoints: "7d8+21".parse().unwrap(),
         // 10 ft RAW — the mouther's "aberrant ground" collapsed to a
         // baked-in slow movement profile.
-        speed: 10.,
+        speed: 20.,
         strength: 10,
         intelligence: 3,
         dexterity: 8,

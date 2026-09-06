@@ -34,7 +34,7 @@ use std::sync::LazyLock;
 /// neither type is how you kill this thing.
 ///
 /// Stat shape per the SRD: AC 8, 52 HP (7d10+14), STR 15 / DEX 6 / CON
-/// 14 / INT 2 / WIS 6 / CHA 1. Speed 10 — the slowest thing on the
+/// 14 / INT 2 / WIS 6 / CHA 1. Speed 20 — among the slowest things on the
 /// board, and the reason an ochre jelly is a corridor problem rather
 /// than an open-field one. Blindsight 60 (blind beyond). CR 2.
 pub static OCHRE_JELLY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -48,7 +48,7 @@ pub static OCHRE_JELLY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 8,
         // 7d10+14 ≈ 52 average per the SRD (CR 2).
         hitpoints: "7d10+14".parse().unwrap(),
-        speed: 10.,
+        speed: 20.,
         strength: 15,
         dexterity: 6,
         constitution: 14,

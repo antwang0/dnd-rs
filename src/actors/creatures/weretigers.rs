@@ -37,8 +37,8 @@ use std::sync::LazyLock;
 /// The load-bearing kit is the bite + claws multi.
 ///
 /// Stat shape: AC 12, ~120 HP (16d8+48), STR 17, DEX 15, CON 16, INT
-/// 10, WIS 13, CHA 11. Speed 40 (hybrid-form burst speed matching the
-/// other wereXX templates). Senses: Darkvision 60. Languages: Common
+/// 10, WIS 13, CHA 11. Speed 30 — RAW's headline; the 40 beside it is
+/// scoped to "tiger form only". Senses: Darkvision 60. Languages: Common
 /// (humanoid form retains speech). Size Large. CR 4.
 pub static WERETIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -54,7 +54,7 @@ pub static WERETIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         // 16d8+48 ≈ 120 average per MM (CR 4).
         hitpoints: "16d8+48".parse().unwrap(),
-        speed: 40.,
+        speed: 30.,
         strength: 17,
         intelligence: 10,
         dexterity: 15,

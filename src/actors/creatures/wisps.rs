@@ -21,8 +21,8 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'w',
         ac: 19,
         hitpoints: "11d4".parse().unwrap(),
-        // RAW speed line: Speed 0 ft., fly 50 ft. (hover)
-        speed: 0.0,
+        // RAW speed line: Speed 5 ft., Fly 50 ft. (hover)
+        speed: 5.0,
         fly_speed: 50.0,
         hovers: true,
         strength: 1,

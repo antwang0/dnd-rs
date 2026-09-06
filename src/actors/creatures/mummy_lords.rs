@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 /// Mummy: same shape (rotting fist + dreadful glare) on a vastly stronger
 /// chassis (3d6+STR + 6d6 necrotic fist, DC-17 60-ft glare), plus Magic
 /// Resistance and the Legendary Resistance (3/Day) anti-caster envelope.
-/// Boss undead "ancient pharaoh" archetype — slow on foot (20 ft speed RAW)
+/// Boss undead "ancient pharaoh" archetype — unhurried on foot (30 ft)
 /// but devastating when the party closes to melee, and the wide-radius
 /// glare projects fear pressure on approach.
 ///
@@ -65,7 +65,7 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 25d8+75 ≈ 187 average per MM (CR 15).
         hitpoints: "25d8+75".parse().unwrap(),
-        speed: 20.,
+        speed: 30.,
         strength: 18,
         intelligence: 11,
         dexterity: 10,

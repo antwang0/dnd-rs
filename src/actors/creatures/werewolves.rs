@@ -12,8 +12,9 @@ use std::sync::LazyLock;
 /// approximated as resistance; see the template body). A bite that
 /// lands forces a CON save for a poisoned-
 /// debuff lycanthropy-curse rider, paying the "is werewolf scary?" tax
-/// without having to model a multi-day curse. Speed is bumped to 40 to
-/// match the hybrid-form profile.
+/// without having to model a multi-day curse. Speed is RAW's headline
+/// 30: the stat block's 40 is scoped to "wolf form only", and the
+/// engine has one body per creature rather than three.
 pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&WEREWOLF_BITE);
@@ -24,7 +25,7 @@ pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'w',
         ac: 15,
         hitpoints: "11d8+22".parse().unwrap(),
-        speed: 40.,
+        speed: 30.,
         strength: 16,
         dexterity: 14,
         constitution: 14,

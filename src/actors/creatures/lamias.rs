@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 /// clause (single-target charm lockout).
 ///
 /// Stat shape: AC 13, ~97 HP (13d10+26), STR 16, DEX 13, CON 15, INT 14,
-/// WIS 15, CHA 16. Speed 30. Senses: Darkvision 60. Languages: Abyssal,
+/// WIS 15, CHA 16. Speed 40. Senses: Darkvision 60. Languages: Abyssal,
 /// Celestial, Common, Draconic. Size Large. CR 4.
 pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -55,7 +55,7 @@ pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         // 13d10+26 ≈ 97 average per MM (CR 4).
         hitpoints: "13d10+26".parse().unwrap(),
-        speed: 30.,
+        speed: 40.,
         strength: 16,
         intelligence: 14,
         dexterity: 13,

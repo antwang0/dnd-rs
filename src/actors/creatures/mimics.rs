@@ -22,7 +22,7 @@ pub static MIMIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'm',
         ac: 12,
         hitpoints: "9d8+18".parse().unwrap(),
-        speed: 15.,
+        speed: 20.,
         strength: 17,
         dexterity: 12,
         constitution: 15,

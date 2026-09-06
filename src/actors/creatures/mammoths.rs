@@ -41,7 +41,7 @@ use std::sync::LazyLock;
 /// ground-bound damage-king on the same Huge frame.
 ///
 /// Stat shape: AC 13, ~126 HP (11d12+55), STR 24, DEX 9, CON 21,
-/// INT 3, WIS 11, CHA 6. Speed 40. Senses: none beyond the default
+/// INT 3, WIS 11, CHA 6. Speed 50. Senses: none beyond the default
 /// (mammoths have no darkvision RAW). Languages: none. Size Huge. CR 6.
 pub static MAMMOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -61,7 +61,7 @@ pub static MAMMOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         // 11d12+55 ≈ 126 average per MM (CR 6).
         hitpoints: "11d12+55".parse().unwrap(),
-        speed: 40.,
+        speed: 50.,
         strength: 24,
         intelligence: 3,
         dexterity: 9,

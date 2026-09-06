@@ -36,6 +36,10 @@ pub static CLOUD_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 16d12+96 ≈ 200 average per MM (CR 9).
         hitpoints: "16d12+96".parse().unwrap(),
         speed: 40.,
+        // RAW speed line: Speed 40 ft., Fly 20 ft. (hover). Half the
+        // walk, and the reason a cloud giant fights from a ledge.
+        fly_speed: 20.,
+        hovers: true,
         strength: 27,
         intelligence: 12,
         dexterity: 10,

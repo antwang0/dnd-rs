@@ -21,8 +21,10 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'P',
         ac: 12,
         hitpoints: "5d8".parse().unwrap(),
-        // RAW speed line: Speed 0 ft., fly 50 ft. (hover)
-        speed: 0.0,
+        // RAW speed line: Speed 30 ft., Fly 50 ft. (hover). SRD 5.2 gives
+        // the specter a real walking speed where the older printing gave
+        // it none.
+        speed: 30.0,
         fly_speed: 50.0,
         hovers: true,
         strength: 1,

@@ -36,7 +36,7 @@ use std::sync::LazyLock;
 /// pack ambush.
 ///
 /// Stat shape: AC 12, ~19 HP (3d10+3), STR 15, DEX 12, CON 13, INT 2,
-/// WIS 10, CHA 5. Speed 30. Size Large. CR ¼. XP: 50 per RAW.
+/// WIS 10, CHA 5. Speed 40. Size Large. CR ¼. XP: 50 per RAW.
 pub static GIANT_LIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_LIZARD_BITE);
@@ -52,7 +52,7 @@ pub static GIANT_LIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ac: 12,
         // 3d10+3 = 19 average per MM (CR ¼).
         hitpoints: "3d10+3".parse().unwrap(),
-        speed: 30.,
+        speed: 40.,
         strength: 15,
         intelligence: 2,
         dexterity: 12,

@@ -42,7 +42,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 25,
         // 34d20+340 = ~697 average per MM (CR 30).
         hitpoints: "34d20+340".parse().unwrap(),
-        speed: 40.,
+        speed: 60.,
         strength: 30,
         dexterity: 11,
         constitution: 30,

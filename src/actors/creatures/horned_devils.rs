@@ -55,8 +55,8 @@ use std::sync::LazyLock;
 /// the mid-and-upper devils.
 ///
 /// Stat shape: AC 18, ~199 HP (19d10+95), STR 22, DEX 17, CON 21,
-/// INT 12, WIS 16, CHA 18. Speed 20 (the horned devil's bulk hurts its
-/// land speed; in RAW it has a fly speed of 60 which we don't yet
+/// INT 12, WIS 16, CHA 18. Speed 30 walking, fly 60 — the devil is
+/// as fast on the ground as anything its size and twice that in the
 /// model). Senses: Darkvision 120. Languages: Infernal (the devil
 /// tongue). Telepathy 120ft RAW — we drop telepathy since the engine
 /// doesn't model it as a language. Size Large. CR 11.
@@ -75,8 +75,8 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ac: 18,
         // 19d10+95 ≈ 199 average per MM (CR 11).
         hitpoints: "19d10+95".parse().unwrap(),
-        // RAW speed line: Speed 20 ft., fly 60 ft.
-        speed: 20.0,
+        // RAW speed line: Speed 30 ft., Fly 60 ft.
+        speed: 30.0,
         fly_speed: 60.0,
         strength: 22,
         intelligence: 12,

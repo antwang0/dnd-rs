@@ -41,8 +41,9 @@ use std::sync::LazyLock;
 /// channel.
 ///
 /// Stat shape: AC 15, ~135 HP (18d8+54), STR 19, DEX 10, CON 17, INT
-/// 11, WIS 12, CHA 12. Speed 40 (hybrid-form burst speed, matching the
-/// werewolf's tuned-up 40-ft for the same hybrid-form flavor).
+/// 11, WIS 12, CHA 12. Speed 30 — RAW's headline; the 40 beside it is
+/// scoped to "bear form only", and the engine has one body per
+/// creature rather than three.
 /// Languages: Common (the humanoid-half retains speech). Size Large.
 /// CR 5.
 ///
@@ -68,7 +69,7 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 15,
         // 18d8+54 ≈ 135 average per MM (CR 5).
         hitpoints: "18d8+54".parse().unwrap(),
-        speed: 40.,
+        speed: 30.,
         strength: 19,
         intelligence: 11,
         dexterity: 10,

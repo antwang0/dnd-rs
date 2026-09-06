@@ -27,6 +27,10 @@ pub static HYDRA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'h' (Hell Hound). Visual reads as a tall serpent-headed beast.
         glyph: 'Y',
         ac: 15,
+        // RAW speed line: Speed 40 ft., Swim 40 ft. — the same number
+        // either way, so the swim tag below is the whole of the water
+        // half.
+        speed: 40.,
         // 16d12+80 ≈ 184 average per MM (CR 8).
         hitpoints: "16d12+80".parse().unwrap(),
         strength: 20,

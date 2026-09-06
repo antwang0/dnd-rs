@@ -9,8 +9,9 @@ use std::sync::LazyLock;
 /// Hawk (CR 0 tiny flier), Bat (CR 0 tiny blindsight flier), Rat
 /// (CR 0 tiny rodent) at the very bottom of the CR ladder. The threat
 /// profile is mobility + DEX-driven evasion, not damage: a cat does
-/// almost nothing if hit, but climbs out of melee with ease (RAW
-/// climb 30 collapsed into the engine's single-speed envelope at 30).
+/// almost nothing if hit, but outruns most of what wants to eat it
+/// (RAW: walk 40, climb 40 — the board has no third axis for the
+/// climb, so the walking half is the number).
 ///
 /// Action lane:
 /// - **cat claws** — DEX-based 1-flat slashing melee via the shared
@@ -29,9 +30,9 @@ use std::sync::LazyLock;
 /// rather than damage output.
 ///
 /// Stat shape: AC 12, ~2 HP (1d4 → average 2), STR 3, DEX 15, CON 10,
-/// INT 3, WIS 12, CHA 7. Speed 30 — RAW: walking 40 ft + climb 30 ft
-/// (the engine collapses ground + climb into a single per-creature
-/// speed). Size Tiny. CR 0. XP: 10 per RAW.
+/// INT 3, WIS 12, CHA 7. Speed 40 — RAW's walking speed; its climb
+/// is the same 40 and has no lane on a flat board. Size Tiny. CR 0.
+/// XP: 10 per RAW.
 pub static CAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&CAT_CLAWS);
@@ -48,11 +49,9 @@ pub static CAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // -1 modifier (the cat's CON 10 is dead-center), so the engine's
         // 1-floor on HP rolls is only a safety net.
         hitpoints: "1d4".parse().unwrap(),
-        // Speed 30 — RAW collapses walking 40 ft + climb 30 ft into a
-        // single per-creature speed. We pin to the climb speed since
-        // the cat's tactical identity is "leaps onto bookcases out of
-        // reach" rather than ground-pace pursuit.
-        speed: 30.,
+        // RAW speed line: Speed 40 ft., Climb 40 ft. Both halves are
+        // the same number, so the flat board costs the cat nothing.
+        speed: 40.,
         strength: 3,
         intelligence: 3,
         dexterity: 15,
