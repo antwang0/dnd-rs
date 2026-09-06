@@ -149,10 +149,6 @@ use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
 use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
 use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
-use crate::actors::creatures::dragons::{
-    ADULT_GREEN_DRAGON_TEMPLATE, ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE,
-    YOUNG_WHITE_DRAGON_TEMPLATE,
-};
 use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
 use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
 use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
@@ -1893,13 +1889,17 @@ pub struct EncounterInstance {
     /// `CompoundAttack` invocation. Incremented before delegating to a
     /// sub-attack and decremented after. Read by `SimpleWeapon` /
     /// `Greataxe` / etc. to gate the Extra Attack rider: a creature with
-    /// both a Multiattack action AND `has_extra_attack: true` (e.g.
-    /// Ancient Blue Dragon) should not have each sub-claw of its
-    /// multiattack fire an additional swing — Multiattack already
-    /// encodes the per-Action swing count. Bare swings outside any
-    /// Multi (the standalone DRAGON_CLAW or DRAGON_BITE the AI picks
-    /// when Multi is on cooldown) still chain correctly because depth
-    /// is 0.
+    /// both a Multiattack action AND `has_extra_attack: true` — an
+    /// ogre chieftain, a veteran — should not have each sub-swing of
+    /// its multiattack fire an additional swing, because Multiattack
+    /// already encodes the per-Action swing count. Bare swings outside
+    /// any Multi (the standalone Rend a dragon's AI picks when the
+    /// Multi is unavailable) still chain correctly because depth is 0.
+    ///
+    /// The dragons used to be the example here and are no longer: the
+    /// ladder in `creatures::dragons` dropped `has_extra_attack`
+    /// outright, on the grounds that a stat block carrying both flags
+    /// is the same rule written twice.
     multiattack_depth: u32,
     /// Stack of in-flight spell casts. `Action::execute` pushes a frame
     /// before building the action's side-effects and pops it after, so
@@ -9627,10 +9627,6 @@ impl EncounterInstance {
             // Vrock) so a higher cr_target run has a good-aligned
             // outsider in the pool too.
             &COUATL_TEMPLATE,
-            &ADULT_RED_DRAGON_TEMPLATE,
-            &YOUNG_WHITE_DRAGON_TEMPLATE,
-            &ANCIENT_BLUE_DRAGON_TEMPLATE,
-            &ADULT_GREEN_DRAGON_TEMPLATE,
             // Mid / low-CR fill-ins added alongside the new templates:
             // Giant Eagle (CR 1 large beast — aerial), Sahuagin (CR ½
             // humanoid w/ Blood Frenzy), Lizardfolk (CR ½ humanoid, sturdy
@@ -10678,6 +10674,13 @@ impl EncounterInstance {
             &GRAY_OOZE_TEMPLATE,
         ];
         pool.extend(crate::actors::creatures::swarms::all_swarm_templates());
+        // The whole dragon ladder — ten colours across four age
+        // categories, CR 1 through 24. Extended rather than listed for
+        // the same reason the swarms are: the forty are one table in
+        // `creatures::dragons`, and forty names spelled out here would
+        // be a second copy of it to keep in step. The generator's CR
+        // ceiling is what keeps an ancient gold out of a first fight.
+        pool.extend(crate::actors::creatures::dragons::all_dragon_templates());
         pool
     }
 

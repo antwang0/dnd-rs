@@ -64,6 +64,19 @@ pub fn add_flat_damage_rider(
     rider_name: &str,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
 ) -> u32 {
+    // A rider of no dice is not a rider. Nine of SRD 5.2's forty
+    // dragons print a Rend with no elemental clause on it — the
+    // metallic wyrmlings and young, whose scales have not caught fire
+    // yet — and they ride the same `WeaponWithRider` chassis as the
+    // thirty-one that do, because the alternative is two parallel
+    // tables of forty rows differing in one field. `Dice::new(0, _)` is
+    // how such a row says "no clause", and without this it would log a
+    // "0d1(0) = 0 fire rider" line and push a zero-damage `DealDamage`
+    // through the whole pipeline — a resistance line, a concentration
+    // check and an absorption payout, all for nothing.
+    if rider_dice.count == 0 {
+        return 0;
+    }
     let amt = encounter.roll(&rider_dice);
     encounter.log(format!(
         "  {}: {}({}) = {} {} rider",
@@ -6209,74 +6222,6 @@ impl Action for BreathWeaponCondition {
     }
 }
 
-/// Dragon Fire Breath — Adult Red Dragon signature. Burst-4 radius
-/// (range 6) of searing flame. 12d6 fire, DC 21 DEX, half on save.
-/// Recharge 5-6 via the `"breath_weapon"` pool. The dragon templates
-/// reach the action via this static; a fresh Behir breath / Wyvern
-/// cone / future poison breath becomes a one-line declaration on the
-/// same chassis.
-pub static DRAGON_BREATH_FIRE: BreathWeapon = BreathWeapon {
-    display_name: "fire breath",
-    aliases: &["fb", "breath"],
-    damage_dice: Dice::new(12, 6),
-    damage_type: DamageType::Fire,
-    save_ability: AbilityScoreType::Dexterity,
-    dc: 21,
-    radius: 4,
-    range: 6,
-    recharge_key: "breath_weapon",
-};
-
-/// Alias for the same fire breath under the older name some sites still
-/// reach for. Kept here so legacy references compile; both point at the
-/// same `BreathWeapon` value.
-pub static DRAGON_FIRE_BREATH: &BreathWeapon = &DRAGON_BREATH_FIRE;
-
-/// Dragon Cold Breath — burst-4 / range-6 of freezing cold. 12d6 cold,
-/// DC 21 DEX, half on save. Recharge 5-6.
-pub static DRAGON_BREATH_COLD: BreathWeapon = BreathWeapon {
-    display_name: "cold breath",
-    aliases: &["cb", "breath"],
-    damage_dice: Dice::new(12, 6),
-    damage_type: DamageType::Cold,
-    save_ability: AbilityScoreType::Dexterity,
-    dc: 21,
-    radius: 4,
-    range: 6,
-    recharge_key: "breath_weapon",
-};
-
-/// Dragon Lightning Breath — burst-4 / range-6 of crackling lightning.
-/// 12d6 lightning, DC 21 DEX, half on save. Recharge 5-6.
-pub static DRAGON_BREATH_LIGHTNING: BreathWeapon = BreathWeapon {
-    display_name: "lightning breath",
-    aliases: &["lb", "breath"],
-    damage_dice: Dice::new(12, 6),
-    damage_type: DamageType::Lightning,
-    save_ability: AbilityScoreType::Dexterity,
-    dc: 21,
-    radius: 4,
-    range: 6,
-    recharge_key: "breath_weapon",
-};
-
-/// Dragon Poison Breath — burst-4 / range-6 of noxious gas. 12d6
-/// poison, DC 21 CON, half on save. Recharge 5-6. Note: poison breath
-/// uses a CON save (inhaled toxin) rather than the DEX save the
-/// elemental breaths route through — the shared chassis carries that
-/// per-instance difference cleanly.
-pub static DRAGON_BREATH_POISON: BreathWeapon = BreathWeapon {
-    display_name: "poison breath",
-    aliases: &["pb", "breath"],
-    damage_dice: Dice::new(12, 6),
-    damage_type: DamageType::Poison,
-    save_ability: AbilityScoreType::Constitution,
-    dc: 21,
-    radius: 4,
-    range: 6,
-    recharge_key: "breath_weapon",
-};
-
 /// Behir lightning breath — burst-3 / range-5, 12d10 lightning, DC 16
 /// DEX, half on save. Recharge 5-6. Behir's signature: a 20 ft line
 /// of lightning that approximates as a small burst here. CR-11
@@ -6294,36 +6239,6 @@ pub static BEHIR_LIGHTNING_BREATH: BreathWeapon = BreathWeapon {
     range: 5,
     recharge_key: "breath_weapon",
 };
-
-/// Dragon Bite — Adult Red Dragon's signature melee. d20 + 14 vs AC
-/// (STR+prof at CR 17), on hit 2d10+8 piercing + 4d6 fire at reach 10ft.
-/// The fire rider is a separate `DealDamage` so per-target resistance /
-/// immunity applies to it independently from the piercing.
-pub static DRAGON_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
-    "dragon bite",
-    &["bite-d", "dbite"],
-    AbilityScoreType::Strength,
-    Dice::new(2, 10),
-    DamageType::Piercing,
-    2,
-    Dice::new(4, 6),
-    DamageType::Fire,
-    "dragon bite",
-);
-
-/// Dragon Claw — Adult Red Dragon's swipe. Identical resolution to a
-/// `SimpleWeapon` (no rider), tuned to 2d6+8 slashing at the dragon's
-/// hit modifier. Two claws + bite = the dragon multiattack; we issue
-/// the data-only SimpleWeapon variant so the AI picks Bite for the
-/// fire rider and Claw as fallback.
-pub static DRAGON_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
-    "dragon claw",
-    &["dclaw", "claw-d"],
-    AbilityScoreType::Strength,
-    Dice::new(2, 6),
-    DamageType::Slashing,
-    2,
-);
 
 /// Lich Paralyzing Touch — touch attack with a paralysis rider. d20 +
 /// 12 (INT-cast attack mod at CR 21) vs AC. On hit: 3d6 cold and the
@@ -6449,17 +6364,6 @@ impl Action for BeholderEyeRay {
 }
 
 pub static BEHOLDER_EYE_RAY: LazyLock<BeholderEyeRay> = LazyLock::new(|| BeholderEyeRay {});
-
-/// Dragon Multiattack — 3 claw swings in one turn at a single target
-/// (a tight stand-in for the Adult Red Dragon's "Bite + 2 Claws" RAW
-/// pattern using the existing single-sub-attack Multiattack scaffold).
-/// The dragon also has a separate Bite action and Fire Breath option
-/// the AI picks between, so the multiattack is the bursty melee lane.
-pub static DRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
-    display_name: "dragon multiattack",
-    sub_attack: &DRAGON_CLAW,
-    count: 3,
-});
 
 /// Drow Poisoned Hand Crossbow — DEX-based 1d6 piercing ranged shot with
 /// 30/120 ft range (≈12 tiles), Action cost. On hit, the target makes a

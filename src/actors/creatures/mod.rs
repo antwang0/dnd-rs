@@ -619,7 +619,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
 /// copy-pasted onto the next template down the file, and a fire
 /// elemental that swims is a bug nobody would go looking for.
 pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
-    vec![
+    let mut aquatic: Vec<&'static CreatureTemplate> = vec![
         &aboleths::ABOLETH_TEMPLATE,
         &bullywugs::BULLYWUG_TEMPLATE,
         &chuuls::CHUUL_TEMPLATE,
@@ -629,7 +629,6 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &crocodiles::GIANT_CROCODILE_TEMPLATE,
         &deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
         &dragon_turtles::DRAGON_TURTLE_TEMPLATE,
-        &dragons::YOUNG_WHITE_DRAGON_TEMPLATE,
         &frogs::FROG_TEMPLATE,
         &giant_crabs::GIANT_CRAB_TEMPLATE,
         &giant_frogs::GIANT_FROG_TEMPLATE,
@@ -667,7 +666,15 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &seahorses::GIANT_SEAHORSE_TEMPLATE,
         &seahorses::SEAHORSE_TEMPLATE,
         &venomous_snakes::VENOMOUS_SNAKE_TEMPLATE,
-    ]
+    ];
+    // The twenty dragons whose Speed line carries a swim — every black,
+    // bronze, gold, green and white, at all four rungs. Extended rather
+    // than listed because `creatures::dragons` already stores the fact
+    // per stat block and can answer it itself; see
+    // `swimming_dragon_templates` for why that is the exception to this
+    // list's write-it-down rule.
+    aquatic.extend(dragons::swimming_dragon_templates());
+    aquatic
 }
 
 #[cfg(test)]

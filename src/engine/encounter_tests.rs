@@ -19846,7 +19846,6 @@ fn lich_paralyzing_touch_can_paralyze() {
 /// fire damage. A fire-immune ally inside takes zero even on fail.
 #[test]
 fn dragon_fire_breath_burns_area() {
-    use crate::actions::monster_attacks::DRAGON_FIRE_BREATH;
     use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 
@@ -19858,7 +19857,15 @@ fn dragon_fire_breath_burns_area() {
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 0, 0)
         .unwrap();
     let g_hp = e.actors[&goblin].hitpoints();
-    let effects = DRAGON_FIRE_BREATH.side_effects(
+    // Off the dragon's own sheet rather than off a shared static. The
+    // breath belongs to the stat block now — forty of them, one per
+    // row of `creatures::dragons::DRAGONS` — so reaching for a global
+    // `DRAGON_FIRE_BREATH` would be testing a fifth thing that no
+    // dragon carries.
+    let breath = e.actors[&dragon]
+        .find_action("fire breath")
+        .expect("an adult red dragon breathes fire");
+    let effects = breath.side_effects(
         &mut e,
         dragon,
         None,
@@ -19902,7 +19909,14 @@ fn adult_red_dragon_immunities() {
     assert!(e.actors[&drg].is_immune_to_condition(Condition::Frightened));
 }
 
-/// Young White Dragon: cold immunity, CR 6, no legendary actions.
+/// Young White Dragon: cold immunity, CR 6, no legendary actions, and
+/// three Rends per Action rather than an Extra Attack.
+///
+/// The last of those is what changed when the ladder became a table.
+/// Every dragon used to carry `has_extra_attack` *and* a Multiattack,
+/// which is the same rule written twice — RAW's Action is the
+/// Multiattack, and the flag only ever fired on a bare Rend the AI
+/// would not have chosen anyway.
 #[test]
 fn young_white_dragon_instantiation() {
     use crate::actors::creatures::dragons::YOUNG_WHITE_DRAGON_TEMPLATE;
@@ -19912,10 +19926,13 @@ fn young_white_dragon_instantiation() {
         .unwrap();
     assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Cold));
     assert_eq!(e.actors[&drg].legendary_actions_per_round(), 0);
-    assert!(e.actors[&drg].has_extra_attack());
+    assert!(!e.actors[&drg].has_extra_attack());
+    assert!(e.actors[&drg].find_action("dragon multiattack").is_some());
 }
 
-/// Ancient Blue Dragon: lightning immunity, CR 23, full legendary package.
+/// Ancient Blue Dragon: lightning immunity, CR 23, full legendary
+/// package — and no Magic Resistance, which SRD 5.2 took off every
+/// dragon in the book.
 #[test]
 fn ancient_blue_dragon_instantiation() {
     use crate::actors::creatures::dragons::ANCIENT_BLUE_DRAGON_TEMPLATE;
@@ -19927,8 +19944,9 @@ fn ancient_blue_dragon_instantiation() {
     assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Lightning));
     assert!(e.actors[&drg].is_immune_to_condition(Condition::Frightened));
     assert_eq!(e.actors[&drg].legendary_actions_per_round(), 3);
-    assert!(e.actors[&drg].has_magic_resistance());
-    assert!(e.actors[&drg].has_extra_attack());
+    assert_eq!(e.actors[&drg].legendary_resistance_max(), 4);
+    assert!(!e.actors[&drg].has_magic_resistance());
+    assert!(e.actors[&drg].find_action("dragon multiattack").is_some());
 }
 
 /// Behir template: huge CR-11 monstrosity, lightning-immune, lightning
@@ -40970,6 +40988,7 @@ fn multiattack_suppresses_inner_extra_attack() {
 
 #[test]
 fn legendary_actions_refresh_on_new_round() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
     use crate::engine::side_effects::Resource;
 
     let mut e = ei_with_terrain(20, 20, &[]);
@@ -72058,35 +72077,51 @@ fn every_action_written_is_an_action_something_can_reach() {
     );
 }
 
-/// The green dragon's breath is a Constitution save, and its three
-/// siblings' are Dexterity.
+/// Every colour breathes its own element, and three of the ten force a
+/// Constitution save where the other seven force Dexterity.
 ///
-/// This is the whole reason the template exists rather than being a
-/// recolour of the red. Every other burst on the dragon chassis
-/// rewards the same answers — Evasion, a high-DEX chassis, spread
-/// out — and an inhaled cloud ignores all three. The breath weapon
-/// was written that way and then sat on no template at all, so
-/// nothing had ever rolled it.
+/// That split is the whole reason the ladder is worth having ten rungs
+/// wide rather than one recoloured five times. Every DEX-save burst in
+/// the game rewards the same three answers — Evasion, a high-DEX
+/// chassis, spreading out — and the green's cloud, the white's and the
+/// silver's frost ignore all three: a rogue who walks through Fire
+/// Breath for nothing takes poison in full.
+///
+/// Run at the adult rung, where all ten colours exist and all ten are
+/// legendary, so the assertion is about the colour and nothing else.
 #[test]
-fn the_green_dragons_cloud_is_inhaled_rather_than_dodged() {
+fn each_colour_breathes_its_own_element_against_its_own_save() {
     use crate::actors::creatures::dragons::{
-        ADULT_GREEN_DRAGON_TEMPLATE, ADULT_RED_DRAGON_TEMPLATE,
-        ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
+        ADULT_BLACK_DRAGON_TEMPLATE, ADULT_BLUE_DRAGON_TEMPLATE, ADULT_BRASS_DRAGON_TEMPLATE,
+        ADULT_BRONZE_DRAGON_TEMPLATE, ADULT_COPPER_DRAGON_TEMPLATE, ADULT_GOLD_DRAGON_TEMPLATE,
+        ADULT_GREEN_DRAGON_TEMPLATE, ADULT_RED_DRAGON_TEMPLATE, ADULT_SILVER_DRAGON_TEMPLATE,
+        ADULT_WHITE_DRAGON_TEMPLATE,
     };
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
 
     for (template, breath, save) in [
+        (&*ADULT_BLACK_DRAGON_TEMPLATE, "acid breath", "Dexterity"),
+        (&*ADULT_BLUE_DRAGON_TEMPLATE, "lightning breath", "Dexterity"),
+        (&*ADULT_BRASS_DRAGON_TEMPLATE, "fire breath", "Dexterity"),
+        (&*ADULT_BRONZE_DRAGON_TEMPLATE, "lightning breath", "Dexterity"),
+        (&*ADULT_COPPER_DRAGON_TEMPLATE, "acid breath", "Dexterity"),
+        (&*ADULT_GOLD_DRAGON_TEMPLATE, "fire breath", "Dexterity"),
         (&*ADULT_GREEN_DRAGON_TEMPLATE, "poison breath", "Constitution"),
         (&*ADULT_RED_DRAGON_TEMPLATE, "fire breath", "Dexterity"),
-        (&*ANCIENT_BLUE_DRAGON_TEMPLATE, "lightning breath", "Dexterity"),
-        (&*YOUNG_WHITE_DRAGON_TEMPLATE, "cold breath", "Dexterity"),
+        (&*ADULT_SILVER_DRAGON_TEMPLATE, "cold breath", "Constitution"),
+        (&*ADULT_WHITE_DRAGON_TEMPLATE, "cold breath", "Constitution"),
     ] {
         let mut e = ei_with_terrain(30, 30, &[]);
         let dragon = e
             .instantiate_creature(template, Coordinate::new(5, 5), 1, 0)
             .unwrap();
+        // A hill giant rather than a fighter: an adult dragon has a
+        // lair now, the lair opens the round with a magma eruption, and
+        // a victim that goes down to *that* leaves the breath with
+        // nobody to make a saving throw. Nothing on this list is
+        // immune to anything a hill giant needs to survive.
         let victim = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(9, 5), 0, 0)
             .unwrap();
         let action = e.actors[&dragon]
             .find_action(breath)
