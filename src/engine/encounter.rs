@@ -120,7 +120,7 @@ use crate::actors::creatures::treants::TREANT_TEMPLATE;
 use crate::actors::creatures::trolls::{TROLL_LIMB_TEMPLATE, TROLL_TEMPLATE};
 use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
 use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
-use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+use crate::actors::creatures::veterans::{VETERAN_TEMPLATE, WARRIOR_INFANTRY_TEMPLATE};
 use crate::actors::creatures::vrocks::VROCK_TEMPLATE;
 use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wights::WIGHT_TEMPLATE;
@@ -181,6 +181,7 @@ use crate::actors::creatures::dryads::DRYAD_TEMPLATE;
 use crate::actors::creatures::bullywugs::BULLYWUG_TEMPLATE;
 use crate::actors::creatures::quasits::QUASIT_TEMPLATE;
 use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
+use crate::actors::creatures::incubi::INCUBUS_TEMPLATE;
 use crate::actors::creatures::succubi::SUCCUBUS_TEMPLATE;
 use crate::actors::creatures::intellect_devourers::INTELLECT_DEVOURER_TEMPLATE;
 use crate::actors::creatures::xorns::XORN_TEMPLATE;
@@ -9792,6 +9793,7 @@ impl EncounterInstance {
             &UMBER_HULK_TEMPLATE,
             &VAMPIRE_SPAWN_TEMPLATE,
             &VETERAN_TEMPLATE,
+            &WARRIOR_INFANTRY_TEMPLATE,
             &VROCK_TEMPLATE,
             &WEREWOLF_TEMPLATE,
             &WIGHT_TEMPLATE,
@@ -9939,6 +9941,7 @@ impl EncounterInstance {
             &QUASIT_TEMPLATE,
             &SHADOW_DEMON_TEMPLATE,
             &SUCCUBUS_TEMPLATE,
+            &INCUBUS_TEMPLATE,
             &INTELLECT_DEVOURER_TEMPLATE,
             &XORN_TEMPLATE,
             // Newest additions filling the giant / aquatic-humanoid /
@@ -10892,6 +10895,7 @@ impl EncounterInstance {
         // be a second copy of it to keep in step. The generator's CR
         // ceiling is what keeps an ancient gold out of a first fight.
         pool.extend(crate::actors::creatures::dragons::all_dragon_templates());
+        pool.extend(crate::actors::creatures::half_dragons::all_half_dragon_templates());
         pool
     }
 

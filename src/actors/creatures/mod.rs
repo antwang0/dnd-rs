@@ -302,6 +302,8 @@ pub mod nobles;
 pub mod spies;
 pub mod pirates;
 pub mod guardian_nagas;
+pub mod half_dragons;
+pub mod incubi;
 pub mod sphinxes_of_lore;
 pub mod priests;
 pub mod gladiators;
@@ -1175,6 +1177,7 @@ mod tests {
         (&*trolls::TROLL_LIMB_TEMPLATE, 13, "4d6", [18, 12, 10, 1, 9, 1], 20, 0, 0.5),
         (&*vampire_spawns::VAMPIRE_SPAWN_TEMPLATE, 16, "12d8+36", [16, 16, 16, 11, 10, 12], 30, 0, 5.0),
         (&*veterans::VETERAN_TEMPLATE, 17, "10d8+20", [16, 13, 14, 10, 11, 10], 30, 0, 3.0),  // SRD 5.2: Warrior Veteran
+        (&*veterans::WARRIOR_INFANTRY_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),
         (&*vrocks::VROCK_TEMPLATE, 15, "16d10+64", [17, 15, 18, 8, 13, 8], 40, 60, 6.0),
         (&*werewolves::WEREWOLF_TEMPLATE, 15, "11d8+22", [16, 14, 14, 10, 11, 10], 30, 0, 3.0),
         (&*wights::WIGHT_TEMPLATE, 14, "11d8+33", [15, 14, 16, 10, 13, 15], 30, 0, 3.0),
@@ -1223,7 +1226,8 @@ mod tests {
         (&*gorgons::GORGON_TEMPLATE, 19, "12d10+48", [20, 11, 18, 2, 12, 7], 40, 0, 5.0),
         (&*dryads::DRYAD_TEMPLATE, 16, "5d8", [10, 12, 11, 14, 15, 18], 30, 0, 1.0),
         (&*quasits::QUASIT_TEMPLATE, 13, "10d4", [5, 17, 10, 7, 10, 10], 40, 0, 1.0),
-        (&*succubi::SUCCUBUS_TEMPLATE, 15, "12d8+12", [8, 17, 13, 15, 12, 20], 30, 60, 4.0),  // SRD 5.2: Incubus
+        (&*succubi::SUCCUBUS_TEMPLATE, 15, "13d8+13", [8, 17, 13, 15, 12, 20], 30, 60, 4.0),
+        (&*incubi::INCUBUS_TEMPLATE, 15, "12d8+12", [8, 17, 13, 15, 12, 20], 30, 60, 4.0),
         (&*xorns::XORN_TEMPLATE, 19, "8d8+48", [17, 10, 22, 11, 10, 11], 20, 0, 5.0),
         (&*oni::ONI_TEMPLATE, 17, "14d10+42", [19, 11, 16, 14, 12, 15], 30, 30, 7.0),
         (&*merrow::MERROW_TEMPLATE, 13, "6d10+12", [18, 15, 15, 8, 10, 9], 10, 0, 2.0),
@@ -1399,6 +1403,13 @@ mod tests {
         (&*swarms::SWARM_OF_VENOMOUS_SNAKES_TEMPLATE, 14, "8d8", [8, 18, 11, 1, 10, 3], 30, 0, 2.0),
         (&*swarms::SWARM_OF_CRAWLING_CLAWS_TEMPLATE, 12, "11d8", [14, 14, 11, 5, 10, 4], 30, 0, 3.0),
         (&*dragons::BLACK_DRAGON_WYRMLING_TEMPLATE, 17, "6d8+6", [15, 14, 13, 10, 11, 13], 30, 60, 2.0),
+        // The five Draconic Origins are one SRD stat block printed
+        // five times, so all five rows read the same numbers.
+        (&*half_dragons::ACID_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
+        (&*half_dragons::COLD_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
+        (&*half_dragons::FIRE_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
+        (&*half_dragons::LIGHTNING_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
+        (&*half_dragons::POISON_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
         (&*dragons::YOUNG_BLACK_DRAGON_TEMPLATE, 18, "15d10+45", [19, 14, 17, 12, 11, 15], 40, 80, 7.0),
         (&*dragons::ADULT_BLACK_DRAGON_TEMPLATE, 19, "17d12+85", [23, 14, 21, 14, 13, 19], 40, 80, 14.0),
         (&*dragons::ANCIENT_BLACK_DRAGON_TEMPLATE, 22, "21d20+147", [27, 14, 25, 16, 15, 22], 40, 80, 21.0),

@@ -1974,6 +1974,15 @@ const LOCKDOWNS: &[LockdownPick] = &[
     // that kept the rest of this list unreachable before it was a list.
     LockdownPick { name: "plane shift", condition: None },
     LockdownPick { name: "sleep gaze", condition: Some(Condition::Asleep) },
+    // The incubus's Nightmare, beside the couatl's gaze because it is
+    // the same effect with a threshold on it. The row costs the rung
+    // nothing extra: the action's own `custom_validate_input` refuses a
+    // target above twenty hit points, so the walk simply steps past
+    // everyone it cannot affect and lands on the one it can. That gate
+    // is why the row sits in tier 1 rather than lower — by the time it
+    // validates at all, the target is nearly down, and taking somebody
+    // out of the fight for an hour beats hitting them once more.
+    LockdownPick { name: "nightmare", condition: Some(Condition::Unconscious) },
     LockdownPick { name: "tasha's hideous laughter", condition: Some(Condition::Incapacitated) },
     LockdownPick { name: "hold person", condition: Some(Condition::Stunned) },
     LockdownPick { name: "banishment", condition: Some(Condition::Banished) },

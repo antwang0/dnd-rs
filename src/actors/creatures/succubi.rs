@@ -41,7 +41,11 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // hooked silhouette of a winged fey-fiend.
         glyph: 'ς',
         ac: 15,
-        hitpoints: "12d8+12".parse().unwrap(),
+        // 13d8+13 = 71 average per SRD 5.2. The bestiary carried the
+        // Incubus's 12d8+12 here for as long as the two shared one
+        // stat block; they are two now, and the five hit points are
+        // the difference RAW draws between them.
+        hitpoints: "13d8+13".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 60 ft.
         speed: 30.0,
         fly_speed: 60.0,

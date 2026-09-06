@@ -20339,3 +20339,181 @@ pub static SWARM_OF_CRAWLING_CLAWS_HANDS: WeaponWithCondition = WeaponWithCondit
     ConditionTimer::Permanent,
     "grasping hands",
 );
+
+// ─── Incubus ─────────────────────────────────────────────────────────
+
+/// Incubus **Restless Touch** — CHA 3d6 psychic at reach 1.
+///
+/// A fiend that hits with its Charisma, which is the whole joke of the
+/// stat block and also the arithmetic: RAW's "+7" against CHA 20 and a
+/// +2 proficiency bonus is the Charisma modifier, not the Strength one
+/// (STR 8, which would be +1). Fifteen psychic a swing on a creature
+/// with a −1 to hit anything physically.
+///
+/// RAW's tail — "the target is cursed for 24 hours or until the incubus
+/// dies. Until the curse ends, the target gains no benefit from
+/// finishing Short Rests" — is not modeled. It is a between-fights
+/// clause: the engine's short rest exists, but a curse that outlives
+/// the encounter has nowhere to be recorded, and the party that took
+/// the touch has already stopped rolling initiative by the time it
+/// would matter.
+pub static INCUBUS_RESTLESS_TOUCH: SimpleWeapon = SimpleWeapon::melee(
+    "restless touch",
+    &["rt", "touch"],
+    AbilityScoreType::Charisma,
+    Dice::new(3, 6),
+    DamageType::Psychic,
+);
+
+/// Incubus Multiattack — two Restless Touches.
+pub static INCUBUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double restless touch",
+    sub_attack: &INCUBUS_RESTLESS_TOUCH,
+    count: 2,
+});
+
+/// Incubus **Nightmare** (Recharge 6) — a bonus-action WIS save DC 15
+/// at 60 ft that puts a wounded creature to sleep for an hour.
+///
+/// RAW: "Failure: If the target has 20 Hit Points or fewer, it has the
+/// Unconscious condition for 1 hour, until it takes damage, or until a
+/// creature within 5 feet of it takes an action to wake it."
+///
+/// The hit-point gate is the thing worth writing an impl for, and it is
+/// why this is not a row on the save-or-condition chassis. Every other
+/// save-or-suffer in the engine asks one question; this one asks two,
+/// in order, and the second is about the target's current state rather
+/// than its saving throw. It makes the ability a *finisher*: an incubus
+/// cannot open with it, and a party that keeps everybody above twenty
+/// hit points never sees it at all. Checked against the target's
+/// current hit points at resolution rather than at targeting, which is
+/// RAW's reading — the save comes first and the threshold second.
+///
+/// A bonus action, so the incubus does this *and* takes its two
+/// touches, and Recharge 6 is what stops that being every turn.
+///
+/// The one-hour duration collapses to the engine's Permanent timer,
+/// which is the honest translation: an hour is longer than any fight,
+/// so what actually ends it is RAW's other two clauses — taking damage,
+/// or an ally spending an action — and both of those the engine already
+/// resolves for `Unconscious`.
+pub struct IncubusNightmare {}
+
+impl Action for IncubusNightmare {
+    fn name(&self) -> &str {
+        "nightmare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nm", "bad-dream"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn recharge_key(&self) -> Option<&'static str> {
+        Some("nightmare")
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        crate::actions::action_template::bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !actor_has_recharge(encounter, caster_id, "nightmare") {
+            return false;
+        }
+        // The threshold, asked here as well as at resolution, so the
+        // AI's picker never spends the recharge on somebody it cannot
+        // affect. RAW does not forbid the attempt — a failed save
+        // against a healthy target simply does nothing — but an
+        // incubus that burns its once-a-fight ability on the full-health
+        // fighter is not playing its own stat block.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return true;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.hitpoints() <= NIGHTMARE_HP_THRESHOLD)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("nightmare");
+        }
+        let save = encounter.roll_save_vs_condition(
+            target_id,
+            AbilityScoreType::Wisdom,
+            NIGHTMARE_DC,
+            Condition::Unconscious,
+        );
+        if save.passed() {
+            encounter.log("  nightmare: the target shakes it off".to_string());
+            return Vec::new();
+        }
+        // The second question, and the order matters: RAW asks for the
+        // save first and the hit points second, so a healthy creature
+        // that fails still spends the incubus's recharge and takes
+        // nothing.
+        let hp = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.hitpoints())
+            .unwrap_or(u32::MAX);
+        if hp > NIGHTMARE_HP_THRESHOLD {
+            encounter.log(format!(
+                "  nightmare: the target is too strong to be dragged under ({} hit points)",
+                hp
+            ));
+            return Vec::new();
+        }
+        encounter.log("  nightmare: the target sinks into it".to_string());
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::Unconscious,
+            target_id,
+            caster_id,
+            ConditionTimer::Permanent,
+        )
+    }
+}
+
+/// RAW's "20 Hit Points or fewer" — the gate that makes Nightmare a
+/// finisher rather than an opener.
+const NIGHTMARE_HP_THRESHOLD: u32 = 20;
+/// The incubus's CHA-based spell save DC at CR 4.
+const NIGHTMARE_DC: i32 = 15;
+
+pub static INCUBUS_NIGHTMARE: LazyLock<IncubusNightmare> = LazyLock::new(|| IncubusNightmare {});
