@@ -1581,7 +1581,14 @@ impl Action for Search {
             // having rolled and for the `Invisible` branch, which has
             // no Stealth check behind it at all.
             let dc = target.hidden_find_dc();
-            if perception < dc {
+            // 5e's lightly-obscured tax, converted to a number the same
+            // way RAW converts it for a passive check: a creature
+            // standing in dim light is five points harder to find. Read
+            // per target rather than folded into the roll above,
+            // because one Perception check is being compared against
+            // several hiders and only some of them are in the gloom.
+            let dim = encounter.dim_light_search_penalty(caster_id, target_id);
+            if perception - dim < dc {
                 continue;
             }
             let target_name = target.name().to_string();

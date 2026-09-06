@@ -4379,6 +4379,48 @@ impl EncounterInstance {
     /// "you can see normally in darkness, both magical and nonmagical",
     /// and the nonmagical half is already covered by the upgrade below
     /// for anyone who has any darkvision at all.
+    /// 5e's **lightly obscured** tax, as a number: *"a lightly
+    /// obscured area […] imposes disadvantage on Wisdom (Perception)
+    /// checks that rely on sight"*, and dim light is the canonical
+    /// lightly obscured area.
+    ///
+    /// Five points, because that is what disadvantage is worth on a
+    /// check the engine cannot roll twice. RAW makes the conversion
+    /// itself — *"if the creature has disadvantage, subtract 5"* from a
+    /// passive check — and the same number is used for the active roll
+    /// here, because both of this engine's Perception readings compare
+    /// one total against one DC per target and there is no second die
+    /// to throw at a specific one of them.
+    ///
+    /// Read from the *viewer's* eyes, so a goblin's darkvision lifts
+    /// the tax it would pay for a human. Returns 0 for a subject in
+    /// bright light, and 0 for one in the dark — a viewer who cannot
+    /// see the tile at all is not making a sight-based check for the
+    /// penalty to apply to, and the `viewer_can_see` gate upstream of
+    /// both callers has already turned that case away.
+    ///
+    /// **This is what dim light does.** The lighting module's own note
+    /// said the rung was tracked only so darkvision would have
+    /// somewhere to upgrade to, "not because standing in it does
+    /// anything to a d20 today" — which was true when the engine had
+    /// no Perception check to tax. It has two now: the Search action,
+    /// and the passive sweep that decides whether a hider gets noticed.
+    pub const DIM_LIGHT_PERCEPTION_PENALTY: i32 = 5;
+
+    /// The `DIM_LIGHT_PERCEPTION_PENALTY` this viewer owes when looking
+    /// for `subject_id`, or 0 when the subject is not standing in the
+    /// gloom.
+    pub fn dim_light_search_penalty(&self, viewer_id: usize, subject_id: usize) -> i32 {
+        let Some(subject) = self.actors.get(&subject_id) else {
+            return 0;
+        };
+        if self.perceived_light(viewer_id, subject.location()) == LightLevel::Dim {
+            Self::DIM_LIGHT_PERCEPTION_PENALTY
+        } else {
+            0
+        }
+    }
+
     pub fn perceived_light(&self, viewer_id: usize, coord: Coordinate) -> LightLevel {
         let Some(viewer) = self.actors.get(&viewer_id) else {
             return self.light_at(coord);
@@ -16118,7 +16160,11 @@ impl EncounterInstance {
                     && a.team() != team
                     && a.is_combat_active()
                     && a.has_condition(Condition::Hidden)
-                    && perception >= a.hidden_find_dc()
+                    // 5e's lightly-obscured tax: a hider standing in
+                    // dim light is five points harder to notice, which
+                    // is what disadvantage is worth on a passive check.
+                    && perception - self.dim_light_search_penalty(watcher_id, id)
+                        >= a.hidden_find_dc()
                     && self.viewer_can_see(watcher_id, id)
                     && self.cover_ac_bonus(watcher_id, id) < Self::THREE_QUARTERS_COVER_AC
             })

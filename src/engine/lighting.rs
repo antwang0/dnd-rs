@@ -71,13 +71,17 @@
 //!
 //! ## What is deliberately not modeled
 //!
-//! **Dim light costs nothing in combat.** RAW's only penalty for a
-//! lightly obscured area is on sight-based Perception checks, and the
-//! engine has no perception check to tax. `Dim` is tracked because
-//! darkvision's upgrade needs a rung between "fine" and "blind" and
-//! because every light source in 5e is specified as a bright radius
-//! plus a dim collar — not because standing in it does anything to a
-//! d20 today.
+//! **Dim light used to be listed here**, on the grounds that RAW's
+//! only penalty for a lightly obscured area is on sight-based
+//! Perception checks and the engine had no Perception check to tax. It has two now — the Search action,
+//! and the passive sweep that decides whether a hidden creature gets
+//! noticed — and `EncounterInstance::dim_light_search_penalty` is the
+//! tax, five points off either reading, which is what RAW itself says
+//! disadvantage is worth on a check nobody rolls twice.
+//!
+//! `Dim` is still also the rung darkvision upgrades *to*, and still the
+//! collar every light source in 5e is specified with; it simply is not
+//! only those things any more. What follows is the cut that stands.
 //!
 //! **Light does not spread around corners or stop at walls.** A light
 //! source fills a Chebyshev radius, the same shape every burst and

@@ -41679,6 +41679,80 @@ fn a_low_wall_is_worth_as_much_against_a_fireball_as_against_an_arrow() {
     let _ = goblin;
 }
 
+/// 5e: a **lightly obscured** area — dim light — *"imposes
+/// disadvantage on Wisdom (Perception) checks that rely on sight"*, and
+/// RAW converts that to a flat five points on a check nobody rolls
+/// twice.
+///
+/// Dim light was the one rung of the lighting layer that did nothing:
+/// it existed so darkvision would have somewhere to upgrade to and
+/// because every light source in 5e is a bright radius plus a dim
+/// collar. It is worth five points of hiding now, and the collar of a
+/// torch is somewhere to stand.
+#[test]
+fn the_gloom_at_the_edge_of_a_torch_is_worth_five_points_of_hiding() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
+
+    let mut e = ei_with_terrain(30, 12, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let watcher = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(16, 4), 1, 0)
+        .unwrap();
+    // A torch on the fighter: 20 ft of bright light and 20 more of dim.
+    // The rogue is standing in the collar.
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Carried(watcher),
+        bright_tiles: crate::engine::lighting::TORCH_BRIGHT_TILES,
+        dim_tiles: crate::engine::lighting::TORCH_DIM_TILES,
+        rounds_remaining: None,
+        spell_level: 0,
+        innate: false,
+    });
+    assert_eq!(
+        e.perceived_light(watcher, e.actors[&rogue].location()),
+        LightLevel::Dim,
+        "the rogue is in the torch's collar, not its bright circle"
+    );
+    assert_eq!(
+        e.dim_light_search_penalty(watcher, rogue),
+        EncounterInstance::DIM_LIGHT_PERCEPTION_PENALTY
+    );
+
+    // Same board, rogue inside the bright circle: no tax.
+    e.relocate_actor(rogue, Coordinate::new(6, 4), false).ok();
+    assert_eq!(
+        e.perceived_light(watcher, e.actors[&rogue].location()),
+        LightLevel::Bright
+    );
+    assert_eq!(e.dim_light_search_penalty(watcher, rogue), 0);
+
+    // And it is read from the *viewer's* eyes: a creature that can see
+    // in the dark is not squinting through gloom that isn't there for
+    // it. Nothing on this board changes but who is looking.
+    let goblin = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(2, 8),
+            0,
+            1,
+        )
+        .unwrap();
+    e.relocate_actor(rogue, Coordinate::new(16, 4), false).ok();
+    assert_eq!(e.dim_light_search_penalty(watcher, rogue), 5);
+    assert_eq!(
+        e.dim_light_search_penalty(goblin, rogue),
+        0,
+        "darkvision reads the collar as bright light"
+    );
+}
+
 /// SRD 5.2: hiding ends *"immediately after […] an enemy finds you"*,
 /// and passive Perception is how an enemy finds you without spending
 /// its Action on Search.
