@@ -8067,6 +8067,71 @@ impl EncounterInstance {
         if hits >= 1 { Self::HALF_COVER_AC } else { 0 }
     }
 
+    /// 5e cover measured from **a point** rather than from an
+    /// attacker — the shape RAW's *"take cover behind the pillar"*
+    /// needs for an area effect, whose origin is a spot on the floor
+    /// and not a creature.
+    ///
+    /// Same ladder as `cover_ac_bonus`, same counting, one clause
+    /// missing and one added. Missing: the adjacency exemption, which
+    /// exists because a swing at arm's length is not obstructed by
+    /// a third body; a fireball's origin has no arm and no reach, and a
+    /// creature standing next to the point of detonation is as much
+    /// behind the ally in front of it as one across the room. Added:
+    /// `origin_owner`, the caster, whose own body is skipped — a
+    /// self-centred burst should not be shielded by the person casting
+    /// it.
+    ///
+    /// RAW measures an area's cover *from its point of origin*, which
+    /// is what makes this a different function rather than a second
+    /// caller of the old one: the line to walk starts at a tile nobody
+    /// is standing on.
+    pub fn cover_bonus_from_point(
+        &self,
+        origin: Coordinate,
+        origin_owner: usize,
+        target_id: usize,
+    ) -> i32 {
+        let Some(target) = self.actors.get(&target_id) else {
+            return 0;
+        };
+        let to = target.location();
+        let span = get_tiles_from_size(target.size()) as isize;
+        let inside_target = |c: Coordinate| -> bool {
+            c.x >= to.x && c.x < to.x + span && c.y >= to.y && c.y < to.y + span
+        };
+        let mut hits = 0u32;
+        let mut last_hit: Option<usize> = None;
+        for coord in tiles_between(origin, to) {
+            if let Some(blocker_id) = self.actor_id_at(coord)
+                && blocker_id != target_id
+                && blocker_id != origin_owner
+                && self
+                    .actors
+                    .get(&blocker_id)
+                    .is_some_and(|a| a.is_combat_active())
+                && last_hit != Some(blocker_id)
+            {
+                last_hit = Some(blocker_id);
+                hits = hits.saturating_add(1);
+                if hits >= 2 {
+                    return Self::THREE_QUARTERS_COVER_AC;
+                }
+            }
+            if !inside_target(coord)
+                && self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type.grants_cover())
+            {
+                hits = hits.saturating_add(1);
+                if hits >= 2 {
+                    return Self::THREE_QUARTERS_COVER_AC;
+                }
+            }
+        }
+        if hits >= 1 { Self::HALF_COVER_AC } else { 0 }
+    }
+
     /// *Which* creature is standing in the way, rather than how much
     /// good it does — `cover_ac_bonus`'s question asked from the other
     /// end.

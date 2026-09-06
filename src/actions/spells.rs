@@ -756,6 +756,7 @@ fn burst_save_damage(
     crate::actions::action_template::resolve_burst_targets(
         encounter,
         caster_id,
+        point,
         &target_ids,
         save_ability,
         dc,

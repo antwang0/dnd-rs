@@ -13,12 +13,19 @@ use crate::engine::{
 /// below it, and `spells::burst_save_damage`, which layers a shared
 /// caster-aware damage roll and a log line on top of it.
 ///
-/// Walks `target_ids` in the given order, rolls a caster-aware save (so
-/// Sorcerer Heightened Spell forces disadvantage on the *first* save in
-/// the burst per RAW), applies the caster-side and target-side damage
-/// modifiers at the shared chokepoint (Potent Cantrip, Rogue / Monk /
-/// Ranger Evasion), and emits a `DealDamage` side-effect for every
-/// non-zero hit. Ids in `shielded` (Sorcerer Careful Spell / Evocation
+/// Walks `target_ids` in the given order, credits each target with 5e
+/// **cover** measured from `origin` when the save is a Dexterity one,
+/// rolls a caster-aware save (so Sorcerer Heightened Spell forces
+/// disadvantage on the *first* save in the burst per RAW), applies the
+/// caster-side and target-side damage modifiers at the shared
+/// chokepoint (Potent Cantrip, Rogue / Monk / Ranger Evasion), and
+/// emits a `DealDamage` side-effect for every non-zero hit.
+///
+/// `origin` is the area's point of origin, which is where RAW measures
+/// its cover from — not the caster's tile, and not the target's. A
+/// blast that goes off on the near side of a low wall gives the
+/// creature behind it half cover; one centred past the wall gives it
+/// nothing, because the wall is no longer between them. Ids in `shielded` (Sorcerer Careful Spell / Evocation
 /// Wizard Sculpt Spells — see `auto_pass_shielded_allies`) auto-pass
 /// with 0 damage and skip the roll entirely.
 ///
@@ -43,6 +50,7 @@ use crate::engine::{
 pub fn resolve_burst_targets(
     encounter: &mut EncounterInstance,
     caster_id: usize,
+    origin: Coordinate,
     target_ids: &[usize],
     save_ability: AbilityScoreType,
     dc: i32,
@@ -58,12 +66,41 @@ pub fn resolve_burst_targets(
             saves.push((target_id, true));
             continue;
         }
+        // 5e Cover, the half of the rule the engine only had one of.
+        // "A target with half cover has a +2 bonus to AC **and
+        // Dexterity saving throws**"; three-quarters cover is +5 to
+        // both. The AC half has been on every attack roll since
+        // `cover_ac_bonus` existed and the save half was on nothing, so
+        // an archer behind a low wall was harder to shoot and exactly
+        // as easy to Fireball as one standing in the open.
+        //
+        // Measured from the burst's own origin, which is where RAW
+        // measures an area's cover from, and spent as a DC reduction
+        // rather than as a bonus to the roll — the same arithmetic, and
+        // it keeps the whole save-mode / rider stack in
+        // `roll_save_against_caster` untouched.
+        //
+        // Dexterity only. RAW's sentence names that one ability, and
+        // it is the right one: a wall you can duck behind does nothing
+        // about a Constitution save against poison gas that has already
+        // filled the room.
+        let cover = if matches!(save_ability, AbilityScoreType::Dexterity) {
+            encounter.cover_bonus_from_point(origin, caster_id, target_id)
+        } else {
+            0
+        };
+        if cover > 0 {
+            let name = encounter.actor_name(target_id);
+            let note = EncounterInstance::cover_log_suffix(cover);
+            encounter.log(format!("  {} saves at DC {}{}", name, dc - cover, note));
+        }
         // Route through the caster-aware save helper so the 5e Sorcerer
         // Heightened Spell metamagic forces disadvantage on the *first*
         // save in the burst (RAW). Subsequent targets in the same cast
         // fall through to the normal save path — `roll_save_against_caster`
         // consumes the prime on its first call.
-        let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
+        let save =
+            encounter.roll_save_against_caster(target_id, save_ability, dc - cover, caster_id);
         let passed = save.passed();
         saves.push((target_id, passed));
         // Post-save damage (Potent Cantrip on the caster side, Evasion
@@ -123,6 +160,7 @@ pub fn resolve_burst_save_damage(
     resolve_burst_targets(
         encounter,
         caster_id,
+        center,
         &target_ids,
         save_ability,
         dc,
@@ -173,6 +211,7 @@ pub fn resolve_enemy_burst_save_damage(
     resolve_burst_targets(
         encounter,
         caster_id,
+        center,
         &target_ids,
         save_ability,
         dc,

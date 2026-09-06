@@ -6448,6 +6448,7 @@ impl Action for BreathWeapon {
         let (mut effects, saves) = crate::actions::action_template::resolve_burst_targets(
             encounter,
             caster_id,
+            point,
             &targets,
             self.save_ability,
             self.dc,

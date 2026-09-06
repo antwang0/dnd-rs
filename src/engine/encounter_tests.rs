@@ -41576,6 +41576,109 @@ fn hide_rolls_against_a_flat_dc_whoever_is_watching() {
     );
 }
 
+/// 5e Cover: *"a target with half cover has a +2 bonus to AC **and
+/// Dexterity saving throws**"*, and three-quarters cover is +5 to both.
+///
+/// The AC half has been on every attack roll since `cover_ac_bonus`
+/// existed. The save half was on nothing, so a creature behind a low
+/// wall was harder to shoot and exactly as easy to Fireball as one
+/// standing in the open — which is the clause the wall is most obviously
+/// for.
+#[test]
+fn a_low_wall_is_worth_as_much_against_a_fireball_as_against_an_arrow() {
+    use crate::actions::action_template::resolve_burst_save_damage;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    let build = |walled: bool| -> (EncounterInstance, usize, usize) {
+        let mut e = ei_with_terrain(24, 12, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+        if walled {
+            // One obstruction on the line from the blast's origin to
+            // the goblin: the engine's half-cover rung.
+            for y in 3..=6isize {
+                e.set_terrain_at(Coordinate::new(8, y), TerrainType::LowWall);
+            }
+        }
+        (e, wizard, goblin)
+    };
+
+    // The blast goes off on the wizard's side of the wall and reaches
+    // past it, which is the case the rule is about: cover is measured
+    // from the area's own point of origin, so the goblin is behind the
+    // wall *relative to the blast* and not merely relative to whoever
+    // threw it.
+    let origin = Coordinate::new(4, 4);
+
+    let (mut open, wizard, goblin) = build(false);
+    let before = open.messages().len();
+    let _ = resolve_burst_save_damage(
+        &mut open,
+        wizard,
+        origin,
+        10,
+        AbilityScoreType::Dexterity,
+        15,
+        10,
+        DamageType::Fire,
+    );
+    assert!(
+        !open.messages()[before..]
+            .iter()
+            .any(|m| m.contains("cover")),
+        "nothing is in the way on an open floor"
+    );
+
+    let (mut walled, wizard, _) = build(true);
+    let before = walled.messages().len();
+    let _ = resolve_burst_save_damage(
+        &mut walled,
+        wizard,
+        origin,
+        10,
+        AbilityScoreType::Dexterity,
+        15,
+        10,
+        DamageType::Fire,
+    );
+    assert!(
+        walled.messages()[before..]
+            .iter()
+            .any(|m| m.contains("(half cover)") && m.contains("DC 13")),
+        "the wall is worth two points of DC: {:?}",
+        &walled.messages()[before..]
+    );
+
+    // And it is Dexterity only. A Constitution save against the same
+    // burst is unmoved — a wall you can duck behind does nothing about
+    // gas that has already filled the room.
+    let (mut walled, wizard, _) = build(true);
+    let before = walled.messages().len();
+    let _ = resolve_burst_save_damage(
+        &mut walled,
+        wizard,
+        origin,
+        10,
+        AbilityScoreType::Constitution,
+        15,
+        10,
+        DamageType::Poison,
+    );
+    assert!(
+        !walled.messages()[before..]
+            .iter()
+            .any(|m| m.contains("cover")),
+        "RAW's sentence names one ability, and it is not this one"
+    );
+    let _ = goblin;
+}
+
 /// SRD 5.2: hiding ends *"immediately after […] an enemy finds you"*,
 /// and passive Perception is how an enemy finds you without spending
 /// its Action on Search.
