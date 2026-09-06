@@ -1254,6 +1254,31 @@ pub trait Action {
         Vec::new()
     }
 
+    /// True when `damage_types()` is a **menu** the caster picks one
+    /// entry from at resolution, rather than a bundle the action lands
+    /// all of at once.
+    ///
+    /// The distinction the list could not carry on its own. A flaming
+    /// longsword's `[Slashing, Fire]` is a bundle: every swing lands
+    /// both, and a target that resists either resists part of every
+    /// hit. Chromatic Orb's six, Sorcerous Burst's seven and Dragon's
+    /// Breath's five are a menu — the resolver runs
+    /// `pick_damage_type_against_target` and hands the target the one
+    /// type it is least able to shrug off.
+    ///
+    /// Read by the AI's attack picker, which scores a menu on its best
+    /// entry and a bundle on its worst. Without it, Sorcerous Burst was
+    /// ranked as "resisted" against anything that resisted any one of
+    /// its seven types — which is most of the bestiary — and lost the
+    /// comparison to a Fire Bolt that the same creature was immune to.
+    ///
+    /// Defaults to `false`, the conservative direction: a bundle read
+    /// as a menu would flatter an action that genuinely eats a
+    /// resistance, and every weapon in the armoury is a bundle.
+    fn chooses_damage_type(&self) -> bool {
+        false
+    }
+
     /// Roughly how much damage one *use* of this action lands on a
     /// single target, if the action can say. `None` means "no estimate"
     /// and is the default.

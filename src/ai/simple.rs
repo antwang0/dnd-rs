@@ -8539,6 +8539,57 @@ pub fn matchup_penalty_vs_magic(
     matchup_penalty(encounter, target_id, damage_types, true)
 }
 
+/// The matchup rung for one whole *action* — which of the two tables
+/// above applies, and whether its `damage_types()` is a bundle or a
+/// menu.
+///
+/// Split out of `best_attack_against`'s closure for the same reason
+/// `matchup_penalty_against` was split out before it: the decision is
+/// worth asserting on its own rather than only through whichever
+/// weapon a goblin happened to pick.
+///
+/// **A menu is scored on its best entry, not on its worst.**
+/// `damage_types()` says two different things depending on the action,
+/// and this lane read only one of them. A flaming longsword's
+/// `[Slashing, Fire]` is a bundle — the swing lands both, and a target
+/// that resists either resists part of every hit, which is exactly
+/// what `matchup_penalty`'s "any resisted type ⇒ rung 2" is right
+/// about. Chromatic Orb's six, Sorcerous Burst's seven and Dragon's
+/// Breath's five are a menu the caster picks one entry from at
+/// resolution (see `Action::chooses_damage_type`), and the picker was
+/// scoring the whole menu as though the caster had to take every item
+/// on it.
+///
+/// Concretely: almost everything in the bestiary resists at least one
+/// of Sorcerous Burst's seven types, so the sorcerer's signature
+/// cantrip sat at rung 2 against most of the roster while a Fire Bolt
+/// the same creature was *immune* to sat at rung 1 — and the picker
+/// preferred the bolt.
+pub fn action_matchup_penalty(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    target_id: usize,
+    action: &dyn Action,
+) -> u8 {
+    // A spell is magical whatever the swinger is holding; a non-spell
+    // action rides the creature's own verdict.
+    let rung = |types: &[crate::engine::types::DamageType]| -> u8 {
+        if action.school().is_some() {
+            return matchup_penalty_vs_magic(encounter, target_id, types);
+        }
+        matchup_penalty_against(encounter, actor_id, target_id, types)
+    };
+    let types = action.damage_types();
+    if action.chooses_damage_type() {
+        return types
+            .iter()
+            .map(|dt| rung(std::slice::from_ref(dt)))
+            .min()
+            .unwrap_or(1);
+    }
+    rung(&types)
+}
+
 fn matchup_penalty(
     encounter: &EncounterInstance,
     target_id: usize,
@@ -8757,14 +8808,8 @@ fn best_attack_against(
         target.location(),
         get_tiles_from_size(target.size()),
     );
-    let matchup_score = |a: &dyn Action| -> u8 {
-        // A spell is magical whatever the swinger is holding; a
-        // non-spell action rides the creature's own verdict.
-        if a.school().is_some() {
-            return matchup_penalty_vs_magic(encounter, target_id, &a.damage_types());
-        }
-        matchup_penalty_against(encounter, actor_id, target_id, &a.damage_types())
-    };
+    let matchup_score =
+        |a: &dyn Action| -> u8 { action_matchup_penalty(encounter, actor_id, target_id, a) };
 
     // Best by (matchup score asc, roll mode asc, reach desc, expected
     // damage desc).
@@ -16774,6 +16819,128 @@ mod tests {
     /// spell's canonical name was `"enlarge"`: the metamagic's whole
     /// reason to fire was invisible to it, and every test still passed.
     ///
+    /// A "you choose the damage type" spell is ranked on the type its
+    /// caster would actually choose, and a weapon that lands two types
+    /// at once is still ranked on the worse of them.
+    ///
+    /// The two readings of `damage_types()`, and the lane that used to
+    /// have only one of them. Sorcerous Burst offers seven types and
+    /// hands the target whichever it is least able to shrug off; a
+    /// flaming longsword lands its slashing and its fire together, and
+    /// a target resistant to either takes less from every swing.
+    #[test]
+    fn a_damage_type_menu_is_ranked_on_the_entry_the_caster_would_pick() {
+        use crate::actions::spells::{FIRE_BOLT, SORCEROUS_BURST};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::{Coordinate, DamageModifier, DamageType};
+
+        let mut e = empty_arena();
+        let sorcerer = e
+            .instantiate_creature(
+                &crate::actors::creatures::sorcerers::SORCERER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+            .unwrap();
+        // A creature that shrugs off two of the seven and has no
+        // opinion about the other five — the shape most of the
+        // bestiary actually has.
+        {
+            let t = e.actors.get_mut(&target).unwrap();
+            t.set_damage_modifier(DamageType::Fire, DamageModifier::Immunity);
+            t.set_damage_modifier(DamageType::Cold, DamageModifier::Resistance);
+        }
+
+        // Read as a bundle, the burst's menu scores "resisted" — one of
+        // its seven is on the sheet.
+        assert_eq!(
+            matchup_penalty_vs_magic(&e, target, &SORCEROUS_BURST.damage_types()),
+            2,
+            "the bundle reading sees the cold resistance"
+        );
+        // Read as the menu it is, it scores neutral: the caster takes
+        // acid, or psychic, or thunder.
+        assert_eq!(
+            action_matchup_penalty(&e, sorcerer, target, &*SORCEROUS_BURST),
+            1,
+            "the caster is not obliged to pick the resisted one"
+        );
+        // And the single-typed bolt is exactly as bad as its one type.
+        assert_eq!(
+            action_matchup_penalty(&e, sorcerer, target, &*FIRE_BOLT),
+            3,
+            "a fire-immune target is immune to Fire Bolt, menu or no menu"
+        );
+
+        // The bundle reading is still the right one for a bundle: a
+        // weapon that lands two types at once is ranked on the worse.
+        struct TwoTypedSwing;
+        impl Action for TwoTypedSwing {
+            fn name(&self) -> &str {
+                "flaming sword"
+            }
+            fn aliases(&self) -> Vec<&str> {
+                Vec::new()
+            }
+            fn targeting_schema(&self) -> TargetingSchema {
+                TargetingSchema::SingleActor
+            }
+            fn school(&self) -> Option<crate::engine::types::SpellSchool> {
+                Some(crate::engine::types::SpellSchool::Evocation)
+            }
+            fn damage_types(&self) -> Vec<DamageType> {
+                vec![DamageType::Slashing, DamageType::Cold]
+            }
+            fn side_effects(
+                &self,
+                _e: &mut EncounterInstance,
+                _c: usize,
+                _ti: Option<&Vec<usize>>,
+                _tl: Option<&Vec<Coordinate>>,
+                _o: Option<&std::collections::HashSet<
+                    crate::engine::action_overrides::ActionOverride,
+                >>,
+            ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+                Vec::new()
+            }
+        }
+        assert_eq!(
+            action_matchup_penalty(&e, sorcerer, target, &TwoTypedSwing),
+            2,
+            "half of every swing is cold, and the target resists cold"
+        );
+    }
+
+    /// A menu of one is not a menu. Drift pin on the flag: an action
+    /// that declares `chooses_damage_type` and offers a single type is
+    /// either mis-declared or has lost its other entries, and either
+    /// way the flag is doing nothing.
+    #[test]
+    fn every_damage_type_menu_has_something_to_choose_between() {
+        use crate::actions::spells::{CHROMATIC_ORB, DRAGONS_BREATH, SORCEROUS_BURST};
+        let menus: Vec<&dyn Action> = vec![
+            &*SORCEROUS_BURST,
+            &*CHROMATIC_ORB,
+            &*DRAGONS_BREATH,
+        ];
+        for action in menus {
+            assert!(
+                action.chooses_damage_type(),
+                "'{}' is on the menu list and does not say so",
+                action.name()
+            );
+            assert!(
+                action.damage_types().len() > 1,
+                "'{}' offers a choice of one",
+                action.name()
+            );
+        }
+    }
+
     /// The four Sorcerer gate lists were function-local consts until
     /// this test needed them; lifting them to module scope is what makes
     /// the sweep possible at all, and puts them beside

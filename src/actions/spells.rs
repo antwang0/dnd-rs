@@ -19601,6 +19601,11 @@ impl Action for ChromaticOrb {
             DamageType::Thunder,
         ]
     }
+    /// RAW's "damage of a type you choose" — the orb's six are a menu,
+    /// and `side_effects` takes the best entry off it.
+    fn chooses_damage_type(&self) -> bool {
+        true
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -21686,6 +21691,11 @@ impl Action for SorcerousBurst {
         SORCEROUS_BURST_TYPES.to_vec()
     }
 
+    /// The seven are a menu, not a bundle — `side_effects` picks one.
+    fn chooses_damage_type(&self) -> bool {
+        true
+    }
+
     // Cantrip — the default `cost()` (one Action, no slot) is right.
 
     fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
@@ -21861,6 +21871,12 @@ impl Action for DragonsBreath {
             DamageType::Lightning,
             DamageType::Poison,
         ]
+    }
+    /// RAW's "you choose one of the following damage types" — the five
+    /// are a menu, and `side_effects` picks off it against the nearest
+    /// enemy in the cone.
+    fn chooses_damage_type(&self) -> bool {
+        true
     }
     fn cost(
         &self,

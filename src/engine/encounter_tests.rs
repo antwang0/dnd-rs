@@ -67631,6 +67631,8 @@ fn every_cantrip_declares_its_school() {
         &*PRODUCE_FLAME,
         &*CREATE_BONFIRE,
         &*INFESTATION,
+        &*SORCEROUS_BURST,
+        &*STARRY_WISP,
     ];
     for action in &cantrips {
         assert!(
