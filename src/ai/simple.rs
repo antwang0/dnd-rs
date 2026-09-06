@@ -16218,6 +16218,73 @@ mod tests {
         }
     }
 
+    /// The two SRD 5.2 cantrips are on the lists RAW puts them on, and
+    /// the picker ranks each above the thing it is meant to beat.
+    ///
+    /// Deliberately *not* a "the AI casts it in a fight" sweep, which
+    /// is what the sibling subclass-signature test does for a headline
+    /// feature. These are cantrips on level-9 casters: a sorcerer
+    /// looking at a fire elemental has Chain Lightning on the same
+    /// list, and preferring it is the picker playing correctly rather
+    /// than the cantrip being unreachable. What is worth pinning is the
+    /// comparison each cantrip exists to win.
+    ///
+    /// **Sorcerous Burst over Fire Bolt against something fireproof.**
+    /// Fire Bolt is the bigger die — 1d10 to a d8 — so on an ordinary
+    /// target the picker prefers it and should. The burst's claim is
+    /// its seven-type menu, and the fixture that tests a menu is a
+    /// creature that eats one of the entries.
+    ///
+    /// **Starry Wisp over Poison Spray against something poison-proof**,
+    /// which is the same claim on the druid's list: a single-typed
+    /// cantrip is worth nothing against the thing that shrugs its type
+    /// off, and radiant is on nobody's immunity line.
+    #[test]
+    fn the_new_cantrips_are_carried_and_ranked_where_they_should_be() {
+        use crate::actions::spells::{FIRE_BOLT, POISON_SPRAY, SORCEROUS_BURST, STARRY_WISP};
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        // RAW's spell lists: Sorcerous Burst is Sorcerer-only, Starry
+        // Wisp is Bard and Druid.
+        assert!(
+            SORCERER_TEMPLATE
+                .actions
+                .iter()
+                .any(|a| a.name() == "sorcerous burst"),
+            "the sorcerer's own cantrip is not on the sorcerer"
+        );
+        for t in [&*BARD_TEMPLATE, &*DRUID_TEMPLATE] {
+            assert!(
+                t.actions.iter().any(|a| a.name() == "starry wisp"),
+                "{} should carry starry wisp",
+                t.name
+            );
+        }
+
+        // A magmin is immune to fire and to poison, which is exactly
+        // the pair of single-typed cantrips these two replace.
+        let mut e = empty_arena();
+        let caster = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let magmin = e
+            .instantiate_creature(&MAGMIN_TEMPLATE, Coordinate::new(14, 2), 1, 0)
+            .unwrap();
+        assert!(
+            action_matchup_penalty(&e, caster, magmin, &*SORCEROUS_BURST)
+                < action_matchup_penalty(&e, caster, magmin, &*FIRE_BOLT),
+            "a seven-type menu beats a fire bolt against something made of fire"
+        );
+        assert!(
+            action_matchup_penalty(&e, caster, magmin, &*STARRY_WISP)
+                < action_matchup_penalty(&e, caster, magmin, &*POISON_SPRAY),
+            "and radiant beats poison against something immune to poison"
+        );
+    }
+
     /// The monk's bonus action, which used to have exactly one thing on
     /// it. Stunning Strike is still the first pick, but it declines
     /// against a creature that is already stunned — and what it declines
