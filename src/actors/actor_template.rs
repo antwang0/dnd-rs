@@ -6234,8 +6234,20 @@ impl ActorInstance {
             .collect()
     }
 
+    /// True when damage of type `dt` is one of the two or three things
+    /// that shut this creature's regeneration off for a round — the
+    /// troll's acid and fire, and whatever a future regenerator names.
+    ///
+    /// Split out of `note_regen_damage` because the question is worth
+    /// asking without answering it: a troll and the arm that fell off
+    /// it should burn to the same two things, and the only way to say
+    /// so is to be able to read the set rather than only write to it.
+    pub fn regen_suppressed_by(&self, dt: DamageType) -> bool {
+        self.regen_suppressors.contains(&dt)
+    }
+
     pub fn note_regen_damage(&mut self, dt: DamageType) {
-        if self.regen_suppressors.contains(&dt) {
+        if self.regen_suppressed_by(dt) {
             self.regen_suppressed = true;
         }
     }

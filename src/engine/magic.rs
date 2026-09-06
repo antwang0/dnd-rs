@@ -555,6 +555,7 @@ mod tests {
             "Swarm of Piranhas",
             "Swarm of Ravens",
             "Swarm of Venomous Snakes",
+            "Swarm of Crawling Claws",
             // Wood. Enchanting the axe does not thin the trunk.
             "Treant",
             "Awakened Tree",

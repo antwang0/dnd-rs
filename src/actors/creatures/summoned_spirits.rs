@@ -548,13 +548,14 @@ pub static DRACONIC_REND_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 pub static DRACONIC_BREATH: BreathWeapon = BreathWeapon {
     display_name: "draconic breath",
     aliases: &["breath", "db"],
-    damage_dice: Dice::new(4, 6),
-    damage_type: DamageType::Fire,
+    damage: Some((Dice::new(4, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: SPIRIT_SAVE_DC,
     radius: 2,
     range: 4,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Draconic Spirit — the Large dragon **Summon Draconic Spirit** puts

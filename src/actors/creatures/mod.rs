@@ -301,6 +301,8 @@ pub mod cultists;
 pub mod nobles;
 pub mod spies;
 pub mod pirates;
+pub mod guardian_nagas;
+pub mod sphinxes_of_lore;
 pub mod priests;
 pub mod gladiators;
 pub mod assassins;
@@ -1170,6 +1172,7 @@ mod tests {
         (&*storm_giants::STORM_GIANT_TEMPLATE, 16, "20d12+100", [29, 14, 20, 16, 20, 18], 50, 25, 13.0),
         (&*treants::TREANT_TEMPLATE, 16, "12d12+60", [23, 8, 21, 12, 16, 12], 30, 0, 9.0),
         (&*trolls::TROLL_TEMPLATE, 15, "9d10+45", [18, 13, 20, 7, 9, 7], 30, 0, 5.0),
+        (&*trolls::TROLL_LIMB_TEMPLATE, 13, "4d6", [18, 12, 10, 1, 9, 1], 20, 0, 0.5),
         (&*vampire_spawns::VAMPIRE_SPAWN_TEMPLATE, 16, "12d8+36", [16, 16, 16, 11, 10, 12], 30, 0, 5.0),
         (&*veterans::VETERAN_TEMPLATE, 17, "10d8+20", [16, 13, 14, 10, 11, 10], 30, 0, 3.0),  // SRD 5.2: Warrior Veteran
         (&*vrocks::VROCK_TEMPLATE, 15, "16d10+64", [17, 15, 18, 8, 13, 8], 40, 60, 6.0),
@@ -1239,6 +1242,8 @@ mod tests {
         (&*sea_hags::SEA_HAG_TEMPLATE, 14, "7d8+21", [16, 13, 16, 12, 12, 13], 30, 0, 2.0),
         (&*night_hags::NIGHT_HAG_TEMPLATE, 17, "15d8+45", [18, 15, 16, 16, 14, 16], 30, 0, 5.0),
         (&*spirit_nagas::SPIRIT_NAGA_TEMPLATE, 17, "18d10+36", [18, 17, 14, 16, 15, 16], 40, 0, 8.0),
+        (&*guardian_nagas::GUARDIAN_NAGA_TEMPLATE, 18, "16d10+48", [19, 18, 16, 16, 19, 18], 40, 0, 10.0),
+        (&*sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE, 17, "20d10+60", [18, 15, 16, 18, 18, 18], 40, 60, 11.0),
         (&*otyughs::OTYUGH_TEMPLATE, 14, "11d10+44", [16, 11, 19, 6, 13, 6], 30, 0, 5.0),
         (&*sprites::SPRITE_TEMPLATE, 15, "4d4", [3, 18, 10, 14, 13, 11], 10, 40, 0.25),
         (&*death_dogs::DEATH_DOG_TEMPLATE, 12, "6d8+12", [15, 14, 14, 3, 13, 6], 40, 0, 1.0),
@@ -1392,6 +1397,7 @@ mod tests {
         (&*swarms::SWARM_OF_PIRANHAS_TEMPLATE, 13, "8d8-8", [13, 16, 9, 1, 7, 2], 5, 0, 1.0),
         (&*swarms::SWARM_OF_RAVENS_TEMPLATE, 12, "2d8+2", [6, 14, 12, 5, 12, 6], 10, 50, 0.25),
         (&*swarms::SWARM_OF_VENOMOUS_SNAKES_TEMPLATE, 14, "8d8", [8, 18, 11, 1, 10, 3], 30, 0, 2.0),
+        (&*swarms::SWARM_OF_CRAWLING_CLAWS_TEMPLATE, 12, "11d8", [14, 14, 11, 5, 10, 4], 30, 0, 3.0),
         (&*dragons::BLACK_DRAGON_WYRMLING_TEMPLATE, 17, "6d8+6", [15, 14, 13, 10, 11, 13], 30, 60, 2.0),
         (&*dragons::YOUNG_BLACK_DRAGON_TEMPLATE, 18, "15d10+45", [19, 14, 17, 12, 11, 15], 40, 80, 7.0),
         (&*dragons::ADULT_BLACK_DRAGON_TEMPLATE, 19, "17d12+85", [23, 14, 21, 14, 13, 19], 40, 80, 14.0),

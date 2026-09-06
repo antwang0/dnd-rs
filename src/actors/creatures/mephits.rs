@@ -220,8 +220,9 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
 ///   typed-rider tail (RAW the dust mephit's scrape is just grit, not
 ///   a typed energy bite).
 /// - **blinding breath** — Recharge-6 15-ft cone (burst-2 / range-3) of
-///   choking grit. DC 10 CON, **Blinded for 1 round on fail** via the
-///   new `BreathWeaponCondition` chassis. Routes through the same
+///   choking grit. DC 10 CON, **Blinded for 1 round on fail** — the
+///   breath chassis with `damage: None`, which is the whole stat
+///   block. Routes through the same
 ///   `"breath_weapon"` recharge pool the damage-cone mephits share so a
 ///   mixed mephit ambush can't double-tap.
 /// - **death burst** (passive on-death) — 1d4 bludgeoning in a 5-ft
@@ -384,7 +385,7 @@ mod tests {
     #[test]
     fn dust_mephit_blinding_breath_is_recharge_gated() {
         // Pin the recharge gate so a future refactor of the
-        // `BreathWeaponCondition` chassis doesn't strip the
+        // `BreathWeapon` chassis doesn't strip the
         // `custom_validate_input` check. The breath should only fire
         // while `"breath_weapon"` is available — symmetric to the
         // damage-variant Breath weapons.

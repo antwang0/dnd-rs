@@ -431,6 +431,188 @@ impl Action for SaveOrCharm {
     }
 }
 
+/// The chassis for a single-target saving throw that hurts — RAW's
+/// "{Ability} Saving Throw: DC N, one creature the {monster} can see
+/// within {range} feet. Failure: {dice} {type} damage[, and the target
+/// has the {condition} condition]. Success: Half damage only."
+///
+/// The burst family has had a data-only home for this since the dragons
+/// arrived; the single-target family did not, so the storm giant's
+/// Lightning Strike was sixty lines of `impl Action` around one save and
+/// one `DealDamage`, and the guardian naga's Poisonous Spittle would
+/// have been sixty more with a condition tacked on the end.
+///
+/// `condition` hangs off the *same* save as the damage, for the reason
+/// the breath chassis gives at more length: a target that made the save
+/// took half and kept its eyes; re-rolling would let it do the
+/// opposite, which is not a rule anybody wrote.
+///
+/// `half_on_save` is what separates the two shapes RAW prints. Most of
+/// these say "Success: Half damage only", but some say nothing at all
+/// on a success, and the difference is a third of the ability's value.
+pub struct SingleTargetSaveDamage {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Range in tiles.
+    pub reach: isize,
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    /// Installed on a failed save, with the damage.
+    pub condition: Option<(Condition, ConditionTimer)>,
+    pub half_on_save: bool,
+    pub bonus_action: bool,
+}
+
+impl SingleTargetSaveDamage {
+    pub const fn new(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        reach: isize,
+        save_ability: AbilityScoreType,
+        dc: i32,
+        damage_dice: Dice,
+        damage_type: DamageType,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            reach,
+            save_ability,
+            dc,
+            damage_dice,
+            damage_type,
+            condition: None,
+            half_on_save: true,
+            bonus_action: false,
+        }
+    }
+
+    /// Builder tail for the printings whose failure clause has a second
+    /// half — the naga's spittle blinds as well as poisons.
+    pub const fn and_condition(self, condition: Condition, timer: ConditionTimer) -> Self {
+        Self {
+            condition: Some((condition, timer)),
+            ..self
+        }
+    }
+
+    pub const fn as_bonus_action(self) -> Self {
+        Self {
+            bonus_action: true,
+            ..self
+        }
+    }
+}
+
+impl Action for SingleTargetSaveDamage {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "one creature the {monster} can see".
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    /// Three quarters of the pool, the same estimate every other
+    /// save-for-half action in the engine makes: half the time it lands
+    /// whole and half the time it lands halved, which averages three
+    /// quarters, and that is the number the attack picker needs to rank
+    /// this honestly against a swing. A save-for-nothing printing gets
+    /// the full pool, because on a failure it is the full pool and on a
+    /// success it is a wasted action either way.
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        let pool = self.damage_dice.average_roll();
+        Some(if self.half_on_save { pool * 0.75 } else { pool })
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            crate::actions::action_template::bonus_action_only()
+        } else {
+            crate::actions::action_template::action_only()
+        }
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&self.damage_dice);
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            self.save_ability,
+            self.dc,
+            caster_id,
+        );
+        let passed = save.passed();
+        // Through the shared post-save chokepoint, so Evasion and the
+        // caster-side damage primes read this action the way they read
+        // every other save-for-half.
+        let damage = encounter.resolve_post_save_damage(
+            caster_id,
+            target_id,
+            self.save_ability,
+            if self.half_on_save {
+                crate::engine::saves::SaveDamagePolicy::HalfOnSave
+            } else {
+                crate::engine::saves::SaveDamagePolicy::NoneOnSave
+            },
+            raw,
+            passed,
+        );
+        encounter.log(format!(
+            "  {}: {}({}) = {} {}{}",
+            self.display_name,
+            self.damage_dice,
+            raw,
+            damage,
+            self.damage_type,
+            if passed { " (saved)" } else { "" }
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if damage > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: damage,
+                damage_type: self.damage_type,
+            }));
+        }
+        if let Some((condition, timer)) = self.condition
+            && !passed
+        {
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                condition, target_id, caster_id, timer,
+            ));
+        }
+        effects
+    }
+}
+
 
 /// On an Action-cost weapon swing, conditionally run a second swing if
 /// the caster has Extra Attack and this invocation isn't already inside
@@ -3500,6 +3682,12 @@ macro_rules! forwards_to_sub_attack {
         fn underwater_weapon_name(&self) -> &str {
             self.$field.underwater_weapon_name()
         }
+
+        // Both are facts about the shape of the thing being wrapped,
+        // so a wrapper reports what it wraps.
+        fn spares_allies(&self) -> bool {
+            self.$field.spares_allies()
+        }
     };
     ($field:ident, transparent) => {
         forwards_to_sub_attack!($field);
@@ -3690,6 +3878,12 @@ impl Action for RechargingAttack {
     }
 
     forwards_to_sub_attack!(sub_attack, transparent);
+
+    /// The wrapper's own, not the sub-attack's: the whole point of this
+    /// chassis is to put a recharge gate on something that had none.
+    fn recharge_key(&self) -> Option<&'static str> {
+        Some(self.recharge_key)
+    }
 
     /// The gate, and the sub-action's own gate underneath it. Both, in
     /// that order, for the reason `Multiattack::custom_validate_input`
@@ -6096,32 +6290,45 @@ pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
     LazyLock::new(|| GelatinousCubeEngulf {});
 
 /// Generic burst breath weapon — the data-only Action behind every
-/// "Recharge 5-6: cone/area of damage type X, save Y for half" creature
-/// ability in the engine. Each instance carries its own name, alias
-/// table, damage roll, damage type, save ability, DC, burst radius, max
-/// range, and recharge-pool key, so adding a new breath (Behir's
-/// lightning line, a Wyvern's poison cone, a future hydra breath, etc.)
-/// is a single static declaration rather than a fresh struct + 60-line
-/// Action impl pair.
+/// "Recharge 5–6: cone of X, save Y" creature ability in the engine.
+/// Each instance carries its own name, alias table, payload, save
+/// ability, DC, burst radius, max range and recharge-pool key, so a new
+/// breath is a single static declaration rather than a fresh struct and
+/// a sixty-line `Action` impl.
 ///
-/// Replaces the four near-identical `DragonBreath{Fire,Cold,Lightning,
-/// Poison}` structs that previously sat here — they all routed through
-/// the same `resolve_burst_save_damage` chokepoint and only differed in
-/// damage type / save ability / log label, so the per-element struct
-/// was pure boilerplate. Recharge gating + DEX-vs-CON save shape lives
-/// in this one place now; the abbreviation aliases ("fb", "cb", "lb",
-/// "pb") survive verbatim.
+/// It began as four near-identical `DragonBreath{Fire,Cold,Lightning,
+/// Poison}` structs, then grew a fifth sibling — `BreathWeaponCondition`
+/// — for the damage-free control cones, and the fifth is what showed
+/// the shape was wrong. RAW's breaths are not "damage" *or* "condition":
+/// the dust mephit's grit blinds and does nothing else, the ancient
+/// dragons' cones only hurt, and the Sphinx of Lore's Mind-Rending Roar
+/// does 10d6 psychic **and** leaves everyone it catches Incapacitated
+/// off the same save. Two chassis could express the first two and
+/// neither could express the third.
 ///
-/// See `BreathWeaponCondition` for the save-or-condition sibling — same
-/// chassis shape (radius, range, recharge_key, save_ability, dc) but
-/// the resolution path installs a condition on fail instead of dealing
-/// half-on-save damage. Use that variant for damage-free control cones
-/// like the Dust Mephit's Blinding Breath.
+/// So both payloads are optional and both hang off one saving throw:
+///
+/// - `damage` — dice and type, rolled **once** and shared across
+///   everyone caught, which is what 5e area effects do. Half on a
+///   successful save.
+/// - `condition` — installed on exactly the creatures that failed *that
+///   same save*. Not a second roll: a target that shrugged off the roar
+///   shrugged off all of it, and re-rolling would let a creature take
+///   full damage and still walk away clean.
+///
+/// `enemies_only` is the other axis RAW cares about. A dragon's breath
+/// is indiscriminate — "each creature in the area", and the engine's
+/// neutral resolver agrees, kobolds included — while a celestial's roar
+/// is written "each enemy". Getting it backwards has the sphinx
+/// stunning the party it was going to question.
+///
+/// A breath with neither payload is a breath that does nothing;
+/// `debug_assert` says so at the one place that can tell.
 pub struct BreathWeapon {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
-    pub damage_dice: Dice,
-    pub damage_type: DamageType,
+    /// Dice and type, or `None` for the pure-control cones.
+    pub damage: Option<(Dice, DamageType)>,
     pub save_ability: AbilityScoreType,
     pub dc: i32,
     pub radius: isize,
@@ -6133,6 +6340,11 @@ pub struct BreathWeapon {
     /// vanilla breath weapon shares the `"breath_weapon"` pool so a
     /// chromatic dragon can't double-tap with two different elements.
     pub recharge_key: &'static str,
+    /// Installed on everyone the *same* save fails against.
+    pub condition: Option<(Condition, ConditionTimer)>,
+    /// True for the breaths RAW scopes to enemies rather than to every
+    /// creature standing in them.
+    pub enemies_only: bool,
 }
 
 impl Action for BreathWeapon {
@@ -6153,8 +6365,17 @@ impl Action for BreathWeapon {
     fn requires_los(&self) -> bool {
         true
     }
+    fn deals_damage(&self) -> bool {
+        self.damage.is_some()
+    }
     fn damage_types(&self) -> Vec<DamageType> {
-        vec![self.damage_type]
+        self.damage.map(|(_, dt)| vec![dt]).unwrap_or_default()
+    }
+    fn recharge_key(&self) -> Option<&'static str> {
+        Some(self.recharge_key)
+    }
+    fn spares_allies(&self) -> bool {
+        self.enemies_only
     }
     fn custom_validate_input(
         &self,
@@ -6174,27 +6395,83 @@ impl Action for BreathWeapon {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        debug_assert!(
+            self.damage.is_some() || self.condition.is_some(),
+            "{}: a breath with no payload is a breath that does nothing",
+            self.display_name
+        );
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        // Spend the recharge resource before resolving damage so a
-        // mid-resolution failure can't leave the breath both spent AND
-        // damage-applied.
+        // Spend the recharge resource before resolving anything, so a
+        // mid-resolution bail can't leave the breath both spent AND
+        // applied.
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
             caster.spend_recharge(self.recharge_key);
         }
-        resolve_point_burst(
+        // One roll, shared — 5e area effects roll damage once, which is
+        // why the roll is here rather than inside the per-target loop.
+        let (dice, damage_type) = self.damage.unwrap_or((Dice::new(0, 0), DamageType::Force));
+        let raw = if self.damage.is_some() {
+            encounter.roll(&dice)
+        } else {
+            0
+        };
+        encounter.log(format!(
+            "  {}: burst centered at ({}, {}) (DC {} {}{}{})",
+            self.display_name,
+            point.x,
+            point.y,
+            self.dc,
+            self.save_ability,
+            self.damage
+                .map(|(_, dt)| format!(", {}({}) = {} {}, half on save", dice, raw, raw, dt))
+                .unwrap_or_default(),
+            self.condition
+                .map(|(c, _)| format!(", {} on fail", c))
+                .unwrap_or_default(),
+        ));
+        let targets = if self.enemies_only {
+            encounter.enemy_burst_targets(caster_id, point, self.radius)
+        } else {
+            encounter.neutral_burst_targets(caster_id, point, self.radius)
+        };
+        // Shielded allies auto-pass and take nothing (Careful Spell,
+        // Sculpt Spells). Enemy-scoped bursts exclude allies at the
+        // target-list step, so there is nobody left for the sweep to
+        // spare.
+        let shielded = if self.enemies_only {
+            HashSet::new()
+        } else {
+            encounter.auto_pass_shielded_allies(caster_id, point, self.radius)
+        };
+        let (mut effects, saves) = crate::actions::action_template::resolve_burst_targets(
             encounter,
             caster_id,
-            point,
-            self.display_name,
-            self.damage_dice,
-            self.damage_type,
+            &targets,
             self.save_ability,
             self.dc,
-            self.radius,
-            false,
-        )
+            raw,
+            damage_type,
+            crate::engine::saves::SaveDamagePolicy::HalfOnSave,
+            &shielded,
+        );
+        let Some((condition, timer)) = self.condition else {
+            return effects;
+        };
+        // The same save decides both halves. A creature that made it
+        // took half the damage and none of the condition; re-rolling
+        // here would let it do the opposite, which is not a rule
+        // anybody wrote.
+        for (target_id, passed) in saves {
+            if passed {
+                continue;
+            }
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                condition, target_id, caster_id, timer,
+            ));
+        }
+        effects
     }
 }
 
@@ -6318,6 +6595,9 @@ impl Action for PointBurstSaveDamage {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.damage_type]
     }
+    fn spares_allies(&self) -> bool {
+        self.enemies_only
+    }
     /// Three quarters of the pool, the same estimate `AtWillEnemyBurst`
     /// makes and for the same reason: save-for-half against one target
     /// at even odds averages three quarters, which is the number the
@@ -6386,107 +6666,6 @@ pub struct DeathBurst {
     pub radius: isize,
 }
 
-/// Recharge-gated burst that imposes a condition rather than dealing
-/// damage — the save-or-condition sibling of `BreathWeapon`. Modeled as
-/// a data-only struct so a new save-or-blinded / save-or-restrained
-/// monster cone lands as a single literal on the template instead of a
-/// bespoke `impl Action`.
-///
-/// Targeting / reach / cost / recharge wiring mirror `BreathWeapon`
-/// exactly — what changes is the resolution path: damage is replaced by
-/// `resolve_burst_save_condition`, which installs `condition` for `timer`
-/// on every enemy in `radius` that fails the save. The `display_name`
-/// drives the log line; per-target immunity to the condition is handled
-/// by the standard `add_condition` chokepoint (no caller-side gate
-/// needed — same as `save_or_condition_rider`).
-///
-/// Canonical entry: the Dust Mephit's Blinding Breath (5 ft cone of
-/// fine grit, DC 10 CON, Blinded on fail). Future Mud Mephit (save-or-
-/// Restrained) and Smoke Mephit (save-or-disadvantage) bursts plug into
-/// the same chassis with their own `(condition, timer)` pair.
-pub struct BreathWeaponCondition {
-    pub display_name: &'static str,
-    pub aliases: &'static [&'static str],
-    pub save_ability: AbilityScoreType,
-    pub dc: i32,
-    pub radius: isize,
-    pub range: isize,
-    pub recharge_key: &'static str,
-    /// Condition installed on every burst target that fails the save.
-    pub condition: Condition,
-    /// How long the installed condition sticks. Mephit cone-breaths use
-    /// `Rounds(1)` (the "until end of [creature]'s next turn" RAW clause
-    /// collapses to one round at the encounter's per-round granularity).
-    pub timer: ConditionTimer,
-}
-
-impl Action for BreathWeaponCondition {
-    fn name(&self) -> &str {
-        self.display_name
-    }
-    fn aliases(&self) -> Vec<&str> {
-        self.aliases.to_vec()
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst {
-            radius: self.radius,
-        }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(self.range)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        actor_has_recharge(encounter, caster_id, self.recharge_key)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = first_target_location(target_locations) else {
-            return Vec::new();
-        };
-        // Spend the recharge resource before resolving the save so a
-        // mid-resolution failure can't leave the breath both spent AND
-        // condition-installed (mirrors the damage variant's order-of-ops).
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge(self.recharge_key);
-        }
-        encounter.log(format!(
-            "  {}: burst centered at ({}, {}) (DC {} {}, {} on fail)",
-            self.display_name, point.x, point.y, self.dc, self.save_ability, self.condition,
-        ));
-        crate::actions::action_template::resolve_burst_save_condition(
-            encounter,
-            caster_id,
-            point,
-            self.radius,
-            self.save_ability,
-            self.dc,
-            self.condition,
-            self.timer,
-        )
-    }
-}
 
 /// Behir lightning breath — burst-3 / range-5, 12d10 lightning, DC 16
 /// DEX, half on save. Recharge 5-6. Behir's signature: a 20 ft line
@@ -6497,13 +6676,14 @@ impl Action for BreathWeaponCondition {
 pub static BEHIR_LIGHTNING_BREATH: BreathWeapon = BreathWeapon {
     display_name: "lightning breath",
     aliases: &["lb", "breath", "blast"],
-    damage_dice: Dice::new(12, 10),
-    damage_type: DamageType::Lightning,
+    damage: Some((Dice::new(12, 10), DamageType::Lightning)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 16,
     radius: 3,
     range: 5,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Lich Paralyzing Touch — touch attack with a paralysis rider. d20 +
@@ -7778,75 +7958,21 @@ pub static STORM_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
 );
 
 /// Storm Giant Lightning Strike — bonus-action signature ability. Hurls
-/// a bolt of lightning at a single target within 500ft. DC 17 DEX save:
-/// half damage on pass, full 8d10 lightning on fail. The bonus-action
-/// cost makes it free-action-economy alongside the giant's main swing.
-pub struct StormGiantLightningStrike {}
-
-impl Action for StormGiantLightningStrike {
-    fn name(&self) -> &str {
-        "lightning strike"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["lstrike", "sgls"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 500ft RAW — capped to map width.
-        Some(40)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Lightning]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        _caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        const DC: i32 = 17;
-        let raw = encounter.roll(&Dice::new(8, 10));
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, DC);
-        let damage = if save.passed() { raw / 2 } else { raw };
-        encounter.log(format!(
-            "  lightning strike: 8d10({}) = {} lightning{}",
-            raw,
-            damage,
-            if save.passed() { " (saved)" } else { "" }
-        ));
-        if damage == 0 {
-            return Vec::new();
-        }
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Lightning,
-        })]
-    }
-}
-
-pub static STORM_GIANT_LIGHTNING_STRIKE: LazyLock<StormGiantLightningStrike> =
-    LazyLock::new(|| StormGiantLightningStrike {});
+/// a bolt of lightning at a single target within 500 ft (capped to the
+/// board's 40 tiles). DC 17 DEX save: half on a pass, the full 8d10
+/// lightning on a fail. The bonus-action cost is what makes it matter —
+/// the giant throws it *and* swings, every turn.
+pub static STORM_GIANT_LIGHTNING_STRIKE: SingleTargetSaveDamage = SingleTargetSaveDamage::new(
+    "lightning strike",
+    &["lstrike", "sgls"],
+    // 500 ft RAW — capped to map width.
+    40,
+    AbilityScoreType::Dexterity,
+    17,
+    Dice::new(8, 10),
+    DamageType::Lightning,
+)
+.as_bonus_action();
 
 /// Hydra Bite — STR-based 1d10+STR piercing melee, reach 2 (10ft natural
 /// reach for the gargantuan head). The Hydra has 5 of these per turn via
@@ -10487,13 +10613,14 @@ pub static WINTER_WOLF_BITE: LazyLock<WinterWolfBite> =
 pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
     display_name: "cold breath",
     aliases: &["wwc", "frost-breath"],
-    damage_dice: Dice::new(4, 8),
-    damage_type: DamageType::Cold,
+    damage: Some((Dice::new(4, 8), DamageType::Cold)),
     save_ability: AbilityScoreType::Constitution,
     dc: 12,
     radius: 2,
     range: 4,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Triceratops Gore — STR-based 4d8+STR piercing, reach 2 (10 ft). The
@@ -12458,13 +12585,14 @@ pub static IRON_GOLEM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
 pub static IRON_GOLEM_BREATH: BreathWeapon = BreathWeapon {
     display_name: "iron poison breath",
     aliases: &["ipb", "iron-breath"],
-    damage_dice: Dice::new(10, 8),
-    damage_type: DamageType::Poison,
+    damage: Some((Dice::new(10, 8), DamageType::Poison)),
     save_ability: AbilityScoreType::Constitution,
     dc: 19,
     radius: 3,
     range: 4,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 // ─── Rakshasa ────────────────────────────────────────────────────────
@@ -12588,13 +12716,14 @@ pub static DRAGON_TURTLE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Comp
 pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
     display_name: "steam breath",
     aliases: &["sb-steam", "steam"],
-    damage_dice: Dice::new(12, 6),
-    damage_type: DamageType::Fire,
+    damage: Some((Dice::new(12, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Constitution,
     dc: 18,
     radius: 3,
     range: 4,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 // ─── Kraken ──────────────────────────────────────────────────────────
@@ -14635,13 +14764,14 @@ pub static ICE_MEPHIT_CLAWS: LazyLock<IceMephitClaws> = LazyLock::new(|| IceMeph
 pub static ICE_MEPHIT_FROST_BREATH: BreathWeapon = BreathWeapon {
     display_name: "frost breath",
     aliases: &["frost", "ice-breath"],
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Cold,
+    damage: Some((Dice::new(1, 8), DamageType::Cold)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 10,
     radius: 2,
     range: 3,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Ice Mephit **Death Burst** — 1d8 slashing in a 5-ft radius (gap 1)
@@ -14725,13 +14855,14 @@ pub static STEAM_MEPHIT_CLAWS: LazyLock<SteamMephitClaws> = LazyLock::new(|| Ste
 pub static STEAM_MEPHIT_STEAM_BREATH: BreathWeapon = BreathWeapon {
     display_name: "steam breath",
     aliases: &["steam", "vapor-breath"],
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Fire,
+    damage: Some((Dice::new(1, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 10,
     radius: 2,
     range: 3,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Steam Mephit **Death Burst** — 1d8 fire in a 5-ft radius (gap 1)
@@ -14811,13 +14942,14 @@ pub static MAGMA_MEPHIT_CLAWS: LazyLock<MagmaMephitClaws> = LazyLock::new(|| Mag
 pub static MAGMA_MEPHIT_FIRE_BREATH: BreathWeapon = BreathWeapon {
     display_name: "magma fire breath",
     aliases: &["magma-breath", "lava-breath"],
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Fire,
+    damage: Some((Dice::new(1, 8), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 11,
     radius: 2,
     range: 3,
     recharge_key: "breath_weapon",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Magma Mephit **Death Burst** — 2d6 fire in a 5-ft radius (gap 1) on
@@ -15871,21 +16003,22 @@ pub static DUST_MEPHIT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// fine choking grit. Save-or-Blinded for 1 round on a failed DC 10
 /// CON save; no damage. Recharge 6.
 ///
-/// Showcases the new `BreathWeaponCondition` chassis — the damage-free
-/// sibling of `BreathWeapon`. RAW's "until the end of the mephit's next
+/// The pure-control end of the breath chassis: `damage: None`, which
+/// is the whole stat block. RAW's "until the end of the mephit's next
 /// turn" timer collapses to `Rounds(1)` at the engine's per-round
 /// granularity. The cone is the dust mephit's only ranged threat; the
 /// claws are a fallback for adjacent targets after the breath spends.
-pub static DUST_MEPHIT_BLINDING_BREATH: BreathWeaponCondition = BreathWeaponCondition {
+pub static DUST_MEPHIT_BLINDING_BREATH: BreathWeapon = BreathWeapon {
     display_name: "blinding breath",
     aliases: &["blinding", "dust-breath", "grit-cone"],
+    damage: None,
     save_ability: AbilityScoreType::Constitution,
     dc: 10,
     radius: 2,
     range: 3,
     recharge_key: "breath_weapon",
-    condition: Condition::Blinded,
-    timer: ConditionTimer::Rounds(1),
+    condition: Some((Condition::Blinded, ConditionTimer::Rounds(1))),
+    enemies_only: false,
 };
 
 /// Dust Mephit **Death Burst** — 1d4 bludgeoning in a 5-ft radius
@@ -20048,3 +20181,161 @@ pub static VAMPIRE_FAMILIAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Mult
     sub_attack: &UMBRAL_DAGGER,
     count: 2,
 });
+
+// ─── Guardian Naga ───────────────────────────────────────────────────
+
+/// Guardian Naga Bite — STR 2d12 piercing at reach 2, plus a flat 4d10
+/// poison rider.
+///
+/// RAW: "Hit: 17 (2d12 + 4) Piercing damage plus 22 (4d10) Poison
+/// damage." The rider is larger than the bite, which is the shape of
+/// every naga in the book and the reason a CR-10 stat block with two
+/// attacks is a serious fight: forty-odd damage a round lands whether
+/// or not anybody fails a save, because the venom asks for none.
+pub static GUARDIAN_NAGA_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
+    "guardian naga bite",
+    &["gn-bite", "naga-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 12),
+    DamageType::Piercing,
+    2,
+    Dice::new(4, 10),
+    DamageType::Poison,
+    "naga venom",
+);
+
+/// Guardian Naga Multiattack — two bites.
+///
+/// RAW adds "It can replace any attack with a use of Poisonous
+/// Spittle", which is the same clause the pirate's Multiattack carries
+/// and is handled the same way: the spittle is its own Action-priced
+/// entry on the list, so the AI weighs it against the bites rather than
+/// being handed a combinatorial choice it cannot price.
+pub static GUARDIAN_NAGA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double naga bite",
+    sub_attack: &GUARDIAN_NAGA_BITE,
+    count: 2,
+});
+
+/// Guardian Naga **Poisonous Spittle** — CON save DC 16 at 60 ft: 7d8
+/// poison, half on a success, and Blinded until the naga's next turn on
+/// a failure.
+///
+/// The naga's answer to a party that stays out of reach, and the reason
+/// it is a guardian rather than an ambusher: it does not have to close.
+/// Blinded off the same save is what makes the spittle worth an Action
+/// against two bites — a blinded fighter is a fighter swinging at
+/// disadvantage into a creature it cannot see.
+pub static GUARDIAN_NAGA_SPITTLE: SingleTargetSaveDamage = SingleTargetSaveDamage::new(
+    "poisonous spittle",
+    &["spittle", "gn-spit"],
+    // RAW 60 ft = 24 tiles.
+    24,
+    AbilityScoreType::Constitution,
+    16,
+    Dice::new(7, 8),
+    DamageType::Poison,
+)
+.and_condition(Condition::Blinded, ConditionTimer::Rounds(1));
+
+// ─── Sphinx of Lore ──────────────────────────────────────────────────
+
+/// Sphinx of Lore Claw — STR 3d6 slashing at reach 1.
+///
+/// Three of these an Action, which is fourteen a swing and forty-two a
+/// round before anything interesting happens. The sphinx is a riddler
+/// in the fiction and a straightforward beating in the initiative
+/// order; the roar is what makes it a puzzle.
+pub static SPHINX_OF_LORE_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "sphinx claw",
+    &["sl-claw", "lore-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Slashing,
+);
+
+/// Sphinx of Lore Multiattack — three claws.
+pub static SPHINX_OF_LORE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "triple sphinx claw",
+    sub_attack: &SPHINX_OF_LORE_CLAW,
+    count: 3,
+});
+
+/// Sphinx of Lore **Mind-Rending Roar** (Recharge 5–6) — WIS save DC 16
+/// against 10d6 psychic *and* Incapacitated until the start of the
+/// sphinx's next turn, for every enemy that hears it.
+///
+/// The stat block that made the breath chassis grow a condition slot.
+/// RAW hangs both halves off one saving throw, and off one *Wisdom*
+/// saving throw at that, which is the save the front line is worst at:
+/// a party that fails it takes thirty-five psychic each and then loses
+/// its Actions, which on a CR-11 boss with three 14-damage claws is the
+/// difference between a fight and a rout.
+///
+/// RAW's shape is a 300-foot Emanation — the whole dungeon, in effect —
+/// scoped to *enemies*. The radius here is 24, which covers any board
+/// the engine generates, and `enemies_only` is the half that is not
+/// cosmetic: a sphinx that stunned its own guardians would be reading
+/// the wrong word in its own stat block.
+pub static MIND_RENDING_ROAR: BreathWeapon = BreathWeapon {
+    display_name: "mind-rending roar",
+    aliases: &["roar", "mrr"],
+    damage: Some((Dice::new(10, 6), DamageType::Psychic)),
+    save_ability: AbilityScoreType::Wisdom,
+    dc: 16,
+    // RAW's 300-foot Emanation, compressed to something a generated
+    // board can contain. Everything hostile hears it.
+    radius: 24,
+    // Centred on the sphinx, which is what an Emanation is; the range
+    // is the slack the targeter needs to pick the sphinx's own tile.
+    range: 2,
+    recharge_key: "breath_weapon",
+    condition: Some((Condition::Incapacitated, ConditionTimer::Rounds(1))),
+    enemies_only: true,
+};
+
+// ─── Troll Limb ──────────────────────────────────────────────────────
+
+/// Troll Limb Rend — STR 2d4 slashing.
+///
+/// RAW: "+6, reach 5 ft. Hit: 9 (2d4 + 4)". STR 18 on a creature with
+/// fourteen hit points, which is the joke: the arm hits as hard as the
+/// troll it fell off and dies to a torch.
+pub static TROLL_LIMB_REND: SimpleWeapon = SimpleWeapon::melee(
+    "limb rend",
+    &["tl-rend", "rend"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Slashing,
+);
+
+// ─── Swarm of Crawling Claws ─────────────────────────────────────────
+
+/// Swarm of Grasping Hands — DEX 4d8 necrotic that also knocks the
+/// target down, no save.
+///
+/// RAW: "Hit: 20 (4d8 + 2) Necrotic damage… If the target is a Medium
+/// or smaller creature, it has the Prone condition." Twenty necrotic a
+/// round with a free trip attached is a great deal for CR 3, and the
+/// price is that it is the swarm's only action — the claws have no
+/// second lane, no ranged option, and nothing to do about a party that
+/// stays six feet up.
+///
+/// Two clauses are not modeled. The **size gate** — Prone only against
+/// a Medium or smaller target — has no lane on `WeaponWithCondition`,
+/// which installs on every hit; the creatures it would spare are the
+/// Large-and-up ones, so a giant fighting this swarm is knocked down
+/// when RAW would leave it standing. And the **bloodied clause**, the
+/// half-damage-when-thinned line every swarm carries, is the standing
+/// omission across all seven: the engine's `bloodied_dice` lane reads
+/// the *target's* hit points, and a swarm's clause reads its own.
+pub static SWARM_OF_CRAWLING_CLAWS_HANDS: WeaponWithCondition = WeaponWithCondition::melee(
+    "grasping hands",
+    &["gh", "claws"],
+    AbilityScoreType::Dexterity,
+    Dice::new(4, 8),
+    DamageType::Necrotic,
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "grasping hands",
+);

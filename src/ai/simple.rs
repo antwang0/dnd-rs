@@ -5813,15 +5813,23 @@ fn try_fear_aura(
     try_self_action(encounter, actor_id, "fear aura")
 }
 
-/// Dragon Breath Weapon — fire a Burst-schema breath attack when the
-/// actor has a recharge-gated breath action available and at least 2
-/// enemies cluster inside the burst radius. Mirrors `try_attack_aoe`'s
-/// point-selection logic (center on enemy locations, pick the tile that
-/// catches the most hostiles without friendly fire). The recharge gate
-/// is enforced by the action's `custom_validate_input` (which checks
-/// `is_recharge_available("breath_weapon")`), so we only need to verify
-/// that the actor has any action whose name contains "breath" and that
-/// the recharge resource is up. Spending the recharge happens inside
+/// Recharge-gated area attacks — a dragon's breath, and everything else
+/// shaped like one. Fires when the actor has such an action available
+/// and at least two enemies cluster inside its radius. Mirrors
+/// `try_attack_aoe`'s point-selection logic: centre on enemy locations,
+/// pick the tile that catches the most hostiles without friendly fire.
+///
+/// The rung used to find its candidates by asking whether the action's
+/// *name* contained the substring `"breath"`, which held for exactly as
+/// long as every recharge burst in the engine belonged to a dragon. The
+/// Sphinx of Lore's Mind-Rending Roar is the same shape, on the same
+/// pool, making the same tactical decision, and is not called a breath;
+/// it was invisible here, and nothing would have said so, because an
+/// ability nobody selects looks like an ability nobody needed. Actions
+/// declare `recharge_key` now, and the rung reads the declaration.
+///
+/// The recharge gate itself is still enforced by the action's own
+/// `custom_validate_input`, and spending the recharge happens inside
 /// `side_effects` when the action executes.
 fn try_breath_weapon(
     encounter: &EncounterInstance,
@@ -5830,15 +5838,11 @@ fn try_breath_weapon(
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
     let actor = encounter.actors.get(&actor_id)?;
-    // Quick gate: the actor must have at least one breath_weapon recharge
-    // entry that's currently available.
-    if !actor.is_recharge_available("breath_weapon") {
-        return None;
-    }
     let my_team = actor.team();
 
-    // Collect Burst-schema actions whose name ends with "breath" — these
-    // are the breath weapon variants (fire breath, cold breath, etc.).
+    // Every harmful Burst action gated on a recharge pool the actor
+    // currently has up. Two facts, both declared by the action itself:
+    // the shape (`Burst`) and the gate (`recharge_key`).
     let breath_actions: Vec<(&'static (dyn Action + Send + Sync), isize)> = actor
         .actions
         .iter()
@@ -5846,7 +5850,7 @@ fn try_breath_weapon(
             if !a.is_harmful() {
                 return None;
             }
-            if !a.name().contains("breath") {
+            if !a.recharge_key().is_some_and(|k| actor.is_recharge_available(k)) {
                 return None;
             }
             match a.targeting_schema() {
@@ -5885,6 +5889,10 @@ fn try_breath_weapon(
             }
 
             let mut enemy_hits = 0usize;
+            // RAW's "each **enemy** in the area" breaths cannot catch
+            // an ally, so an ally standing in one is not a reason to
+            // hold fire — see `Action::spares_allies`.
+            let spares_allies = action.spares_allies();
             let mut friendly_fire = false;
             for (id, a) in encounter.actors.iter() {
                 if !a.is_combat_active() {
@@ -5900,8 +5908,11 @@ fn try_breath_weapon(
                     continue;
                 }
                 if *id == actor_id || a.team() == my_team {
-                    friendly_fire = true;
-                    break;
+                    if !spares_allies {
+                        friendly_fire = true;
+                        break;
+                    }
+                    continue;
                 }
                 enemy_hits += 1;
             }
@@ -7836,7 +7847,14 @@ fn best_burst_placement(
                     continue;
                 }
                 if *id == actor_id || a.team() == my_team {
-                    ally_hits += 1;
+                    // An enemy-scoped area skips them, so they are not
+                    // in the blast to be counted — see
+                    // `Action::spares_allies`. Without this an angel
+                    // standing in its own party could never fire the
+                    // one ability it has for exactly that situation.
+                    if !action.spares_allies() {
+                        ally_hits += 1;
+                    }
                 } else {
                     enemy_hits += 1;
                 }
@@ -12042,6 +12060,89 @@ mod tests {
             start_team: 0,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+    }
+
+    /// A recharge burst that is not called a breath still gets used.
+    ///
+    /// The rung selected its candidates by asking whether the action's
+    /// name contained `"breath"`, which was true of every recharge
+    /// burst in the engine for as long as they all belonged to
+    /// dragons. The Sphinx of Lore's Mind-Rending Roar is the same
+    /// shape on the same pool and is not called a breath, so it was
+    /// unreachable — and the failure was silent, because an ability
+    /// nobody selects looks exactly like an ability nobody needed.
+    ///
+    /// Pinned on the roar rather than on a dragon, because a dragon
+    /// passed the old rung and the new one alike.
+    #[test]
+    fn the_sphinx_roars_and_it_is_not_called_a_breath() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let sphinx = e
+            .instantiate_creature(&SPHINX_OF_LORE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Two, because the rung wants a cluster before it spends a
+        // recharge — the same floor a dragon's breath reads.
+        for (i, y) in [4, 6].into_iter().enumerate() {
+            e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(10, y), 1, i)
+                .unwrap();
+        }
+        e.actors
+            .get_mut(&sphinx)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        match SimpleAi.decide(&e, sphinx) {
+            ControllerDecision::Act(aei) => assert_eq!(
+                aei.action().name(),
+                "mind-rending roar",
+                "the sphinx should open with the ability its whole stat block is about"
+            ),
+            ControllerDecision::AwaitInput => panic!("the sphinx stalled on its own turn"),
+        }
+    }
+
+    /// An area that skips allies is not held back by an ally standing
+    /// in it.
+    ///
+    /// Both area rungs vetoed any placement that caught a friendly,
+    /// which is right for a fireball and wrong for the enemy-scoped
+    /// bursts RAW writes as "each **enemy** in the area". The sphinx's
+    /// roar is one, so a sphinx with its own guard beside it used to
+    /// stand there doing nothing rather than roar past them.
+    #[test]
+    fn an_enemy_only_burst_fires_over_the_heads_of_its_own_side() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::actors::creatures::guards::GUARD_TEMPLATE;
+        use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let sphinx = e
+            .instantiate_creature(&SPHINX_OF_LORE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Standing right where the roar is loudest, on the sphinx's
+        // own side.
+        e.instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(9, 5), 0, 1)
+            .unwrap();
+        for (i, y) in [4, 6].into_iter().enumerate() {
+            e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(10, y), 1, i)
+                .unwrap();
+        }
+        e.actors
+            .get_mut(&sphinx)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+        match SimpleAi.decide(&e, sphinx) {
+            ControllerDecision::Act(aei) => assert_eq!(
+                aei.action().name(),
+                "mind-rending roar",
+                "an enemy-scoped roar cannot hit the guard, so the guard is not a reason to hold it"
+            ),
+            ControllerDecision::AwaitInput => panic!("the sphinx stalled on its own turn"),
+        }
     }
 
     /// The attrition rung sits in the seam it was cut for: a burst wins

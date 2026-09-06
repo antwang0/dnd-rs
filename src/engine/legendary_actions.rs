@@ -905,6 +905,100 @@ pub const ANDROSPHINX_LEGENDARY: &[LegendaryAction] = &[
     },
 ];
 
+/// A saving throw that ages you — the Sphinx of Lore's Weight of Years,
+/// and the only legendary option in the book whose payload is a level
+/// of exhaustion.
+///
+/// Exhaustion is not a `Condition` in this engine, it is a counter with
+/// six rungs, so `legendary_gaze` cannot carry it: that helper installs
+/// a condition and this one raises a number. What they share is the
+/// shape RAW gives both — nearest enemy in range, one save against the
+/// creature's own DC, nothing on a success — so the two sit beside each
+/// other rather than one pretending to be the other.
+fn legendary_exhaust(
+    encounter: &mut EncounterInstance,
+    actor_id: usize,
+    option_name: &'static str,
+    reach: isize,
+    save: AbilityScoreType,
+) {
+    let Some(target_id) = nearest_enemy_within(encounter, actor_id, reach) else {
+        return;
+    };
+    let dc = legendary_dc(encounter, actor_id);
+    let target_name = encounter.actor_name(target_id);
+    if encounter
+        .roll_save_against_caster(target_id, save, dc, actor_id)
+        .passed()
+    {
+        return;
+    }
+    let level = encounter
+        .actors
+        .get_mut(&target_id)
+        .map(|a| a.gain_exhaustion(1))
+        .unwrap_or(0);
+    encounter.log(format!(
+        "  {}: {} ages, and is exhausted (level {}).",
+        option_name, target_name, level
+    ));
+}
+
+/// **Sphinx of Lore** (SRD 5.2). Two options, and RAW prices the
+/// interesting one at the same single point as the boring one.
+///
+/// **Arcane Prowl** is a teleport *and* a claw for one point, which is
+/// the whole reason the sphinx is hard to pin: it takes its three claws
+/// on its turn, then steps thirty feet and takes a fourth between
+/// somebody else's. The teleport half collapses to a stride here — the
+/// engine has no blink lane, and a sphinx that walks the same thirty
+/// feet arrives in the same place, minus the ability to cross a wall.
+///
+/// **Weight of Years** is the exhaustion tax, and RAW's rider is that
+/// the sphinx cannot use it again until the start of its next turn —
+/// which the one-per-round budget already enforces here, since taking
+/// it twice would need two points and the second use would be the
+/// cheaper prowl instead. Written at cost 1 like its sibling, so the
+/// sphinx's three points buy three interventions a round in whatever
+/// mix the dispatcher likes.
+pub const SPHINX_OF_LORE_LEGENDARY: &[LegendaryAction] = &[
+    LegendaryAction {
+        name: "arcane prowl",
+        cost: 1,
+        fire: |e, id| {
+            // 30 ft of teleport = 12 tiles, then the claw RAW hands it
+            // in the same breath.
+            legendary_stride(e, id, 12);
+            legendary_attack(
+                e,
+                id,
+                &Swing {
+                    name: "arcane prowl",
+                    ability: AbilityScoreType::Strength,
+                    dice: Dice::new(3, 6),
+                    damage_type: DamageType::Slashing,
+                    reach: MELEE,
+                    kind: SwingKind::Melee,
+                },
+            );
+        },
+    },
+    LegendaryAction {
+        name: "weight of years",
+        cost: 1,
+        fire: |e, id| {
+            legendary_exhaust(
+                e,
+                id,
+                "weight of years",
+                // RAW 120 ft = 48 tiles, wider than any board here.
+                48,
+                AbilityScoreType::Constitution,
+            )
+        },
+    },
+];
+
 /// **Death knight** (MM). Built from its own stat block, like the pit
 /// fiend's: the longsword it already carries, and the hellfire it
 /// already throws, priced against the budget its template declares.
@@ -959,6 +1053,7 @@ mod tests {
     use crate::actors::creatures::liches::LICH_TEMPLATE;
     use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
     use crate::actors::creatures::solars::SOLAR_TEMPLATE;
+    use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
     use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
     use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
     use crate::engine::actor_gen::ActorGenParams;
@@ -982,6 +1077,7 @@ mod tests {
             (PIT_FIEND_LEGENDARY, &PIT_FIEND_TEMPLATE),
             (SOLAR_LEGENDARY, &SOLAR_TEMPLATE),
             (ANDROSPHINX_LEGENDARY, &ANDROSPHINX_TEMPLATE),
+            (SPHINX_OF_LORE_LEGENDARY, &SPHINX_OF_LORE_TEMPLATE),
             (DEATH_KNIGHT_LEGENDARY, &DEATH_KNIGHT_TEMPLATE),
         ]
     }

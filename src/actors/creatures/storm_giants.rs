@@ -22,7 +22,7 @@ pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&STORM_GIANT_GREATSWORD);
     actions.push(&STORM_GIANT_ROCK);
-    actions.push(&*STORM_GIANT_LIGHTNING_STRIKE);
+    actions.push(&STORM_GIANT_LIGHTNING_STRIKE);
     CreatureTemplate {
         name: "Storm Giant",
         // 'L' is unused in the creature pool — chosen here because the

@@ -1,4 +1,4 @@
-//! 5e **swarms** — the six SRD statblocks that are one initiative slot
+//! 5e **swarms** — the seven SRD statblocks that are one initiative slot
 //! wearing hundreds of bodies.
 //!
 //! A swarm is not a big monster. It is a Medium-sized cloud of Tiny
@@ -16,7 +16,7 @@
 //!   - **It cannot be put in most conditions.** You cannot knock a
 //!     cloud prone, grapple it, or paralyse it; there is no *it* to
 //!     take hold of. Plain `condition_immunities` rows.
-//!   - **A blade barely works on it.** Five of the six resist
+//!   - **A blade barely works on it.** Six of the seven resist
 //!     bludgeoning, piercing and slashing: a sword swung through a
 //!     swarm of insects kills the insects it hits and none of the rest.
 //!     Area damage is the answer, and that is the tactical question the
@@ -26,6 +26,13 @@
 //! deliberate about it: rats are big enough to hit. It is the swarm you
 //! can fight with a weapon, which is why it sits at the bottom of the
 //! ladder alongside the bats.
+//!
+//! And one entry is not vermin at all. The Swarm of Crawling Claws is
+//! Undead — a floor's worth of severed hands rather than a cloud of
+//! anything alive — which is why it is the only one that does necrotic
+//! damage, the only one immune to it, and the only one four rungs up
+//! the CR ladder from its nearest sibling. Everything else about it is
+//! the shared envelope, which is the point of having one.
 //!
 //! Not modelled: "the swarm can occupy another creature's space, and
 //! vice versa". `EncounterInstance::actor_map` holds one actor id per
@@ -39,8 +46,9 @@ use crate::actions::action_template::Action;
 use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_PIRANHAS_BITES,
-    SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS, SWARM_OF_VENOMOUS_SNAKES_BITES,
+    SWARM_OF_BATS_BITES, SWARM_OF_CRAWLING_CLAWS_HANDS, SWARM_OF_INSECTS_BITES,
+    SWARM_OF_PIRANHAS_BITES, SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS,
+    SWARM_OF_VENOMOUS_SNAKES_BITES,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -51,7 +59,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// The eight conditions no swarm can be put in. RAW lists the same set
-/// on all six statblocks, so it is written once here.
+/// on all seven statblocks, so it is written once here.
+///
+/// The Swarm of Crawling Claws extends the list rather than replacing
+/// it — a swarm of dead hands is immune to three more, for the same
+/// reason it is immune to necrotic: there is nothing in it left to
+/// tire out, stun, or poison.
 ///
 /// What they have in common is that each one needs a single body to act
 /// on: you knock *a creature* prone, grapple *it*, petrify *it*. A cloud
@@ -74,7 +87,7 @@ fn swarm_condition_immunities() -> HashSet<Condition> {
 }
 
 /// Resistance to the three physical damage types — the "a blade passes
-/// through the cloud" clause five of the six swarms carry.
+/// through the cloud" clause six of the seven swarms carry.
 fn swarm_physical_resistances() -> HashMap<DamageType, DamageModifier> {
     HashMap::from([
         (DamageType::Bludgeoning, DamageModifier::Resistance),
@@ -179,7 +192,7 @@ fn swarm_template(
 /// had while its fly speed was spelled "30 ft. walking".
 ///
 /// Glyph 'ß' — a doubled-up 's', for a swarm that is many of one thing.
-/// The six swarms share the mark and differ by name and team colour,
+/// The seven swarms share the mark and differ by name and team colour,
 /// which is the right read: on a board, "that is a swarm" is the fact
 /// that changes your plan, and which vermin it is made of is detail.
 pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -249,7 +262,7 @@ pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// 60 — it finds you by touch, not by echo, so unlike the bats it can
 /// be hidden from, just not once it has arrived.
 ///
-/// Slowest of the six at speed 20. That is the counterplay: a party
+/// Slowest of the seven at speed 20. That is the counterplay: a party
 /// that keeps moving outruns it, and one that stands and swings at it
 /// with steel does not.
 pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -342,7 +355,7 @@ pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         1.0,
         &SWARM_OF_PIRANHAS_BITES,
         true,
-        // The one swarm of the six that lives in the water — RAW's
+        // The one swarm on the ladder that lives in the water — RAW's
         // "Speed 0 ft., swim 40 ft.", the only entry on the ladder with
         // no walking speed at all. The swim tag is what stops a pool
         // from charging it double to cross; the breathing tag is RAW's
@@ -385,9 +398,68 @@ pub static SWARM_OF_VENOMOUS_SNAKES_TEMPLATE: LazyLock<CreatureTemplate> = LazyL
     )
 });
 
+/// Swarm of Crawling Claws — CR 3 Medium swarm of Tiny **undead**, and
+/// the one entry on the ladder that is not made of animals.
+///
+/// Every other swarm in this file is a Beast: bats, rats, insects,
+/// piranhas, ravens, snakes. This one is a floor's worth of severed
+/// hands, and the difference runs through the whole stat block. It is
+/// immune to necrotic and poison the way undead are, immune to three
+/// more conditions than the animals (a hand cannot be exhausted or
+/// incapacitated, and cannot be sickened by a poison it has no blood
+/// for), and it does necrotic damage rather than teeth.
+///
+/// It is also, at CR 3, the top of the ladder by a full rung, and the
+/// twenty necrotic a round with a free knockdown is why. The animals
+/// bite for two to seven; the hands take a fighter off their feet and
+/// hit for twenty while they are down there.
+///
+/// The bestiary already has a **Crawling Claw** — the single Tiny
+/// undead from the 2014 book — and the two are deliberately both here.
+/// SRD 5.2 reshaped the stat block into this swarm, but a lone claw
+/// scuttling out of a drawer is a different encounter from a carpet of
+/// them, and neither is a worse printing of the other.
+pub static SWARM_OF_CRAWLING_CLAWS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // The animals' eight, plus the three an undead swarm adds. Written
+    // as an extension rather than as a fresh literal so the shared
+    // eight stay shared — a future correction to the swarm envelope
+    // should reach the hands too.
+    let mut immunities = swarm_condition_immunities();
+    immunities.extend([
+        Condition::Exhausted,
+        Condition::Incapacitated,
+        Condition::Poisoned,
+    ]);
+    // Likewise: the physical resistances every swarm but the rats gets,
+    // plus the two damage immunities that come with being dead.
+    let mut modifiers = swarm_physical_resistances();
+    modifiers.insert(DamageType::Necrotic, DamageModifier::Immunity);
+    modifiers.insert(DamageType::Poison, DamageModifier::Immunity);
+    CreatureTemplate {
+        creature_type: CreatureType::Undead,
+        condition_immunities: immunities,
+        damage_modifiers: modifiers,
+        ..swarm_template(
+            "Swarm of Crawling Claws",
+            'ß',
+            12,
+            "11d8",
+            // RAW speed line: Speed 30 ft., Climb 30 ft. The climb has
+            // no lane on a flat board.
+            30.,
+            [14, 14, 11, 5, 10, 4],
+            HashSet::from([SpecialSense::Blindsight(30)]),
+            3.0,
+            &SWARM_OF_CRAWLING_CLAWS_HANDS,
+            true,
+            HashSet::new(),
+        )
+    }
+});
+
 /// Every swarm statblock, for the sweeps that want to assert something
 /// about all of them at once.
-pub fn all_swarm_templates() -> [&'static CreatureTemplate; 6] {
+pub fn all_swarm_templates() -> [&'static CreatureTemplate; 7] {
     [
         &SWARM_OF_BATS_TEMPLATE,
         &SWARM_OF_RATS_TEMPLATE,
@@ -395,6 +467,7 @@ pub fn all_swarm_templates() -> [&'static CreatureTemplate; 6] {
         &SWARM_OF_PIRANHAS_TEMPLATE,
         &SWARM_OF_RAVENS_TEMPLATE,
         &SWARM_OF_VENOMOUS_SNAKES_TEMPLATE,
+        &SWARM_OF_CRAWLING_CLAWS_TEMPLATE,
     ]
 }
 
@@ -416,16 +489,16 @@ mod tests {
         .unwrap()
     }
 
-    /// The four clauses that make a swarm a swarm hold on all six, so
-    /// a sixth swarm added through the shared chassis inherits the
-    /// sweep rather than needing its own copy of it.
+    /// The four clauses that make a swarm a swarm hold on all seven, so
+    /// a new swarm added through the shared chassis inherits the sweep
+    /// rather than needing its own copy of it.
     #[test]
     fn every_swarm_carries_the_shared_swarm_envelope() {
         for template in all_swarm_templates() {
             let a = make(template);
             let name = a.name().to_string();
             assert!(a.is_swarm(), "{name} should be flagged a swarm");
-            // Size is the one line of the six stat blocks that is not
+            // Size is one of the two lines of the seven stat blocks that is not
             // shared: SRD 5.2 prints the bat swarm as Large and the
             // other four as Medium. Asserted as a pair rather than
             // exempted, so a sixth swarm has to say which it is.
@@ -435,7 +508,17 @@ mod tests {
                 Size::Medium
             };
             assert_eq!(a.size(), expected, "{name} has the wrong size");
-            assert_eq!(a.creature_type(), CreatureType::Beast, "{name}");
+            // Six of the seven are vermin. The Swarm of Crawling Claws
+            // is a floor's worth of severed hands, and RAW files it as
+            // Undead — asserted as a pair rather than exempted, for the
+            // same reason the bat swarm's size is: an eighth swarm has
+            // to say which it is.
+            let expected_type = if template.name == "Swarm of Crawling Claws" {
+                CreatureType::Undead
+            } else {
+                CreatureType::Beast
+            };
+            assert_eq!(a.creature_type(), expected_type, "{name}");
             for condition in swarm_condition_immunities() {
                 assert!(
                     a.is_immune_to_condition(condition),

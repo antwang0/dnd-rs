@@ -890,6 +890,36 @@ pub trait Action {
         None
     }
 
+    /// The recharge pool this action is gated on, or `None` for the
+    /// overwhelming majority that are gated on nothing.
+    ///
+    /// Declared rather than inferred, because the AI used to infer it
+    /// from the *name*: the breath rung selected any Burst action whose
+    /// name contained the substring `"breath"`, which worked for as
+    /// long as every recharge burst in the engine was a dragon's. The
+    /// Sphinx of Lore's Mind-Rending Roar is the same shape, the same
+    /// pool and the same tactical decision, and it is not called a
+    /// breath, so the rung could not see it — and nothing would have
+    /// reported that, because an ability nobody selects looks exactly
+    /// like an ability nobody needed.
+    fn recharge_key(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// True when this action's area deliberately skips the caster's own
+    /// side — RAW's "each **enemy** in a 20-foot Emanation" rather than
+    /// "each creature in the area".
+    ///
+    /// The AI's two area rungs both veto a placement that catches an
+    /// ally, which is right for a fireball and wrong for a planetar's
+    /// Holy Burst: an angel standing in the middle of its own party
+    /// could never fire the one ability it has for exactly that
+    /// situation. The resolvers have known the difference since the
+    /// enemy-scoped burst arrived; this is how the picker finds out.
+    fn spares_allies(&self) -> bool {
+        false
+    }
+
     /// Whether this action requires unobstructed line-of-sight from caster
     /// to target. True for ranged attacks and most spells; false for melee
     /// (you have to be touching). Walls block, actors don't.

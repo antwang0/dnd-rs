@@ -117,7 +117,7 @@ use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
 use crate::actors::creatures::stone_giants::STONE_GIANT_TEMPLATE;
 use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
 use crate::actors::creatures::treants::TREANT_TEMPLATE;
-use crate::actors::creatures::trolls::TROLL_TEMPLATE;
+use crate::actors::creatures::trolls::{TROLL_LIMB_TEMPLATE, TROLL_TEMPLATE};
 use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
 use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
 use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
@@ -242,7 +242,9 @@ use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
 use crate::actors::creatures::giant_octopuses::GIANT_OCTOPUS_TEMPLATE;
 use crate::actors::creatures::plesiosauruses::PLESIOSAURUS_TEMPLATE;
 use crate::actors::creatures::pteranodons::PTERANODON_TEMPLATE;
+use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
 use crate::actors::creatures::pirates::{PIRATE_CAPTAIN_TEMPLATE, PIRATE_TEMPLATE};
+use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
 use crate::actors::creatures::thugs::{THUG_TEMPLATE, TOUGH_BOSS_TEMPLATE};
 use crate::actors::creatures::tribal_warriors::TRIBAL_WARRIOR_TEMPLATE;
 use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
@@ -9786,6 +9788,7 @@ impl EncounterInstance {
             &STORM_GIANT_TEMPLATE,
             &TREANT_TEMPLATE,
             &TROLL_TEMPLATE,
+            &TROLL_LIMB_TEMPLATE,
             &UMBER_HULK_TEMPLATE,
             &VAMPIRE_SPAWN_TEMPLATE,
             &VETERAN_TEMPLATE,
@@ -10031,6 +10034,8 @@ impl EncounterInstance {
             &HELMED_HORROR_TEMPLATE,
             &PIXIE_TEMPLATE,
             &ANDROSPHINX_TEMPLATE,
+            &SPHINX_OF_LORE_TEMPLATE,
+            &GUARDIAN_NAGA_TEMPLATE,
             // Newest additions filling the mid-CR celestial / mid-CR
             // monstrosity / low-CR fey lanes:
             //   - Unicorn (CR 5 large celestial): magic-resistant healer
@@ -10191,8 +10196,8 @@ impl EncounterInstance {
             &MAGMA_MEPHIT_TEMPLATE,
             // Dust Mephit (CR ½, no fire / cold vulnerability): grit
             // breath that imposes the Blinded condition instead of
-            // dealing damage — the first creature wired through the
-            // new `BreathWeaponCondition` chassis. Slots alongside the
+            // dealing damage — the breath chassis with no damage
+            // payload at all. Slots alongside the
             // Ice / Magma mephits on the same CR shelf but with the
             // control-flavored breath envelope.
             &DUST_MEPHIT_TEMPLATE,

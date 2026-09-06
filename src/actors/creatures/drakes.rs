@@ -57,13 +57,14 @@ pub static DRAKE_BITE: SimpleWeapon = SimpleWeapon::melee(
 pub static DRAKE_BREATH: BreathWeapon = BreathWeapon {
     display_name: "drake's breath",
     aliases: &["breath", "drake breath"],
-    damage_dice: Dice::new(3, 6),
-    damage_type: DamageType::Fire,
+    damage: Some((Dice::new(3, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 14,
     radius: 1,
     range: 2,
     recharge_key: "drake_breath",
+    condition: None,
+    enemies_only: false,
 };
 
 /// Drake Companion — the Small dragon a Drakewarden Ranger calls to
