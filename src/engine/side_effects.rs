@@ -994,7 +994,9 @@ impl ApplicableSideEffect for DealDamage {
                 // at 1 instead of falling. The helper rolls the save,
                 // logs the outcome, and reverts the Dying transition
                 // on a pass. Skipped silently for non-barbarians.
-                if !ei.try_relentless_rage(self.actor_id) {
+                if !ei.try_relentless_rage(self.actor_id)
+                    && !ei.try_undead_fortitude(self.actor_id, self.damage_type, landed)
+                {
                     ei.log(format!("{} falls unconscious.", name));
                     ei.drop_concentration(self.actor_id);
                     // Shared kill-triggered temp HP cohort: reducing a
@@ -1009,6 +1011,15 @@ impl ApplicableSideEffect for DealDamage {
                 }
             }
             DamageOutcome::Killed => {
+                // 5e **Undead Fortitude**: a zombie reduced to 0 hit
+                // points rolls a CON save against DC 5 + the damage and
+                // stands at 1 HP on a pass. Asked here as well as in
+                // the Downed branch above, because "reduced to 0" is
+                // spelled two different ways depending on whether the
+                // creature rolls death saves, and a zombie does not.
+                if ei.try_undead_fortitude(self.actor_id, self.damage_type, landed) {
+                    return;
+                }
                 // cleanup_dead_actors logs "X dies." when it removes
                 // the actor; we just drop concentration here.
                 ei.drop_concentration(self.actor_id);

@@ -12898,6 +12898,32 @@ pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const SWIM_SPEED_TAG: &str = "shared.swim_speed";
 
+/// **Undead Fortitude** — the zombie trait, and the reason a zombie
+/// takes two rounds to put down when the arithmetic says one.
+///
+/// RAW: *"If damage reduces the zombie to 0 Hit Points, it makes a
+/// Constitution saving throw (DC 5 plus the damage taken) unless the
+/// damage is Radiant or from a Critical Hit. On a successful save, the
+/// zombie drops to 1 Hit Point instead."*
+///
+/// On the `shared.` namespace beside the swimming speed, and for the
+/// same reason: it is a line of a monster sheet. Read by
+/// `EncounterInstance::try_undead_fortitude`, which is called from the
+/// damage chokepoint's two "reduced to 0" branches — the Downed one a
+/// player character takes and the Killed one a monster does.
+///
+/// The DC scales with the blow, which is the whole design: a zombie
+/// finished off by a dagger rolls against DC 8 and gets up, and one
+/// hit by a greataxe crit rolls against nothing because the crit
+/// clause exempts it. The engine keeps the first half of that sentence
+/// and not the second — see `try_undead_fortitude` for why the crit
+/// exemption is a scope cut and what it would take to ship.
+///
+/// Always-on passive; no per-rest charge and no condition gate. A
+/// zombie can get up as many times as its saves let it, which is RAW
+/// and is exactly how a zombie is supposed to feel.
+pub const UNDEAD_FORTITUDE_TAG: &str = "shared.undead_fortitude";
+
 /// **Breathes underwater** — the stat-block line that says the water
 /// will not drown this creature, on the same `shared.` namespace as the
 /// swimming speed beside it and for the same reason: it is a fact about

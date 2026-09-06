@@ -83681,3 +83681,143 @@ fn a_creature_out_of_breath_walks_around_the_pool_it_would_have_waded() {
         "a creature that breathes water has no reason to walk around it"
     );
 }
+
+/// 5e **Undead Fortitude**: the blow that should have finished a zombie
+/// buys it a Constitution save instead, and a zombie that passes stands
+/// back up at one hit point.
+///
+/// Driven across a seed sweep because the whole trait is a die roll —
+/// what is pinned is that both outcomes happen, not which one a given
+/// board produces. A zombie that always got up would be unkillable and
+/// one that never did would be a trait nothing reads.
+#[test]
+fn a_zombie_that_should_be_dead_rolls_to_get_back_up() {
+    use crate::engine::side_effects::DealDamage;
+    let mut got_up = 0;
+    let mut stayed_down = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hp = e.actors[&zombie].hitpoints();
+        DealDamage {
+            actor_id: zombie,
+            amount: hp,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        match e.actors.get(&zombie) {
+            Some(a) if a.hitpoints() == 1 && a.is_combat_active() => got_up += 1,
+            _ => stayed_down += 1,
+        }
+    }
+    assert!(got_up > 0, "no zombie ever made the save across forty seeds");
+    assert!(
+        stayed_down > 0,
+        "every zombie made the save across forty seeds"
+    );
+}
+
+/// RAW's own exemption: *"unless the damage is Radiant."* A cleric's
+/// light puts a zombie down and it stays down.
+///
+/// The half of the trait a party can play toward, and the reason it
+/// ships while the Critical Hit half does not — see
+/// `EncounterInstance::try_undead_fortitude`. Swept over the same forty
+/// seeds as the test above, so "never" means never rather than "not on
+/// seed 0".
+#[test]
+fn radiant_damage_puts_a_zombie_down_for_good() {
+    use crate::engine::side_effects::DealDamage;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Half the zombie's roll, because radiant is doubled against it
+        // — the vulnerability its own stat block prints.
+        let hp = e.actors[&zombie].hitpoints();
+        DealDamage {
+            actor_id: zombie,
+            amount: hp,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors
+                .get(&zombie)
+                .is_none_or(|a| !a.is_combat_active()),
+            "seed {}: radiant is RAW's exemption and the zombie got up anyway",
+            seed
+        );
+    }
+}
+
+/// The DC is priced off the blow, which is what separates Undead
+/// Fortitude from the barbarian's Relentless Rage beside it: the
+/// barbarian's climbs with use and resets on a rest, and the zombie's
+/// is a fact about how hard you hit it.
+///
+/// Read out of the log rather than out of the roll, because the DC is
+/// the thing being asserted and the roll is not: a hit for four points
+/// asks DC 9 and a hit for twenty asks DC 25, and a party that learns
+/// that has learned to commit.
+#[test]
+fn the_fortitude_dc_is_five_plus_the_blow() {
+    use crate::engine::side_effects::DealDamage;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // Enough hit points that the exact roll cannot matter, then a blow
+    // that takes all of them.
+    let hp = e.actors[&zombie].hitpoints();
+    let before = e.messages().len();
+    DealDamage {
+        actor_id: zombie,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    let logged: Vec<&String> = e.messages()[before..].iter().collect();
+    assert!(
+        logged
+            .iter()
+            .any(|m| m.contains(&format!("undead fortitude CON save vs DC {}", 5 + hp))),
+        "the save should be priced at 5 + the damage taken: {:?}",
+        logged
+    );
+}
+
+/// A creature without the trait falls the way it always did.
+///
+/// The negative half, and worth its own test because the intercept sits
+/// on the shared damage chokepoint every creature in the game routes
+/// through: a bug there would not be a zombie behaving oddly, it would
+/// be every skeleton on the board refusing to die.
+#[test]
+fn a_creature_without_the_trait_still_falls_over() {
+    use crate::engine::side_effects::DealDamage;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hp = e.actors[&skeleton].hitpoints();
+    DealDamage {
+        actor_id: skeleton,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors
+            .get(&skeleton)
+            .is_none_or(|a| !a.is_combat_active()),
+        "a skeleton has no fortitude to roll"
+    );
+    assert!(
+        !e.messages().iter().any(|m| m.contains("undead fortitude")),
+        "and nothing should have offered it one"
+    );
+}

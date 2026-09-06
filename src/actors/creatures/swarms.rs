@@ -1,10 +1,10 @@
-//! 5e **swarms** — the five SRD statblocks that are one initiative slot
+//! 5e **swarms** — the six SRD statblocks that are one initiative slot
 //! wearing hundreds of bodies.
 //!
 //! A swarm is not a big monster. It is a Medium-sized cloud of Tiny
 //! ones, and everything odd about its statblock follows from that:
 //!
-//!   - **It thins as it dies.** Every one of the five writes "…or half
+//!   - **It thins as it dies.** Every one of them writes "…or half
 //!     as much damage if the swarm has half of its hit points or fewer"
 //!     into its Bites line, because half the mouths are gone. The rule
 //!     lives once, on `ActorInstance::is_thinned_swarm`, read at
@@ -16,7 +16,7 @@
 //!   - **It cannot be put in most conditions.** You cannot knock a
 //!     cloud prone, grapple it, or paralyse it; there is no *it* to
 //!     take hold of. Plain `condition_immunities` rows.
-//!   - **A blade barely works on it.** Four of the five resist
+//!   - **A blade barely works on it.** Five of the six resist
 //!     bludgeoning, piercing and slashing: a sword swung through a
 //!     swarm of insects kills the insects it hits and none of the rest.
 //!     Area damage is the answer, and that is the tactical question the
@@ -39,8 +39,8 @@ use crate::actions::action_template::Action;
 use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_VENOMOUS_SNAKES_BITES,
-    SWARM_OF_PIRANHAS_BITES, SWARM_OF_RATS_BITES,
+    SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_PIRANHAS_BITES,
+    SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS, SWARM_OF_VENOMOUS_SNAKES_BITES,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -51,7 +51,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// The eight conditions no swarm can be put in. RAW lists the same set
-/// on all five statblocks, so it is written once here.
+/// on all six statblocks, so it is written once here.
 ///
 /// What they have in common is that each one needs a single body to act
 /// on: you knock *a creature* prone, grapple *it*, petrify *it*. A cloud
@@ -74,7 +74,7 @@ fn swarm_condition_immunities() -> HashSet<Condition> {
 }
 
 /// Resistance to the three physical damage types — the "a blade passes
-/// through the cloud" clause four of the five swarms carry.
+/// through the cloud" clause five of the six swarms carry.
 fn swarm_physical_resistances() -> HashMap<DamageType, DamageModifier> {
     HashMap::from([
         (DamageType::Bludgeoning, DamageModifier::Resistance),
@@ -83,7 +83,7 @@ fn swarm_physical_resistances() -> HashMap<DamageType, DamageModifier> {
     ])
 }
 
-/// Shared chassis for the five SRD swarm statblocks.
+/// Shared chassis for the six SRD swarm statblocks.
 ///
 /// Every swarm is Medium, `is_swarm`, a Beast, immune to the same eight
 /// conditions, and has exactly one Action: its Bites. Those five facts
@@ -93,10 +93,10 @@ fn swarm_physical_resistances() -> HashMap<DamageType, DamageModifier> {
 /// itself.
 ///
 /// The same "one shared envelope, per-entry swaps" shape as
-/// `barbarians::subclass_barbarian_template`: adding a sixth swarm (a
-/// Swarm of Ravens, a Swarm of Spiders) is one call rather than one
-/// forty-line struct literal that has to remember eight condition
-/// immunities.
+/// `barbarians::subclass_barbarian_template`, and it has since been
+/// asked to prove it: the Swarm of Ravens arrived as one call plus two
+/// overrides rather than as a forty-line struct literal that had to
+/// remember eight condition immunities.
 ///
 /// `physical_resistance` is a parameter rather than part of the chassis
 /// because the rat swarm is the one statblock that doesn't get it, and
@@ -153,10 +153,10 @@ fn swarm_template(
 /// HP (2d10), speed 5 ft / fly 30 ft, blindsight 60 ft, resistant to
 /// bludgeoning / piercing / slashing, Bites 5 (2d4) piercing.
 ///
-/// The mobile swarm. Fly 30 and blindsight 60 make it the one that
+/// The blind swarm. Fly 30 and blindsight 60 make it the one that
 /// picks its target — it crosses the board, ignores the fog the party
-/// hid in, and lands on the caster. Its bite is the lightest of the
-/// five; the threat is the arrival, not the teeth.
+/// hid in, and lands on the caster. Its bite is the lightest on the
+/// ladder; the threat is the arrival, not the teeth.
 ///
 /// Note what blindsight now costs the party: since
 /// `nonvisual_sense_reaches` reads it at both sight gates, a Swarm of
@@ -164,8 +164,9 @@ fn swarm_template(
 /// 24 tiles. The wizard's usual two answers to "something is coming for
 /// me" are both off.
 ///
-/// RAW's "0 ft, fly 30 ft" is now written as the two numbers it is,
-/// and this is the one swarm of the five that leaves the floor. It is
+/// RAW's "5 ft., Fly 30 ft." is written as the two numbers it is. The
+/// ravens leave the floor too, and faster, but the bats got here
+/// first. It is
 /// also the only member of the chassis that overrides anything, which
 /// is why the flying speed arrives as a `..swarm_template(…)` spread at
 /// the call site rather than as an eighth parameter four other swarms
@@ -178,7 +179,7 @@ fn swarm_template(
 /// had while its fly speed was spelled "30 ft. walking".
 ///
 /// Glyph 'ß' — a doubled-up 's', for a swarm that is many of one thing.
-/// The five swarms share the mark and differ by name and team colour,
+/// The six swarms share the mark and differ by name and team colour,
 /// which is the right read: on a board, "that is a swarm" is the fact
 /// that changes your plan, and which vermin it is made of is detail.
 pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -248,7 +249,7 @@ pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// 60 — it finds you by touch, not by echo, so unlike the bats it can
 /// be hidden from, just not once it has arrived.
 ///
-/// Slowest of the five at speed 20. That is the counterplay: a party
+/// Slowest of the six at speed 20. That is the counterplay: a party
 /// that keeps moving outruns it, and one that stands and swings at it
 /// with steel does not.
 pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -287,6 +288,48 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// Speed 40 for RAW's "0 ft, swim 40 ft" — the engine models one speed
 /// magnitude, so the swim number is the one that matters; a swarm of
 /// quippers on dry land is not an encounter.
+/// Swarm of Ravens — CR ¼ Medium swarm of Tiny beasts. RAW: AC 12,
+/// 11 HP (2d8+2), speed 10 ft / fly 50 ft, resistant to bludgeoning /
+/// piercing / slashing, Beaks 5 (1d6 + 2) piercing.
+///
+/// The sixth swarm, and the one with eyes. Every other entry on the
+/// ladder finds you by touch or by echo; the ravens have Perception +5
+/// and ordinary sight, which on this board makes them the swarm a party
+/// cannot hide from and the only one a dark room actually inconveniences.
+///
+/// Fly 50 makes it the fastest thing on the bench by twenty feet — the
+/// bats manage 30 — and that is its whole tactical identity: a raven
+/// swarm crosses the room in one turn, which is the difference between
+/// a swarm the archers get two rounds on and a swarm they get none.
+///
+/// RAW's **Cacophony** (Recharge 6) — a DC 10 Wisdom save or the target
+/// cannot take Reactions and has Disadvantage on ability checks and
+/// attacks until the swarm's next turn — is not modeled. It is a
+/// three-clause debuff on a recharge-6 pool, and the engine's
+/// condition set has no single entry that means all three; splitting it
+/// across two conditions on one save would be inventing a rule to hold
+/// a rule.
+pub static SWARM_OF_RAVENS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    CreatureTemplate {
+        // RAW speed line: Speed 10 ft., Fly 50 ft.
+        fly_speed: 50.0,
+        skills: HashSet::from([crate::engine::types::Skill::Perception]),
+        ..swarm_template(
+            "Swarm of Ravens",
+            'ß',
+            12,
+            "2d8+2",
+            10.,
+            [6, 14, 12, 5, 12, 6],
+            HashSet::new(),
+            0.25,
+            &SWARM_OF_RAVENS_BEAKS,
+            true,
+            HashSet::new(),
+        )
+    }
+});
+
 pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     swarm_template(
         "Swarm of Piranhas",
@@ -299,7 +342,7 @@ pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         1.0,
         &SWARM_OF_PIRANHAS_BITES,
         true,
-        // The one swarm of the five that lives in the water — RAW's
+        // The one swarm of the six that lives in the water — RAW's
         // "Speed 0 ft., swim 40 ft.", the only entry on the ladder with
         // no walking speed at all. The swim tag is what stops a pool
         // from charging it double to cross; the breathing tag is RAW's
@@ -321,7 +364,7 @@ pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// party and it — the poison rides a landed bite, so the only defence
 /// is the CON save.
 ///
-/// Also the toughest frame of the five (AC 14, 36 HP), which matters
+/// Also the toughest frame on the ladder (AC 14, 36 HP), which matters
 /// more than it looks: the halving threshold is 18 HP, so a party
 /// needs to land more raw damage on this swarm than on any other before
 /// its bite starts shrinking — and against b/p/s resistance that is 36
@@ -344,12 +387,13 @@ pub static SWARM_OF_VENOMOUS_SNAKES_TEMPLATE: LazyLock<CreatureTemplate> = LazyL
 
 /// Every swarm statblock, for the sweeps that want to assert something
 /// about all of them at once.
-pub fn all_swarm_templates() -> [&'static CreatureTemplate; 5] {
+pub fn all_swarm_templates() -> [&'static CreatureTemplate; 6] {
     [
         &SWARM_OF_BATS_TEMPLATE,
         &SWARM_OF_RATS_TEMPLATE,
         &SWARM_OF_INSECTS_TEMPLATE,
         &SWARM_OF_PIRANHAS_TEMPLATE,
+        &SWARM_OF_RAVENS_TEMPLATE,
         &SWARM_OF_VENOMOUS_SNAKES_TEMPLATE,
     ]
 }
@@ -372,7 +416,7 @@ mod tests {
         .unwrap()
     }
 
-    /// The four clauses that make a swarm a swarm hold on all five, so
+    /// The four clauses that make a swarm a swarm hold on all six, so
     /// a sixth swarm added through the shared chassis inherits the
     /// sweep rather than needing its own copy of it.
     #[test]
@@ -381,7 +425,7 @@ mod tests {
             let a = make(template);
             let name = a.name().to_string();
             assert!(a.is_swarm(), "{name} should be flagged a swarm");
-            // Size is the one line of the five stat blocks that is not
+            // Size is the one line of the six stat blocks that is not
             // shared: SRD 5.2 prints the bat swarm as Large and the
             // other four as Medium. Asserted as a pair rather than
             // exempted, so a sixth swarm has to say which it is.

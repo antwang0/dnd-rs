@@ -57,7 +57,7 @@ use crate::actors::creatures::violet_fungi::VIOLET_FUNGUS_TEMPLATE;
 use crate::actors::creatures::warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE;
 use crate::actors::creatures::winged_kobolds::WINGED_KOBOLD_TEMPLATE;
 use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
-use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
+use crate::actors::creatures::animated_armors::{ANIMATED_ARMOR_TEMPLATE, FLYING_SWORD_TEMPLATE};
 use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
@@ -142,12 +142,12 @@ use crate::actors::creatures::couatls::COUATL_TEMPLATE;
 use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::flameskulls::FLAMESKULL_TEMPLATE;
 use crate::actors::creatures::imps::IMP_TEMPLATE;
-use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+use crate::actors::creatures::skeletons::{MINOTAUR_SKELETON_TEMPLATE, SKELETON_TEMPLATE};
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
 use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
 use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
-use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+use crate::actors::creatures::zombies::{OGRE_ZOMBIE_TEMPLATE, ZOMBIE_TEMPLATE};
 use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
 use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
 use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
@@ -5730,6 +5730,82 @@ impl EncounterInstance {
         true
     }
 
+    /// 5e **Undead Fortitude** intercept. Called from the damage
+    /// chokepoint when a blow reduces the holder to 0 hit points, from
+    /// *both* of the branches that can mean: `Downed` for a creature
+    /// that rolls death saves and `Killed` for one that does not.
+    ///
+    /// RAW: *"it makes a Constitution saving throw (DC 5 plus the
+    /// damage taken) unless the damage is Radiant or from a Critical
+    /// Hit. On a successful save, the zombie drops to 1 Hit Point
+    /// instead."* Returns true when the zombie got back up, and the
+    /// caller then skips everything it would have done about a corpse.
+    ///
+    /// Sibling of `try_relentless_rage` on the same lane and
+    /// deliberately shaped like it — both are "a save, at the moment
+    /// the creature would fall, to stand at 1 HP instead" — but the two
+    /// differ in the way that matters to a party. The barbarian's DC
+    /// climbs with each use and resets on a rest, so it is a resource;
+    /// the zombie's is priced off the *blow*, so it is a property of
+    /// how hard you hit it. A zombie finished off by a dagger rolls
+    /// against DC 8 and gets up; one finished off by a maul rolls
+    /// against DC 19 and does not. That is the trait teaching a party
+    /// to commit.
+    ///
+    /// **The Critical Hit exemption is not modeled.** `DealDamage`
+    /// carries the amount and the type and does not carry whether the
+    /// swing that produced it crit — the damage pipeline is
+    /// deliberately decoupled from the attack roll, and hundreds of
+    /// sites construct a `DealDamage` from things that are not attacks
+    /// at all. Threading a crit flag through all of them to reach one
+    /// stat block's clause would cost more than the clause is worth.
+    /// The radiant half of the exemption ships, which is the half a
+    /// party can play toward: a cleric's Sacred Flame puts a zombie
+    /// down and stays down.
+    pub fn try_undead_fortitude(
+        &mut self,
+        actor_id: usize,
+        damage_type: crate::engine::types::DamageType,
+        damage: u32,
+    ) -> bool {
+        use crate::actions::class_features::UNDEAD_FORTITUDE_TAG;
+        use crate::engine::types::{AbilityScoreType, DamageType};
+
+        // Radiant is RAW's own exemption and the reason a party carries
+        // a cleric. Checked before the tag so the common case — a
+        // creature that is not a zombie — still costs one hash lookup.
+        if damage_type == DamageType::Radiant {
+            return false;
+        }
+        if !self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_passive_feature(UNDEAD_FORTITUDE_TAG))
+        {
+            return false;
+        }
+        // RAW's "DC 5 plus the damage taken", read off the
+        // post-mitigation number — the one the creature actually took,
+        // which is what the sentence says.
+        let dc = 5 + damage as i32;
+        let name = self.actor_name(actor_id);
+        self.log(format!(
+            "  {} will not lie down \u{2014} undead fortitude CON save vs DC {}",
+            name, dc
+        ));
+        let save = self.roll_save(actor_id, AbilityScoreType::Constitution, dc);
+        if !save.passed() {
+            return false;
+        }
+        if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.revive_at_one_hp();
+        } else {
+            return false;
+        }
+        self.log(format!("  {} gets back up with 1 HP.", name));
+        true
+    }
+
     /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
     /// `roll_save` except it walks the shared `CASTER_SAVE_MODE_RIDERS`
     /// cohort first: any row whose gate fires for this (caster, target)
@@ -9645,6 +9721,7 @@ impl EncounterInstance {
         let mut pool: Vec<&'static CreatureTemplate> = vec![
             &ANKHEG_TEMPLATE,
             &ANIMATED_ARMOR_TEMPLATE,
+            &FLYING_SWORD_TEMPLATE,
             &BANDIT_TEMPLATE,
             &BANDIT_CAPTAIN_TEMPLATE,
             &BANSHEE_TEMPLATE,
@@ -9740,7 +9817,9 @@ impl EncounterInstance {
             // restores the "common monster" fallback for the cr_target
             // ≈ 1 default the main loop spawns at.
             &SKELETON_TEMPLATE,
+            &MINOTAUR_SKELETON_TEMPLATE,
             &ZOMBIE_TEMPLATE,
+            &OGRE_ZOMBIE_TEMPLATE,
             &SLIME_TEMPLATE,
             &IMP_TEMPLATE,
             &FIRE_IMP_TEMPLATE,

@@ -19705,3 +19705,116 @@ pub static TOUGH_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     sub_attack: &TOUGH_BOSS_WARHAMMER,
     count: 2,
 });
+
+// ─── Ogre Zombie ─────────────────────────────────────────────────────
+
+/// Ogre Zombie Slam — STR-based 2d8+STR bludgeoning. RAW: "Slam. Melee
+/// Attack Roll: +6, reach 5 ft. Hit: 13 (2d8 + 4) Bludgeoning damage."
+///
+/// One swing where the ordinary zombie takes two, and harder than
+/// either. That trade is the stat block: an ogre zombie hits like the
+/// ogre it used to be and swings like the zombie it is now.
+pub static OGRE_ZOMBIE_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "ogre zombie slam",
+    &["oz-slam", "ogre-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+);
+
+// ─── Minotaur Skeleton ───────────────────────────────────────────────
+
+/// Minotaur Skeleton Gore — STR-based 2d6+STR piercing, and the horn
+/// half of the charge below. RAW: "Gore. Melee Attack Roll: +6, reach 5
+/// ft. Hit: 11 (2d6 + 4) Piercing damage. If the target is a Large or
+/// smaller creature and the skeleton moved 20+ feet straight toward it
+/// immediately before the hit, the target takes an extra 9 (2d8)
+/// Piercing damage and has the Prone condition."
+///
+/// A plain weapon rather than a bespoke Action, because the whole
+/// conditional clause is `MINOTAUR_SKELETON_CHARGE` — the engine has a
+/// charge lane and this is exactly the shape it takes.
+pub static MINOTAUR_SKELETON_GORE: SimpleWeapon = SimpleWeapon::melee(
+    "skeleton gore",
+    &["sk-gore", "skeleton-gore"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Minotaur Skeleton Slam — STR-based 2d10+STR bludgeoning. RAW: "Slam.
+/// Melee Attack Roll: +6, reach 5 ft. Hit: 15 (2d10 + 4) Bludgeoning
+/// damage."
+///
+/// The heavier of the skeleton's two swings, and the one it uses
+/// standing still: 2d10 flat beats 2d6 every round the skeleton has
+/// not run. The gore only overtakes it on a charge, which is the choice
+/// the pair is there to give the picker.
+pub static MINOTAUR_SKELETON_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "skeleton slam",
+    &["sk-slam", "skeleton-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Bludgeoning,
+);
+
+/// Minotaur Skeleton **Charge** — RAW's twenty feet of run for an extra
+/// 2d8 piercing and a knockdown.
+///
+/// Twenty feet is `CHARGE_RUN_TILES`, the bar nearly every charge clause
+/// in the bestiary asks for; the living minotaur's own Gore wants ten,
+/// which is one of the two places the ladder disagrees with itself and
+/// is RAW both times.
+///
+/// RAW's "Large or smaller" size gate on the knockdown is not modeled —
+/// the charge lane has no size field, and every other knockdown clause
+/// in the bestiary is missing the same gate. What it costs is a
+/// Huge creature that can be knocked over by a skeleton, which is a
+/// smaller wrong than the clause never firing.
+pub const MINOTAUR_SKELETON_CHARGE: ChargeRider = ChargeRider {
+    weapon: Some("skeleton gore"),
+    dice: Dice::new(2, 8),
+    damage_type: DamageType::Piercing,
+    run_tiles: CHARGE_RUN_TILES,
+    knocks_prone: true,
+    label: "skeleton charge",
+    knockdown_label: "skeleton charge knockdown",
+    once_per_turn_tag: None,
+    prone_follow_up: None,
+};
+
+// ─── Animated Flying Sword ───────────────────────────────────────────
+
+/// Animated Flying Sword Slash — DEX-based 1d8+DEX slashing. RAW:
+/// "Slash. Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Slashing
+/// damage."
+///
+/// DEX rather than STR, which is unusual for a melee swing and is what
+/// the stat block says: the sword has no arm behind it, so what decides
+/// whether it lands is how fast it moves.
+pub static FLYING_SWORD_SLASH: SimpleWeapon = SimpleWeapon::melee(
+    "flying sword slash",
+    &["fs-slash", "sword-slash"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+);
+
+// ─── Swarm of Ravens ─────────────────────────────────────────────────
+
+/// Swarm of Ravens Beaks — DEX-based 1d6+DEX piercing. RAW: "Beaks.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage,
+/// or 2 (1d4) Piercing damage if the swarm is Bloodied."
+///
+/// The half-strength-when-thinned clause is not modeled, which is the
+/// standing choice on all five swarms already on the bench rather than
+/// a new one: the engine's `bloodied_dice` lane swaps a die when the
+/// *target* is bloodied — the blood hawk's clause — and a swarm's reads
+/// its own hit points, which is the other creature entirely.
+pub static SWARM_OF_RAVENS_BEAKS: SimpleWeapon = SimpleWeapon::melee(
+    "raven beaks",
+    &["rb", "beaks"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
