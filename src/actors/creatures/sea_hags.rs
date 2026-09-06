@@ -32,8 +32,10 @@ use std::sync::LazyLock;
 /// Aquan, Common, Giant. Size Medium. CR 2.
 ///
 /// RAW also gives the sea hag:
-/// - **Amphibious** (breathes air + water) — no in-engine consumer (the
-///   engine doesn't model breathing / drowning).
+/// - **Amphibious** (breathes air + water) — carried, on
+///   `UNDERWATER_BREATHING_TAG`. The hag is on
+///   `underwater_breathing_templates`, so the suffocation clock in
+///   `engine::breath` never starts on it.
 /// - **Horrific Appearance** (each enemy that starts its turn within
 ///   30ft + can see the hag rolls WIS save or takes 1d6 psychic +
 ///   Frightened until end of turn) — would need a start-of-turn aura

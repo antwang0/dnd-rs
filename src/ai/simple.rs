@@ -1816,14 +1816,14 @@ fn try_cheapest_printing(
 ///     hostile on it is a board where the bonus action is better spent
 ///     on anything else — including nothing.
 ///   - **The action's own validator**, which `try_self_action` runs.
-///     That is where the melee clause lives: you cannot slip out of
-///     sight of something standing next to you, which is exactly the
-///     case a melee chassis is in every round it matters. So this rung
-///     fires for the archers and the knife-throwers and quietly
-///     declines for everybody in contact, without needing to know which
-///     is which. The Stealth check itself is the action's too — the
-///     hide can simply fail, and a failed hide still costs the bonus
-///     action, which is RAW.
+///     That is where SRD 5.2's own precondition lives: there has to be
+///     somewhere to hide — an enemy that cannot see you, or three-
+///     quarters cover between you and every one that can. So this rung
+///     fires for a creature in the dark or behind a wall and quietly
+///     declines for one standing in an open, lit room, without needing
+///     to know which it is in. The Stealth check itself is the
+///     action's too — the hide can simply fail, and a failed hide
+///     still costs the bonus action, which is RAW.
 fn try_bonus_action_hide(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -16354,7 +16354,12 @@ mod tests {
         let mut e = empty_arena();
         // Far enough away that nothing is in contact — the melee clause
         // on the action's own validator is a separate rule and has its
-        // own test below.
+        // own test below — and behind a wall, because SRD 5.2's Hide
+        // wants Total Cover or an enemy that cannot see you and an
+        // open, lit room is neither.
+        for y in 0..20isize {
+            e.set_terrain_at(Coordinate::new(9, y), crate::engine::terrain::TerrainType::Wall);
+        }
         e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(18, 4), 1, 0)
             .unwrap();
         let rogue = e
@@ -16384,6 +16389,11 @@ mod tests {
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
         use crate::conditions::ConditionTimer;
         let mut e = empty_arena();
+        // A wall between them, so there is somewhere to hide at all —
+        // see the sibling test above.
+        for y in 0..20isize {
+            e.set_terrain_at(Coordinate::new(9, y), crate::engine::terrain::TerrainType::Wall);
+        }
         let rogue = e
             .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(3, 4), 0, 0)
             .unwrap();

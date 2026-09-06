@@ -7937,6 +7937,19 @@ impl EncounterInstance {
             .any(|c| matches!(self.terrain_at(c), Some(t) if t.terrain_type.blocks_sight()))
     }
 
+    /// 5e **half cover**: "+2 bonus to AC and Dexterity saving
+    /// throws". The lower of the two rungs `cover_ac_bonus` returns.
+    ///
+    /// Named because three places compare against it — the AC lookup,
+    /// the log suffix, and the Hide action's "behind Three-Quarters
+    /// Cover" gate — and a bare `2` at each reads as a coincidence
+    /// rather than as the one number it is.
+    pub const HALF_COVER_AC: i32 = 2;
+    /// 5e **three-quarters cover**: "+5 bonus to AC and Dexterity
+    /// saving throws", and the rung SRD 5.2's Hide action names as one
+    /// of the two things that let you try to hide at all.
+    pub const THREE_QUARTERS_COVER_AC: i32 = 5;
+
     /// 5e cover. Counts the obstructions a straight origin-to-origin
     /// line from attacker to target passes through: combat-active actors
     /// other than the two ends, and `TerrainType::LowWall` tiles. 0
@@ -8012,7 +8025,7 @@ impl EncounterInstance {
                 last_hit = Some(blocker_id);
                 hits = hits.saturating_add(1);
                 if hits >= 2 {
-                    return 5;
+                    return Self::THREE_QUARTERS_COVER_AC;
                 }
             }
             // A low wall under the line obstructs it the same way a body
@@ -8047,11 +8060,11 @@ impl EncounterInstance {
             {
                 hits = hits.saturating_add(1);
                 if hits >= 2 {
-                    return 5;
+                    return Self::THREE_QUARTERS_COVER_AC;
                 }
             }
         }
-        if hits >= 1 { 2 } else { 0 }
+        if hits >= 1 { Self::HALF_COVER_AC } else { 0 }
     }
 
     /// *Which* creature is standing in the way, rather than how much
@@ -11948,8 +11961,8 @@ impl EncounterInstance {
     /// attack-roll log lines so the two paths can't drift.
     pub fn cover_log_suffix(cover_bonus: i32) -> &'static str {
         match cover_bonus {
-            2 => " (half cover)",
-            5 => " (three-quarters cover)",
+            Self::HALF_COVER_AC => " (half cover)",
+            Self::THREE_QUARTERS_COVER_AC => " (three-quarters cover)",
             _ => "",
         }
     }

@@ -23142,23 +23142,41 @@ fn relentless_rage_dc_resets_on_rest() {
 }
 
 /// Rogue Cunning Hide: bonus-action Hide that drops the Hidden flag.
+///
+/// Swept across seeds because the payload rolls: SRD 5.2's Hide is a
+/// DC 15 Dexterity (Stealth) check, and a rogue misses it often enough
+/// that a single seed is a coin flip rather than an assertion.
 #[test]
 fn cunning_hide_applies_hidden() {
     use crate::actions::class_features::CUNNING_HIDE;
     use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::engine::side_effects::Resource;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let id = e
-        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    let effects = CUNNING_HIDE.side_effects(&mut e, id, None, None, None);
-    for ef in effects {
-        ef.apply(&mut e);
+    let mut hid = false;
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(10, 10, &[], seed);
+        let id = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let cost = CUNNING_HIDE.cost(&e, id, None, None, None);
+        assert!(cost.contains(&Resource::BonusAction));
+        for ef in CUNNING_HIDE.side_effects(&mut e, id, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&id].has_condition(Condition::Hidden) {
+            hid = true;
+            // A successful hide records what it rolled — the DC anybody
+            // searching for this rogue has to beat.
+            assert!(
+                e.actors[&id]
+                    .hidden_check_total()
+                    .is_some_and(|t| t >= crate::actions::default_actions::HIDE_DC),
+                "seed {}: a successful hide keeps the total that made it",
+                seed
+            );
+        }
     }
-    assert!(e.actors[&id].has_condition(Condition::Hidden));
-    let cost = CUNNING_HIDE.cost(&e, id, None, None, None);
-    assert!(cost.contains(&Resource::BonusAction));
+    assert!(hid, "the rogue never once cleared DC 15 in twenty tries");
 }
 
 /// 5e Ranger **Vanish** (lv14 class feature) — bonus-action Hide
@@ -41495,63 +41513,135 @@ fn hobgoblin_warlord_instantiates() {
     assert_eq!(e.actors[&w].armor_class(), 20);
 }
 
+/// SRD 5.2 moved the Hide check off the contest and onto a number:
+/// *"you must succeed on a DC 15 Dexterity (Stealth) check."* Whoever
+/// is watching no longer changes what the hider has to roll.
+///
+/// This test used to assert the opposite — that a sharp-eyed couatl in
+/// the room made hiding harder — which was the 2014 rule and the one
+/// the engine ran. The contest did not disappear; it moved to the
+/// other side. A watcher spends its Search action and rolls Perception
+/// against the total the hider actually got, which is what
+/// `search_reveals_hidden_enemy` covers.
 #[test]
-fn hide_dc_uses_passive_perception() {
+fn hide_rolls_against_a_flat_dc_whoever_is_watching() {
     use crate::actions::default_actions::HIDE;
     use crate::actors::creatures::couatls::COUATL_TEMPLATE;
     use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::side_effects::Resource;
 
-    let mut successes_with_enemy = 0u32;
-    let mut successes_no_enemy = 0u32;
-    let trials = 200u64;
+    // A wall down the middle, so the hider clears SRD 5.2's "out of any
+    // enemy's line of sight" gate and the roll is the only variable
+    // left.
+    let wall: Vec<(isize, isize)> = (0..20isize).map(|y| (9isize, y)).collect();
+    let watchers: [&crate::actors::actor_template::CreatureTemplate; 2] =
+        [&COUATL_TEMPLATE, &ZOMBIE_TEMPLATE];
 
-    for seed in 0..trials {
-        let mut e = ei_with_terrain(20, 20, &[]);
-        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let rogue = e
-            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let _couatl = e
-            .instantiate_creature(&COUATL_TEMPLATE, Coordinate::new(10, 10), 1, 0)
-            .unwrap();
-        e.actors
-            .get_mut(&rogue)
-            .unwrap()
-            .give_resource(Resource::Action);
-
-        let effects = HIDE.execute(&mut e, rogue, None, None, None);
-        for eff in &effects {
-            eff.apply(&mut e);
+    let mut hid_at_least_once = false;
+    for seed in 0..40u64 {
+        let mut outcomes = Vec::new();
+        for watcher in watchers {
+            let mut e = ei_with_terrain(20, 20, &wall);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.instantiate_creature(watcher, Coordinate::new(14, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&rogue)
+                .unwrap()
+                .give_resource(Resource::Action);
+            // Seeded *after* both creatures are on the board: rolling
+            // a stat block's hit points draws dice, and the two
+            // watchers draw a different number of them, so seeding
+            // first would have compared two different die rolls and
+            // called the difference the couatl's eyesight.
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            for eff in HIDE.execute(&mut e, rogue, None, None, None) {
+                eff.apply(&mut e);
+            }
+            outcomes.push(e.actors[&rogue].has_condition(Condition::Hidden));
         }
-        if e.actors[&rogue].has_condition(Condition::Hidden) {
-            successes_with_enemy += 1;
-        }
+        assert_eq!(
+            outcomes[0], outcomes[1],
+            "seed {}: the couatl's eyes are not part of the DC any more",
+            seed
+        );
+        hid_at_least_once |= outcomes[0];
+    }
+    assert!(
+        hid_at_least_once,
+        "the rogue never cleared DC 15 in forty tries, which is not a flat DC"
+    );
+}
 
-        let mut e2 = ei_with_terrain(20, 20, &[]);
-        e2.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let rogue2 = e2
-            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        e2.actors
-            .get_mut(&rogue2)
-            .unwrap()
-            .give_resource(Resource::Action);
+/// SRD 5.2's *"while you're Heavily Obscured or behind Three-Quarters
+/// Cover or Total Cover, and you must be out of any enemy's line of
+/// sight"* — the sentence the engine could not enforce until it had a
+/// lighting layer and a cover ladder, and enforced as
+/// "nothing is standing next to you" in the meantime.
+///
+/// Three boards, one rogue, one ogre. The rogue can hide on two of
+/// them and not on the third, and the third is the one the old rule
+/// allowed.
+#[test]
+fn hiding_wants_somewhere_to_hide() {
+    use crate::actions::default_actions::HIDE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
 
-        let effects2 = HIDE.execute(&mut e2, rogue2, None, None, None);
-        for eff in &effects2 {
-            eff.apply(&mut e2);
-        }
-        if e2.actors[&rogue2].has_condition(Condition::Hidden) {
-            successes_no_enemy += 1;
+    // 1. An open, brightly lit floor with a watcher looking straight at
+    //    the rogue from across the room. Nothing to hide behind, and
+    //    the old gate said yes because nothing was adjacent.
+    //
+    //    A fighter rather than an ogre, because the second board turns
+    //    the lights out and an ogre has sixty feet of darkvision to see
+    //    through them with.
+    let mut open = ei_with_terrain(24, 12, &[]);
+    let rogue = open
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    open.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+        .unwrap();
+    assert!(
+        !HIDE.custom_validate_input(&open, rogue, None, None, None),
+        "an open lit field is not somewhere to hide"
+    );
+
+    // 2. The same board with the lights out. The fighter has no
+    //    darkvision, so it cannot see the rogue at all.
+    open.set_ambient_light(AmbientLight::Darkness);
+    assert!(
+        !open.viewer_can_see(
+            open.actors
+                .keys()
+                .copied()
+                .find(|id| *id != rogue)
+                .unwrap(),
+            rogue
+        ),
+        "the fighter is not seeing anything in an unlit room"
+    );
+    assert!(
+        HIDE.custom_validate_input(&open, rogue, None, None, None),
+        "darkness is heavy obscurement, and heavy obscurement is the rule"
+    );
+
+    // 3. Lit again, but with two low walls on the firing line — the
+    //    engine's three-quarters-cover rung, which is RAW's other way
+    //    to qualify.
+    open.set_ambient_light(AmbientLight::BrightLight);
+    assert!(!HIDE.custom_validate_input(&open, rogue, None, None, None));
+    for x in [8isize, 10] {
+        for y in 3..=6isize {
+            open.set_terrain_at(Coordinate::new(x, y), TerrainType::LowWall);
         }
     }
-
     assert!(
-        successes_with_enemy < successes_no_enemy,
-        "hide DC should be harder with a high-WIS enemy (successes with={} vs without={})",
-        successes_with_enemy,
-        successes_no_enemy
+        HIDE.custom_validate_input(&open, rogue, None, None, None),
+        "two obstructions is the +5 rung, and the +5 rung is the one RAW names"
     );
 }
 
@@ -80034,6 +80124,58 @@ fn water_breathing_stops_the_clock_without_taking_anybody_out_of_the_lake() {
     );
 }
 
+/// 5e Storm Herald Barbarian **Storm Soul (Sea)**: *"you gain
+/// resistance to lightning damage, and you can breathe underwater. You
+/// also gain a swimming speed."*
+///
+/// All three clauses, one of which has been on the sheet since the tag
+/// arrived and two of which were left out because the engine had no
+/// water tiles and no breath clock. It has both now, and the tag's
+/// docstring outlived the cut by several features — which is the
+/// ordinary way a deliberate omission turns into a gap nobody is
+/// looking at.
+#[test]
+fn the_sea_storm_herald_swims_and_breathes_as_well_as_shrugging_off_lightning() {
+    use crate::actors::creatures::barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let barbarian = e
+        .instantiate_creature(
+            &SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+            Coordinate::new(4, 4),
+            0,
+            0,
+        )
+        .unwrap();
+    // An ordinary martial in the same pool, as the control.
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+        .unwrap();
+
+    assert!(e.is_immersed(barbarian) && e.is_immersed(fighter));
+    assert!(
+        e.can_breathe(barbarian) && !e.can_breathe(fighter),
+        "the storm herald breathes water and the fighter does not"
+    );
+    assert!(
+        e.actors[&barbarian].has_swim_speed() && !e.actors[&fighter].has_swim_speed(),
+        "and swims where the fighter wades"
+    );
+    // The clause that was always here.
+    assert!(
+        e.actors[&barbarian].is_resistant_to(DamageType::Lightning)
+            || e.actors[&barbarian].has_own_typed_reduction(DamageType::Lightning),
+        "the lightning resistance is the half that already shipped"
+    );
+}
+
 /// The party-buff chassis' two refusals, exercised through Water
 /// Breathing: a dry board is not worth a 3rd-level slot, and neither is
 /// a party that already breathes down there.
@@ -84422,7 +84564,12 @@ fn the_cheap_printings_of_hide_answer_to_the_same_rules_as_the_expensive_one() {
     use crate::actors::creatures::ogres::OGRE_TEMPLATE;
     use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
 
-    let mut e = ei_with_terrain(20, 20, &[]);
+    // A wall down the middle of the room, so there is somewhere to
+    // hide at all: SRD 5.2's Hide wants the hider Heavily Obscured or
+    // behind Three-Quarters or Total Cover, and an open lit floor is
+    // none of the three.
+    let wall: Vec<(isize, isize)> = (0..20isize).map(|y| (9isize, y)).collect();
+    let mut e = ei_with_terrain(20, 20, &wall);
     let rogue = e
         .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
@@ -84430,7 +84577,7 @@ fn the_cheap_printings_of_hide_answer_to_the_same_rules_as_the_expensive_one() {
         .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 4), 1, 0)
         .unwrap();
 
-    // Across the room, both printings are legal.
+    // Across the room and behind the wall, both printings are legal.
     for action in [&*HIDE as &dyn Action, &CUNNING_HIDE as &dyn Action] {
         assert!(
             action.custom_validate_input(&e, rogue, None, None, None),

@@ -18,9 +18,11 @@ use std::sync::LazyLock;
 ///   only (Move / Dash / Dodge / Hide / Skip). A frog cannot harm a
 ///   PC; it exists as flavor / ambient atmosphere.
 ///
-/// **Amphibious** (RAW: breathes air and water) is flavor-only — the
-/// engine doesn't model drowning today, so the trait collapses to a
-/// note. **Standing Leap** (RAW: long jump = 10 ft) is captured by
+/// **Amphibious** (RAW: breathes air and water) is carried, on
+/// `UNDERWATER_BREATHING_TAG` — the frog is on
+/// `underwater_breathing_templates`, so the suffocation clock in
+/// `engine::breath` never starts on it. It has no other combat
+/// surface, which for a 1 HP frog is most of what can be said. **Standing Leap** (RAW: long jump = 10 ft) is captured by
 /// the speed-20 walking baseline; the engine doesn't model separate
 /// jump distances. Darkvision 30 surfaces through the standard
 /// `SpecialSense::Darkvision` chokepoint.

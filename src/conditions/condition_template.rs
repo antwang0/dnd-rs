@@ -108,9 +108,25 @@ pub enum Condition {
     /// Took the Help action against this turn — your next attack against
     /// the helped target has advantage (cleared on use or end of round).
     Helped,
-    /// Successful Stealth check; you have unseen advantage on attack and
-    /// attackers have disadvantage. Distinct from Invisible: it's broken
-    /// by attacking, ending hidden status.
+    /// A successful Hide: SRD 5.2's DC 15 Dexterity (Stealth) check,
+    /// made somewhere there was cover or darkness to make it in.
+    ///
+    /// Both halves of being unseen. The holder swings at advantage
+    /// (`grants_self_attack_advantage`) and is swung at with
+    /// disadvantage (`imposes_disadvantage_to_attackers`) — the second
+    /// of which the condition claimed here for a long time and did not
+    /// carry, so hiding bought one good attack and no protection in
+    /// between.
+    ///
+    /// RAW's own condition for a successful Hide is `Invisible`, and
+    /// this is deliberately not that: it burns off when the holder
+    /// attacks, which is RAW's *"you stop being hidden […] you make an
+    /// attack roll"* arriving as the condition's own clause rather than
+    /// as a rule somewhere else. See `CONSUMED_ON_ATTACK`.
+    ///
+    /// The total that was rolled lives on the actor
+    /// (`ActorInstance::hidden_check_total`), because RAW makes it the
+    /// DC for anybody searching.
     Hidden,
     /// On fire — takes 1d4 fire at the start of each of its turns until
     /// extinguished. Burning is a DOT condition with `Rounds(n)` timer.

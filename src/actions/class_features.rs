@@ -1354,9 +1354,10 @@ impl Action for BonusManeuver {
         {
             return false;
         }
-        // Every printing of Hide reads the same clause: there has to be
-        // somewhere to hide, which there is not while a hostile is in
-        // contact. The other two maneuvers have no precondition.
+        // Every printing of Hide reads the same clause: there has to
+        // be somewhere to hide — SRD 5.2's Heavily Obscured or
+        // three-quarters cover, out of every enemy's line of sight.
+        // The other two maneuvers have no precondition.
         !self.does(Maneuver::Hide)
             || crate::actions::default_actions::can_attempt_hide(encounter, caster_id)
     }
@@ -13638,15 +13639,18 @@ pub const INURED_TO_UNDEATH_TAG: &str = "wizard.inured_to_undeath";
 /// the sea storm herald's body absorbs the tempest's fury — the
 /// barbarian gains **resistance to lightning damage**.
 ///
-/// RAW pairs the lightning resistance with an "can breathe underwater
-/// and gains a swimming speed equal to your walking speed" clause. The
-/// engine doesn't model swim tiles or drowning as first-class combat
-/// surfaces, so both the swim speed and the water-breathing halves are
-/// non-op in combat and are left as future work. The resistance clause
-/// is the load-bearing defensive half and rides here alone, matching
-/// the way `INURED_TO_UNDEATH_TAG` ships without the max-HP-can't-be-
-/// reduced clause and Radiant Soul ships without the +CHA-mod damage
-/// rider.
+/// RAW pairs the lightning resistance with "you can breathe underwater
+/// and you gain a swimming speed equal to your walking speed", and all
+/// three clauses now land. The swim half is a row on
+/// `SWIM_SPEED_SOURCES`, which lifts the water movement surcharge and
+/// 5e's melee Underwater Combat penalty; the breathing half is a row on
+/// `UNDERWATER_BREATH_SOURCES`, which takes the barbarian off the
+/// suffocation clock in `engine::breath`.
+///
+/// It shipped with the resistance alone and a note saying the other two
+/// had no combat surface, which was true of an engine with no water
+/// tiles and no breath clock. Both arrived; the note outlived them by
+/// several features, which is the ordinary way a cut becomes a gap.
 ///
 /// First Barbarian-chassis row on the passive typed-resistance lane —
 /// every prior row (Dwarven / Fiendish / Draconic / Heart of the Storm
@@ -13731,9 +13735,10 @@ pub const STORM_SOUL_SEA_TAG: &str = "barbarian.storm_soul_sea";
 /// exhaustion sits outside the tactical loop, and the ignite ribbon is
 /// out-of-combat flavor — so both are left as future work. The resistance
 /// clause is the load-bearing defensive half and rides here alone,
-/// matching the way `STORM_SOUL_SEA_TAG` ships without the swim /
-/// water-breathing halves and `INURED_TO_UNDEATH_TAG` ships without the
-/// max-HP-can't-be-reduced clause.
+/// matching the way `INURED_TO_UNDEATH_TAG` ships without the
+/// max-HP-can't-be-reduced clause. (Its Sea sibling no longer belongs
+/// on that list — the engine grew water and a breath clock, and Storm
+/// Soul (Sea) now ships whole.)
 ///
 /// Second Barbarian-chassis row on the passive typed-resistance lane —
 /// `STORM_SOUL_SEA_TAG` (Sea, Lightning) blazed the trail; every earlier
@@ -13823,7 +13828,6 @@ pub const STORM_SOUL_DESERT_TAG: &str = "barbarian.storm_soul_desert";
 /// the tactical loop, and the freeze-water ribbon is out-of-combat flavor
 /// — so both are left as future work. The resistance clause is the
 /// load-bearing defensive half and rides here alone, matching the way
-/// `STORM_SOUL_SEA_TAG` ships without the swim / water-breathing halves,
 /// `STORM_SOUL_DESERT_TAG` ships without the extreme-heat / ignite halves,
 /// and `INURED_TO_UNDEATH_TAG` ships without the max-HP-can't-be-reduced
 /// clause.

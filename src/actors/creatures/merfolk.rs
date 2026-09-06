@@ -18,8 +18,11 @@ use std::sync::LazyLock;
 /// **Amphibious** — RAW: "the merfolk can breathe air and water" — is
 /// the trait, and it lands on `SWIM_SPEED_TAG`, which is the engine's
 /// name for the whole aquatic package: water costs nothing to cross,
-/// and the underwater melee clause lifts. The breathing half has no
-/// surface, since the engine has no drowning clock.
+/// and the underwater melee clause lifts. The breathing half lands on
+/// `UNDERWATER_BREATHING_TAG`, which keeps the merfolk off the
+/// suffocation clock in `engine::breath` — the two halves are
+/// deliberately two tags, because a white dragon swims and drowns and
+/// a green hag breathes and cannot swim.
 ///
 /// The merrow four CRs above it is the same creature corrupted, and
 /// they share the aquatic pool. This is what a party meets in the

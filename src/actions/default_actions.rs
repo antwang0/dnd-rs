@@ -1271,12 +1271,43 @@ impl Action for GrappleEscape {
 
 pub static GRAPPLE_ESCAPE: LazyLock<GrappleEscape> = LazyLock::new(|| GrappleEscape {});
 
-/// 5e Hide action — Stealth check; on success the actor becomes Hidden
-/// (attackers have disadvantage, you have advantage on your next attack).
-/// DC is the highest passive Perception (10 + WIS mod) among active
-/// enemies, defaulting to 10 if none are present. Cannot be used while
-/// any enemy is footprint-adjacent — you can't realistically duck from
-/// sight while they're inside arm's reach.
+/// **Hide** — SRD 5.2's action, in full:
+///
+/// > With the Hide action, you try to hide yourself. To do so, you must
+/// > succeed on a DC 15 Dexterity (Stealth) check while you're Heavily
+/// > Obscured or behind Three-Quarters Cover or Total Cover, and you
+/// > must be out of any enemy's line of sight […] On a successful
+/// > check, you have the Invisible condition while hidden. Make note of
+/// > your check's total, which is the DC for a creature to find you
+/// > with a Wisdom (Perception) check.
+///
+/// Three sentences, and the engine used to carry a different rule for
+/// each of them. The check rolled against the best passive Perception
+/// on the board rather than a flat 15; the *conditions* for attempting
+/// it were "nothing hostile is standing next to you", which is not a
+/// rule in any edition and let a creature vanish standing in an open,
+/// brightly lit field; and Search looked for the hider against a
+/// `12 + DEX` estimate rather than against the number the hider
+/// actually rolled.
+///
+/// All three are the same rule now, and the reason they can be is that
+/// the engine grew the layers RAW's paragraph is written about. Heavy
+/// obscurement is the lighting layer and the zone layer between them
+/// (`viewer_can_see` folds darkness, fog and walls); three-quarters
+/// cover is `cover_ac_bonus`'s upper rung; total cover is a blocked
+/// line of sight. See `can_attempt_hide` for how the two clauses
+/// compose.
+///
+/// The one deliberate divergence is which condition lands.
+/// RAW hands out `Invisible`; the engine installs `Condition::Hidden`,
+/// which does the same two things on the d20 and differs in the one
+/// place that matters: it burns off when the hider attacks, which is
+/// RAW's *"you stop being hidden […] you make an attack roll"* arriving
+/// as the condition's own clause rather than as a fourth rule
+/// somewhere else. The other three ways RAW ends hiding — a sound
+/// louder than a whisper, an enemy finding you, a verbal-component
+/// spell — are respectively unmodelled, the Search action, and
+/// unmodelled.
 pub struct Hide {}
 
 impl Action for Hide {
@@ -1316,51 +1347,89 @@ impl Action for Hide {
 
 /// Can `caster_id` attempt to hide at all?
 ///
-/// One gate for all three printings of the action. RAW's own version of
-/// this sentence is a paragraph about obscurement and cover; the
-/// engine's is the one clause of it a flat, fully-lit board can
-/// enforce — **not while something hostile is standing next to you.**
-/// You cannot slip out of sight of a creature that is already inside
-/// your reach, whatever you are wearing.
+/// SRD 5.2's condition, asked of every enemy on the board: *"while
+/// you're Heavily Obscured or behind Three-Quarters Cover or Total
+/// Cover, and you must be out of any enemy's line of sight."*
 ///
-/// Shared because it was not. `Hide` carried this check and the two
-/// bonus-action printings — the Rogue's Cunning Hide and the Ranger's
-/// Vanish — carried none, so a rogue toe-to-toe with an ogre could
-/// vanish from it as a bonus action while the ogre's own player could
-/// not do it with a whole Action. The docstrings on those printings say
-/// they are "the same effect at the cheaper cost", and now they are.
+/// RAW writes it as two clauses joined by "and", and on a battle map
+/// they collapse into one question asked per watcher: **does this
+/// enemy have a clear look at you?** An enemy answers no if it cannot
+/// see the hider at all — `viewer_can_see` folds blindness, an unlit
+/// tile the watcher has no darkvision for, a fog bank, and a wall,
+/// which between them are every way RAW's first clause can be
+/// satisfied — or if what it can see is a sliver behind three-quarters
+/// cover. Every enemy has to answer no; one clear line of sight is
+/// enough to spoil it, which is what "out of *any* enemy's line of
+/// sight" says.
+///
+/// **This replaced "nothing hostile is standing next to you"**, which
+/// was the one clause of RAW's paragraph a flat, fully-lit board could
+/// enforce back when the engine had neither a lighting layer nor a
+/// cover ladder. It has both, and the old gate's practical effect was
+/// that anything could vanish in an open field at noon so long as it
+/// had taken one step back first. The adjacency clause is gone rather
+/// than kept alongside, because the new gate subsumes it: a creature
+/// inside your reach is exempted from the cover ladder by
+/// `cover_ac_bonus`'s own melee clause, so the only way to hide from
+/// one is for it to be unable to see you at all — which is exactly
+/// right, and is how you hide from something standing next to you in
+/// pitch darkness.
+///
+/// A board with no enemies on it answers `true` vacuously, which is
+/// the honest answer: there is nobody to hide from and nothing to fail.
+///
+/// Shared by all three printings of the action. `Hide` carried the old
+/// check and the two bonus-action printings — the Rogue's Cunning Hide
+/// and the Ranger's Vanish — carried none, so a rogue toe-to-toe with
+/// an ogre could vanish from it as a bonus action while the ogre's own
+/// player could not do it with a whole Action. The docstrings on those
+/// printings say they are "the same effect at the cheaper cost", and
+/// now they are.
 pub fn can_attempt_hide(encounter: &EncounterInstance, caster_id: usize) -> bool {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
     let Some(me) = encounter.actors.get(&caster_id) else {
         return false;
     };
     let my_team = me.team();
-    let my_loc = me.location();
-    let my_size = get_tiles_from_size(me.size());
-    !encounter.actors.iter().any(|(id, other)| {
-        *id != caster_id
-            && other.team() != my_team
-            && other.is_combat_active()
-            && footprint_chebyshev(
-                other.location(),
-                get_tiles_from_size(other.size()),
-                my_loc,
-                my_size,
-            ) == 0
+    encounter.actors.iter().all(|(id, other)| {
+        if *id == caster_id || other.team() == my_team || !other.is_combat_active() {
+            return true;
+        }
+        !encounter.viewer_can_see(*id, caster_id)
+            || encounter.cover_ac_bonus(*id, caster_id)
+                >= EncounterInstance::THREE_QUARTERS_COVER_AC
     })
 }
+
+/// SRD 5.2's flat Hide DC: *"you must succeed on a DC 15 Dexterity
+/// (Stealth) check."*
+///
+/// A number rather than a contest, which is the 2024 rule and a real
+/// change from the one the engine used to run: rolling against the
+/// best passive Perception on the board made hiding harder in
+/// proportion to how many creatures were looking, and RAW's contest
+/// happens on the *other* side of it — a watcher spends its Search
+/// action and rolls Perception against the number the hider actually
+/// got. That number is `ActorInstance::hidden_check_total`, and the
+/// Search action is where it is spent.
+pub const HIDE_DC: i32 = 15;
 
 /// Roll one Hide attempt and return what it installs — the `Hidden`
 /// condition on a pass, and nothing at all on a fail.
 ///
-/// 5e Hide is a Dexterity (Stealth) *check* against the best passive
-/// Perception watching. It used to roll a Dexterity *save*, which is a
-/// different number on the same die: the save lane collects save
-/// proficiency, Aura of Protection, Bless, and the save-mode cohorts,
-/// and collects none of the Stealth proficiency the action is named
-/// after. A rogue who is proficient in Stealth got nothing for it —
-/// while `Search`, on the other side of the same contest, was already
-/// adding that very proficiency into the DC it compared against.
+/// 5e Hide is a Dexterity (Stealth) *check* against `HIDE_DC`. It used
+/// to roll a Dexterity *save*, which is a different number on the same
+/// die: the save lane collects save proficiency, Aura of Protection,
+/// Bless, and the save-mode cohorts, and collects none of the Stealth
+/// proficiency the action is named after. A rogue who is proficient in
+/// Stealth got nothing for it — while `Search`, on the other side of
+/// the same contest, was already adding that very proficiency into the
+/// DC it compared against.
+///
+/// The successful total is recorded on the hider, because RAW says to:
+/// *"make note of your check's total, which is the DC for a creature to
+/// find you with a Wisdom (Perception) check."* A rogue who rolls a 27
+/// is harder to find than one who scraped a 15, and before the number
+/// was kept, both were found on the same `12 + DEX` estimate.
 ///
 /// Shared by all three printings for the same reason `can_attempt_hide`
 /// is: the bonus-action ones used to install `Hidden` outright, with no
@@ -1372,31 +1441,22 @@ pub fn resolve_hide_attempt(
     caster_id: usize,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
     use crate::engine::types::{AbilityScoreType, Skill};
-    // The highest passive Perception among active enemies, via
-    // `ActorInstance::passive_perception` (which folds in Perception
-    // skill proficiency where applicable).
-    let caster_team = encounter
-        .actors
-        .get(&caster_id)
-        .map(|a| a.team())
-        .unwrap_or(0);
-    let dc = encounter
-        .actors
-        .iter()
-        .filter(|(id, a)| **id != caster_id && a.team() != caster_team && a.is_combat_active())
-        .map(|(_, a)| a.passive_perception())
-        .max()
-        .unwrap_or(10);
     let roll = encounter.roll_ability_check(
         caster_id,
         AbilityScoreType::Dexterity,
         Some(Skill::Stealth),
     );
-    if roll < dc {
-        encounter.log(format!("  hide: stealth {} fails vs DC {}", roll, dc));
+    if roll < HIDE_DC {
+        encounter.log(format!("  hide: stealth {} fails vs DC {}", roll, HIDE_DC));
         return Vec::new();
     }
-    encounter.log("  hide: succeeds");
+    // Written eagerly rather than through a side-effect, for the same
+    // reason a light source is: it is a number the *condition* is about,
+    // and the condition install queued below is what the stack is for.
+    if let Some(me) = encounter.actors.get_mut(&caster_id) {
+        me.set_hidden_check_total(roll);
+    }
+    encounter.log(format!("  hide: succeeds (found only on a DC {})", roll));
     vec![Box::new(crate::engine::side_effects::ApplyCondition {
         actor_id: caster_id,
         condition: crate::conditions::Condition::Hidden,
@@ -1507,11 +1567,21 @@ impl Action for Search {
                 Some(a) => a,
                 None => continue,
             };
-            let dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
-            let mut dc = 12 + dex_mod;
-            if target.has_skill(Skill::Stealth) {
-                dc += target.proficiency_bonus();
-            }
+            // SRD 5.2: the DC to find a hider is *"your check's
+            // total"* — the number they actually rolled, kept on the
+            // actor by `resolve_hide_attempt`. The `12 + DEX` estimate
+            // below is the fallback for a creature holding `Hidden`
+            // without having rolled for it (a test that installs the
+            // condition directly, or a future effect that hides
+            // somebody by fiat), and for the `Invisible` branch, which
+            // has no Stealth check behind it at all.
+            let dc = target.hidden_check_total().unwrap_or_else(|| {
+                let mut estimate = 12 + target.ability_modifier(AbilityScoreType::Dexterity);
+                if target.has_skill(Skill::Stealth) {
+                    estimate += target.proficiency_bonus();
+                }
+                estimate
+            });
             if perception < dc {
                 continue;
             }

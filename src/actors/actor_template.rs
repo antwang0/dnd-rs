@@ -1906,6 +1906,9 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
 ///     breathe underwater". A condition rather than a flag, because
 ///     unlike the other two rows it is something done *to* a creature
 ///     and can be taken back off it.
+///   - **Storm Soul (Sea)** (`STORM_SOUL_SEA_TAG`) — the Storm Herald
+///     Barbarian's "you can breathe underwater", on its own tag rather
+///     than on the stat-block one for the reason given at the row.
 const UNDERWATER_BREATH_SOURCES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::UNDERWATER_BREATHING_TAG),
@@ -1915,6 +1918,15 @@ const UNDERWATER_BREATH_SOURCES: &[ActorFlagRow] = &[
     },
     ActorFlagRow {
         flag: |a| a.has_condition(Condition::WaterBreathing),
+    },
+    // 5e Storm Herald Barbarian **Storm Soul (Sea)** — "you can breathe
+    // underwater". A tag rather than the shared `UNDERWATER_BREATHING_TAG`
+    // because the two are different kinds of fact: that one is a line
+    // on a creature's stat block, and `underwater_breathing_templates`
+    // is the roster of the creatures that print it. A barbarian who
+    // took a subclass is not on that roster and should not have to be.
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::STORM_SOUL_SEA_TAG),
     },
 ];
 
@@ -1950,6 +1962,17 @@ const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
     // terrain and a lake is not that.
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
+    },
+    // 5e Storm Herald Barbarian **Storm Soul (Sea)** (subclass lv6,
+    // XGtE): "you gain resistance to lightning damage, and you can
+    // breathe underwater. You also gain a swimming speed of 30 feet."
+    // The tag shipped with its resistance clause alone and a docstring
+    // saying the other two halves had no combat surface, which was true
+    // when there was no water and no breath clock. There are both now,
+    // and this row and its sibling on `UNDERWATER_BREATH_SOURCES` are
+    // the rest of the sentence arriving.
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::STORM_SOUL_SEA_TAG),
     },
 ];
 
@@ -4797,6 +4820,11 @@ pub struct ActorInstance {
     /// the attacker is the natural chokepoint, whereas a target-side
     /// set would need per-attacker turn-tracking to know when to clear.
     hit_targets_this_turn: HashSet<usize>,
+    /// The Stealth total that hid this creature, per SRD 5.2's "make
+    /// note of your check's total, which is the DC for a creature to
+    /// find you". Written by `resolve_hide_attempt`, read by the Search
+    /// action. See `hidden_check_total`.
+    hidden_check_total: Option<i32>,
     /// 5e Rogue Assassin **Assassinate** (level 3) tracker. Flipped to
     /// `true` the first time this actor begins a turn in the encounter
     /// — set by the engine's `start_turn_for` hook. Read at
@@ -5244,6 +5272,7 @@ impl ActorInstance {
             damage_bonus_buff: 0,
             once_per_turn_marks: HashSet::new(),
             hit_targets_this_turn: HashSet::new(),
+            hidden_check_total: None,
             has_taken_turn_in_combat: false,
             relentless_rage_dc: 10,
             help_grants: HashMap::new(),
@@ -7382,6 +7411,36 @@ impl ActorInstance {
         score
     }
 
+    /// The total this creature rolled on the Stealth check that hid it
+    /// — SRD 5.2's *"make note of your check's total, which is the DC
+    /// for a creature to find you with a Wisdom (Perception) check"* —
+    /// or `None` if it is not hiding on a check anybody rolled.
+    ///
+    /// Kept beside `passive_perception` because the two are the halves
+    /// of one contest, and because keeping them apart is what let them
+    /// drift: Hide rolled a real check against the room's best passive
+    /// Perception and then threw the number away, and Search went
+    /// looking for the hider against a `12 + DEX` estimate of what the
+    /// roll might have been. A rogue who rolls a 27 is now harder to
+    /// find than one who scraped a 15, which is the whole point of
+    /// rolling.
+    ///
+    /// `None` rather than zero for a creature that holds `Hidden`
+    /// without having rolled for it — the AI's tests install the
+    /// condition directly, and so does anything that hides a creature
+    /// by fiat — so the Search action can tell "hid on a 15" from "hid
+    /// because somebody said so" and fall back rather than finding it
+    /// automatically.
+    pub fn hidden_check_total(&self) -> Option<i32> {
+        self.hidden_check_total
+    }
+
+    /// Record the Stealth total that hid this creature. Set by
+    /// `resolve_hide_attempt`, which is the only thing that rolls one.
+    pub fn set_hidden_check_total(&mut self, total: i32) {
+        self.hidden_check_total = Some(total);
+    }
+
     pub fn xp(&self) -> u32 {
         self.xp
     }
@@ -7669,6 +7728,14 @@ impl ActorInstance {
             self.condition_links.remove(&c);
             if c == Condition::MirroredImages {
                 self.mirror_images = 0;
+            }
+            // The Stealth total that hid this creature dies with the
+            // hiding, for the same reason the decoy count does: it is
+            // auxiliary state about one condition, and a stale copy of
+            // it would set the find-DC for the *next* time somebody
+            // ends up `Hidden` without rolling for it.
+            if c == Condition::Hidden {
+                self.hidden_check_total = None;
             }
         }
         removed
