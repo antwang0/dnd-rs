@@ -9965,6 +9965,95 @@ mod tests {
         }
     }
 
+    /// The seed is the whole encounter. Two runs of the same seed, in
+    /// the same process, must produce the same fight line for line.
+    ///
+    /// The invariant the binary advertises — the UI prints the seed on
+    /// the initiative panel so a fight can be replayed — and the one
+    /// nothing was checking. The engine has a great many places where a
+    /// tie could be broken by something the seed does not control, and
+    /// the actor table was a `HashMap` until recently, whose iteration
+    /// order is drawn from the operating system per process *and* per
+    /// thread.
+    ///
+    /// Two runs **in one process** is what gives the test teeth against
+    /// exactly that class of leak: consecutive `HashMap`s on one thread
+    /// get consecutive hasher keys, so a walk whose result depended on
+    /// hash order would come out differently the second time and the
+    /// logs would diverge. A test that compared two *processes* would
+    /// see two identical hash seeds' worth of nothing.
+    ///
+    /// Six seeds and both lighting states, because the cheapest way for
+    /// this to rot is a new rung that reaches for "whichever candidate
+    /// came first" down a lane the old seeds never walk.
+    #[test]
+    fn the_same_seed_fights_the_same_fight_twice() {
+        use crate::actors::creatures::pc_template_families;
+
+        // One run of the driver, returned as the log it wrote.
+        let play = |seed: u64| -> Vec<String> {
+            let families = pc_template_families();
+            let tp = TerrainGenParams {
+                width: 26,
+                height: 16,
+                branch_depth: (seed % 4) as usize,
+                branch_prob: 0.5,
+            };
+            let fam = &families[(seed as usize) % families.len()].1;
+            let ap = ActorGenParams {
+                cr_target: 2.0 + (seed % 4) as f32,
+                n_teams: 2,
+                pc_template: Some(fam[(seed as usize) % fam.len()]),
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed))
+                .unwrap_or_else(|err| panic!("seed {seed}: generation failed: {err}"));
+            if seed.is_multiple_of(2) {
+                e.set_ambient_light(crate::engine::lighting::AmbientLight::Darkness);
+            }
+            let ai = SimpleAi;
+            for _ in 0..200_000 {
+                e.process_stack();
+                if e.is_complete() {
+                    break;
+                }
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            e.messages().clone()
+        };
+
+        for seed in 0u64..6 {
+            let first = play(seed);
+            let second = play(seed);
+            assert!(
+                !first.is_empty(),
+                "seed {seed}: the driver produced no log at all to compare"
+            );
+            if first != second {
+                let at = first
+                    .iter()
+                    .zip(second.iter())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or_else(|| first.len().min(second.len()));
+                panic!(
+                    "seed {seed}: two runs of the same seed diverged at line {at}\n\
+                     first:  {:?}\n\
+                     second: {:?}",
+                    first.get(at),
+                    second.get(at)
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_pc_template_can_be_driven_by_the_ai_to_completion() {
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;

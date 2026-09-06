@@ -293,7 +293,7 @@ use crate::actors::creatures::goats::GOAT_TEMPLATE;
 use crate::actors::creatures::mules::MULE_TEMPLATE;
 use crate::actors::creatures::ponies::PONY_TEMPLATE;
 use crate::actors::creatures::elks::ELK_TEMPLATE;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 
 use crate::actions::action_template::ActionExecutionInfo;
@@ -1294,6 +1294,11 @@ pub enum ConcealmentPiercing {
     /// Sees through the whole illusion cohort — Truesight, Feral
     /// Senses, and every range-gated non-visual sense in
     /// `nonvisual_sense_reaches` that reaches the subject.
+    ///
+    /// Also finds a creature that is merely *hidden*, which is a
+    /// different rule reached by a different half of the tier — see
+    /// `Condition::countered_by_keen_senses` for which sources RAW
+    /// grants it to and which two are along for the ride.
     All,
 }
 
@@ -1307,7 +1312,9 @@ impl ConcealmentPiercing {
         match self {
             ConcealmentPiercing::None => false,
             ConcealmentPiercing::Invisibility => c.countered_by_see_invisibility(),
-            ConcealmentPiercing::All => c.countered_by_truesight(),
+            ConcealmentPiercing::All => {
+                c.countered_by_truesight() || c.countered_by_keen_senses()
+            }
         }
     }
 }
@@ -1644,7 +1651,7 @@ impl InitiativeTracker {
         cleared
     }
 
-    pub fn initialize_actors(&mut self, actors: &HashMap<usize, ActorInstance>) {
+    pub fn initialize_actors(&mut self, actors: &BTreeMap<usize, ActorInstance>) {
         for (id, actor) in actors.iter() {
             self.initiatives.push(InitiativeElement {
                 actor_id: *id,
@@ -1924,7 +1931,30 @@ pub struct EncounterInstance {
     terrain: Vec<TerrainInfo>,
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
-    pub actors: HashMap<usize, ActorInstance>,
+    /// Every creature in the encounter, live or fallen, keyed by id.
+    ///
+    /// A `BTreeMap` rather than a `HashMap`, and the difference is not
+    /// a performance one. This engine promises reproducibility from a
+    /// seed — the UI prints the seed on the initiative panel, the AI's
+    /// pickers document their tie-breaks as "deterministic ordering
+    /// keeps seed reproducibility intact", and a hundred tests sweep a
+    /// range of seeds and assert on what comes out. A `HashMap`'s
+    /// iteration order is seeded from the operating system, per
+    /// process and per thread, so every one of the several dozen sites
+    /// that walks this map and takes a `max_by_key`, a `find`, or a
+    /// first-match was quietly deciding ties by something no seed
+    /// controls.
+    ///
+    /// Every one of those sites turns out to sort or otherwise settle
+    /// its own ties — `the_same_seed_fights_the_same_fight_twice`
+    /// passes under either map, which is a real credit to whoever wrote
+    /// them. What the `BTreeMap` buys is that it stays true without
+    /// anybody having to remember: a walk of this table is now
+    /// id-ordered by the type rather than by the care of its author,
+    /// which is the order the careful sites were sorting themselves
+    /// into by hand anyway. Lookups on a table this size are no slower
+    /// for it.
+    pub actors: BTreeMap<usize, ActorInstance>,
     /// Loot piles indexed by tile. Items dropped by slain enemies sit
     /// here until a PC walks onto the tile and auto-picks them up
     /// (`MoveActor::apply` calls `pickup_items_at`). HashMap (not a
@@ -9759,7 +9789,7 @@ impl EncounterInstance {
             terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
-            actors: HashMap::new(),
+            actors: BTreeMap::new(),
             items_on_ground: HashMap::new(),
             initiative_tracker: InitiativeTracker::new(),
             encounter_stack: Vec::new(),

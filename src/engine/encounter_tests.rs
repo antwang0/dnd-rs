@@ -35968,6 +35968,56 @@ fn an_outline_burns_off_the_invisibility_underneath_it() {
     );
 }
 
+/// 5e: *"when you attack a target that you can't see, you have
+/// disadvantage on the attack roll"* — and a creature that has beaten
+/// the room's passive Perception with a Stealth check is one you can't
+/// see.
+///
+/// The other half of `Condition::Hidden`, which the engine carried in
+/// its docstring and nowhere else: hiding bought the rogue one good
+/// swing (the advantage half, consumed by taking it) and no protection
+/// at all in between, which is not what anybody hides for.
+#[test]
+fn a_hidden_creature_is_hard_to_hit_until_something_hears_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let rogue = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.attack_mode_tally(fighter, rogue, true).resolve(),
+        RollMode::Normal
+    );
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+    assert_eq!(
+        e.attack_mode_tally(fighter, rogue, true).resolve(),
+        RollMode::Disadvantage,
+        "you cannot see where it went"
+    );
+
+    // A non-visual sense in range finds it anyway — RAW's Blindsense is
+    // "aware of the location of any hidden or invisible creature", and
+    // every ear and tremor sense on the piercing tier reads the same.
+    // The rogue is two tiles away, inside the 10 ft envelope.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .set_blindsense(true);
+    assert_eq!(
+        e.attack_mode_tally(fighter, rogue, true).resolve(),
+        RollMode::Normal,
+        "a listener does not need to see it"
+    );
+}
+
 /// Starry Wisp: the SRD 5.2 bard / druid cantrip. On a hit it leaves
 /// two things behind — a `WispLit` mark and a carried light source —
 /// and between them an invisible target stops being hard to hit and
@@ -68157,6 +68207,7 @@ fn concealment_piercing_tiers_are_a_strict_hierarchy() {
         Condition::Invisible,
         Condition::Blurred,
         Condition::Displaced,
+        Condition::Hidden,
         Condition::Dodging,
         Condition::Prone,
     ] {
@@ -68169,15 +68220,27 @@ fn concealment_piercing_tiers_are_a_strict_hierarchy() {
             !ConcealmentPiercing::None.pierces(c),
             "the None tier pierces nothing"
         );
+        // The top tier pierces the union of the two cohorts it stands
+        // for: what a viewer sees through, and what a viewer simply
+        // knows the location of.
         assert_eq!(
             ConcealmentPiercing::All.pierces(c),
-            c.countered_by_truesight()
+            c.countered_by_truesight() || c.countered_by_keen_senses()
         );
         assert_eq!(
             ConcealmentPiercing::Invisibility.pierces(c),
             c.countered_by_see_invisibility()
         );
     }
+    // The two top-tier cohorts are about different things and must not
+    // start overlapping: seeing through an illusion and knowing where
+    // somebody is are separate rules, and a condition on both would be
+    // a sign one of them had been widened by accident.
+    assert!(
+        Condition::Hidden.countered_by_keen_senses()
+            && !Condition::Hidden.countered_by_truesight(),
+        "hiding is not an illusion"
+    );
     assert!(ConcealmentPiercing::None < ConcealmentPiercing::Invisibility);
     assert!(ConcealmentPiercing::Invisibility < ConcealmentPiercing::All);
 }

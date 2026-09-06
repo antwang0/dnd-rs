@@ -1533,7 +1533,12 @@ impl Action for Search {
                 // model the location-reveal by tagging Outlined for a
                 // round. The Invisible condition itself stays (since
                 // becoming visible would dispel the spell), but Outlined
-                // grants attack advantage to allies for the round.
+                // grants attack advantage to allies for the round — and,
+                // since `Condition::suppresses_invisibility` arrived,
+                // takes the concealment's disadvantage off the same
+                // swings. A pinpointed target is pinpointed: the mark
+                // no longer merely cancels out against the invisibility
+                // it was painted over.
                 encounter.log(format!(
                     "  search: pinpoint {}'s invisible location (DC {}).",
                     target_name, dc

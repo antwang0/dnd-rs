@@ -291,7 +291,7 @@ impl LightSource {
     /// tile rather than a distance from it.
     pub fn origin_in(
         &self,
-        actors: &std::collections::HashMap<usize, crate::actors::actor_template::ActorInstance>,
+        actors: &std::collections::BTreeMap<usize, crate::actors::actor_template::ActorInstance>,
     ) -> Option<Coordinate> {
         match self.anchor {
             LightAnchor::Fixed(c) => Some(c),

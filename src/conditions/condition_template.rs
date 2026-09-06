@@ -2992,6 +2992,31 @@ impl Condition {
         matches!(self, Condition::Invisible)
     }
 
+    /// True if this condition's concealment is beaten by *knowing where
+    /// the creature is* rather than by seeing through anything —
+    /// currently `Hidden`, and only `Hidden`.
+    ///
+    /// The cohort exists because 5e's sensory piercers say so in as
+    /// many words. The Rogue's **Blindsense** is "you are aware of the
+    /// location of any hidden or invisible creature within 10 feet",
+    /// and every non-visual sense on `nonvisual_sense_reaches` —
+    /// blindsight, tremorsense, a bat's ears, a snake's pits — locates
+    /// a creature that has merely gone quiet just as readily. None of
+    /// them is *seeing* anything, which is why this is a second cohort
+    /// rather than another arm on `countered_by_truesight`.
+    ///
+    /// **One deliberate over-grant.** `ConcealmentPiercing::All` folds
+    /// Truesight and Feral Senses in with the non-visual senses, and
+    /// RAW neither of those beats mundane hiding: Truesight's list is
+    /// invisibility, illusions, shapechangers and the Ethereal Plane,
+    /// and Feral Senses names invisible creatures only. Splitting the
+    /// tier to say so would buy one clause on two creatures and cost
+    /// the ordering that makes the tiers a ladder — so the collapse
+    /// stands, and is written down here rather than being found later.
+    pub fn countered_by_keen_senses(&self) -> bool {
+        matches!(self, Condition::Hidden)
+    }
+
     /// True if this condition, held by a creature, stops *that creature*
     /// benefiting from the Invisible condition — 5e's "the affected
     /// creature can't benefit from the Invisible condition", which
@@ -3278,10 +3303,21 @@ impl Condition {
     /// attacker-side state to evaluate; the call site handles them.
     /// `WindWalled` is *not* in this list — it imposes disadvantage only
     /// on ranged attacks (see `imposes_disadvantage_to_ranged_attackers`).
+    ///
+    /// `Hidden` **is**, and used not to be. 5e's rule is one sentence —
+    /// "when you attack a target you can't see, you have disadvantage
+    /// on the attack roll" — and a creature that has beaten the room's
+    /// passive Perception with a Stealth check is a target you can't
+    /// see. The condition's own docstring has claimed the clause since
+    /// it was written; what it actually carried was the *other* half,
+    /// the advantage on the hider's own swing, so hiding bought a rogue
+    /// one good attack and no protection at all in between. See
+    /// `countered_by_keen_senses` for who finds them anyway.
     pub fn imposes_disadvantage_to_attackers(&self) -> bool {
         matches!(
             self,
             Condition::Invisible
+                | Condition::Hidden
                 | Condition::Dodging
                 | Condition::Blurred
                 | Condition::HolyAuraed
