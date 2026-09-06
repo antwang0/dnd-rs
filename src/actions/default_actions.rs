@@ -1585,6 +1585,166 @@ impl Action for WipeAcid {
 
 pub static WIPE_ACID: LazyLock<WipeAcid> = LazyLock::new(|| WipeAcid {});
 
+/// 5e's attach clause, the attacher's half: "the stirge can detach
+/// itself by spending 5 feet of its movement."
+///
+/// `NoArgs`, because there is only one thing you can be wrapped around,
+/// and free, because the sentence before it set the creature's Speed to
+/// 0 — see `crate::engine::attachment`'s "what is deliberately not
+/// modeled" for the whole of that argument. The landing tile is the
+/// engine's to pick, which is why the validator asks for one: a
+/// darkmantle wrapped around somebody in a sealed corridor stays on
+/// rather than spending a turn failing to get off.
+///
+/// Lives on the default list rather than on the three stat blocks that
+/// can use it, for the same reason `StandUp` does: the validator is the
+/// gate, and three copies of one sentence is three places for it to
+/// drift.
+pub struct Release {}
+
+impl Action for Release {
+    fn name(&self) -> &str {
+        "release"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["letgo", "unlatch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .attached_host(caster_id)
+            .is_some_and(|host_id| {
+                encounter
+                    .find_adjacent_teleport_anchor(host_id, caster_id)
+                    .is_some()
+            })
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::ReleaseAttachment {
+            attacher_id: caster_id,
+        })]
+    }
+}
+
+pub static RELEASE: LazyLock<Release> = LazyLock::new(|| Release {});
+
+/// 5e's attach clause, everybody else's half: "the target or a creature
+/// within 5 feet of it can take an action to try to detach the cloaker,
+/// doing so by succeeding on a DC 14 Strength (Athletics) check."
+///
+/// Targets the *passenger*, not the person wearing it, which is the
+/// reading that makes the two halves of RAW's sentence one action: a
+/// victim prying the thing off its own face and an ally pulling it off
+/// theirs are the same swing at the same creature, and the only
+/// difference is where the prier is standing. Both are covered by the
+/// ordinary melee reach check, because an attached creature's location
+/// is mirrored onto its host's — so the host is at gap 0 from it and a
+/// neighbour is at gap 1.
+///
+/// Harmful, so the AI's hostile-action scan finds it and so the Charmed
+/// gate keeps a charmed victim from peeling their charmer's pet off.
+/// Deals no damage, so the attack-ranking lanes leave it alone: this
+/// action is chosen by `ai::simple::try_pry_attachment`, which knows
+/// what it is worth, rather than by the damage estimator, which would
+/// price it at zero.
+pub struct PryLoose {}
+
+impl Action for PryLoose {
+    fn name(&self) -> &str {
+        "pry loose"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pry", "peel", "detach"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        if !encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active())
+        {
+            return false;
+        }
+        // RAW's "the target or a creature within 5 feet of it": the
+        // prier has to be the host or standing beside them. The reach
+        // check in `Action::validate` measures to the *passenger*,
+        // whose location is the host's — so it answers both cases at
+        // once and this only has to confirm there is a latch to pull.
+        encounter.attached_host(target_id).is_some()
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(attacher_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(crate::engine::side_effects::PryAttachment {
+            prier_id: caster_id,
+            attacher_id,
+        })]
+    }
+}
+
+pub static PRY_LOOSE: LazyLock<PryLoose> = LazyLock::new(|| PryLoose {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -1599,6 +1759,8 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*HELP,
             &*MOUNT,
             &*DISMOUNT,
+            &*RELEASE,
+            &*PRY_LOOSE,
             &*SHOVE,
             &*GRAPPLE,
             &*GRAPPLE_ESCAPE,

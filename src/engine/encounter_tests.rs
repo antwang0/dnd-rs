@@ -82464,3 +82464,486 @@ fn a_planetars_holy_burst_knows_whose_side_everyone_is_on() {
         "the burst has to have hurt somebody, or the ally's zero proves nothing"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 5e's attach clause — `engine::attachment`
+//
+// Three SRD stat blocks latch onto what they hit: the Stirge (drains),
+// the Cloaker (blinds, and splits every blow aimed at it with the
+// person underneath) and the Darkmantle (blinds, and swings at
+// advantage). What they share is the *link* — the passenger comes off
+// the occupancy grid and rides the host's tiles — and that is what
+// most of this block is about, because it is the half that can corrupt
+// the board rather than merely get a rule wrong.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Spawn `attacher` beside a guard on a blank map and hand back
+/// `(encounter, attacher, host)`. A tile apart, so the reach half of
+/// the swing is genuinely exercised rather than assumed.
+///
+/// A Guard rather than a Fighter, deliberately: the victim in these
+/// tests is a Medium humanoid with a sword and nothing else, so an
+/// assertion about what the AI does with a cloaker on its face is not
+/// answered by a class feature three rungs higher in the pipeline.
+fn latched_pair(
+    template: &'static CreatureTemplate,
+) -> (EncounterInstance, usize, usize) {
+    latched_pair_seeded(template, 0)
+}
+
+/// Seed-parameterised `latched_pair`, for the sweeps that ride a die.
+fn latched_pair_seeded(
+    template: &'static CreatureTemplate,
+    seed: u64,
+) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
+    let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+    let attacher = e
+        .instantiate_creature(template, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let host = e
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    (e, attacher, host)
+}
+
+fn stirge_pair() -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    latched_pair(&STIRGE_TEMPLATE)
+}
+
+fn cloaker_pair() -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+    latched_pair(&CLOAKER_TEMPLATE)
+}
+
+/// The board invariant the whole module rests on: a latched creature
+/// owns no tiles, its location mirrors its host's, and it is still a
+/// creature every distance query can find.
+///
+/// Same three assertions `a_rider_leaves_the_grid_and_the_mount_keeps_
+/// the_tiles` makes about a saddle, and they matter more here: a rider
+/// is always smaller than its mount, and a cloaker is not.
+#[test]
+fn a_latched_creature_leaves_the_grid_and_the_host_keeps_the_tiles() {
+    let (mut e, stirge, host) = stirge_pair();
+    let perch = e.actors[&host].location();
+    let old = e.actors[&stirge].location();
+    assert!(e.attach(stirge, host).is_ok());
+
+    assert!(e.is_attached(stirge));
+    assert_eq!(e.attached_host(stirge), Some(host));
+    assert_eq!(e.attachers_on(host), vec![stirge]);
+    assert_eq!(
+        e.actors[&stirge].location(),
+        perch,
+        "the passenger's location mirrors its host's"
+    );
+    assert_eq!(e.actor_id_at(perch), Some(host));
+    assert_eq!(e.actor_id_at(old), None, "its old square is vacated");
+    assert_eq!(e.footprint_distance(stirge, host), Some(0));
+}
+
+/// "…and it moves with the target." The host walks, and the thing on
+/// its neck goes with it — which is also what keeps the passenger
+/// inside every reach, aura and burst measured against the host.
+#[test]
+fn a_latched_creature_travels_with_whatever_it_bit() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let dest = Coordinate::new(12, 9);
+    e.place_actor_at(host, dest).unwrap();
+    assert_eq!(e.actors[&stirge].location(), dest);
+    assert_eq!(e.actor_id_at(dest), Some(host), "and the host still owns the tile");
+}
+
+/// "Its Speed becomes 0, it can't benefit from any bonus to its Speed."
+///
+/// The rule that has to hold for the grid's sake as much as for RAW's:
+/// a passenger that could walk would stamp its footprint onto tiles
+/// belonging to the creature it is riding.
+#[test]
+fn a_latched_creature_has_no_movement_of_its_own() {
+    let (mut e, stirge, host) = stirge_pair();
+    e.actors.get_mut(&stirge).unwrap().reset_for_new_round();
+    assert!(
+        e.actors[&stirge].remaining_movement() > 0.0,
+        "a loose stirge flies"
+    );
+    assert!(e.attach(stirge, host).is_ok());
+    e.actors.get_mut(&stirge).unwrap().reset_for_new_round();
+    assert_eq!(e.actors[&stirge].remaining_movement(), 0.0);
+}
+
+/// "While attached, the stirge can't make Proboscis attacks, and the
+/// target takes 5 (2d4) Necrotic damage at the start of each of the
+/// stirge's turns."
+///
+/// Both halves, because either alone is a different creature: a stirge
+/// that drains *and* re-bites is twice the monster RAW prints, and one
+/// that only stops biting is a rock.
+#[test]
+fn an_attached_stirge_stops_biting_and_starts_draining() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let before = e.actors[&host].hitpoints();
+
+    let bite = e.actors[&stirge]
+        .find_action("blood drain")
+        .expect("the stirge carries its proboscis");
+    let aei = ActionExecutionInfo::new(bite, stirge, Some(vec![host]), None, None);
+    assert!(
+        !aei.validate(&e),
+        "an attached stirge cannot make its attach attack again"
+    );
+
+    e.start_turn_for(stirge);
+    let after = e.actors[&host].hitpoints();
+    assert!(
+        after < before,
+        "the drain fires at the start of the stirge's turn: {} -> {}",
+        before,
+        after
+    );
+    // 2d4 — never zero, never more than eight.
+    let drained = before - after;
+    assert!((2..=8).contains(&drained), "2d4 necrotic, got {}", drained);
+}
+
+/// The drain is hung on the *attacher's* turn, not the victim's, which
+/// is what makes a cloud of stirges a clock you stop by killing them
+/// one at a time rather than a lump the victim eats once a round.
+#[test]
+fn the_drain_rides_the_attachers_turn_and_not_the_hosts() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let before = e.actors[&host].hitpoints();
+    e.start_turn_for(host);
+    assert_eq!(
+        e.actors[&host].hitpoints(),
+        before,
+        "the victim's own turn costs them nothing"
+    );
+}
+
+/// "While the cloaker is attached, the target has the Blinded
+/// condition… the cloaker halves the damage it takes (round down), and
+/// the target takes the same amount of damage."
+///
+/// The split is the reason the pry action exists: a party that keeps
+/// swinging at a wrapped cloaker is putting half of every blow through
+/// its own fighter.
+#[test]
+fn a_wrapped_cloaker_splits_every_blow_with_the_person_underneath() {
+    use crate::engine::side_effects::DealDamage;
+    let (mut e, cloaker, host) = cloaker_pair();
+    assert!(e.attach(cloaker, host).is_ok());
+    assert!(
+        e.actors[&host].has_condition(Condition::Blinded),
+        "a wrapped victim cannot see"
+    );
+
+    let cloaker_before = e.actors[&cloaker].hitpoints();
+    let host_before = e.actors[&host].hitpoints();
+    DealDamage {
+        actor_id: cloaker,
+        amount: 12,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+
+    assert_eq!(
+        cloaker_before - e.actors[&cloaker].hitpoints(),
+        6,
+        "the cloaker halves what it takes"
+    );
+    assert_eq!(
+        host_before - e.actors[&host].hitpoints(),
+        6,
+        "and the target takes the same amount"
+    );
+}
+
+/// The split must not split again. `claim_attachment_damage_share`
+/// reads the same redirect guard the two interposition lanes beside it
+/// do, which is what stops a 12-point blow from recursing down to
+/// nothing.
+#[test]
+fn the_cloakers_split_halves_once_and_not_forever() {
+    use crate::engine::side_effects::DealDamage;
+    let (mut e, cloaker, host) = cloaker_pair();
+    assert!(e.attach(cloaker, host).is_ok());
+    let before = e.actors[&cloaker].hitpoints();
+    DealDamage {
+        actor_id: cloaker,
+        amount: 8,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        before - e.actors[&cloaker].hitpoints(),
+        4,
+        "8 -> 4, not 8 -> 4 -> 2 -> 1"
+    );
+}
+
+/// A loose cloaker takes its damage whole. The halving belongs to the
+/// link, not to the creature — it is not a resistance.
+#[test]
+fn a_loose_cloaker_takes_the_whole_blow() {
+    use crate::engine::side_effects::DealDamage;
+    let (mut e, cloaker, _host) = cloaker_pair();
+    let before = e.actors[&cloaker].hitpoints();
+    DealDamage {
+        actor_id: cloaker,
+        amount: 12,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert_eq!(before - e.actors[&cloaker].hitpoints(), 12);
+}
+
+/// "If the target is a Large or smaller creature, the cloaker attaches
+/// to it." The size gate, both sides of it.
+#[test]
+fn a_cloaker_cannot_wrap_something_bigger_than_it_is() {
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::attachment::AttachRefusal;
+    let (mut e, cloaker, _host) = cloaker_pair();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 4), 0, 0)
+        .unwrap();
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(14, 4), 0, 0)
+        .unwrap();
+    assert_eq!(e.actors[&ogre].size(), Size::Large);
+    assert_eq!(e.actors[&giant].size(), Size::Huge);
+    assert!(e.can_attach(cloaker, ogre).is_ok());
+    assert_eq!(
+        e.can_attach(cloaker, giant),
+        Err(AttachRefusal::TooBig)
+    );
+}
+
+/// "While attached to a target, the darkmantle can attack only the
+/// target but has Advantage on its attack rolls."
+///
+/// Both clauses, and they are the two the hostility gate and the
+/// attack-mode tally answer respectively — neither of which the
+/// darkmantle's own files can see.
+#[test]
+fn an_attached_darkmantle_swings_only_at_its_host_and_swings_at_advantage() {
+    use crate::actors::creatures::darkmantles::DARKMANTLE_TEMPLATE;
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
+    let (mut e, mantle, host) = latched_pair(&DARKMANTLE_TEMPLATE);
+    let bystander = e
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(7, 4), 0, 1)
+        .unwrap();
+    assert!(e.attach(mantle, host).is_ok());
+
+    assert!(!e.attachment_blocks_hostility(mantle, host));
+    assert!(e.attachment_blocks_hostility(mantle, bystander));
+    assert_eq!(
+        e.compute_attack_mode(mantle, host, true),
+        RollMode::Advantage,
+        "a wrapped darkmantle swings at advantage"
+    );
+    assert!(
+        e.actors[&host].has_condition(Condition::Blinded),
+        "and a Medium victim is smothered blind"
+    );
+}
+
+/// "If the target is a Medium or smaller creature… it covers the
+/// target." The size gate on the *covering*, which is the one half of
+/// RAW's two-part gate the engine keeps — the attach itself has none.
+#[test]
+fn a_darkmantle_holds_onto_a_large_creature_without_blinding_it() {
+    use crate::actors::creatures::darkmantles::DARKMANTLE_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    let (mut e, mantle, _host) = latched_pair(&DARKMANTLE_TEMPLATE);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 4), 0, 0)
+        .unwrap();
+    assert!(e.attach(mantle, ogre).is_ok());
+    assert_eq!(e.attached_host(mantle), Some(ogre), "it still holds on");
+    assert!(
+        !e.actors[&ogre].has_condition(Condition::Blinded),
+        "but it cannot cover a Large head"
+    );
+}
+
+/// "The target or a creature within 5 feet of it can detach the stirge
+/// as an action" — no check named, so an Action does it.
+#[test]
+fn a_stirge_comes_off_for_the_asking() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    assert!(e.pry_attachment(host, stirge));
+    assert!(!e.is_attached(stirge));
+    let landed = e.actors[&stirge].location();
+    assert_eq!(
+        e.actor_id_at(landed),
+        Some(stirge),
+        "and is back on the board under its own name"
+    );
+}
+
+/// "…doing so by succeeding on a DC 14 Strength (Athletics) check."
+///
+/// Swept across seeds rather than pinned to one, because the point is
+/// that the check is *rolled*: a cloaker that always came off, or never
+/// did, would pass a single-seed assertion either way.
+#[test]
+fn a_cloaker_has_to_be_wrestled_off() {
+    let mut came_off = 0;
+    let mut held_on = 0;
+    for seed in 0..40u64 {
+        use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+        let (mut e, cloaker, host) = latched_pair_seeded(&CLOAKER_TEMPLATE, seed);
+        assert!(e.attach(cloaker, host).is_ok());
+        if e.pry_attachment(host, cloaker) {
+            came_off += 1;
+        } else {
+            held_on += 1;
+        }
+    }
+    assert!(came_off > 0, "the DC 14 has to be beatable");
+    assert!(held_on > 0, "and it has to be failable");
+}
+
+/// A latched creature that leaves the board must not take its host's
+/// tiles with it, and a host that leaves must put its passengers down.
+///
+/// The exact pair of failures `sever_ride_links` was written to stop,
+/// one link over — and the reason `sever_attachments` reports whose
+/// footprint it handled rather than letting the removal path guess.
+#[test]
+fn banishing_half_of_a_latched_pair_leaves_the_other_half_standing() {
+    // The passenger goes. Its tiles were never its own.
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let perch = e.actors[&host].location();
+    e.actors
+        .get_mut(&stirge)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+    assert!(e.actors[&stirge].is_off_board());
+    assert_eq!(e.attached_host(stirge), None);
+    assert_eq!(
+        e.actor_id_at(perch),
+        Some(host),
+        "the host keeps every tile it was standing on"
+    );
+
+    // The host goes. Its passenger has to be somewhere afterwards.
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    e.actors
+        .get_mut(&host)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(5));
+    e.reconcile_board_presence();
+    assert!(e.actors[&host].is_off_board());
+    assert_eq!(e.attached_host(stirge), None);
+    assert!(!e.actors[&stirge].is_off_board(), "the stirge stays behind");
+    let landed = e.actors[&stirge].location();
+    assert_eq!(e.actor_id_at(landed), Some(stirge));
+}
+
+/// A host that dies out from under its passenger drops it rather than
+/// leaving it glued to a corpse — and, critically, the removal must not
+/// blank the tiles the passenger has just been stood up on.
+#[test]
+fn a_passenger_lands_when_its_host_is_removed_from_the_board() {
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let stirge = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let host = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    assert!(e.attach(stirge, host).is_ok());
+    e.remove_actor(host);
+
+    assert!(!e.actors.contains_key(&host));
+    assert_eq!(e.attached_host(stirge), None);
+    let landed = e.actors[&stirge].location();
+    assert_eq!(
+        e.actor_id_at(landed),
+        Some(stirge),
+        "the stirge is on the board and the grid agrees"
+    );
+}
+
+/// The link is one-to-many on the host side and one-to-one on the
+/// passenger's, and it never chains: a creature already carrying
+/// somebody cannot become somebody else's ride.
+#[test]
+fn latches_stack_on_one_victim_but_never_on_each_other() {
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    use crate::engine::attachment::AttachRefusal;
+    let (mut e, first, host) = stirge_pair();
+    let second = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(8, 4), 1, 1)
+        .unwrap();
+    let third = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(10, 4), 1, 2)
+        .unwrap();
+    assert!(e.attach(first, host).is_ok());
+    assert!(e.attach(second, host).is_ok());
+    assert_eq!(e.attachers_on(host), vec![first, second]);
+
+    // Already riding — cannot ride a second thing.
+    assert_eq!(
+        e.can_attach(first, third),
+        Err(AttachRefusal::AlreadyPaired)
+    );
+    // Already carrying — cannot become a ride.
+    assert!(e.attach(third, host).is_ok());
+    assert_eq!(
+        e.can_attach(first, host),
+        Err(AttachRefusal::AlreadyPaired),
+        "and a passenger cannot re-latch onto the host it is already on"
+    );
+}
+
+/// The AI's rung: a party member with a cloaker on them pries rather
+/// than swinging, because swinging puts half the blow through their own
+/// ribs.
+#[test]
+fn the_ai_peels_a_cloaker_off_instead_of_hitting_it() {
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+    let (mut e, cloaker, host) = cloaker_pair();
+    assert!(e.attach(cloaker, host).is_ok());
+    e.start_turn_for(host);
+    let decision = SimpleAi.decide(&e, host);
+    match decision {
+        ControllerDecision::Act(aei) => assert_eq!(
+            aei.action().name(),
+            "pry loose",
+            "a wrapped fighter should peel the cloaker, not stab through themselves"
+        ),
+        ControllerDecision::AwaitInput => panic!("expected an action, got AwaitInput"),
+    }
+}
+
+/// …and does *not* pry a stirge, which has five hit points and is
+/// better answered with a sword. The AI's rung is deliberately narrow;
+/// this is the half of it that has to stay narrow.
+#[test]
+fn the_ai_kills_a_stirge_rather_than_peeling_it() {
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    e.start_turn_for(host);
+    if let ControllerDecision::Act(aei) = SimpleAi.decide(&e, host) {
+        assert_ne!(aei.action().name(), "pry loose");
+    }
+}

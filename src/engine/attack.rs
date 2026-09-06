@@ -1291,6 +1291,10 @@ pub fn try_fire_directed_attack(
             (dist <= reach).then_some((dist, *id))
         })
         .filter(|(_, id)| !encounter.charm_blocks_hostility(actor_id, *id))
+        // 5e's attach clause, same lane and same reason: a creature
+        // wrapped around somebody's head "can attack only the target",
+        // and an opportunity swing at a third party is an attack.
+        .filter(|(_, id)| !encounter.attachment_blocks_hostility(actor_id, *id))
         .collect();
     candidates.sort_unstable();
     let Some((_, target_id)) = candidates.first().copied() else {
@@ -1364,6 +1368,13 @@ pub fn try_fire_riposte(
     // Deflect Missiles and Parry only reduce incoming damage, which a
     // charmed creature may do freely, but Riposte swings back.
     if encounter.charm_blocks_hostility(target_id, attacker_id) {
+        return;
+    }
+    // 5e's attach clause parts company with the same three self-clamps
+    // for the same reason: a latched creature may shrug off a blow from
+    // anyone, but it may only swing back at the thing it is holding
+    // onto.
+    if encounter.attachment_blocks_hostility(target_id, attacker_id) {
         return;
     }
     // Find the target's first melee weapon action via the shared

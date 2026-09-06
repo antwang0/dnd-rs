@@ -1454,6 +1454,20 @@ pub trait Action {
             {
                 return false;
             }
+            // 5e's attach clause: "while attached to a target, the
+            // darkmantle can attack only the target", and the narrower
+            // "can't make Attach attacks against other targets" the
+            // cloaker and the stirge word it as. Checked across every
+            // declared target for the same reason the charm gate above
+            // it is — the restriction binds on each name in the list
+            // independently.
+            if self.is_harmful()
+                && targets
+                    .iter()
+                    .any(|&tid| encounter.attachment_blocks_hostility(caster_id, tid))
+            {
+                return false;
+            }
         } else if let Some(locs) = target_locations
             && let Some(&point) = locs.first()
         {

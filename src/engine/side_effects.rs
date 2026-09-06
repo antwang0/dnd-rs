@@ -580,6 +580,70 @@ impl ApplicableSideEffect for DismountFrom {
     }
 }
 
+/// 5e's attach clause, the on-hit half: "…and the stirge attaches to
+/// the target."
+///
+/// A thin wrapper over `EncounterInstance::attach`, for the same reason
+/// `MountUp` is one over `mount`: the latch belongs in the stack
+/// alongside the damage the same swing dealt, and it has to resolve
+/// *after* it — a blow that drops the target should be the reason the
+/// latch does not take hold, not a thing that happens to a corpse.
+///
+/// The refusal is silent when the swing simply killed what it bit
+/// (`NoSuchPair` covers a host that is no longer a creature), and
+/// logged otherwise: the size gate turning a cloaker away from an ogre
+/// is a rule the table should see fire.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct AttachTo {
+    pub attacher_id: usize,
+    pub host_id: usize,
+}
+
+impl ApplicableSideEffect for AttachTo {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::attachment::AttachRefusal;
+        match ei.attach(self.attacher_id, self.host_id) {
+            Ok(()) | Err(AttachRefusal::NoSuchPair) => {}
+            Err(refusal) => {
+                let name = ei.actor_name(self.attacher_id);
+                ei.log(format!("  {} can't hold on: {}.", name, refusal.describe()));
+            }
+        }
+    }
+}
+
+/// 5e's attach clause, the attacher's half: let go of whatever this
+/// creature is wrapped around. Sibling of `DismountFrom`, and the engine
+/// call is re-checked rather than assumed to still be legal for the same
+/// reason: validation ran when the action was declared, and the board
+/// may have moved underneath it before the stack got here.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct ReleaseAttachment {
+    pub attacher_id: usize,
+}
+
+impl ApplicableSideEffect for ReleaseAttachment {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.detach(self.attacher_id, crate::engine::attachment::DetachCause::Voluntary);
+    }
+}
+
+/// 5e's attach clause, everybody else's half: try to pull a latched
+/// creature off. The check — and whether there is one at all — belongs
+/// to the passenger's own profile; see
+/// `EncounterInstance::pry_attachment`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct PryAttachment {
+    pub prier_id: usize,
+    pub attacher_id: usize,
+}
+
+impl ApplicableSideEffect for PryAttachment {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.pry_attachment(self.prier_id, self.attacher_id);
+    }
+}
+
 /// Move an actor to `dest` without firing per-step opportunity attacks.
 /// 5e teleports (Misty Step, Dimension Door, fey step abilities) bypass
 /// the normal "movement leaving threatened squares" trigger because the
@@ -679,6 +743,41 @@ impl ApplicableSideEffect for DealDamage {
                 damage_type: self.damage_type,
             };
             ei.within_damage_redirect(|e| redirected.apply(e));
+            return;
+        }
+
+        // 5e Cloaker, while attached: "the cloaker halves the damage it
+        // takes (round down), and the target takes the same amount of
+        // damage." Third in the same lane as the two interpositions
+        // above, and last of the three because it is the only one that
+        // does not *move* the blow — both halves land, one on each of
+        // the pair, so it has to be asked after everything that might
+        // have taken the whole hit somewhere else.
+        //
+        // Re-issued as two fresh `DealDamage`s so each side runs the
+        // full pipeline on its own sheet: resistances, temp HP,
+        // concentration saves and death handling all fire exactly as
+        // they would for a swing that had been aimed there. Both are
+        // wrapped in `within_damage_redirect`, whose guard
+        // `claim_attachment_damage_share` reads — that is what stops
+        // the cloaker's own half from splitting again, and again.
+        if let Some((host, halved)) =
+            ei.claim_attachment_damage_share(self.actor_id, self.amount)
+        {
+            let (cloaker_name, host_name) =
+                (ei.actor_name(self.actor_id), ei.actor_name(host));
+            ei.log(format!(
+                "  {} splits the {} {:?} with {} ({} each).",
+                cloaker_name, self.amount, self.damage_type, host_name, halved
+            ));
+            for actor_id in [self.actor_id, host] {
+                let split = DealDamage {
+                    actor_id,
+                    amount: halved,
+                    damage_type: self.damage_type,
+                };
+                ei.within_damage_redirect(|e| split.apply(e));
+            }
             return;
         }
 

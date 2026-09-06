@@ -2375,6 +2375,139 @@ impl Action for WeaponWithCondition {
     }
 }
 
+/// The weapon-rider family's fourth shape: a melee swing whose hit
+/// latches the swinger onto what it bit.
+///
+/// Sibling of `WeaponWithCondition`, and the difference between them is
+/// the whole reason this exists rather than a `Condition::Attached` row
+/// on that one. An install-on-hit condition is a fact about the
+/// *target*; an attach is a fact about the *pair*, and the pair has a
+/// position — see `crate::engine::attachment` for what the link does
+/// that a flag could not.
+///
+/// What the latch does once it holds belongs to the creature's
+/// `AttachProfile`, not to this struct: three stat blocks share this
+/// chassis and differ on every clause of the ride, and threading eight
+/// more fields through the weapon would put the cloaker's damage split
+/// on the stirge's proboscis.
+pub struct AttachingWeapon {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub attack_ability: AbilityScoreType,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub reach: isize,
+}
+
+impl AttachingWeapon {
+    /// Const constructor for the only shape any of the three carriers
+    /// has: a reach-5-ft swing using one ability for both attack and
+    /// damage.
+    pub const fn melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+        }
+    }
+}
+
+impl Action for AttachingWeapon {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+    fn is_melee_attack(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    /// The swing is refused while its swinger is already holding onto
+    /// somebody, which is RAW for all three carriers — "while attached,
+    /// the stirge can't make Proboscis attacks", "the cloaker can't
+    /// make Attach attacks against other targets".
+    ///
+    /// The hostility gate in `Action::validate` already stops this
+    /// action being aimed at a *third* creature. What it cannot stop is
+    /// a latched creature biting the thing it is already wrapped around
+    /// — the one target the gate lets through — which would re-open a
+    /// link that is already open and, for the cloaker, re-roll its
+    /// victim's blindness for free. So the second half of the sentence
+    /// is checked here, on the one action that can violate it.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        !encounter.is_attached(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let (mut effects, _dealt) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            self.display_name,
+            self.attack_ability,
+            self.damage_dice,
+            self.damage_type,
+            true,
+            None,
+        );
+        // Hit/miss gate via the effects vec, the same reading the rest
+        // of the weapon-rider family uses: empty on a miss, on
+        // Sanctuary and on a Mirror Image, non-empty on a hit even when
+        // the damage is later scaled to nothing. RAW hangs the latch on
+        // the hit, so a blow zeroed by Uncanny Dodge still attaches.
+        if effects.is_empty() {
+            return effects;
+        }
+        // Queued behind the damage rather than performed here, so a
+        // swing that drops its target attaches to nobody — see
+        // `AttachTo`. No Extra Attack chain: nothing on this chassis
+        // has one, and a second swing from a creature that just latched
+        // would be refused by its own validator anyway.
+        effects.push(Box::new(crate::engine::side_effects::AttachTo {
+            attacher_id: caster_id,
+            host_id: target_id,
+        }));
+        effects
+    }
+}
+
 /// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
 /// Reach is in tiles (not feet); 20 tiles = 50ft on this 2.5ft grid, which is
 /// short of the 5e 80/320 normal/long range but plenty for our 40×20 maps.
@@ -4761,15 +4894,24 @@ impl Action for WorgBite {
 
 pub static WORG_BITE: LazyLock<WorgBite> = LazyLock::new(|| WorgBite {});
 
-/// Stirge blood-drain proboscis — DEX attack, on a hit attaches to the
-/// target and drains 1d4+1 piercing per turn. We approximate the
-/// "attached" rider as a single 1d4+1 piercing strike per Action, with
-/// a +5 to-hit (matches the MM stat block at +5).
-pub static STIRGE_PROBOSCIS: SimpleWeapon = SimpleWeapon::melee(
+/// Stirge Proboscis — DEX-based 1d6+DEX piercing melee that latches the
+/// stirge onto whatever it hit. RAW: "Melee Attack Roll: +5, reach 5
+/// ft. Hit: 6 (1d6 + 3) Piercing damage, and the stirge attaches to the
+/// target. While attached, the stirge can't make Proboscis attacks, and
+/// the target takes 5 (2d4) Necrotic damage at the start of each of the
+/// stirge's turns."
+///
+/// The whole of that sentence lands now, across two files: the latch is
+/// this chassis, and the drain plus the no-second-bite clause are the
+/// stirge's `AttachProfile`. What shipped before was the first six
+/// words of it — a 1d4 jab with a docstring conceding that the attach
+/// was "approximated" by re-jabbing every turn, which is a different
+/// creature: a stirge you can walk away from.
+pub static STIRGE_PROBOSCIS: AttachingWeapon = AttachingWeapon::melee(
     "blood drain",
     &["proboscis", "drain"],
     AbilityScoreType::Dexterity,
-    Dice::new(1, 4),
+    Dice::new(1, 6),
     DamageType::Piercing,
 );
 
@@ -17441,30 +17583,30 @@ pub static CHAIN_DEVIL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 
 // ─── Darkmantle ─────────────────────────────────────────────────────
 
-/// Darkmantle Crush — STR-based 1d6+STR bludgeoning melee whose hit
-/// Blinds the target. RAW: "Crush. Melee Weapon Attack: +5 to hit,
-/// reach 5 ft., one creature. Hit: 6 (1d6 + 3) bludgeoning damage, and
-/// the darkmantle attaches to the target. If the target is Medium or
-/// smaller and the darkmantle has advantage on the attack roll, it
-/// attaches by covering the target's head, and the target is blinded
-/// and unable to breathe while the darkmantle is attached."
+/// Darkmantle Crush — STR-based 1d6+STR bludgeoning melee that wraps
+/// the darkmantle around whatever it hit. RAW: "Crush. Melee Attack
+/// Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning damage, and the
+/// darkmantle attaches to the target. If the target is a Medium or
+/// smaller creature and the darkmantle had Advantage on the attack
+/// roll, it covers the target, which has the Blinded condition and is
+/// suffocating while the darkmantle is attached in this way."
 ///
-/// The attach is modeled as an unconditional Blinded install rather
-/// than as a grapple with a sight clause riding on it. RAW gates the
-/// blinding on having had advantage — which the darkmantle arranges by
-/// dropping from a ceiling the party cannot see, a setup the engine has
-/// no vertical axis to express — so gating on it here would mean the
-/// signature clause of the creature almost never fired. The suffocation
-/// half is dropped: the engine has no breath clock.
-pub static DARKMANTLE_CRUSH: WeaponWithCondition = WeaponWithCondition::melee(
+/// The blindness is the darkmantle's `AttachProfile` now rather than a
+/// two-round `Blinded` install on this weapon, which is the difference
+/// between a creature that smothers you and one that flashes your eyes
+/// and lets go. Two clauses are still dropped and both were dropped
+/// before: the suffocation (the engine has no breath clock) and RAW's
+/// advantage gate on covering (the darkmantle earns that advantage by
+/// dropping from a ceiling the engine has no vertical axis to hang it
+/// from, so gating on it would mean the signature clause of the
+/// creature almost never fired). The *size* half of that gate is kept,
+/// as `host_conditions_max_size`.
+pub static DARKMANTLE_CRUSH: AttachingWeapon = AttachingWeapon::melee(
     "darkmantle crush",
     &["dm-crush", "darkmantle-crush"],
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Bludgeoning,
-    Condition::Blinded,
-    ConditionTimer::Rounds(2),
-    "smothering membrane",
 );
 
 // ─── Duergar ────────────────────────────────────────────────────────
@@ -18405,29 +18547,64 @@ impl Action for CloakerMoan {
 
 pub static CLOAKER_MOAN: LazyLock<CloakerMoan> = LazyLock::new(|| CloakerMoan {});
 
-/// Cloaker Bite — STR-based 2d6+STR piercing melee. RAW: "Bite. Melee
-/// Weapon Attack: +6 to hit, reach 5 ft., one creature. Hit: 10 (2d6 +
-/// 3) piercing damage, and the cloaker attaches to the target."
+/// Cloaker Attach — STR-based 3d6+STR piercing melee that wraps the
+/// cloaker around whatever it hit. RAW: "Attach. Melee Attack Roll: +6,
+/// reach 5 ft. Hit: 13 (3d6 + 3) Piercing damage. If the target is a
+/// Large or smaller creature, the cloaker attaches to it. While the
+/// cloaker is attached, the target has the Blinded condition, and the
+/// cloaker can't make Attach attacks against other targets. In
+/// addition, the cloaker halves the damage it takes (round down), and
+/// the target takes the same amount of damage."
 ///
-/// The attach clause is not modeled — the engine has no "riding on a
-/// creature's back" state, and the closest available shape (`Adhered`,
-/// the mimic's glue) says the *target* is stuck rather than that the
-/// cloaker is. The bite is the half that lands, and it is what turns the
-/// cloaker's multiattack into something other than a tail swipe.
-pub static CLOAKER_BITE: SimpleWeapon = SimpleWeapon::melee(
-    "cloaker bite",
-    &["cl-bite", "cloaker-bite"],
+/// All four clauses land now. The latch is this chassis; the blindness,
+/// the size gate and the damage split are the cloaker's
+/// `AttachProfile`; and the "can't make Attach attacks against other
+/// targets" half is the shared hostility gate every latched creature
+/// answers. The docstring this replaced conceded the whole rider — "the
+/// engine has no riding-on-a-creature's-back state" — which was true
+/// when it was written, and is what `engine::attachment` is.
+///
+/// Renamed from "cloaker bite" to match SRD 5.2, which calls the attack
+/// **Attach** and gives it 3d6 rather than the 2d6 the older printing
+/// did; the aliases keep the old name reachable from the prompt.
+pub static CLOAKER_ATTACH: AttachingWeapon = AttachingWeapon::melee(
+    "cloaker attach",
+    &["cl-bite", "cloaker-bite", "cl-attach"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(3, 6),
     DamageType::Piercing,
 );
 
-/// Cloaker Multiattack — "The cloaker makes two attacks: one with its
-/// bite and one with its tail." Heterogeneous, so `CompoundAttack`
-/// rather than the homogeneous chassis.
+/// Cloaker Multiattack — SRD 5.2: "The cloaker makes one Attach attack
+/// and two Tail attacks." Heterogeneous, so `CompoundAttack` rather
+/// than the homogeneous chassis.
+///
+/// The tail count was one and RAW's is two, which was the other half of
+/// the same stale printing `CLOAKER_ATTACH` came from — the bite was
+/// 2d6 there and the Action was two swings rather than three.
+///
+/// The Attach leads, which is the order RAW prints and the order that
+/// matters: the latch is tried before the tails, so a cloaker that
+/// wraps somebody spends the rest of its Action on a Blinded target.
+///
+/// **A cloaker that is already attached cannot take this Action at
+/// all**, and RAW says it should still swing the two tails. The
+/// `CompoundAttack` chassis validates `all` of its parts and then
+/// resolves all of them, so a compound whose Attach is refused has to
+/// be refused whole — see `CompoundAttack::custom_validate_input` for
+/// the argument, which is that a compound resolving a part it should
+/// not is a silent rules violation and a compound refusing is a visible
+/// loss. So an attached cloaker falls back to a single bare Tail: one
+/// swing short of RAW, in the direction that under-powers the monster.
+///
+/// The other refusal is not this one. A cloaker whose Attach is turned
+/// away by the *size* gate — an ogre is Large, a giant is not — still
+/// gets its whole Action, because that gate lives in `AttachTo` and
+/// fires when the stack applies the latch, long after every part of the
+/// compound has swung.
 pub static CLOAKER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "cloaker multiattack",
-    parts: vec![(&CLOAKER_BITE, 1), (&CLOAKER_TAIL, 1)],
+    parts: vec![(&CLOAKER_ATTACH, 1), (&CLOAKER_TAIL, 2)],
 });
 
 // ═══════════════════════════════════════════════════════════════════

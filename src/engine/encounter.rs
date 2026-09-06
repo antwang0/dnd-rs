@@ -3605,6 +3605,20 @@ impl EncounterInstance {
             tally.add(RollMode::Advantage);
         }
 
+        // 5e Darkmantle, while attached: "the darkmantle can attack
+        // only the target but has Advantage on its attack rolls."
+        // Beside the mounted clause above because it is the same shape
+        // — one creature riding another, and the ride is what grants
+        // the bonus — with the polarity of the ride reversed.
+        //
+        // Not gated on `is_melee`: RAW attaches the advantage to the
+        // creature's attack rolls without qualification, and a
+        // darkmantle wrapped around a head has nothing but its Crush to
+        // make anyway.
+        if self.attachment_grants_advantage(attacker_id, target_id) {
+            tally.add(RollMode::Advantage);
+        }
+
         // 5e concealment-piercing snapshot: does the attacker see through
         // the target's illusion / invisibility, and does the target see
         // through the attacker's? Both booleans feed the suppression
@@ -7234,7 +7248,12 @@ impl EncounterInstance {
                 // answer to a Rune Knight who grows to Large on a
                 // Large horse — RAW's own "if there is enough room"
                 // clause, with a saddle as the room.
-                if a.mounted_on().is_some() {
+                // A latched creature is off the grid for the same
+                // reason and gets the same deferral: the host owns the
+                // tiles, so a growth that resized it here would stamp a
+                // second body over its victim. It takes its new size
+                // the moment it lets go.
+                if a.mounted_on().is_some() || a.attached_to().is_some() {
                     return None;
                 }
                 let want = a.desired_size();
@@ -9341,12 +9360,12 @@ impl EncounterInstance {
             let location = ei.get_random_spawn(pc.size())?;
             let actor_id = ei.next_actor_id();
             // Ids are handed out fresh for the new board, so any
-            // rider/mount link a survivor arrives holding names an actor
-            // in the fight that just ended — at best nobody, at worst
-            // whoever inherits that number. Cut before they are seated;
-            // `set_actor_map` below stamps every one of them onto the
-            // grid in their own right.
-            pc.clear_ride_links();
+            // rider/mount or attach link a survivor arrives holding
+            // names an actor in the fight that just ended — at best
+            // nobody, at worst whoever inherits that number. Cut before
+            // they are seated; `set_actor_map` below stamps every one
+            // of them onto the grid in their own right.
+            pc.clear_body_links();
             pc.set_location(location);
             ei.actors.insert(actor_id, pc);
             ei.set_actor_map(actor_id, location)?;
@@ -11003,6 +11022,15 @@ impl EncounterInstance {
         // beside each other — all three read the actor's state at the
         // top of the turn and none depends on the others.
         self.apply_sunlight_hypersensitivity(actor_id);
+        // 5e's attach clause: "the target takes 5 (2d4) Necrotic damage
+        // at the start of each of the stirge's turns", and the same
+        // tick refreshes whatever the latch imposes on its host.
+        // Beside the other three start-of-turn passives because it is
+        // the same shape — read the actor's state at the top of the
+        // turn, pay out — and after them because the drain can drop the
+        // host, and a host that goes down should do so on a board the
+        // other three have already finished with.
+        self.drain_attached_host(actor_id);
         // 5e controlled mount: "it moves as you direct it". The rider
         // walks on the horse's legs, so the turn's movement budget is
         // the horse's speed rather than their own. Runs after
@@ -14578,6 +14606,14 @@ impl EncounterInstance {
                 r.set_location(coord);
             }
         }
+        // 5e's attach clause: "…and it moves with the target." Both
+        // halves of a rider/mount pair are asked, because a stirge on a
+        // knight rides wherever the horse goes and the knight's own
+        // mirror has already run one block up.
+        self.mirror_attachers_onto(body_id, coord, walked);
+        if let Some(rider_id) = passenger {
+            self.mirror_attachers_onto(rider_id, coord, walked);
+        }
         // "If an effect moves your mount against its will while you're
         // on it…" — the involuntary half of that sentence is exactly
         // `walked == false`, which is the distinction `walk_actor_to`
@@ -15183,18 +15219,28 @@ impl EncounterInstance {
     ///   - a **rider**, whose tiles belong to the mount it is sitting
     ///     on — `sever_ride_links` owns that repair and says so by
     ///     returning true;
+    ///   - a **latched creature**, whose tiles belong to the host it
+    ///     bit — `sever_attachments` owns that one, and also stands any
+    ///     passengers of a departing *host* back up on the box it is
+    ///     about to vacate;
     ///   - a creature that is **off the board**, which gave its
     ///     footprint up when it was banished and may well have had it
     ///     walked into since.
     ///
     /// Shared by both removal paths — `despawn_actor` and
     /// `remove_actor` — which used to spell the first case out
-    /// identically and would each have had to learn the second.
+    /// identically and would each have had to learn the others.
     fn release_grid_claim(&mut self, id: usize) -> bool {
-        // Ordered so the sever always runs: it is a repair, not a
-        // query, and `||` would skip it for an off-board rider.
-        let severed = self.sever_ride_links(id);
-        severed || self.actors.get(&id).is_some_and(|a| a.is_off_board())
+        // Ordered so both severs always run: they are repairs, not
+        // queries, and `||` would skip them for an off-board rider.
+        // Ride first, so a rider whose tiles were never theirs has
+        // already said so before the attach sever asks the grid who
+        // owns them.
+        let unseated = self.sever_ride_links(id);
+        let unlatched = self.sever_attachments(id);
+        unseated
+            || unlatched
+            || self.actors.get(&id).is_some_and(|a| a.is_off_board())
     }
 
     pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {

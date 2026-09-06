@@ -2876,6 +2876,23 @@ pub struct CreatureTemplate {
     /// `false` for the overwhelming majority of the bestiary, including
     /// every player class — a fighter is not something you ride.
     pub mountable: bool,
+    /// This creature's 5e **attach** clause — the sentence that lets it
+    /// latch onto something it hit and ride it — or `None` for the
+    /// overwhelming majority of the bestiary that fights at arm's
+    /// length.
+    ///
+    /// Three SRD 5.2 stat blocks carry one: the Cloaker, the
+    /// Darkmantle and the Stirge. See
+    /// `crate::engine::attachment::AttachProfile` for the eight clauses
+    /// they differ on, and the module docstring above it for why the
+    /// link is positional rather than a condition.
+    ///
+    /// Declared on the *creature* rather than on the attack that opens
+    /// it, the same way `charge` is, because five of the sites that ask
+    /// about it — the movement gate, the hostility gate, the
+    /// start-of-turn drain, the damage split, the release action —
+    /// never see the swing.
+    pub attach: Option<&'static crate::engine::attachment::AttachProfile>,
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -4011,6 +4028,7 @@ impl CreatureTemplate {
             condition_immunities: HashSet::new(),
             charge: None,
             mountable: false,
+            attach: None,
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
@@ -4587,6 +4605,27 @@ pub struct ActorInstance {
     /// The creature currently sitting on this actor. The other side of
     /// the `mounted_on` link; see there.
     ridden_by: Option<usize>,
+    /// This creature's 5e attach clause, copied from its template. See
+    /// `CreatureTemplate::attach`.
+    attach: Option<&'static crate::engine::attachment::AttachProfile>,
+    /// The creature this actor is currently latched onto, or `None` for
+    /// everything that fights at arm's length.
+    ///
+    /// Deliberately *one-sided*, which is the one way it differs from
+    /// the `mounted_on` / `ridden_by` pair it otherwise mirrors. RAW
+    /// never caps how many stirges land on one victim, so the host side
+    /// is one-to-many and is answered by
+    /// `EncounterInstance::attachers_on` scanning for this field rather
+    /// than by a `Vec` on the host that would be a second copy of the
+    /// same truth. `EncounterInstance::{attach, detach,
+    /// sever_attachments}` are the only writers.
+    ///
+    /// An attached creature is *off the occupancy grid*, exactly as a
+    /// mounted rider is: the host owns the tiles and this actor's
+    /// `location` is kept mirrored onto the host's, so every distance,
+    /// aura, line-of-sight and burst query keeps working on it
+    /// unchanged.
+    attached_to: Option<usize>,
     /// Class-feature charges currently unspent, keyed by feature tag
     /// (decremented on use, refilled to `features_max` on long rest and
     /// — for the short-rest cohorts — on short rest).
@@ -5053,6 +5092,8 @@ impl ActorInstance {
             mountable: ct.mountable,
             mounted_on: None,
             ridden_by: None,
+            attach: ct.attach,
+            attached_to: None,
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             attack_bonus_buff: 0,
@@ -8584,6 +8625,22 @@ impl ActorInstance {
         if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
         }
+        // 5e's attach clause: "its Speed becomes 0, it can't benefit
+        // from any bonus to its Speed, and it moves with the target."
+        // Read here rather than as a condition, because the whole of
+        // this rule is a fact about the *link* — see
+        // `crate::engine::attachment` — and because a creature that is
+        // off the occupancy grid must not be able to walk under its own
+        // power: its footprint belongs to the host it is riding, and a
+        // step would stamp it onto tiles it does not own.
+        //
+        // Above the exhaustion rung and below the condition sweep for
+        // the same reason both of those are where they are: all three
+        // are "the budget does not matter" answers, and a Dash cannot
+        // buy past any of them.
+        if self.attached_to.is_some() {
+            return 0.0;
+        }
         // 5e exhaustion tier 5: "speed reduced to 0". Read here rather
         // than as another `CONDITION_SPEED_MULTIPLIERS` row with a
         // factor of 0, because those factors scale the *speed* that
@@ -8812,8 +8869,9 @@ impl ActorInstance {
         self.ridden_by
     }
 
-    /// Forget whatever rider/mount link this actor is holding, without
-    /// touching the board.
+    /// Forget every id-to-id link this actor is holding — the
+    /// rider/mount pair and the attach link — without touching the
+    /// board.
     ///
     /// The one legitimate use for a one-sided write, and it is not a
     /// rule: it is for an actor being lifted out of one encounter and
@@ -8821,13 +8879,21 @@ impl ActorInstance {
     /// across names a creature that no longer exists — or, worse, one
     /// that now does and isn't a horse. `EncounterInstance::with_pcs`
     /// is the sole caller and it re-stamps every survivor onto the new
-    /// grid immediately after, which is what makes cutting the link
+    /// grid immediately after, which is what makes cutting the links
     /// without landing anybody safe here and nowhere else.
     ///
-    /// Ending a ride *inside* a live encounter is `dismount`.
-    pub fn clear_ride_links(&mut self) {
+    /// Both links are cut together because both mean the same thing to
+    /// the new board — *this actor's footprint belongs to somebody
+    /// else* — and a survivor that walked out of the last fight with a
+    /// stirge on its neck would otherwise arrive off the grid with the
+    /// tiles it is pointing at owned by a stranger.
+    ///
+    /// Ending either link *inside* a live encounter is `dismount` /
+    /// `detach`.
+    pub fn clear_body_links(&mut self) {
         self.mounted_on = None;
         self.ridden_by = None;
+        self.attached_to = None;
     }
 
     /// Write one side of the rider/mount link. Crate-visible rather than
@@ -8841,6 +8907,26 @@ impl ActorInstance {
     /// Write the other side of the link. See `set_mounted_on`.
     pub(crate) fn set_ridden_by(&mut self, rider_id: Option<usize>) {
         self.ridden_by = rider_id;
+    }
+
+    /// This creature's 5e attach clause, if its stat block has one. See
+    /// `CreatureTemplate::attach`.
+    pub fn attach_profile(&self) -> Option<&'static crate::engine::attachment::AttachProfile> {
+        self.attach
+    }
+
+    /// The creature this actor is latched onto, if any.
+    pub fn attached_to(&self) -> Option<usize> {
+        self.attached_to
+    }
+
+    /// Write the attach link. Crate-visible rather than public for the
+    /// same reason `set_mounted_on` is: the board and the link have to
+    /// agree about who owns which tiles, and only
+    /// `EncounterInstance::{attach, detach, sever_attachments}` can see
+    /// both at once.
+    pub(crate) fn set_attached_to(&mut self, host_id: Option<usize>) {
+        self.attached_to = host_id;
     }
 
     /// 5e "you can mount or dismount a creature… the cost is movement

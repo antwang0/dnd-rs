@@ -2,9 +2,39 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::DARKMANTLE_CRUSH;
 use crate::actions::spells::DARKNESS;
 use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
+use crate::engine::attachment::AttachProfile;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// The darkmantle's half of SRD 5.2's attach clause: "If the target is
+/// a Medium or smaller creature and the darkmantle had Advantage on the
+/// attack roll, it covers the target, which has the Blinded condition
+/// and is suffocating while the darkmantle is attached in this way.
+/// While attached to a target, the darkmantle can attack only the
+/// target but has Advantage on its attack rolls. Its Speed becomes 0,
+/// it can't benefit from any bonus to its Speed, and it moves with the
+/// target… A creature can take an action to try to detach the
+/// darkmantle from itself, doing so with a successful DC 13 Strength
+/// (Athletics) check."
+///
+/// No `max_host_size`: RAW lets the darkmantle attach to anything it
+/// can hit, and gates only the *covering* — the blindness — on the
+/// target being Medium or smaller. That is `host_conditions_max_size`,
+/// and it is the one half of RAW's two-part gate the engine keeps; see
+/// `DARKMANTLE_CRUSH` for why the advantage half is dropped.
+///
+/// No drain and no damage split: a darkmantle holds on and hits you, it
+/// does not feed.
+static DARKMANTLE_ATTACH: AttachProfile = AttachProfile {
+    verb: "wraps itself around",
+    host_conditions: &[Condition::Blinded],
+    host_conditions_max_size: Some(Size::Medium),
+    advantage_on_host: true,
+    pry_dc: Some(13),
+    ..AttachProfile::defaults()
+};
 
 /// Darkmantle — CR ½ small monstrosity. A cave ceiling that turns out to
 /// be alive, drops onto a head, and smothers it. The cheapest creature
@@ -16,7 +46,12 @@ use std::sync::LazyLock;
 ///   spell, so the darkmantle gets a single level-2 slot and casts the
 ///   real thing: a sphere of magical dark that no nonmagical light lifts
 ///   and no darkvision penetrates.
-/// - **darkmantle crush** — 1d6+STR bludgeoning that blinds on hit.
+/// - **darkmantle crush** — 1d6+STR bludgeoning that wraps the
+///   darkmantle around whatever it lands on. See `DARKMANTLE_ATTACH`
+///   for the ride: while it holds, a Medium-or-smaller victim is
+///   Blinded, the darkmantle swings at nothing else and swings at
+///   advantage, and it takes a DC 13 Strength (Athletics) check to pull
+///   off.
 ///
 /// The two lanes are the same tactic twice, and that redundancy is the
 /// creature. A darkmantle that has cast its Darkness is fighting inside
@@ -24,6 +59,10 @@ use std::sync::LazyLock;
 /// board — every combatant in the cloud is effectively Blinded and it is
 /// not — and a darkmantle that has spent its slot still blinds whatever
 /// it lands on.
+///
+/// The crush used to install a two-round `Blinded` and let go, which is
+/// a creature that flashes your eyes rather than one that smothers you.
+/// The attach lane is what the SRD sentence actually says.
 ///
 /// **Echolocation** (RAW: the darkmantle's blindsight fails while
 /// deafened) is the clause not carried; the engine's Blindsight has no
@@ -65,6 +104,7 @@ pub static DARKMANTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // One level-2 slot: RAW's "1/day" Darkness, priced in the only
         // currency the engine has for an innate cast.
         spell_slots_by_level: vec![0, 1],
+        attach: Some(&DARKMANTLE_ATTACH),
         ..CreatureTemplate::defaults()
     }
 });

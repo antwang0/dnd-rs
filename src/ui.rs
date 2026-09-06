@@ -211,6 +211,16 @@ pub fn render_map(
                 // outer `if let` exists: a frame can land between a
                 // death and its cleanup, and a renderer is the wrong
                 // place to find out.
+                //
+                // The attach link (`engine::attachment`) takes its
+                // passenger off the grid the same way and is
+                // deliberately *not* given the same treatment: a
+                // mounted pair is two creatures the player chose to
+                // stack, where a latched one is a monster on a party
+                // member's face, and drawing the monster would erase
+                // the character. The panel says "gripped by" instead —
+                // which is also the row that carries the numbers a
+                // player needs (whose turn drains them, how long).
                 let (actor_id, actor) = match occupant.ridden_by() {
                     Some(rider_id) if occupant.location() == coord => encounter
                         .actors
@@ -541,6 +551,33 @@ pub fn render_sideinfo(
                     format!(" riding {}", encounter.actor_name(mount_id)),
                     Style::default().fg(Color::LightGreen),
                 ));
+            }
+            // The attach link, both ends, on the same row and for the
+            // same reason the mount link is: an attached creature has
+            // no stamp of its own on the grid, so the map can only draw
+            // one of the pair, and the half it cannot draw is the one
+            // that explains why the other is Blinded and losing hit
+            // points every round.
+            //
+            // Red rather than green, which is the one thing this says
+            // that the mounted line does not: nobody up there chose it.
+            if let Some(host_id) = actor.attached_to() {
+                spans.push(Span::styled(
+                    format!(" on {}", encounter.actor_name(host_id)),
+                    Style::default().fg(Color::LightRed),
+                ));
+            } else {
+                let latched = encounter.attachers_on(actor_id);
+                if !latched.is_empty() {
+                    let names: Vec<String> = latched
+                        .iter()
+                        .map(|&a| encounter.actor_name(a))
+                        .collect();
+                    spans.push(Span::styled(
+                        format!(" gripped by {}", names.join(", ")),
+                        Style::default().fg(Color::LightRed),
+                    ));
+                }
             }
             initiative_lines.push(Line::from(spans));
         }

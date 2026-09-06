@@ -191,7 +191,13 @@ impl EncounterInstance {
         // the common case where the rider has already been set down
         // beside the horse correctly reports the horse's own footprint
         // as still its own.
-        let footprint_handled = self.sever_ride_links(actor_id);
+        // Both link severs run, which is why this is `|` and not `||`:
+        // they are repairs rather than queries, and a banished knight
+        // with a stirge on their neck is half of each. Ride first, so a
+        // rider whose tiles were never theirs has already said so
+        // before the attach sever asks the grid who owns them.
+        let footprint_handled =
+            self.sever_ride_links(actor_id) | self.sever_attachments(actor_id);
         let Some((origin, size, name)) = self
             .actors
             .get(&actor_id)

@@ -1567,6 +1567,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5g. Pull a latched creature off — see `try_pry_attachment`.
+        //     Sits immediately above focus-fire because it is a
+        //     deliberate refusal to focus-fire: the two latches it
+        //     fires on are the two the picker would answer by swinging
+        //     at the thing on somebody's face, which for a cloaker
+        //     means putting half of that swing through the person
+        //     underneath it.
+        if let Some(aei) = try_pry_attachment(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 6. Focus-fire: pick targets with advantage > normal > disadv;
         //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
@@ -8951,6 +8962,98 @@ fn try_escape_grapple(
         return None;
     }
     try_self_action(encounter, actor_id, "escape")
+}
+
+/// Spend an Action pulling a latched creature off — 5e's "the target or
+/// a creature within 5 feet of it can take an action to try to detach
+/// the cloaker."
+///
+/// The whole difficulty here is that prying is usually *not* the right
+/// answer. A latched creature is at gap 0 from its host and gap 1 from
+/// the host's neighbours, so it is already the easiest thing on the
+/// board to hit — and killing it ends the ride permanently where a pry
+/// only interrupts it. That is exactly right for the stirge, which has
+/// five hit points and dies to a stiff breeze, and it is why this
+/// function does not fire on one.
+///
+/// Two latches are worth an Action, and both are cases where swinging
+/// at the thing is worse than useless:
+///
+///   1. **It splits the damage** (`shares_damage`, the cloaker). Every
+///      point the party puts into it, the person wearing it takes half
+///      of. Attacking a wrapped cloaker is attacking your own fighter,
+///      so the pry is not merely better — the alternative has negative
+///      value, and nothing else in the AI's pipeline can see that.
+///   2. **It has blinded its host and cannot be finished this turn.**
+///      A blinded creature swings at disadvantage at everything, so the
+///      host's whole turn is worth less until the thing is off. "Cannot
+///      be finished" is the honest half of the comparison: if the
+///      actor's best swing is expected to drop it outright, that is
+///      strictly better than a check that might fail, and the picker
+///      one rung down will take it.
+///
+/// Prefers the latch on the actor's own body over one on a neighbour's,
+/// which is the ordering both clauses want: the actor is the one
+/// eating the split or fighting blind, and an ally standing next to
+/// them can pry on their own turn.
+fn try_pry_attachment(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("pry loose")?;
+    // The best single swing this actor could put into the latch
+    // instead. `expected_damage` is deliberately target-blind, which is
+    // fine for the comparison being made: it is asked whether the swing
+    // *could* finish a creature, and an over-estimate errs toward
+    // swinging, which is the cheaper mistake.
+    let best_swing = actor
+        .actions
+        .iter()
+        .filter(|a| a.is_harmful() && a.deals_damage())
+        .filter_map(|a| a.expected_damage(encounter, actor_id))
+        .fold(0.0f32, f32::max);
+    let my_team = actor.team();
+    let mut best: Option<(bool, usize, ActionExecutionInfo)> = None;
+    for host_id in encounter.sorted_actor_ids() {
+        let Some(host) = encounter.actors.get(&host_id) else {
+            continue;
+        };
+        // Allies only — including the actor itself. Nobody peels a
+        // stirge off an orc.
+        if host.team() != my_team || !host.is_combat_active() {
+            continue;
+        }
+        for attacher_id in encounter.attachers_on(host_id) {
+            let Some(profile) = encounter.attach_profile(attacher_id) else {
+                continue;
+            };
+            let finishable = encounter
+                .actors
+                .get(&attacher_id)
+                .is_some_and(|a| (a.hitpoints() as f32) <= best_swing);
+            let worth_it = profile.shares_damage
+                || (!profile.host_conditions.is_empty() && !finishable);
+            if !worth_it {
+                continue;
+            }
+            let aei =
+                ActionExecutionInfo::new(action, actor_id, Some(vec![attacher_id]), None, None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+            // Own body first, then lowest attacher id, so a seeded run
+            // reproduces.
+            let key = (host_id != actor_id, attacher_id);
+            if best
+                .as_ref()
+                .is_none_or(|(off_self, id, _)| (key.0, key.1) < (*off_self, *id))
+            {
+                best = Some((key.0, key.1, aei));
+            }
+        }
+    }
+    best.map(|(_, _, aei)| aei)
 }
 
 /// True when readying an attack is the better use of a turn the actor
