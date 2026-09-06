@@ -96,13 +96,15 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        // Deva resistances per MM: radiant immunity, plus RAW's
+        // SRD 5.2 "Resistances Radiant" — a resistance, not the
+        // immunity this used to carry, and the distinction is the whole
+        // difference between a cleric's Guiding Bolt being halved and
+        // being wasted. The deva's Immunities row is conditions only
+        // (Charmed, Exhaustion, Frightened); the qualified
         // "bludgeoning, piercing, and slashing from nonmagical attacks"
-        // — genuinely qualified, via the constructor in the `..` tail
-        // below. The unqualified overlay here is the radiant immunity
-        // and nothing else, which is what makes a +1 mace an answer to
-        // a deva and a club not.
-        damage_modifiers: HashMap::from([(DamageType::Radiant, DamageModifier::Immunity)]),
+        // triplet rides the constructor in the `..` tail below, which
+        // is what makes a +1 mace an answer to a deva and a club not.
+        damage_modifiers: HashMap::from([(DamageType::Radiant, DamageModifier::Resistance)]),
         // Deva condition immunities per MM: Charmed, Exhausted,
         // Frightened. The celestial purity envelope — can't be
         // compelled, fatigued, or fear-locked by mortal magic.
@@ -160,10 +162,13 @@ mod tests {
     #[test]
     fn deva_has_celestial_envelope() {
         let a = make();
-        // Radiant immunity — the angelic glow shrugs off its own type.
+        // SRD 5.2 "Resistances Radiant" — halved, not shrugged off.
+        // Asserted as the exact modifier rather than as "reduced",
+        // because immunity and resistance are the difference between a
+        // Guiding Bolt being wasted and being worth casting.
         assert_eq!(
             a.damage_modifier(DamageType::Radiant),
-            Some(DamageModifier::Immunity)
+            Some(DamageModifier::Resistance)
         );
         // RAW's "from nonmagical attacks", and asserted in both
         // directions: a resistance that had leaked into the unqualified

@@ -86,9 +86,13 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // effects. Standard upper-tier genie / fey / fiend trait.
         has_magic_resistance: true,
         has_extra_attack: true,
+        // SRD 5.2 "Immunities Lightning, Thunder" — full immunity, not
+        // the resistance this carried. The djinni is a storm with a
+        // face, and the two types its own Whirlwind and thunderous
+        // slams are made of are the two it cannot be hurt by.
         ..elemental_defaults([
-            (DamageType::Thunder, DamageModifier::Resistance),
-            (DamageType::Lightning, DamageModifier::Resistance),
+            (DamageType::Thunder, DamageModifier::Immunity),
+            (DamageType::Lightning, DamageModifier::Immunity),
         ])
     }
 });
@@ -129,19 +133,21 @@ mod tests {
             0,
         )
         .unwrap();
-        // Elemental envelope: poison immune, BPS resistant, lightning +
-        // thunder resistant from the air-element overlay.
+        // Elemental envelope: poison immune and BPS resistant from the
+        // shared tail, plus SRD 5.2's "Immunities Lightning, Thunder" —
+        // full immunity on both, which is the storm the djinni is made
+        // of failing to hurt it.
         assert_eq!(
             a.damage_modifier(DamageType::Poison),
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Thunder),
-            Some(DamageModifier::Resistance)
+            Some(DamageModifier::Immunity)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Lightning),
-            Some(DamageModifier::Resistance)
+            Some(DamageModifier::Immunity)
         );
         assert_eq!(
             a.nonmagical_damage_modifier(DamageType::Bludgeoning),

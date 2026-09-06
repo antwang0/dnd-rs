@@ -108,9 +108,15 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]),
-        // Lightning immunity is the kraken's signature defense — its own
-        // Lightning Storm can't blow back through self-centered casts.
-        damage_modifiers: HashMap::from([(DamageType::Lightning, DamageModifier::Immunity)]),
+        // SRD 5.2 "Immunities Cold, Lightning". Lightning is the
+        // kraken's signature defence — its own Lightning Storm can't
+        // blow back through self-centred casts — and cold is the
+        // half that was missing: the thing lives at the bottom of the
+        // ocean, where cold is the ambient condition.
+        damage_modifiers: HashMap::from([
+            (DamageType::Cold, DamageModifier::Immunity),
+            (DamageType::Lightning, DamageModifier::Immunity),
+        ]),
         condition_immunities: HashSet::from([
             // Too primal to fear, too vast to paralyze.
             Condition::Frightened,

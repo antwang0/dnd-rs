@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -35,6 +35,15 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Large,
         creature_type: CreatureType::Ooze,
         actions,
+        // SRD 5.2 "Immunities Acid" — the row the cube was shipping
+        // without, and the one its whole silhouette is about: the
+        // creature *is* a block of digestive acid, and its own Engulf
+        // deals acid damage it would otherwise have been taking a share
+        // of from any friendly-fire burst.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Acid,
+            DamageModifier::Immunity,
+        )]),
         // Ooze envelope: ignores Blinded (no eyes to gouge), Charmed,
         // Deafened, Exhaustion (no muscle to tire), Frightened, Prone
         // (no shape to knock down), and Asleep. RAW oozes also ignore

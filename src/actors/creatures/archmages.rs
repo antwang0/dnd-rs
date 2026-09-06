@@ -91,6 +91,18 @@ pub static ARCHMAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         proficient_saves: HashSet::from([AbilityScoreType::Intelligence, AbilityScoreType::Wisdom]),
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 1, 1, 1],
         has_magic_resistance: true,
+        // SRD 5.2 "Immunities Psychic; Charmed (with Mind Blank)". The
+        // stat block prints the psychic half flat — the archmage keeps a
+        // Mind Blank up as a matter of routine — so it lands as a plain
+        // immunity rather than as a rider on a spell the engine would
+        // have to watch for. The Charmed half is left off for the
+        // opposite reason: that one RAW does condition on the spell
+        // being up, and there is a real difference between a caster who
+        // cannot be charmed and one who has to have spent a slot.
+        damage_modifiers: crate::actors::actor_template::damage_modifiers_from([(
+            crate::engine::types::DamageType::Psychic,
+            crate::engine::types::DamageModifier::Immunity,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

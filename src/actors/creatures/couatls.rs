@@ -47,11 +47,12 @@ pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Celestial,
         actions,
-        // MM Couatl: resistant to radiant; magical-damage immunity (we
-        // omit the magical-physical resistance line since we don't track
-        // magical vs mundane weapon damage). Psychic immunity matches RAW.
+        // SRD 5.2 "Immunities Psychic, Radiant" — both full immunities.
+        // The radiant half was carried as a resistance, which is the
+        // 2014 printing; a couatl is a feathered serpent made of
+        // sunlight, and 5.2 upgraded it accordingly.
         damage_modifiers: HashMap::from([
-            (DamageType::Radiant, DamageModifier::Resistance),
+            (DamageType::Radiant, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
         // MM Couatl proficient saves: CON / WIS / CHA.

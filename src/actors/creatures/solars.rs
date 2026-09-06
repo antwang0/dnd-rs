@@ -69,8 +69,11 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // with was a CR 21 celestial that a hireling with a club hurt
         // exactly as much as a paladin with a holy avenger. The
         // qualified triplet is in the `..` tail below.
+        // SRD 5.2 "Immunities Poison, Radiant". Fire is not on that
+        // row and never was — not in 5.2 and not in the 2014 printing
+        // either — so a solar is answerable by a Fireball like anything
+        // else with 297 hit points.
         damage_modifiers: HashMap::from([
-            (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Radiant, DamageModifier::Immunity),
         ]),
@@ -124,11 +127,14 @@ mod tests {
     #[test]
     fn solar_is_radiant_immune() {
         let s = make();
+        // SRD 5.2 "Immunities Poison, Radiant" — and nothing else on
+        // the damage side.
         assert_eq!(s.effective_damage(99, DamageType::Radiant), 0);
-        assert_eq!(s.effective_damage(99, DamageType::Fire), 0);
         assert_eq!(s.effective_damage(99, DamageType::Poison), 0);
-        // Necrotic still bites — undead-killing angels aren't necrotic-immune
-        // in RAW.
+        // Fire is not on that row, in 5.2 or in the 2014 printing, and
+        // used to be here. Necrotic never was: undead-killing angels
+        // aren't necrotic-immune in RAW either.
+        assert_eq!(s.effective_damage(99, DamageType::Fire), 99);
         assert_eq!(s.effective_damage(10, DamageType::Necrotic), 10);
     }
 

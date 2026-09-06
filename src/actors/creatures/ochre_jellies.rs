@@ -60,13 +60,17 @@ pub static OCHRE_JELLY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Ooze,
         actions,
+        // SRD 5.2 "Resistances Acid" and "Immunities Lightning,
+        // Slashing" — and the two rows had been swapped round the wrong
+        // way here. Both immunities exist for the same reason and it is
+        // not toughness: lightning and a sword edge are the two things
+        // that *split* a jelly rather than hurt it, and the jelly that
+        // comes out of it is two jellies. Its own acid is the thing it
+        // merely shrugs off.
         damage_modifiers: damage_modifiers_from([
-            (DamageType::Acid, DamageModifier::Immunity),
-            // RAW's lightning immunity, which exists because lightning
-            // is the thing that splits a jelly rather than the thing
-            // that hurts it.
+            (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Immunity),
-            (DamageType::Slashing, DamageModifier::Resistance),
+            (DamageType::Slashing, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([
             Condition::Blinded,
@@ -108,9 +112,12 @@ mod tests {
     }
 
     /// The two damage types RAW writes the jelly's Split clause about
-    /// are the two it does not care about, which is the whole reason
-    /// the immunity list looks strange. Pinning both keeps a future
-    /// "lightning immunity looks like a typo" edit honest.
+    /// are the two it is *immune* to, which is the whole reason the
+    /// immunity list looks strange — and the acid it is made of is the
+    /// one it merely resists. The three had been ordered wrong here:
+    /// slashing was a resistance and acid an immunity, which is the
+    /// intuitive reading and the opposite of SRD 5.2's "Resistances
+    /// Acid / Immunities Lightning, Slashing".
     #[test]
     fn the_jelly_shrugs_off_exactly_what_would_have_split_it() {
         let a = make();
@@ -120,11 +127,11 @@ mod tests {
         );
         assert_eq!(
             a.damage_modifier(DamageType::Slashing),
-            Some(DamageModifier::Resistance)
+            Some(DamageModifier::Immunity)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Acid),
-            Some(DamageModifier::Immunity)
+            Some(DamageModifier::Resistance)
         );
     }
 

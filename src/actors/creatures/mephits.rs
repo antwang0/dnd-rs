@@ -267,11 +267,16 @@ pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Small,
         creature_type: CreatureType::Elemental,
         actions,
-        // No fire / cold vulnerability — RAW. The dust mephit is a
-        // grit-imp without a paired elemental opposite.
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&DUST_MEPHIT_DEATH_BURST),
-        ..elemental_body_defaults([])
+        // SRD 5.2 "Vulnerabilities Fire". The comment this replaces
+        // said the dust mephit had no vulnerability because it had no
+        // "paired elemental opposite" — but RAW gives every mephit one,
+        // and dust's is fire: a cloud of grit is exactly the thing a
+        // flame goes through. It is also the only one of the four that
+        // was missing it, which is what made the omission look like a
+        // rule rather than a gap.
+        ..elemental_body_defaults([(DamageType::Fire, DamageModifier::Vulnerability)])
     }
 });
 
@@ -437,12 +442,13 @@ mod tests {
         assert!(a.find_action("blinding breath").is_some());
         // Death burst should be wired through.
         assert!(a.death_burst().is_some());
-        // No fire / cold vulnerability — the dust mephit's defensive
-        // profile is the "no paired elemental opposite" variant. Distinct
-        // from Ice (fire-vulnerable) and Magma (cold-vulnerable).
-        assert!(
-            a.damage_modifier(DamageType::Fire).is_none(),
-            "Dust Mephit should NOT have fire vulnerability (RAW)",
+        // SRD 5.2 "Vulnerabilities Fire" — every mephit in the book has
+        // a paired opposite and dust's is fire. Cold is not one: a
+        // cloud of grit does not care about the temperature.
+        assert_eq!(
+            a.damage_modifier(DamageType::Fire),
+            Some(DamageModifier::Vulnerability),
+            "Dust Mephit is fire-vulnerable per SRD 5.2",
         );
         assert!(
             a.damage_modifier(DamageType::Cold).is_none(),

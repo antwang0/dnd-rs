@@ -39,9 +39,13 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        // 5e Wight: necrotic + poison immunity, non-magical BPS resistance.
+        // SRD 5.2 "Resistances Necrotic" and "Immunities Poison" — the
+        // necrotic half is a resistance, not the immunity this carried.
+        // Which matters: necrotic is what a warlock's Eldritch Blast
+        // build and a Death Cleric aim at undead, and an immune wight
+        // turned all of it off.
         damage_modifiers: damage_modifiers_from([
-            (DamageType::Necrotic, DamageModifier::Immunity),
+            (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         // Undead proficiencies — wights have decent CON/CHA from MM.

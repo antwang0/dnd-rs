@@ -674,7 +674,7 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
 mod tests {
     use crate::actors::actor_template::CreatureTemplate;
     use crate::conditions::Condition;
-    use crate::engine::types::Skill;
+    use crate::engine::types::{DamageModifier, DamageType, Skill};
 
     /// SRD 5.2's Exhaustion immunity, stat block by stat block, for every
     /// carrier of it this bestiary ships plus the near misses that share a
@@ -772,6 +772,146 @@ mod tests {
         (&*super::violet_fungi::VIOLET_FUNGUS_TEMPLATE, false),
         (&*super::treants::TREANT_TEMPLATE, false),
         ]
+    }
+
+    /// The damage rows SRD 5.2 prints for the stat blocks where the
+    /// distinction between *resisted* and *immune* is load-bearing, and
+    /// where this bestiary had it wrong in one direction or the other.
+    ///
+    /// Resistance and immunity are one enum variant apart and read the
+    /// same in prose — "the deva shrugs off radiant" is true of both —
+    /// so a swap survives every test that only asks whether the damage
+    /// was reduced. What it changes is whether a spell is worth casting:
+    /// a Guiding Bolt halved against a deva is a good turn and a Guiding
+    /// Bolt nullified is a wasted one, and the same sentence decides
+    /// whether a warlock's necrotic build has anything to do about a
+    /// wight.
+    ///
+    /// Nine of these eleven rows were wrong before the table existed,
+    /// and the two directions are equally represented: the ochre jelly
+    /// had its acid and its slashing the wrong way round, the solar was
+    /// immune to a type no printing gives it, and the gelatinous cube —
+    /// a cube of digestive acid — took full damage from acid.
+    ///
+    /// `None` means the type is not on any of the creature's rows, which
+    /// is an assertion in its own right: it is what says the solar's
+    /// fire immunity is gone rather than merely downgraded.
+    #[allow(clippy::type_complexity)]
+    fn damage_row_table() -> Vec<(
+        &'static CreatureTemplate,
+        &'static [(DamageType, Option<DamageModifier>)],
+    )> {
+        use DamageModifier::{Immunity, Resistance, Vulnerability};
+        vec![
+            // "Resistances Bludgeoning, Lightning, Piercing, Slashing"
+            // / "Immunities Poison, Thunder".
+            (
+                &*super::air_elementals::AIR_ELEMENTAL_TEMPLATE,
+                &[
+                    (DamageType::Lightning, Some(Resistance)),
+                    (DamageType::Thunder, Some(Immunity)),
+                ],
+            ),
+            // "Immunities Psychic" — the archmage keeps a Mind Blank up.
+            (
+                &*super::archmages::ARCHMAGE_TEMPLATE,
+                &[(DamageType::Psychic, Some(Immunity))],
+            ),
+            // "Resistances Bludgeoning, Piercing, Slashing" /
+            // "Immunities Psychic, Radiant".
+            (
+                &*super::couatls::COUATL_TEMPLATE,
+                &[
+                    (DamageType::Psychic, Some(Immunity)),
+                    (DamageType::Radiant, Some(Immunity)),
+                ],
+            ),
+            // "Resistances Radiant" — and no damage immunities at all.
+            (
+                &*super::devas::DEVA_TEMPLATE,
+                &[(DamageType::Radiant, Some(Resistance))],
+            ),
+            // "Immunities Lightning, Thunder".
+            (
+                &*super::djinn::DJINNI_TEMPLATE,
+                &[
+                    (DamageType::Lightning, Some(Immunity)),
+                    (DamageType::Thunder, Some(Immunity)),
+                ],
+            ),
+            // "Immunities Acid" — the cube is the acid.
+            (
+                &*super::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE,
+                &[(DamageType::Acid, Some(Immunity))],
+            ),
+            // "Immunities Cold, Lightning".
+            (
+                &*super::krakens::KRAKEN_TEMPLATE,
+                &[
+                    (DamageType::Cold, Some(Immunity)),
+                    (DamageType::Lightning, Some(Immunity)),
+                ],
+            ),
+            // "Vulnerabilities Fire" — every mephit has a paired
+            // opposite and dust's is fire.
+            (
+                &*super::mephits::DUST_MEPHIT_TEMPLATE,
+                &[
+                    (DamageType::Fire, Some(Vulnerability)),
+                    (DamageType::Cold, None),
+                ],
+            ),
+            // "Resistances Acid" / "Immunities Lightning, Slashing" —
+            // the two that split it, not the one it is made of.
+            (
+                &*super::ochre_jellies::OCHRE_JELLY_TEMPLATE,
+                &[
+                    (DamageType::Acid, Some(Resistance)),
+                    (DamageType::Lightning, Some(Immunity)),
+                    (DamageType::Slashing, Some(Immunity)),
+                ],
+            ),
+            // "Immunities Poison, Radiant" — and fire is not on it.
+            (
+                &*super::solars::SOLAR_TEMPLATE,
+                &[
+                    (DamageType::Poison, Some(Immunity)),
+                    (DamageType::Radiant, Some(Immunity)),
+                    (DamageType::Fire, None),
+                    (DamageType::Necrotic, None),
+                ],
+            ),
+            // "Resistances Necrotic" / "Immunities Poison" — two rows,
+            // and the necrotic one is the weaker.
+            (
+                &*super::wights::WIGHT_TEMPLATE,
+                &[
+                    (DamageType::Necrotic, Some(Resistance)),
+                    (DamageType::Poison, Some(Immunity)),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_bestiary_agrees_with_the_srd_about_what_hurts() {
+        let mut wrong: Vec<String> = Vec::new();
+        for (t, rows) in damage_row_table() {
+            for &(damage_type, expected) in rows {
+                let actual = t.damage_modifiers.get(&damage_type).copied();
+                if actual != expected {
+                    wrong.push(format!(
+                        "{}: SRD says {} is {:?}, template says {:?}",
+                        t.name, damage_type, expected, actual
+                    ));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "damage rows disagree with SRD 5.2:\n  {}",
+            wrong.join("\n  ")
+        );
     }
 
     #[test]

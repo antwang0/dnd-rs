@@ -17324,7 +17324,7 @@ fn wight_life_drain_reduces_max_hp_on_fail() {
 }
 
 #[test]
-fn wight_is_immune_to_necrotic_and_poison() {
+fn a_wight_shrugs_off_poison_and_only_half_shrugs_off_necrotic() {
     use crate::actors::creatures::wights::WIGHT_TEMPLATE;
     use crate::engine::types::DamageType;
 
@@ -17332,8 +17332,13 @@ fn wight_is_immune_to_necrotic_and_poison() {
     let wight = e
         .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(2, 2), 1, 0)
         .unwrap();
-    assert!(e.actors[&wight].is_immune_to(DamageType::Necrotic));
+    // SRD 5.2 "Resistances Necrotic" / "Immunities Poison" — two
+    // different rows, and the necrotic one used to be read as the
+    // stronger of the two. Halved rather than nullified is what makes
+    // a warlock's necrotic build worth pointing at a wight at all.
     assert!(e.actors[&wight].is_immune_to(DamageType::Poison));
+    assert!(!e.actors[&wight].is_immune_to(DamageType::Necrotic));
+    assert!(e.actors[&wight].is_resistant_to(DamageType::Necrotic));
 }
 
 #[test]
@@ -25925,9 +25930,10 @@ fn couatl_template_has_bite_gaze_and_resistances() {
         .collect();
     assert!(names.contains(COUATL_BITE.name()));
     assert!(names.contains(COUATL_SLEEP_GAZE.name()));
-    // Psychic immunity, radiant resistance.
+    // SRD 5.2 "Immunities Psychic, Radiant" — both, and the radiant
+    // half is an immunity rather than the 2014 printing's resistance.
     assert!(actor.is_immune_to(DamageType::Psychic));
-    assert!(actor.is_resistant_to(DamageType::Radiant));
+    assert!(actor.is_immune_to(DamageType::Radiant));
     // Couatls can't be magically charmed or frightened.
     assert!(actor.is_immune_to_condition(Condition::Charmed));
     assert!(actor.is_immune_to_condition(Condition::Frightened));
@@ -31197,14 +31203,19 @@ fn mordenkainens_sword_installs_concentration() {
 }
 
 /// Negative Energy Flood deals necrotic damage that respects
-/// resistance: a wight (necrotic-immune) shrugs it off entirely;
-/// a goblin (no resistance) takes damage.
+/// immunity: a ghost shrugs it off entirely; a goblin (no
+/// resistance) takes damage.
+///
+/// A ghost rather than the wight this used to use. SRD 5.2 gives a
+/// wight *resistance* to necrotic, not immunity, so it is no longer a
+/// creature that takes nothing — and a test whose whole assertion is
+/// "HP unchanged" needs a subject that actually takes nothing.
 #[test]
 fn negative_energy_flood_respects_necrotic_immunity() {
     use crate::actions::spells::NEGATIVE_ENERGY_FLOOD;
+    use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
-    use crate::actors::creatures::wights::WIGHT_TEMPLATE;
     let mut e = ei_with_terrain(15, 15, &[]);
     let warlock = e
         .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -31212,11 +31223,11 @@ fn negative_energy_flood_respects_necrotic_immunity() {
     let goblin = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
         .unwrap();
-    let wight = e
-        .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(7, 2), 1, 1)
+    let ghost = e
+        .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(7, 2), 1, 1)
         .unwrap();
     let goblin_hp = e.actors[&goblin].hitpoints();
-    let wight_hp = e.actors[&wight].hitpoints();
+    let ghost_hp = e.actors[&ghost].hitpoints();
     // Hit the goblin first.
     for x in NEGATIVE_ENERGY_FLOOD.side_effects(&mut e, warlock, Some(&vec![goblin]), None, None) {
         x.apply(&mut e);
@@ -31230,14 +31241,14 @@ fn negative_energy_flood_respects_necrotic_immunity() {
         0
     };
     assert!(goblin_after < goblin_hp, "goblin takes necrotic damage");
-    // Wight is necrotic-immune — HP unchanged.
-    for x in NEGATIVE_ENERGY_FLOOD.side_effects(&mut e, warlock, Some(&vec![wight]), None, None) {
+    // The ghost is necrotic-immune — HP unchanged.
+    for x in NEGATIVE_ENERGY_FLOOD.side_effects(&mut e, warlock, Some(&vec![ghost]), None, None) {
         x.apply(&mut e);
     }
     assert_eq!(
-        e.actors[&wight].hitpoints(),
-        wight_hp,
-        "wight is necrotic-immune and takes no damage"
+        e.actors[&ghost].hitpoints(),
+        ghost_hp,
+        "the ghost is necrotic-immune and takes no damage"
     );
 }
 
@@ -32767,9 +32778,13 @@ fn air_elemental_template_carries_elemental_envelope() {
         .instantiate_creature(&AIR_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 1, 0)
         .unwrap();
     let ae = &e.actors[&id];
+    // SRD 5.2 splits the air elemental's two signature types across
+    // both rows: "Resistances Bludgeoning, Lightning, Piercing,
+    // Slashing" and "Immunities Poison, Thunder". A living gale is
+    // hurt a little by its own lightning and not at all by noise.
     assert!(ae.is_immune_to(DamageType::Poison));
     assert!(ae.is_resistant_to(DamageType::Lightning));
-    assert!(ae.is_resistant_to(DamageType::Thunder));
+    assert!(ae.is_immune_to(DamageType::Thunder));
     assert!(ae.is_immune_to_condition(Condition::Poisoned));
     assert!(ae.is_immune_to_condition(Condition::Petrified));
     assert!(ae.find_action("air slam").is_some());

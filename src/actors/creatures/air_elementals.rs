@@ -42,11 +42,15 @@ pub static AIR_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         creature_type: CreatureType::Elemental,
         actions,
         // Base BPS + Poison entries live in
-        // `elemental_body_defaults`; lightning + thunder resistance
-        // are the air variant's signature overlays.
+        // `elemental_body_defaults`; the lightning and thunder rows are
+        // the air variant's signature overlays. SRD 5.2 splits them —
+        // "Resistances Bludgeoning, Lightning, Piercing, Slashing" and
+        // "Immunities Poison, Thunder" — so the thunder half is a full
+        // immunity and the lightning half is not. A living gale is not
+        // hurt by noise.
         ..elemental_body_defaults([
             (DamageType::Lightning, DamageModifier::Resistance),
-            (DamageType::Thunder, DamageModifier::Resistance),
+            (DamageType::Thunder, DamageModifier::Immunity),
         ])
     }
 });
