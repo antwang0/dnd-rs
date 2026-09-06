@@ -352,6 +352,9 @@ impl EncounterInstance {
             // mid-charge, whatever run it had going.
             r.set_location(mount_loc);
         }
+        // …and anything latched onto them goes up into the saddle too.
+        // See `unlink_ride` for why these two sites mirror by hand.
+        self.mirror_attachers_onto(rider_id, mount_loc, false);
         if let Some(m) = self.actors.get_mut(&mount_id) {
             m.set_ridden_by(Some(rider_id));
         }
@@ -541,5 +544,12 @@ impl EncounterInstance {
         }
         let size = self.actors[&rider_id].size();
         self.stamp_footprint_of(rider_id, landing, size);
+        // Anything latched onto the rider comes down with them. This
+        // and `mount` are the two places a creature's `location` moves
+        // without going through `relocate_actor`, which is where every
+        // other move mirrors its passengers — so a stirge on a knight
+        // who is thrown from the saddle would otherwise be left
+        // pointing at the horse.
+        self.mirror_attachers_onto(rider_id, landing, false);
     }
 }

@@ -83058,3 +83058,41 @@ fn the_ai_kills_a_stirge_rather_than_peeling_it() {
         assert_ne!(aei.action().name(), "pry loose");
     }
 }
+
+/// A latched creature follows its host through the saddle, in both
+/// directions.
+///
+/// `mount` and `unlink_ride` are the only two places in the engine
+/// where a creature's `location` moves without going through
+/// `relocate_actor` — which is where every other move mirrors its
+/// passengers. A stirge on a knight who climbs into a saddle, and then
+/// comes back out of it, is the case that finds them both.
+#[test]
+fn a_latched_creature_rides_the_saddle_its_host_climbs_into() {
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    let (mut e, rider, mount) = mounted_pair();
+    let stirge = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+        .unwrap();
+    assert!(e.attach(stirge, rider).is_ok());
+
+    assert!(e.mount(rider, mount).is_ok());
+    let saddle = e.actors[&mount].location();
+    assert_eq!(
+        e.actors[&stirge].location(),
+        saddle,
+        "the stirge goes up with the knight"
+    );
+    // And it is still measurable from the pair, which is what every
+    // reach, aura and burst query reads.
+    assert_eq!(e.footprint_distance(stirge, mount), Some(0));
+
+    assert!(e.dismount(rider));
+    let ground = e.actors[&rider].location();
+    assert_ne!(ground, saddle, "the knight is off the horse");
+    assert_eq!(
+        e.actors[&stirge].location(),
+        ground,
+        "and the stirge came down with them"
+    );
+}
