@@ -27,9 +27,9 @@ pub static FIRE_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // giant kin gets a distinct glyph (G/J/g/L/F) on the same map.
         glyph: 'F',
         ac: 18,
-        // 13d12+65 ≈ 162 average per MM (CR 9). Heaviest giant HP pool
+        // 13d12+78 ≈ 162 average per MM (CR 9). Heaviest giant HP pool
         // below the Storm Giant.
-        hitpoints: "13d12+65".parse().unwrap(),
+        hitpoints: "13d12+78".parse().unwrap(),
         speed: 30.,
         strength: 25,
         intelligence: 10,

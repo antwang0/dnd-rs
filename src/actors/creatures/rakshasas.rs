@@ -36,7 +36,7 @@ use std::sync::LazyLock;
 /// by alignment; the load-bearing damage profile is the magic-weapon
 /// gate the B/P/S resistance imposes.
 ///
-/// Stat shape: AC 16, ~110 average HP (13d8+52), DEX 17 / CHA 20 — the
+/// Stat shape: AC 17, ~221 average HP (26d8+104), DEX 17 / CHA 20 — the
 /// hyper-charismatic shapechanger statline RAW uses. Languages: Common
 /// and Infernal (the rakshasa's native tongue). Senses: Darkvision 60 ft.
 /// No legendary resistances or actions — RAW: rakshasas don't have the
@@ -58,9 +58,9 @@ pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'K' — distinct from 'R' (Adult Red Dragon) and unused in the
         // fiend pool. Mnemonic for "raKshasa" with the K consonant.
         glyph: 'K',
-        ac: 16,
-        // 13d8+52 ≈ 110 average per MM (CR 13).
-        hitpoints: "13d8+52".parse().unwrap(),
+        ac: 17,
+        // 26d8+104 ≈ 221 average per MM (CR 13).
+        hitpoints: "26d8+104".parse().unwrap(),
         speed: 40.,
         strength: 14,
         intelligence: 13,

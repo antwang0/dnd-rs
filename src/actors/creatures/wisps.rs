@@ -6,7 +6,7 @@ use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, S
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Will-o-Wisp — CR 2 incorporeal undead. Tiny, fragile (22 HP), but
+/// Will-o-Wisp — CR 2 incorporeal undead. Tiny, fragile (27 HP), but
 /// hard to pin: AC 19, immune to lightning / poison, resistant to most
 /// damage types and to a slate of incorporeal-flavored conditions
 /// (Grappled / Restrained / Prone / Exhaustion). At-will Shock attack
@@ -20,7 +20,7 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'w' (lowercase) — distinct from 'W' (Wolf) and 'R' (Wraith).
         glyph: 'w',
         ac: 19,
-        hitpoints: "9d4".parse().unwrap(),
+        hitpoints: "11d4".parse().unwrap(),
         // RAW speed line: Speed 0 ft., fly 50 ft. (hover)
         speed: 0.0,
         fly_speed: 50.0,

@@ -23,7 +23,7 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Nightmare",
         glyph: 'N',
         ac: 13,
-        hitpoints: "8d10+16".parse().unwrap(),
+        hitpoints: "8d10+24".parse().unwrap(),
         // RAW speed line: Speed 60 ft., fly 90 ft.
         speed: 60.0,
         fly_speed: 90.0,
@@ -31,7 +31,7 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         dexterity: 15,
         constitution: 16,
         intelligence: 10,
-        wisdom: 12,
+        wisdom: 13,
         charisma: 15,
         languages: HashSet::from([Language::Abyssal, Language::Infernal]),
         cr: 3.0,

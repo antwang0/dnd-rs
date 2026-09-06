@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// for melee fallback when the charm misses or its target is already
 /// charm-immune.
 ///
-/// Templates: AC 11 (barkskin-flavored natural armor), 22 HP (5d8),
+/// Templates: AC 16 (barkskin-flavored natural armor), 22 HP (5d8),
 /// STR 10, DEX 12, CON 11, INT 14, WIS 15, CHA 18 (primary save DC stat).
 /// Languages: Elvish, Sylvan. Senses: Darkvision 60 ft. Fits the
 /// low-CR fey gap between the harpy (CR 1) and the green hag (CR 3) on
@@ -28,7 +28,7 @@ pub static DRYAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'r' for dryad — lowercase tree-spirit glyph. Distinct from 'D'
         // (Druid / Dragon family) and 'd' (Medusa).
         glyph: 'r',
-        ac: 11,
+        ac: 16,
         hitpoints: "5d8".parse().unwrap(),
         speed: 30.,
         strength: 10,

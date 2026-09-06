@@ -20,7 +20,7 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // (Amulet of Health ground glyph).
         glyph: 'I',
         ac: 18,
-        hitpoints: "5d8+10".parse().unwrap(),
+        hitpoints: "6d8+6".parse().unwrap(),
         speed: 25.,
         strength: 14,
         intelligence: 1,

@@ -40,7 +40,7 @@ use std::sync::LazyLock;
 /// out the celestial immunity envelope (per RAW).
 ///
 /// Stat shape: AC 12 (the unicorn relies on speed + Magic Resistance
-/// rather than armor), 67 HP (9d10+18), STR 18, DEX 14, CON 15, INT 11,
+/// rather than armor), 97 HP (13d10+26), STR 18, DEX 14, CON 15, INT 11,
 /// WIS 17, CHA 16. Speed 50ft — among the fastest in the pool. Senses:
 /// Darkvision 60. Languages: Celestial, Elvish, Sylvan. Size Large.
 /// CR 5.
@@ -66,8 +66,8 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // as the silhouette). The glyph is a UI hint, not a unique key.
         glyph: 'U',
         ac: 12,
-        // 9d10+18 ≈ 67 average per MM (CR 5).
-        hitpoints: "9d10+18".parse().unwrap(),
+        // 13d10+26 ≈ 97 average per MM (CR 5).
+        hitpoints: "13d10+26".parse().unwrap(),
         speed: 50.,
         strength: 18,
         intelligence: 11,

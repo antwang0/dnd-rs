@@ -145,8 +145,8 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // 'E' (uppercase) — free; uppercase 'F' is the fighter.
         glyph: 'E',
         ac: 13,
-        // 10d10+20 = 75 average per MM.
-        hitpoints: "10d10+20".parse().unwrap(),
+        // 11d10+33 = 93 average per MM.
+        hitpoints: "11d10+33".parse().unwrap(),
         speed: 50.,
         strength: 10,
         intelligence: 6,

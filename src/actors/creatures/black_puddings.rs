@@ -39,7 +39,7 @@ pub static BLACK_PUDDING_CORROSIVE_FORM: MeleeReflect = MeleeReflect {
 ///   combat penalty is the acid damage spike.
 ///
 /// Defensive identity: AC 7 (no natural armor — soft amorphous sludge),
-/// 85 HP (10d10+30). The signature ooze envelope: **acid immunity** (its
+/// 68 HP (8d10+24). The signature ooze envelope: **acid immunity** (its
 /// own corrosive form is what it eats with), plus immunity to cold,
 /// lightning, and slashing damage RAW. We collapse the cold / lightning
 /// immunities into the standard damage-modifier map since the engine
@@ -74,7 +74,7 @@ pub static BLACK_PUDDING_CORROSIVE_FORM: MeleeReflect = MeleeReflect {
 /// engine's grid is open enough that a Large blob can route around
 /// most chokepoints without a per-tile squeeze check.
 ///
-/// Stat shape: AC 7, ~85 HP (10d10+30), STR 16, DEX 5, CON 16, INT 1,
+/// Stat shape: AC 7, ~68 HP (8d10+24), STR 16, DEX 5, CON 16, INT 1,
 /// WIS 6, CHA 1. Speed 20 (slow ooze ooze). Senses: Blindsight 60
 /// (perception via vibration / chemoreception — the pudding has no
 /// eyes per RAW). Languages: none. Size Large. CR 4.
@@ -87,8 +87,8 @@ pub static BLACK_PUDDING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // 'b' (Bandit/Boar/Bullywug). 'p' for the formless puddle.
         glyph: 'p',
         ac: 7,
-        // 10d10+30 ≈ 85 average per MM (CR 4).
-        hitpoints: "10d10+30".parse().unwrap(),
+        // 8d10+24 ≈ 68 average per MM (CR 4).
+        hitpoints: "8d10+24".parse().unwrap(),
         speed: 20.,
         strength: 16,
         intelligence: 1,

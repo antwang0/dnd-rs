@@ -17,7 +17,7 @@ pub static DIRE_WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'D' — distinct from 'W' (wolf).
         glyph: 'D',
         ac: 14,
-        hitpoints: "5d10+10".parse().unwrap(),
+        hitpoints: "3d10+6".parse().unwrap(),
         speed: 50.,
         strength: 17,
         dexterity: 15,

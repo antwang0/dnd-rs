@@ -25,8 +25,8 @@ pub static WINTER_WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // cleanly as the upgraded variant.
         glyph: 'f',
         ac: 13,
-        // 9d10+18 ≈ 75 average per MM (CR 3).
-        hitpoints: "9d10+18".parse().unwrap(),
+        // 10d10+20 ≈ 75 average per MM (CR 3).
+        hitpoints: "10d10+20".parse().unwrap(),
         speed: 50.,
         strength: 18,
         intelligence: 7,

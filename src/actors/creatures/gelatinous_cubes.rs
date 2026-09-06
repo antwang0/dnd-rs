@@ -22,8 +22,8 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // 'j' (lowercase) — "jelly". Free glyph.
         glyph: 'j',
         ac: 6,
-        // 8d10+40 = 84 average per MM — surprisingly tanky for a CR 2.
-        hitpoints: "8d10+40".parse().unwrap(),
+        // 6d10+30 = 63 average per MM — surprisingly tanky for a CR 2.
+        hitpoints: "6d10+30".parse().unwrap(),
         speed: 15.,
         strength: 14,
         dexterity: 3,

@@ -47,8 +47,8 @@ use std::sync::LazyLock;
 /// proportionally less than it costs the spy: 4d6 is a fifth of what
 /// the venom already does.
 ///
-/// Stat shape per the SRD NPC appendix: AC 15 (studded leather), 78 HP
-/// (12d8+24), STR 11 / DEX 16 / CON 14 / INT 13 / WIS 11 / CHA 10.
+/// Stat shape per the SRD NPC appendix: AC 16 (studded leather), 97 HP
+/// (15d8+30), STR 11 / DEX 18 / CON 14 / INT 16 / WIS 11 / CHA 10.
 /// Speed 30. Proficient DEX / INT saves. Skills: Acrobatics, Deception,
 /// Perception, Stealth. CR 8.
 pub static ASSASSIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -65,14 +65,14 @@ pub static ASSASSIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // which is the same creature seen from the other side of the
         // screen, and with Animated Armor at a CR five rungs away.
         glyph: 'A',
-        ac: 15,
-        // 12d8+24 ≈ 78 average per the SRD NPC appendix (CR 8).
-        hitpoints: "12d8+24".parse().unwrap(),
+        ac: 16,
+        // 15d8+30 ≈ 97 average per the SRD NPC appendix (CR 8).
+        hitpoints: "15d8+30".parse().unwrap(),
         speed: 30.,
         strength: 11,
-        dexterity: 16,
+        dexterity: 18,
         constitution: 14,
-        intelligence: 13,
+        intelligence: 16,
         wisdom: 11,
         charisma: 10,
         skills: HashSet::from([

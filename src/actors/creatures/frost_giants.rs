@@ -20,8 +20,8 @@ pub static FROST_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'G' as the canonical giant glyph (lower-case 'g' is goblin).
         glyph: 'G',
         ac: 15,
-        // 12d12+60 ≈ 138 average per the MM Frost Giant stat block.
-        hitpoints: "12d12+60".parse().unwrap(),
+        // 13d12+65 ≈ 149 average per the MM Frost Giant stat block.
+        hitpoints: "13d12+65".parse().unwrap(),
         speed: 40.,
         strength: 23,
         intelligence: 9,

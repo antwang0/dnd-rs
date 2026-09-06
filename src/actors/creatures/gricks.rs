@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 /// Grick — CR 2 monstrosity. Worm-like ambush predator that lurks in
 /// caverns. Tentacles deal 2d6+2 slashing, beak deals 1d6+2 piercing.
 /// Resistant to bludgeoning/piercing/slashing from nonmagical attacks
-/// (we model as resistance to all three physical types). AC 14, ~27 HP
-/// (6d8). Darkvision 60ft.
+/// (we model as resistance to all three physical types). AC 14, ~54 HP
+/// (12d8). Darkvision 60ft.
 pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GRICK_TENTACLES_WEAPON);
@@ -18,7 +18,7 @@ pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Grick",
         glyph: 'ğ',
         ac: 14,
-        hitpoints: "6d8".parse().unwrap(),
+        hitpoints: "12d8".parse().unwrap(),
         strength: 14,
         dexterity: 14,
         constitution: 11,

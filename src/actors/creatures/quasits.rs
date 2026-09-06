@@ -32,7 +32,7 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // descender hints at the quasit's hooked tail.
         glyph: 'q',
         ac: 13,
-        hitpoints: "7d4".parse().unwrap(),
+        hitpoints: "10d4".parse().unwrap(),
         speed: 40.,
         strength: 5,
         intelligence: 7,

@@ -20,8 +20,8 @@ pub static HIPPOGRIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // hippogriff so the map differentiates Harpy / Hippogriff.
         glyph: 'H',
         ac: 11,
-        // 3d10+3 = 19 average per MM.
-        hitpoints: "3d10+3".parse().unwrap(),
+        // 4d10+4 = 26 average per MM.
+        hitpoints: "4d10+4".parse().unwrap(),
         // RAW speed line: Speed 40 ft., fly 60 ft.
         speed: 40.0,
         fly_speed: 60.0,

@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 /// Chuul — CR 4 aberration. Lobster-like predator with paralyzing
 /// tentacles. Two actions: pincer (2d6+4 bludgeoning + grapple on hit)
 /// and tentacles (1d6+4 poison + CON save DC 13 or Paralyzed 1 round,
-/// only on grappled targets). AC 16, ~93 HP (11d10+33). Immune to
+/// only on grappled targets). AC 16, ~76 HP (9d10+27). Immune to
 /// poison damage and the Poisoned condition. Amphibious with darkvision
 /// 60ft and tremorsense 60ft.
 pub static CHUUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -21,7 +21,7 @@ pub static CHUUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Chuul",
         glyph: 'ç',
         ac: 16,
-        hitpoints: "11d10+33".parse().unwrap(),
+        hitpoints: "9d10+27".parse().unwrap(),
         speed: 30.,
         strength: 19,
         intelligence: 5,

@@ -36,7 +36,7 @@ pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         strength: 29,
         intelligence: 16,
         dexterity: 14,
-        wisdom: 18,
+        wisdom: 20,
         constitution: 20,
         charisma: 18,
         languages: HashSet::from([Language::Common, Language::Giant]),

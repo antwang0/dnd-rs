@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// suppressor, just a flat heal" — we keep parity for simplicity).
 ///
 /// Stats roughly track MM Oni at CR 7 — STR 19 (+4) drives the glaive's
-/// to-hit / damage, CON 16 gives a solid HP pool (110 HP at 13d10+39),
+/// to-hit / damage, CON 16 gives a solid HP pool (119 HP at 14d10+42),
 /// CHA 15 hints at the RAW spellcasting flavor (the engine doesn't
 /// surface the spell list — the oni's identity is the polearm reach).
 /// Proficient saves on DEX / CON / WIS / CHA per RAW. Senses include
@@ -38,9 +38,9 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // from Ogre's 'g' (lowercase Goblin/Gargoyle family) and Owlbear's
         // 'o' (lowercase beast slot).
         glyph: 'O',
-        ac: 16,
-        // 13d10+39 = 110 average per MM.
-        hitpoints: "13d10+39".parse().unwrap(),
+        ac: 17,
+        // 14d10+42 = 119 average per MM.
+        hitpoints: "14d10+42".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 30 ft.
         speed: 30.0,
         fly_speed: 30.0,
@@ -106,7 +106,7 @@ mod tests {
             0,
         )
         .unwrap();
-        // 13d10+39 averages 110 HP; the CR-7 chassis should be well above
+        // 14d10+42 averages 119 HP; the CR-7 chassis should be well above
         // the lower-tier giant baseline.
         assert!(a.max_hitpoints() >= 70);
     }

@@ -41,7 +41,7 @@ pub static MERROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 20.,
         strength: 18,
         intelligence: 8,
-        dexterity: 10,
+        dexterity: 15,
         wisdom: 10,
         constitution: 15,
         charisma: 9,

@@ -19,8 +19,8 @@ pub static GNOLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Gnoll",
         // 'N' (gNoll) — 'G' is the goblin.
         glyph: 'N',
-        ac: 12,
-        hitpoints: "3d8".parse().unwrap(),
+        ac: 15,
+        hitpoints: "6d8".parse().unwrap(),
         strength: 14,
         dexterity: 12,
         constitution: 11,

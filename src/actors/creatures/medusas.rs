@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// - **Petrifying Gaze** (standalone): the pure stone-lock save.
 /// - **Longbow**: ranged piercing option for when the gaze is on cooldown.
 ///
-/// MM RAW: AC 15, ~127 HP (17d8+51), DEX 15, CON 16. No damage or
+/// MM RAW: AC 15, ~127 HP (17d8+51), DEX 17, CON 16. No damage or
 /// condition immunities (medusas are mortal monstrosities). Darkvision
 /// 60. Speaks Common in this version (RAW says "the languages it knew
 /// in life" — we tag Common as the baseline).
@@ -35,7 +35,7 @@ pub static MEDUSA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 17d8+51 ≈ 127 average per MM (CR 6).
         hitpoints: "17d8+51".parse().unwrap(),
         strength: 10,
-        dexterity: 15,
+        dexterity: 17,
         constitution: 16,
         intelligence: 12,
         wisdom: 13,

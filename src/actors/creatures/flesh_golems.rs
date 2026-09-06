@@ -23,7 +23,7 @@ use std::sync::LazyLock;
 ///   slam multi.
 ///
 /// Defensive identity: AC 9 (no natural armor — soft patchwork flesh),
-/// 93 HP (11d8+44). The standard construct envelope plus the **flesh
+/// 127 HP (15d8+60). The standard construct envelope plus the **flesh
 /// golem signature**: RAW's **Lightning Absorption** — "whenever the
 /// golem is subjected to Lightning damage, it regains a number of Hit
 /// Points equal to the Lightning damage dealt". It is powered by
@@ -60,7 +60,7 @@ use std::sync::LazyLock;
 /// doesn't yet have a 'damage-type-triggered debuff' hook"; the hook is
 /// `CreatureTemplate::flinches`, and this is one of its two rows.
 ///
-/// Stat shape: AC 9, ~93 HP (11d8+44), STR 19, DEX 9, CON 18, INT 6,
+/// Stat shape: AC 9, ~127 HP (15d8+60), STR 19, DEX 9, CON 18, INT 6,
 /// WIS 10, CHA 5. Speed 30 (slow lurching shamble). Senses: Darkvision
 /// 60. Languages: understands its creator's languages, but doesn't
 /// speak — we omit a Language entry to match the "comprehends but
@@ -75,8 +75,8 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and 'I' (Iron Golem) at the same uppercase glyph tier.
         glyph: 'F',
         ac: 9,
-        // 11d8+44 ≈ 93 average per MM (CR 5).
-        hitpoints: "11d8+44".parse().unwrap(),
+        // 15d8+60 ≈ 127 average per MM (CR 5).
+        hitpoints: "15d8+60".parse().unwrap(),
         speed: 30.,
         strength: 19,
         intelligence: 6,

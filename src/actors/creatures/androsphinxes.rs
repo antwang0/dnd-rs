@@ -39,7 +39,7 @@ use std::sync::LazyLock;
 /// a guardian, not a thrall" envelope shared with Ancient Red Dragon).
 ///
 /// Stat shape: AC 17 (natural armor), ~199 average HP (19d10+95), STR 22,
-/// WIS 18, CHA 23 — the high-WIS / high-CHA guardian statline. Senses:
+/// WIS 23, CHA 18 — the high-WIS / high-CHA guardian statline. Senses:
 /// Truesight 120 ft (the canonical "sees through illusion" guardian
 /// envelope — slots into the `TrueSighted` condition cohort's senses
 /// equivalent). Languages: Common, Sphinx (we use Sylvan as the closest
@@ -81,9 +81,9 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         strength: 22,
         intelligence: 16,
         dexterity: 10,
-        wisdom: 18,
+        wisdom: 23,
         constitution: 20,
-        charisma: 23,
+        charisma: 18,
         senses: HashSet::from([SpecialSense::Truesight(120)]),
         // RAW languages: Common + "Sphinx". Sphinx isn't enumerated in the
         // engine's `Language` set, so we substitute Sylvan as the closest

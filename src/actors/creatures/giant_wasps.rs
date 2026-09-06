@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 ///   Same chassis-share lane as the Spider Bite / Ettercap Bite /
 ///   Drow Poisoned Crossbow.
 ///
-/// Defensive identity: AC 12 (medium + DEX), 13 HP (3d8). Vanilla
+/// Defensive identity: AC 13 (medium + DEX), 22 HP (5d8). Vanilla
 /// beast envelope — no resistances or condition immunities. The
 /// wasp dies to two solid hits; threat lives in the venom rider on
 /// a fragile flying frame, not survivability. Pair with a melee
@@ -34,7 +34,7 @@ use std::sync::LazyLock;
 /// pressures squishy back-line targets from above while the
 /// crawlers close in on the front.
 ///
-/// Stat shape: AC 12, ~13 HP (3d8), STR 10, DEX 14, CON 10, INT 1,
+/// Stat shape: AC 13, ~22 HP (5d8), STR 10, DEX 22, CON 10, INT 1,
 /// WIS 10, CHA 3. Speed 50 — RAW: walking 10 ft + fly 50 ft. The
 /// engine collapses ground + fly to a single per-creature speed;
 /// we pin to the fly speed since wasps almost never walk in
@@ -51,9 +51,9 @@ pub static GIANT_WASP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // disambiguates from the same-glyph (Wolves use 'w' too) on
         // the map; the beast / CR-½ context further separates.
         glyph: 'w',
-        ac: 12,
-        // 3d8 = 13.5 average per MM (CR ½).
-        hitpoints: "3d8".parse().unwrap(),
+        ac: 13,
+        // 5d8 = 22 average per MM (CR ½).
+        hitpoints: "5d8".parse().unwrap(),
         // Fly 50 — slower than the Hawk / Giant Bat / Giant Owl
         // (60) but still firmly in the "aerial harasser" envelope.
         // Matches RAW's giant-wasp stat block. The engine collapses

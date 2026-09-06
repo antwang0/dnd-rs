@@ -20,7 +20,7 @@ pub static GIANT_SCORPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         ac: 15,
         hitpoints: "7d10+14".parse().unwrap(),
         speed: 40.,
-        strength: 15,
+        strength: 16,
         dexterity: 13,
         constitution: 15,
         intelligence: 1,

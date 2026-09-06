@@ -149,8 +149,8 @@ fn swarm_template(
     }
 }
 
-/// Swarm of Bats — CR ¼ Medium swarm of Tiny beasts. RAW: AC 12, 22 HP
-/// (5d8), speed 0 ft / fly 30 ft, blindsight 60 ft, resistant to
+/// Swarm of Bats — CR ¼ **Large** swarm of Tiny beasts. RAW: AC 12, 11
+/// HP (2d10), speed 5 ft / fly 30 ft, blindsight 60 ft, resistant to
 /// bludgeoning / piercing / slashing, Bites 5 (2d4) piercing.
 ///
 /// The mobile swarm. Fly 30 and blindsight 60 make it the one that
@@ -183,13 +183,20 @@ fn swarm_template(
 /// that changes your plan, and which vermin it is made of is detail.
 pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
-        // RAW speed line: Speed 0 ft., fly 30 ft.
+        // RAW speed line: Speed 5 ft., Fly 30 ft. The walking half is
+        // the token five feet every airborne swarm on the ladder gets;
+        // the swarm's business is done in the air.
         fly_speed: 30.0,
+        // The one swarm SRD 5.2 prints as **Large**. Every other entry
+        // on the ladder is Medium, which is why the shared chassis pins
+        // Medium and this is the one override — a cloud of six hundred
+        // bats fills more of a corridor than a knot of rats does.
+        size: Size::Large,
         ..swarm_template(
             "Swarm of Bats",
             'ß',
             12,
-            "5d8",
+            "2d10",
             0.,
             [5, 15, 10, 2, 12, 4],
             HashSet::from([SpecialSense::Blindsight(60)]),
@@ -201,8 +208,8 @@ pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     }
 });
 
-/// Swarm of Rats — CR ¼ Medium swarm of Tiny beasts. RAW: AC 10, 24 HP
-/// (7d8-7), speed 30 ft, darkvision 30 ft, **no damage resistances**,
+/// Swarm of Rats — CR ¼ Medium swarm of Tiny beasts. RAW: AC 10, 14 HP
+/// (4d8-4), speed 30 ft, darkvision 30 ft, **no damage resistances**,
 /// Bites 7 (2d6) piercing.
 ///
 /// The swarm you can fight with a sword. RAW withholds the physical
@@ -220,7 +227,7 @@ pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         "Swarm of Rats",
         'ß',
         10,
-        "7d8-7",
+        "4d8-4",
         30.,
         [9, 11, 9, 2, 10, 3],
         HashSet::from([SpecialSense::Darkvision(30)]),
@@ -231,12 +238,12 @@ pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     )
 });
 
-/// Swarm of Insects — CR ½ Medium swarm of Tiny beasts. RAW: AC 12, 22
-/// HP (5d8), speed 20 ft / climb 20 ft, blindsight 10 ft, resistant to
-/// bludgeoning / piercing / slashing, Bites 10 (4d4) piercing.
+/// Swarm of Insects — CR ½ Medium swarm of Tiny beasts. RAW: AC 11, 19
+/// HP (3d8+6), speed 20 ft / climb 20 ft, blindsight 10 ft, resistant
+/// to bludgeoning / piercing / slashing, Bites 10 (4d4) piercing.
 ///
 /// The damage swarm, and the family's clearest statement of the
-/// tactical problem: 4d4 a round on a 22-HP frame you can only really
+/// tactical problem: 4d4 a round on a 19-HP frame you can only really
 /// hurt with fire. Its blindsight is 10 ft rather than the bat swarm's
 /// 60 — it finds you by touch, not by echo, so unlike the bats it can
 /// be hidden from, just not once it has arrived.
@@ -248,10 +255,10 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     swarm_template(
         "Swarm of Insects",
         'ß',
-        12,
-        "5d8",
+        11,
+        "3d8+6",
         20.,
-        [3, 13, 10, 1, 7, 1],
+        [3, 13, 14, 1, 7, 1],
         HashSet::from([SpecialSense::Blindsight(10)]),
         0.5,
         &SWARM_OF_INSECTS_BITES,
@@ -374,7 +381,16 @@ mod tests {
             let a = make(template);
             let name = a.name().to_string();
             assert!(a.is_swarm(), "{name} should be flagged a swarm");
-            assert_eq!(a.size(), Size::Medium, "{name} should be Medium");
+            // Size is the one line of the five stat blocks that is not
+            // shared: SRD 5.2 prints the bat swarm as Large and the
+            // other four as Medium. Asserted as a pair rather than
+            // exempted, so a sixth swarm has to say which it is.
+            let expected = if template.name == "Swarm of Bats" {
+                Size::Large
+            } else {
+                Size::Medium
+            };
+            assert_eq!(a.size(), expected, "{name} has the wrong size");
             assert_eq!(a.creature_type(), CreatureType::Beast, "{name}");
             for condition in swarm_condition_immunities() {
                 assert!(

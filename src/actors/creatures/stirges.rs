@@ -54,7 +54,7 @@ pub static STIRGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Stirge",
         // 's' lower (small swarm creature).
         glyph: 's',
-        ac: 14,
+        ac: 13,
         hitpoints: "2d4".parse().unwrap(),
         // RAW speed line: Speed 10 ft., fly 40 ft.
         speed: 10.0,

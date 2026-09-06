@@ -80,13 +80,13 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Lich",
         // 'L' is taken in some content; use 'l' (lowercase L) for lich.
         glyph: 'l',
-        ac: 17,
-        // 18d8+54 = 135 average per MM CR 21.
-        hitpoints: "18d8+54".parse().unwrap(),
+        ac: 20,
+        // 42d8+126 = 315 average per MM CR 21.
+        hitpoints: "42d8+126".parse().unwrap(),
         strength: 11,
         dexterity: 16,
         constitution: 16,
-        intelligence: 20, // primary spellcasting ability
+        intelligence: 21, // primary spellcasting ability
         wisdom: 14,
         charisma: 16,
         senses: HashSet::from([SpecialSense::Truesight(120), SpecialSense::Darkvision(120)]),

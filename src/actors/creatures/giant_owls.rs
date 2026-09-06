@@ -47,7 +47,7 @@ use std::sync::LazyLock;
 /// tongues."
 ///
 /// Stat shape: AC 12, ~19 HP (3d10+3), STR 13, DEX 15, CON 12,
-/// INT 8, WIS 13, CHA 10. Speed 5 (walking) collapsed to 30
+/// INT 10, WIS 14, CHA 10. Speed 5 (walking) collapsed to 30
 /// (engine doesn't track separate fly speed; the canonical aerial
 /// move-budget rounds up to the 30 floor). Senses: Darkvision 120.
 /// Languages: Common, Elvish, Sylvan. Size Large. CR ¼. XP: 50 per
@@ -74,9 +74,9 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 5.0,
         fly_speed: 60.0,
         strength: 13,
-        intelligence: 8,
+        intelligence: 10,
         dexterity: 15,
-        wisdom: 13,
+        wisdom: 14,
         constitution: 12,
         charisma: 10,
         // Darkvision 120 — twice the standard nocturnal-beast envelope.

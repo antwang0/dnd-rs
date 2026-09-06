@@ -23,9 +23,9 @@ pub static WYVERN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Wyvern",
         // 'y' (lowercase) is free; uppercase 'Y' is Yeti.
         glyph: 'y',
-        ac: 13,
-        // 13d10+39 = ~110 average per MM (CR 6).
-        hitpoints: "13d10+39".parse().unwrap(),
+        ac: 14,
+        // 15d10+45 = ~127 average per MM (CR 6).
+        hitpoints: "15d10+45".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 80 ft.
         speed: 20.0,
         fly_speed: 80.0,

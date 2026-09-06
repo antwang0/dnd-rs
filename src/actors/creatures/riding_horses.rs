@@ -19,14 +19,14 @@ use std::sync::LazyLock;
 ///   swing — same chassis as the Draft Horse, distinguished only
 ///   by the STR mod that scales the damage.
 ///
-/// Defensive identity: AC 10 (no armor, no shield, no natural
+/// Defensive identity: AC 11 (no armor, no shield, no natural
 /// hide), 13 HP (2d10+2). Vanilla beast envelope — no resistances
 /// or condition immunities. The riding horse dies to two solid
 /// hits; the template exists primarily for travel encounters and
 /// as the floor of the equine CR ladder rather than as a combat
 /// threat.
 ///
-/// Stat shape: AC 10, ~13 HP (2d10+2), STR 16, DEX 10, CON 12,
+/// Stat shape: AC 11, ~13 HP (2d10+2), STR 16, DEX 13, CON 12,
 /// INT 2, WIS 11, CHA 7. Speed 60 (long-distance travel pace
 /// matches the warhorse). Size Large. CR ¼. XP: 50 per RAW.
 pub static RIDING_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -42,13 +42,13 @@ pub static RIDING_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // separates it from the warhorse on the map without needing
         // a distinct glyph.
         glyph: 'H',
-        ac: 10,
+        ac: 11,
         // 2d10+2 = 13 average per MM (CR ¼).
         hitpoints: "2d10+2".parse().unwrap(),
         speed: 60.,
         strength: 16,
         intelligence: 2,
-        dexterity: 10,
+        dexterity: 13,
         wisdom: 11,
         constitution: 12,
         charisma: 7,

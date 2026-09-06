@@ -18,9 +18,9 @@ pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Goblin Boss",
         glyph: 'B',
         ac: 17, // chain shirt + shield
-        hitpoints: "6d6+6".parse().unwrap(),
+        hitpoints: "6d6".parse().unwrap(),
         strength: 10,
-        dexterity: 14,
+        dexterity: 15,
         constitution: 10,
         intelligence: 10,
         wisdom: 8,

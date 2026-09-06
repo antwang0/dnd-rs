@@ -41,7 +41,7 @@ pub static ETTIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Ettin",
         glyph: 'E',
         ac: 12,
-        hitpoints: "10d10+20".parse().unwrap(),
+        hitpoints: "10d10+30".parse().unwrap(),
         speed: 40.,
         strength: 21,
         intelligence: 6,

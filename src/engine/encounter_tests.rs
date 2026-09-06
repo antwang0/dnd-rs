@@ -9461,14 +9461,14 @@ fn hide_invalid_in_melee() {
 }
 
 #[test]
-fn spider_bite_can_apply_poisoned() {
-    use crate::actions::monster_attacks::SPIDER_BITE;
+fn giant_spider_bite_can_apply_poisoned() {
+    use crate::actions::monster_attacks::GIANT_SPIDER_BITE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+    use crate::actors::creatures::giant_spiders::GIANT_SPIDER_TEMPLATE;
     use crate::conditions::Condition;
     let mut e = ei_with_terrain(15, 15, &[]);
     let spider = e
-        .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&GIANT_SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let target = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 1, 0)
@@ -9483,7 +9483,7 @@ fn spider_bite_can_apply_poisoned() {
         e.actors.get_mut(&target).unwrap().heal(max);
         e.actors.get_mut(&target).unwrap().remove_condition(Condition::Poisoned);
         let target_vec = vec![target];
-        let effects = SPIDER_BITE.side_effects(&mut e, spider, Some(&target_vec), None, None);
+        let effects = GIANT_SPIDER_BITE.side_effects(&mut e, spider, Some(&target_vec), None, None);
         for eff in effects {
             eff.apply(&mut e);
         }
@@ -9492,17 +9492,17 @@ fn spider_bite_can_apply_poisoned() {
             break;
         }
     }
-    assert!(poisoned, "spider bite should eventually apply Poisoned");
+    assert!(poisoned, "the giant spider's bite should eventually apply Poisoned");
 }
 
 #[test]
-fn spider_immune_to_own_venom() {
-    use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+fn giant_spider_immune_to_own_venom() {
+    use crate::actors::creatures::giant_spiders::GIANT_SPIDER_TEMPLATE;
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
     let mut e = ei_with_terrain(15, 15, &[]);
     let id = e
-        .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&GIANT_SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
@@ -15577,9 +15577,14 @@ fn worg_bite_can_knock_prone() {
     use crate::actors::creatures::worgs::WORG_TEMPLATE;
     use crate::conditions::Condition;
 
+    // Seeded per trial. The loop used to build every board with
+    // `ei_with_terrain`, which pins seed 0 — so all fifty "trials" were
+    // one trial run fifty times, and the test passed or failed on
+    // whether that single roll happened to land. Varying the seed is
+    // what makes "sometimes" mean sometimes.
     let mut prone_seen = false;
-    for _ in 0..50 {
-        let mut e = ei_with_terrain(20, 20, &[]);
+    for seed in 0..50u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
         let worg = e
             .instantiate_creature(&WORG_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
@@ -19414,6 +19419,17 @@ fn the_sanctuary_dc_belongs_to_whoever_cast_it() {
 
     // No link — the potion / scroll case — falls back to the item
     // tier rather than to whoever happens to be holding the flag.
+    //
+    // The ward is torn down and rebuilt rather than merely re-added:
+    // `add_condition` on a condition already held keeps the longer
+    // timer *and* the back-link it came with, so whether this half of
+    // the test saw a linked or an unlinked ward used to depend on
+    // whether the goblin's save above had happened to breach the first
+    // one. That is a fact about the dice, not about the rule.
+    e.actors
+        .get_mut(&warded)
+        .unwrap()
+        .remove_condition(Condition::Sanctuary);
     e.actors
         .get_mut(&warded)
         .unwrap()
@@ -48510,9 +48526,14 @@ fn necklace_of_lightning_bolts_damages_enemies_and_is_consumed() {
             caster_hp_pre,
             "Necklace of Lightning Bolts must not damage its own caster"
         );
-        if e.actors[&g1].hitpoints() < g1_hp_pre
-            || e.actors[&g2].hitpoints() < g2_hp_pre
-        {
+        // A goblin the bolt kills is swept off the board by the death
+        // cleanup, so "took damage" has to include "is no longer here"
+        // — indexing the map directly panicked on exactly the seeds
+        // where the necklace worked best.
+        let hurt = |id: usize, before: u32| {
+            e.actors.get(&id).is_none_or(|a| a.hitpoints() < before)
+        };
+        if hurt(g1, g1_hp_pre) || hurt(g2, g2_hp_pre) {
             hit_anyone = true;
             break;
         }
@@ -53907,15 +53928,24 @@ fn thiefs_reflexes_grants_a_second_turn_only_in_round_one() {
         1,
         "nobody else gains a slot"
     );
-    // The extra slot sits below the Thief's own rather than beside
-    // it — that gap is what the enemies act in.
+    // The extra slot sits *below* the Thief's own — RAW's "your second
+    // turn at your initiative minus 10" — and it is the one flagged as
+    // extra, which is what the panel reads to explain a name appearing
+    // twice.
+    //
+    // What is deliberately *not* asserted is that somebody else acts in
+    // between. That reads like the point of the ten-point drop and is
+    // not an invariant: whether an enemy's roll lands inside the window
+    // is a fact about their initiative, and a goblin that rolls under
+    // the Thief's second slot leaves the two adjacent with nothing
+    // wrong. The old assertion said otherwise and held only while the
+    // goblin's dice happened to cooperate.
     let first = round_one.iter().position(|&id| id == thief).unwrap();
     let second = round_one.iter().rposition(|&id| id == thief).unwrap();
-    assert!(
-        second > first + 1 || round_one.len() == 2,
-        "the second slot should not sit immediately behind the first: {:?}",
-        round_one
-    );
+    assert!(second > first, "the extra turn comes after the rolled one");
+    let slots = e.initiative_slots();
+    assert!(!slots[first].is_extra, "the first slot is the rolled one");
+    assert!(slots[second].is_extra, "the second is the granted one");
 
     // Walk out of round 1. `skip_turn` advances one slot at a time,
     // so the queue length is exactly the number of steps to a wrap.
@@ -73777,11 +73807,19 @@ fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
                     is_spell: false,
                 },
             );
+            let hit = !effects.is_empty();
             for ef in effects {
                 ef.apply(e);
             }
+            hit
         };
-        swing(&mut e);
+        // A natural 1 misses however large the bonus, and a clause that
+        // rides a hit has nothing to ride. Two seeds in forty roll one;
+        // the loop used to assert through them and passed only because
+        // the ones it happened to draw were not those two.
+        if !swing(&mut e) {
+            continue;
+        }
         assert!(
             e.actors[&cavalier].once_per_turn_used(FEROCIOUS_CHARGER_TAG),
             "the first swing after the run should cash the clause"

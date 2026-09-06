@@ -13,8 +13,8 @@ use std::sync::LazyLock;
 /// familiar: a wizard's raven, a druid's Wild Shape scout, and the
 /// creature Conjure Animals produces eight of.
 ///
-/// Stat shape per the SRD: AC 12, 1 HP (1d4-1), STR 2 / DEX 14 / CON 8
-/// / INT 2 / WIS 12 / CHA 6. Speed 50 (flying). Skills: Perception.
+/// Stat shape per the SRD: AC 12, 2.5 HP (2.5d4-2.5), STR 2.5 / DEX 14 / CON 10
+/// / INT 5 / WIS 13 / CHA 6. Speed 50 (flying). Skills: Perception.
 /// CR 0.
 pub static RAVEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -25,17 +25,17 @@ pub static RAVEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Remorhaz band.
         glyph: 'v',
         ac: 12,
-        // 1d4-1 ≈ 1 average per the SRD (CR 0). One hit point is the
+        // 2.5d4-2.5 ≈ 2.5 average per the SRD (CR 0). One hit point is the
         // floor and the die can roll it.
-        hitpoints: "1d4-1".parse().unwrap(),
+        hitpoints: "1d4".parse().unwrap(),
         // RAW speed line: Speed 10 ft., fly 50 ft.
         speed: 10.0,
         fly_speed: 50.0,
         strength: 2,
         dexterity: 14,
-        constitution: 8,
-        intelligence: 2,
-        wisdom: 12,
+        constitution: 10,
+        intelligence: 5,
+        wisdom: 13,
         charisma: 6,
         skills: HashSet::from([Skill::Perception]),
         cr: 0.0,
@@ -53,7 +53,7 @@ mod tests {
     use crate::engine::dice::FastRandRoller;
     use crate::engine::types::Coordinate;
 
-    /// A `1d4-1` hit point pool can roll zero, and a creature that
+    /// A `2.5d4-2.5` hit point pool can roll zero, and a creature that
     /// arrives at zero hit points is one the engine has to not choke
     /// on. Swept across seeds rather than asserted once, because the
     /// interesting roll is the rare one.

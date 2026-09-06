@@ -38,7 +38,7 @@ use std::sync::LazyLock;
 /// collapsed to flat fire immunity with a note about where a future
 /// hook would land; the hook is `DamageModifier::Absorption`, and the
 /// difference it makes is the whole character of the fight — a CR-16
-/// construct with 210 HP that a Fireball *tops up* is a different
+/// construct with 252 HP that a Fireball *tops up* is a different
 /// problem from one that merely ignores it.
 ///
 /// **Immutable Form** RAW makes the golem immune to any spell or effect
@@ -57,7 +57,7 @@ use std::sync::LazyLock;
 /// envelope, the golem demands magical weapons to whittle down — spells
 /// bounce off.
 ///
-/// Stat shape: AC 20, ~210 average HP (20d10+100), STR 24, INT 3,
+/// Stat shape: AC 20, ~252 average HP (24d10+120), STR 24, INT 3,
 /// darkvision 120 ft. No languages — golems understand commands from
 /// their creator but don't speak. CR 16.
 pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -72,8 +72,8 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (imp), kept short for the ASCII map readability.
         glyph: 'I',
         ac: 20,
-        // 20d10+100 ≈ 210 average per MM (CR 16).
-        hitpoints: "20d10+100".parse().unwrap(),
+        // 24d10+120 ≈ 252 average per MM (CR 16).
+        hitpoints: "24d10+120".parse().unwrap(),
         speed: 30.,
         strength: 24,
         intelligence: 3,

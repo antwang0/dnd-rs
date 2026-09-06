@@ -38,7 +38,7 @@ use std::sync::LazyLock;
 /// gives Blood Frenzy time to ramp up on whichever target it
 /// scratches first.
 ///
-/// Stat shape: AC 12, ~45 HP (6d10+12), STR 18, DEX 13, CON 15,
+/// Stat shape: AC 12, ~45 HP (6d10+12), STR 18, DEX 14, CON 15,
 /// INT 1, WIS 10, CHA 4. Speed 40 (RAW swim 40; magnitude collapsed to
 /// per-creature speed). Senses: Blindsight 30. Size Large. CR 2.
 /// XP: 450 per RAW.
@@ -60,7 +60,7 @@ pub static HUNTER_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         speed: 40.,
         strength: 18,
         intelligence: 1,
-        dexterity: 13,
+        dexterity: 14,
         wisdom: 10,
         constitution: 15,
         charisma: 4,

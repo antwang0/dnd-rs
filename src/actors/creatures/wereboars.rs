@@ -26,8 +26,8 @@ use std::sync::LazyLock;
 ///   melee. Vanilla `SimpleWeapon`; the chunky-damage lane that pairs
 ///   with the curse-flavored tusks.
 ///
-/// Defensive identity: AC 10 (no armor — just the boar's thick hide).
-/// 78 HP (12d8+24). Non-magical BPS resistance via the shared
+/// Defensive identity: AC 15 (no armor — just the boar's thick hide).
+/// 97 HP (15d8+30). Non-magical BPS resistance via the shared
 /// `damage_modifiers_from` helper — the canonical
 /// lycanthrope envelope. RAW also gives the wereboar **Charge** (when
 /// it moves 15+ ft and hits with a tusks attack, the target takes an
@@ -36,7 +36,7 @@ use std::sync::LazyLock;
 /// movement for triggering on-hit bonus damage. The load-bearing kit
 /// is the tusks + maul multi, not the charge rider.
 ///
-/// Stat shape: AC 10, ~78 HP (12d8+24), STR 17, DEX 10, CON 15, INT 10,
+/// Stat shape: AC 15, ~97 HP (15d8+30), STR 17, DEX 10, CON 15, INT 10,
 /// WIS 11, CHA 8. Speed 30. Senses: Darkvision 60. Languages: Common
 /// (humanoid form retains speech). Size Medium. CR 4.
 pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -50,9 +50,9 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'B' (Werebear / Brown Bear). The wereboar gets 'p' for
         // "pig" — the boar's silhouette is the read on the map.
         glyph: 'p',
-        ac: 10,
-        // 12d8+24 ≈ 78 average per MM (CR 4).
-        hitpoints: "12d8+24".parse().unwrap(),
+        ac: 15,
+        // 15d8+30 ≈ 97 average per MM (CR 4).
+        hitpoints: "15d8+30".parse().unwrap(),
         speed: 30.,
         strength: 17,
         intelligence: 10,

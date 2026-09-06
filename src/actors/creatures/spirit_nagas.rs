@@ -30,12 +30,12 @@ use std::sync::LazyLock;
 /// - **sacred flame** — level-0 at-will cantrip; the naga's fallback when
 ///   spell slots run dry.
 ///
-/// Defensive identity: AC 15 (natural armor — the naga's scaled hide).
+/// Defensive identity: AC 17 (natural armor — the naga's scaled hide).
 /// Poison damage immunity + Poisoned condition immunity — the naga is
 /// venom incarnate; her own kind's bite has no effect. Charmed condition
 /// immunity — the naga's mind is too alien to coerce.
 ///
-/// Stat shape: AC 15, ~75 HP (10d10+20), STR 18, DEX 17, CON 14, INT 16,
+/// Stat shape: AC 17, ~135 HP (18d10+36), STR 18, DEX 17, CON 14, INT 16,
 /// WIS 15, CHA 16. Speed 40 (the naga's long coiled body propels her
 /// forward faster than a standard medium humanoid). Senses: Darkvision
 /// 60. Languages: Abyssal, Common. Saving Throws DEX, CON, WIS, CHA all
@@ -68,9 +68,9 @@ pub static SPIRIT_NAGA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // silhouette even though the naga is Large; the glyph pool is
         // exhausted at letters that still read as "serpent".
         glyph: 'n',
-        ac: 15,
-        // 10d10+20 ≈ 75 average per MM (CR 8).
-        hitpoints: "10d10+20".parse().unwrap(),
+        ac: 17,
+        // 18d10+36 ≈ 135 average per MM (CR 8).
+        hitpoints: "18d10+36".parse().unwrap(),
         speed: 40.,
         strength: 18,
         intelligence: 16,

@@ -32,8 +32,8 @@ use std::sync::LazyLock;
 ///   support lane the deva carries — turns it into a battlefield medic
 ///   when paired with the standard celestial save defenses.
 ///
-/// Defensive identity: AC 17 (the deva's blessed mail), 136 HP
-/// (16d8+64). **Magic Resistance** (advantage on saves vs spells /
+/// Defensive identity: AC 17 (the deva's blessed mail), 229 HP
+/// (27d8+108). **Magic Resistance** (advantage on saves vs spells /
 /// magical effects — standard celestial defense), radiant immunity
 /// (the angelic glow absorbs its own damage type) plus the
 /// non-magical physical resistance triplet (BPS halved) per RAW. The
@@ -41,7 +41,7 @@ use std::sync::LazyLock;
 /// Frightened) round out the save resilience — the deva can't be
 /// fear-locked or compelled by mortal magic.
 ///
-/// Stat shape: AC 17, ~136 HP (16d8+64), STR 18, DEX 18, CON 18,
+/// Stat shape: AC 17, ~229 HP (27d8+108), STR 18, DEX 18, CON 18,
 /// INT 17, WIS 20, CHA 20. Speed 30ft walk + 90ft fly (RAW). We
 /// collapse to the fly speed since the engine isn't 3D and the
 /// stationary terrain doesn't gate flight. Senses: Darkvision 120,
@@ -68,8 +68,8 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'V' (untaken) if rendering collisions surface.
         glyph: '✦',
         ac: 17,
-        // 16d8+64 ≈ 136 average per MM (CR 10).
-        hitpoints: "16d8+64".parse().unwrap(),
+        // 27d8+108 ≈ 229 average per MM (CR 10).
+        hitpoints: "27d8+108".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 90 ft.
         speed: 30.0,
         fly_speed: 90.0,

@@ -23,14 +23,14 @@ use std::sync::LazyLock;
 ///   to the bow whenever there's clearance.
 ///
 /// Defensive identity: the sprite has no resistances or immunities — the
-/// 2-HP statline IS its design: glass-cannon scout that lands the sleep
-/// opener and dies to any glancing blow. We omit Fey Ancestry / Magic
+/// 10-HP statline IS its design: glass-cannon scout that lands the sleep
+/// opener and dies to two glancing blows. We omit Fey Ancestry / Magic
 /// Resistance to keep the sprite distinct from the Pixie (the Pixie has
 /// both; the sprite has neither in RAW). Heart Sight (the sprite's
 /// alignment-reading clause) is a non-combat divination — no in-engine
 /// consumer.
 ///
-/// Stat shape: AC 15 (RAW armor-class — leather + DEX 18), 2 HP (1d4),
+/// Stat shape: AC 15 (RAW armor-class — leather + DEX 18), 10 HP (4d4),
 /// STR 3 (a stiff breeze knocks one over), DEX 18 (the high-DEX flying
 /// fey signature), CON 10, INT 14, WIS 13, CHA 11. Speed 10 ground +
 /// flight (RAW 40 ft fly) — the engine doesn't model 3D flight, so the
@@ -56,9 +56,9 @@ pub static SPRITE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the tiny fey scout's silhouette.
         glyph: 's',
         ac: 15,
-        // 1d4 ≈ 2.5 average per MM (CR ¼). The 2-HP shape is the design:
+        // 4d4 ≈ 10 average per MM (CR ¼). The 10-HP shape is the design:
         // a glass-cannon controller.
-        hitpoints: "1d4".parse().unwrap(),
+        hitpoints: "4d4".parse().unwrap(),
         // RAW speed line: Speed 10 ft., fly 40 ft.
         speed: 10.0,
         fly_speed: 40.0,
@@ -120,8 +120,9 @@ mod tests {
         // fey distinct (Pixie: caster-flavored area sleep; Sprite:
         // archer-flavored single-target sleep arrow).
         assert!(!a.has_magic_resistance());
-        // The 2-HP glass-cannon design — a sprite WILL die to anything
-        // that lands, so the sleep arrow is its one tactical clause.
+        // The 10-HP glass-cannon design — a sprite dies to almost
+        // anything that lands twice, so the sleep arrow is its one
+        // tactical clause.
         assert!(!a.effectively_immune_to_condition(Condition::Charmed));
         assert!(!a.effectively_immune_to_condition(Condition::Asleep));
     }

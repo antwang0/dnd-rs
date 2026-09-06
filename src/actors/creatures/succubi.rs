@@ -41,7 +41,7 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // hooked silhouette of a winged fey-fiend.
         glyph: 'ς',
         ac: 15,
-        hitpoints: "10d8+20".parse().unwrap(),
+        hitpoints: "12d8+12".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 60 ft.
         speed: 30.0,
         fly_speed: 60.0,

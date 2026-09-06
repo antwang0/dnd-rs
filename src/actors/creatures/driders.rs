@@ -34,8 +34,8 @@ use std::sync::LazyLock;
 /// install the same condition on pickup. No magic resistance — the
 /// drider is a corrupted mortal, not a fey / outsider.
 ///
-/// Stat shape: AC 19, ~123 HP (13d10+52), STR 16, DEX 16, CON 18, INT 13,
-/// WIS 14, CHA 12. Speed 30. Senses: Darkvision 120 (drow-tier dark
+/// Stat shape: AC 19, ~123 HP (13d10+52), STR 16, DEX 19, CON 18, INT 13,
+/// WIS 16, CHA 12. Speed 30. Senses: Darkvision 120 (drow-tier dark
 /// vision). Languages: Elvish, Undercommon. Size Large. CR 6.
 ///
 /// RAW also gives the drider:
@@ -70,8 +70,8 @@ pub static DRIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 30.,
         strength: 16,
         intelligence: 13,
-        dexterity: 16,
-        wisdom: 14,
+        dexterity: 19,
+        wisdom: 16,
         constitution: 18,
         charisma: 12,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),

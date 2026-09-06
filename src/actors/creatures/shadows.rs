@@ -20,7 +20,7 @@ pub static SHADOW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Shadow",
         glyph: 's',
         ac: 12,
-        hitpoints: "3d8+3".parse().unwrap(),
+        hitpoints: "5d8+5".parse().unwrap(),
         speed: 40.,
         strength: 6,
         dexterity: 14,

@@ -28,13 +28,13 @@ use std::sync::LazyLock;
 ///   would produce.
 ///
 /// Defensive identity: AC 11 (the octopus is squishy — its threat lives
-/// on the lock-down, not damage soak), ~52 HP (8d10+8). Standard beast
+/// on the lock-down, not damage soak), ~45 HP (7d10+7). Standard beast
 /// envelope — no special resistances or condition immunities. The
 /// octopus's threat is the long-reach lock-down on a 10-round Restrained
 /// timer; once the rider lands, allies can pile on a target that's both
 /// unable to move AND eating attack-against advantage.
 ///
-/// Stat shape: AC 11, ~52 HP (8d10+8), STR 17, DEX 13, CON 13, INT 4,
+/// Stat shape: AC 11, ~45 HP (7d10+7), STR 17, DEX 13, CON 13, INT 5,
 /// WIS 10, CHA 4. Speed 20 (RAW: 10ft walk + 60ft swim — we keep the
 /// swimming speed as a flag and collapse the magnitudes to
 /// a 20ft walking speed since the engine isn't aquatic-aware; the
@@ -57,11 +57,11 @@ pub static GIANT_OCTOPUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // the glyph map at this size.
         glyph: 'o',
         ac: 11,
-        // 8d10+8 ≈ 52 average per MM (CR 1).
-        hitpoints: "8d10+8".parse().unwrap(),
+        // 7d10+7 ≈ 45 average per MM (CR 1).
+        hitpoints: "7d10+7".parse().unwrap(),
         speed: 20.,
         strength: 17,
-        intelligence: 4,
+        intelligence: 5,
         dexterity: 13,
         wisdom: 10,
         constitution: 13,

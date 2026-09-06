@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 /// - **Multiattack** (2 claws + 1 sting): heterogeneous compound; the
 ///   devil's full opening salvo.
 ///
-/// Stats target the MM Bone Devil block: 142 HP, AC 19, STR 18 / DEX 16
+/// Stats target the SRD 5.2 Bone Devil block: 161 HP, AC 16, STR 18 / DEX 16
 /// / CON 18 / WIS 14 / CHA 16. Standard devil envelope: immune to fire +
 /// poison, resistant to cold + mundane B/P/S; can't be poisoned or
 /// charmed. Proficient INT / WIS / CHA saves (the mental lane).
@@ -33,9 +33,9 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'B' is Bracers loot — creature glyph 'b' for the bone devil
         // is open.
         glyph: 'b',
-        ac: 19,
-        // 15d10+60 ≈ 142 average per the MM Bone Devil stat block.
-        hitpoints: "15d10+60".parse().unwrap(),
+        ac: 16,
+        // 17d10+68 ≈ 161 average per the MM Bone Devil stat block.
+        hitpoints: "17d10+68".parse().unwrap(),
         // RAW speed line: Speed 40 ft., fly 40 ft.
         speed: 40.0,
         fly_speed: 40.0,

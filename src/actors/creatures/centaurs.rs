@@ -24,8 +24,8 @@ pub static CENTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'C' was free in the medium / large monstrosity slot — capital
         // because Large.
         glyph: 'C',
-        ac: 12,
-        hitpoints: "5d10+10".parse().unwrap(),
+        ac: 16,
+        hitpoints: "6d10+12".parse().unwrap(),
         speed: 50.,
         strength: 18,
         intelligence: 9,

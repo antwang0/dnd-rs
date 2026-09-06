@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 ///   melee. Vanilla `SimpleWeapon`; the per-Action damage lane that
 ///   pairs with the curse-flavored bite.
 ///
-/// Defensive identity: AC 12 (light armor + DEX). 120 HP (16d10+32).
+/// Defensive identity: AC 12 (light armor + DEX). 120 HP (16d8+48).
 /// Non-magical BPS resistance via the shared
 /// `damage_modifiers_from` helper — the canonical
 /// lycanthrope envelope. RAW gives the weretiger **Keen Hearing and
@@ -36,7 +36,7 @@ use std::sync::LazyLock;
 /// doesn't track per-turn movement for triggering on-hit save riders.
 /// The load-bearing kit is the bite + claws multi.
 ///
-/// Stat shape: AC 12, ~120 HP (16d10+32), STR 17, DEX 15, CON 16, INT
+/// Stat shape: AC 12, ~120 HP (16d8+48), STR 17, DEX 15, CON 16, INT
 /// 10, WIS 13, CHA 11. Speed 40 (hybrid-form burst speed matching the
 /// other wereXX templates). Senses: Darkvision 60. Languages: Common
 /// (humanoid form retains speech). Size Large. CR 4.
@@ -52,8 +52,8 @@ pub static WERETIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // distinct silhouette from the plain tiger.
         glyph: 't',
         ac: 12,
-        // 16d10+32 ≈ 120 average per MM (CR 4).
-        hitpoints: "16d10+32".parse().unwrap(),
+        // 16d8+48 ≈ 120 average per MM (CR 4).
+        hitpoints: "16d8+48".parse().unwrap(),
         speed: 40.,
         strength: 17,
         intelligence: 10,

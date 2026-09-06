@@ -100,14 +100,14 @@ pub static ICE_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// - **death burst** (passive on-death) — 1d8 fire in a 5-ft radius
 ///   when reduced to 0 HP. DC 10 DEX halves.
 ///
-/// Defensive identity: AC 10, ~21 HP (6d6). Fire immunity (the mephit
+/// Defensive identity: AC 10, ~17 HP (5d6). Fire immunity (the mephit
 /// IS heat). Poison immunity + non-magical BPS resistance from the
 /// shared elemental baseline. Standard 9-condition elemental immunity
 /// envelope. No cold vulnerability per RAW (the steam mephit is heat-
 /// pressure, not ice — cold doesn't condense it back as fast as fire
 /// melts the ice mephit).
 ///
-/// Stat shape: AC 10, ~21 HP (6d6), STR 5, DEX 11, CON 10, INT 11,
+/// Stat shape: AC 10, ~17 HP (5d6), STR 5, DEX 11, CON 10, INT 11,
 /// WIS 10, CHA 12. Speed 30. Senses: Darkvision 60. Languages:
 /// Primordial. Size Small. CR ¼.
 pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -120,7 +120,7 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // Mephit), 'm' (Magmin). Reads as the wispy steam-imp shape.
         glyph: 's',
         ac: 10,
-        hitpoints: "6d6".parse().unwrap(),
+        hitpoints: "5d6".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
         speed: 30.0,
         fly_speed: 30.0,
@@ -162,13 +162,13 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
 ///   when reduced to 0 HP. Same damage profile as the Magmin but on
 ///   the shorter mephit radius. DC 11 DEX halves.
 ///
-/// Defensive identity: AC 11, ~22 HP (5d6+5). Fire immunity. Cold
+/// Defensive identity: AC 11, ~18 HP (4d6+4). Fire immunity. Cold
 /// vulnerability (RAW — the lava crust solidifies and shatters under
 /// magical cold). Poison immunity + non-magical BPS resistance via the
 /// shared elemental baseline. Standard 9-condition elemental immunity
 /// envelope.
 ///
-/// Stat shape: AC 11, ~22 HP (5d6+5), STR 8, DEX 12, CON 12, INT 7,
+/// Stat shape: AC 11, ~18 HP (4d6+4), STR 8, DEX 12, CON 12, INT 7,
 /// WIS 10, CHA 10. Speed 30. Senses: Darkvision 60. Languages:
 /// Primordial. Size Small. CR ½.
 pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -182,7 +182,7 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // free in the small-elemental cohort.
         glyph: 'g',
         ac: 11,
-        hitpoints: "5d6+5".parse().unwrap(),
+        hitpoints: "4d6+4".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
         speed: 30.0,
         fly_speed: 30.0,

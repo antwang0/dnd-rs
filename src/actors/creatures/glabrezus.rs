@@ -27,8 +27,8 @@ pub static GLABREZU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // distinct from 'g' = Ghost / Goblin and 'G' = Gargoyle.)
         glyph: 'Z',
         ac: 17,
-        // 15d10+75 = 157 average per MM (CR 9 demon HP envelope).
-        hitpoints: "15d10+75".parse().unwrap(),
+        // 18d10+90 = 189 average per MM (CR 9 demon HP envelope).
+        hitpoints: "18d10+90".parse().unwrap(),
         speed: 40.,
         strength: 20,
         dexterity: 15,

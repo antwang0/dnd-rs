@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 /// shallows before that.
 ///
 /// Stat shape per the SRD: AC 11, 11 HP (2d8+2), STR 10 / DEX 13 / CON
-/// 12 / INT 11 / WIS 11 / CHA 12. Speed 10 walking, 40 swimming — the
+/// 12 / INT 11 / WIS 14 / CHA 12. Speed 10 walking, 40 swimming — the
 /// engine has one speed and takes the water one, since that is where a
 /// merfolk fights. Skills: Perception. Languages: Common, Primordial
 /// (Aquan). CR ⅛.
@@ -46,7 +46,7 @@ pub static MERFOLK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         dexterity: 13,
         constitution: 12,
         intelligence: 11,
-        wisdom: 11,
+        wisdom: 14,
         charisma: 12,
         skills: HashSet::from([Skill::Perception]),
         languages: HashSet::from([Language::Common, Language::Primordial]),

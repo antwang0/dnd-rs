@@ -42,7 +42,7 @@ use std::sync::LazyLock;
 /// the trait; the Quasit (CR 1, MR-flagged) is the next demon up.
 ///
 /// Stat shape: AC 11 (natural armor — the leathery hide), 18 HP (4d6+4),
-/// STR 11, DEX 11, CON 12, INT 5, WIS 8, CHA 3 (a dretch has no
+/// STR 12, DEX 11, CON 12, INT 5, WIS 8, CHA 3 (a dretch has no
 /// personality to speak of). Speed 20 (the manes-shuffle). Senses:
 /// Darkvision 60. Languages: Abyssal (the demon tongue), with
 /// understanding-but-not-speaking of Common — we drop the listener-only
@@ -64,7 +64,7 @@ pub static DRETCH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 4d6+4 ≈ 18 average per MM (CR ¼).
         hitpoints: "4d6+4".parse().unwrap(),
         speed: 20.,
-        strength: 11,
+        strength: 12,
         intelligence: 5,
         dexterity: 11,
         wisdom: 8,

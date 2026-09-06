@@ -22,8 +22,8 @@ pub static PEGASUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // taken by Polar Bear; 'e' for "equus" reads as horse-flavored.
         glyph: 'e',
         ac: 12,
-        // 7d10+14 ≈ 59 average per MM (CR 2).
-        hitpoints: "7d10+14".parse().unwrap(),
+        // 7d10+21 ≈ 59 average per MM (CR 2).
+        hitpoints: "7d10+21".parse().unwrap(),
         // 60 ft fly RAW. Engine isn't 3D so the fly speed becomes
         // ground speed; pegasus stays the fastest celestial in the pool.
         // RAW speed line: Speed 60 ft., fly 90 ft.

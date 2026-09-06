@@ -63,13 +63,13 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'L' (Lord) reads cleanly and is unused in the undead pool.
         glyph: 'L',
         ac: 17,
-        // 17d8+85 ≈ 161 average per MM (CR 15).
-        hitpoints: "17d8+85".parse().unwrap(),
+        // 25d8+75 ≈ 187 average per MM (CR 15).
+        hitpoints: "25d8+75".parse().unwrap(),
         speed: 20.,
         strength: 18,
         intelligence: 11,
         dexterity: 10,
-        wisdom: 18,
+        wisdom: 19,
         constitution: 17,
         charisma: 16,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),

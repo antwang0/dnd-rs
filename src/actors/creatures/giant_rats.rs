@@ -29,13 +29,13 @@ use std::sync::LazyLock;
 /// higher tiers: doubled-bite damage on advantage rolls turns a 1d4 +
 /// STR mod swing into a credible threat against soft-AC targets.
 ///
-/// Defensive identity: AC 12 (small + DEX), 7 HP (2d6). Vanilla beast
+/// Defensive identity: AC 13 (small + DEX), 7 HP (2d6). Vanilla beast
 /// envelope — no resistances or condition immunities. The rat dies to
 /// a single solid hit; the threat lives in the swarm. **Keen Smell**
 /// (advantage on Perception checks using smell) is RAW flavor-only —
 /// the engine doesn't surface skill checks through combat.
 ///
-/// Stat shape: AC 12, ~7 HP (2d6), STR 7, DEX 15, CON 11, INT 2,
+/// Stat shape: AC 13, ~7 HP (2d6), STR 7, DEX 16, CON 11, INT 2,
 /// WIS 10, CHA 4. Speed 30. Senses: Darkvision 60. Size Small. CR ⅛.
 /// XP: 25 per RAW.
 pub static GIANT_RAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -48,13 +48,13 @@ pub static GIANT_RAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // / fey CR contexts rarely collide in random encounter rolls.
         // 'R' is taken by Adult Red Dragon / Ranger / Rogue cohort.
         glyph: 'r',
-        ac: 12,
+        ac: 13,
         // 2d6 = 7 average per MM (CR ⅛).
         hitpoints: "2d6".parse().unwrap(),
         speed: 30.,
         strength: 7,
         intelligence: 2,
-        dexterity: 15,
+        dexterity: 16,
         wisdom: 10,
         constitution: 11,
         charisma: 4,

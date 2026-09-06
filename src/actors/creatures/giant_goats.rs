@@ -31,8 +31,8 @@ use std::sync::LazyLock;
 /// immunities. The goat dies to two solid hits at its CR; threat
 /// lives in the chunky ram die rather than survivability.
 ///
-/// Stat shape: AC 11, ~19 HP (3d10+3), STR 17, DEX 11, CON 12,
-/// INT 3, WIS 12, CHA 5. Speed 40. Size Large. CR ½. XP: 100 per RAW.
+/// Stat shape: AC 11, ~19 HP (3d10+3), STR 17, DEX 13, CON 12,
+/// INT 3, WIS 12, CHA 6. Speed 40. Size Large. CR ½. XP: 100 per RAW.
 pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_GOAT_RAM);
@@ -51,10 +51,10 @@ pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 40.,
         strength: 17,
         intelligence: 3,
-        dexterity: 11,
+        dexterity: 13,
         wisdom: 12,
         constitution: 12,
-        charisma: 5,
+        charisma: 6,
         cr: 0.5,
         size: Size::Large,
         // 5e Mounted Combat: MM's mountain mount — what a dwarf rides where a horse can't stand up.

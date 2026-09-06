@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 /// swim number as the per-creature speed since giant sharks
 /// never walk).
 ///
-/// Defensive identity: AC 13 (huge + 11 DEX), 126 HP (11d12+44).
+/// Defensive identity: AC 13 (huge + 11 DEX), 126 HP (8d12+40).
 /// Vanilla beast envelope — no resistances or condition
 /// immunities. **Blindsight 60** (twice the reef / hunter shark
 /// range) routes the giant shark through the engine's
@@ -43,7 +43,7 @@ use std::sync::LazyLock;
 /// outlasts most CR-5 swing exchanges, giving Blood Frenzy
 /// multiple full rounds to ramp.
 ///
-/// Stat shape: AC 13, ~126 HP (11d12+44), STR 23, DEX 11, CON 19,
+/// Stat shape: AC 13, ~126 HP (8d12+40), STR 23, DEX 11, CON 21,
 /// INT 1, WIS 10, CHA 5. Speed 50 (RAW swim 50; magnitude collapsed to
 /// per-creature speed). Senses: Blindsight 60. Size Huge. CR 5.
 /// XP: 1800 per RAW.
@@ -63,14 +63,14 @@ pub static GIANT_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // size-vs-type split.
         glyph: 'Q',
         ac: 13,
-        // 11d12+44 = 126 average per MM (CR 5).
-        hitpoints: "11d12+44".parse().unwrap(),
+        // 8d12+40 = 126 average per MM (CR 5).
+        hitpoints: "8d12+40".parse().unwrap(),
         speed: 50.,
         strength: 23,
         intelligence: 1,
         dexterity: 11,
         wisdom: 10,
-        constitution: 19,
+        constitution: 21,
         charisma: 5,
         senses: HashSet::from([SpecialSense::Blindsight(60)]),
         cr: 5.0,

@@ -23,12 +23,12 @@ pub static TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'T' for Tiger — capital because Large; collides with Troll
         // on first letter, but Troll is also 'T' in this engine.
         glyph: 'T',
-        ac: 12,
-        hitpoints: "5d10+10".parse().unwrap(),
+        ac: 13,
+        hitpoints: "4d10+8".parse().unwrap(),
         speed: 40.,
         strength: 17,
         intelligence: 3,
-        dexterity: 15,
+        dexterity: 16,
         wisdom: 12,
         constitution: 14,
         charisma: 8,

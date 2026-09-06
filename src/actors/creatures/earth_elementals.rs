@@ -25,8 +25,8 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // 'E' fire-elemental glyph.
         glyph: 'Q',
         ac: 17,
-        // 12d10+60 = ~126 average per MM (CR 5, heavier HP pool).
-        hitpoints: "12d10+60".parse().unwrap(),
+        // 14d10+70 = ~147 average per MM (CR 5, heavier HP pool).
+        hitpoints: "14d10+70".parse().unwrap(),
         speed: 30., // burrow + walk, no flight
         strength: 20,
         intelligence: 5,

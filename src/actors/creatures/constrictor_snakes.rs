@@ -27,11 +27,11 @@ use std::sync::LazyLock;
 ///   chokepoint so grapple-immune targets (the elemental / construct
 ///   envelope) shrug it off cleanly.
 ///
-/// Defensive identity: AC 12, ~13 HP (2d10+2). Standard beast envelope
+/// Defensive identity: AC 13, ~13 HP (2d10+2). Standard beast envelope
 /// — no special resistances, no condition immunities. The constrictor's
 /// threat is the grapple lock-down, not damage soak.
 ///
-/// Stat shape: AC 12, ~13 HP (2d10+2), STR 15, DEX 14, CON 12, INT 1,
+/// Stat shape: AC 13, ~13 HP (2d10+2), STR 15, DEX 14, CON 12, INT 1,
 /// WIS 10, CHA 3. Speed 30 (RAW also swim 30, whose magnitude we don't model as a
 /// separate movement lane). Senses: Blindsight 10ft (the snake's heat-
 /// pit sensors). Size Large. CR ¼.
@@ -45,7 +45,7 @@ pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // 's' (Steam Mephit / Skeleton). 'n' reads as the low coiled
         // silhouette of a serpent.
         glyph: 'n',
-        ac: 12,
+        ac: 13,
         // 2d10+2 ≈ 13 average per MM (CR ¼).
         hitpoints: "2d10+2".parse().unwrap(),
         speed: 30.,

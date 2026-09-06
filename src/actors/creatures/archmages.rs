@@ -11,13 +11,14 @@ use std::sync::LazyLock;
 
 /// Archmage — CR 12 medium humanoid. The apex of the NPC appendix and
 /// the only entry in it that fights the party the way a party fights.
-/// Ninety-nine hit points behind a Shield reaction, Magic Resistance
+/// A hundred and seventy hit points behind a Shield reaction, Magic
+/// Resistance
 /// against everything the party casts back, and nine tiers of slots.
 ///
 /// Action lanes, in the order the archmage actually spends them:
 /// - **counterspell** — the reaction that makes the fight about the
 ///   archmage's turn rather than the party's.
-/// - **shield** — +5 AC as a reaction. On AC 12 that is the difference
+/// - **shield** — +5 AC as a reaction. On AC 17 that is the difference
 ///   between a body and a target.
 /// - **time stop** — the level-9 opener, when it has one.
 /// - **cone of cold** / **fireball** — the two damage tiers.
@@ -35,17 +36,16 @@ use std::sync::LazyLock;
 /// the party's control spells are the only thing that answers a caster
 /// with this many slots, and every one of them now rolls twice.
 ///
-/// Stat shape per the SRD NPC appendix: AC 12 (15 with mage armor), 99
-/// HP (18d8+18), STR 10 / DEX 14 / CON 12 / INT 20 / WIS 15 / CHA 16.
+/// Stat shape per the SRD NPC appendix: AC 17, 170 HP (31d8+31), STR 10 / DEX 14 / CON 12 / INT 20 / WIS 15 / CHA 16.
 /// Speed 30. Proficient INT / WIS saves. Darkvision 60 (RAW's archmage
 /// is usually an elf or a half-elf and the appendix prints the sense).
 /// CR 12.
 ///
-/// The spell ability is WIS rather than the INT 20 RAW prints, because
-/// the engine derives every save DC and spell attack from a single
-/// ability and that ability is Wisdom. WIS 15 is set high enough to keep
-/// the archmage's DCs in the band its CR expects without pretending the
-/// stat block's INT is doing the work.
+/// The spell ability is Intelligence, RAW's own. This paragraph used to
+/// say Wisdom, and explain that the engine could only derive a save DC
+/// from one fixed ability; `best_spell_save_dc` reads the caster's
+/// highest mental score now, so the archmage casts off the INT 20 its
+/// stat block invests in, exactly as the book intends.
 ///
 /// The slot ladder is 4/3/3/3/3/2/1/1/1 — RAW's, exactly. It is a lot of
 /// rows for a creature that will realistically spend four of them, and
@@ -72,9 +72,9 @@ pub static ARCHMAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // are the same silhouette at different CRs and the map should
         // say so.
         glyph: 'm',
-        ac: 12,
-        // 18d8+18 ≈ 99 average per the SRD NPC appendix (CR 12).
-        hitpoints: "18d8+18".parse().unwrap(),
+        ac: 17,
+        // 31d8+31 ≈ 170 average per the SRD NPC appendix (CR 12).
+        hitpoints: "31d8+31".parse().unwrap(),
         speed: 30.,
         strength: 10,
         dexterity: 14,

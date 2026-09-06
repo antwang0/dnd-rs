@@ -78,7 +78,7 @@ static DARKMANTLE_ATTACH: AttachProfile = AttachProfile {
 /// deafness gate, and installing one for a single CR ½ creature would be
 /// a rule only the darkmantle obeys.
 ///
-/// Stat shape per the SRD: AC 11, 22 HP (5d8), STR 16 / DEX 12 / CON 13
+/// Stat shape per the SRD: AC 11, 22 HP (5d6+5), STR 16 / DEX 12 / CON 13
 /// / INT 2 / WIS 10 / CHA 5. Speed 10, fly 30 — the fly speed is what
 /// gets it onto the ceiling, and the engine's single speed field takes
 /// the larger of the two. Blindsight 60 (blind beyond). CR ½.
@@ -92,8 +92,8 @@ pub static DARKMANTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // dragon / drake / dire-wolf pools and 'm' is the caster band.
         glyph: 'k',
         ac: 11,
-        // 5d8 ≈ 22 average per the SRD (CR ½).
-        hitpoints: "5d8".parse().unwrap(),
+        // 5d6+5 ≈ 22 average per the SRD (CR ½).
+        hitpoints: "5d6+5".parse().unwrap(),
         // RAW walks at 10 and flies at 30. The engine has one speed, and
         // the flying one is the one a darkmantle spends its turn using.
         // RAW speed line: Speed 10 ft., fly 30 ft.

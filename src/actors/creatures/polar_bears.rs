@@ -22,12 +22,12 @@ pub static POLAR_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Brown Bear so the glyphs stay distinguishable on a shared map.
         glyph: 'P',
         ac: 12,
-        // 9d10+27 ≈ 76 average per MM (CR 2).
-        hitpoints: "9d10+27".parse().unwrap(),
+        // 5d10+15 ≈ 42 average per MM (CR 2).
+        hitpoints: "5d10+15".parse().unwrap(),
         speed: 40.,
         strength: 20,
         intelligence: 2,
-        dexterity: 10,
+        dexterity: 14,
         wisdom: 13,
         constitution: 16,
         charisma: 7,

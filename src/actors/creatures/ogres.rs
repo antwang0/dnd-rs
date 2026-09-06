@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 /// creature in the codebase that takes a 4×4 footprint, exercising the
 /// footprint-aware reach, pathing, and OA logic at scale. Plus the
 /// Greatclub's reach-2 swing means an Ogre threatens a wider area than
-/// any other melee creature today. Stats scaled to roughly CR 1 so it
+/// any other melee creature today. Stats scaled to roughly CR 2 so it
 /// hits hard without trivially erasing parties.
 pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -18,7 +18,7 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Ogre",
         glyph: 'O',
         ac: 11,
-        hitpoints: "4d10+8".parse().unwrap(),
+        hitpoints: "8d10+24".parse().unwrap(),
         speed: 40.,
         strength: 19,
         dexterity: 8,
@@ -28,7 +28,7 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charisma: 7,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common, Language::Giant]),
-        cr: 1.0,
+        cr: 2.0,
         size: Size::Large,
         creature_type: CreatureType::Giant,
         actions,

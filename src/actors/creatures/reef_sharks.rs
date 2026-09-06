@@ -39,7 +39,7 @@ use std::sync::LazyLock;
 /// at short range — the same sensory envelope the Spider /
 /// Giant Wolf Spider cohort uses for web-vibration awareness.
 ///
-/// Stat shape: AC 12, ~22 HP (4d8+4), STR 14, DEX 13, CON 13,
+/// Stat shape: AC 12, ~22 HP (4d8+4), STR 14, DEX 15, CON 13,
 /// INT 1, WIS 10, CHA 4. Speed 40 (RAW swim 40; we collapse to
 /// the swim number as per-creature speed). Senses: Blindsight 30.
 /// Size Medium. CR ½. XP: 100 per RAW.
@@ -62,7 +62,7 @@ pub static REEF_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 40.,
         strength: 14,
         intelligence: 1,
-        dexterity: 13,
+        dexterity: 15,
         wisdom: 10,
         constitution: 13,
         charisma: 4,

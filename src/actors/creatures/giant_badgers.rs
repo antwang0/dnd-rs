@@ -35,13 +35,13 @@ use std::sync::LazyLock;
 /// is flavor-only — the engine doesn't surface skill checks through
 /// combat.
 ///
-/// Defensive identity: AC 10 (medium + no DEX bonus, hide), 13 HP
-/// (2d8+4). Vanilla beast envelope — no resistances or condition
+/// Defensive identity: AC 13 (medium + no DEX bonus, hide), 15 HP
+/// (2d8+6). Vanilla beast envelope — no resistances or condition
 /// immunities. The badger takes two solid hits to drop; threat lives in
 /// the heterogeneous compound multi against single targets and the
 /// dual-typed damage spread (bypasses most single-type resistances).
 ///
-/// Stat shape: AC 10, ~13 HP (2d8+4), STR 13, DEX 10, CON 15, INT 2,
+/// Stat shape: AC 13, ~15 HP (2d8+6), STR 15, DEX 10, CON 17, INT 2,
 /// WIS 12, CHA 5. Speed 30 — RAW: 30 walking + burrow 10. The engine
 /// doesn't track separate burrow speed (no underground-terrain
 /// awareness), so the burrow half is collapsed to the walking value.
@@ -59,15 +59,15 @@ pub static GIANT_BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // same-glyph humanoid / fiend cohort. Uppercase 'B' reads as
         // "stout four-legged digger silhouette" at the small UI scale.
         glyph: 'B',
-        ac: 10,
-        // 2d8+4 = 13 average per MM (CR ¼).
-        hitpoints: "2d8+4".parse().unwrap(),
+        ac: 13,
+        // 2d8+6 = 15 average per MM (CR ¼).
+        hitpoints: "2d8+6".parse().unwrap(),
         speed: 30.,
         strength: 13,
         intelligence: 2,
         dexterity: 10,
         wisdom: 12,
-        constitution: 15,
+        constitution: 17,
         charisma: 5,
         // Darkvision 30 — the burrow-dweller's low-light senses
         // (matches the Giant Frog's 30-ft envelope at the same CR

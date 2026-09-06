@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 /// the satyr picks whichever of the three the situation wants, which on
 /// a forty-foot speed means it is never in the wrong band.
 ///
-/// Stat shape per the SRD: AC 14 (leather armor), 31 HP (7d8), STR 12 /
+/// Stat shape per the SRD: AC 13 (leather armor), 31 HP (7d8), STR 12 /
 /// DEX 16 / CON 11 / INT 12 / WIS 10 / CHA 14. Speed 40. Skills:
 /// Perception, Performance, Stealth. Languages: Common, Elvish, Sylvan.
 /// CR ½.
@@ -38,7 +38,7 @@ pub static SATYR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'Y' (uppercase) — an unclaimed letter; 'S' and 's' are both
         // deep pools and lowercase 'y' is the Spy's.
         glyph: 'Y',
-        ac: 14,
+        ac: 13,
         // 7d8 ≈ 31 average per the SRD (CR ½).
         hitpoints: "7d8".parse().unwrap(),
         speed: 40.,

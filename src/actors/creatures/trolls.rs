@@ -24,7 +24,7 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Troll",
         glyph: 'T',
         ac: 15,
-        hitpoints: "8d10+24".parse().unwrap(),
+        hitpoints: "9d10+45".parse().unwrap(),
         strength: 18,
         dexterity: 13,
         constitution: 20,

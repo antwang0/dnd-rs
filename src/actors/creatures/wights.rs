@@ -25,8 +25,8 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'i' for "wight" since it's distinctive on the map).
         glyph: 'i',
         ac: 14,
-        // 9d8+18 = 45 average per MM.
-        hitpoints: "9d8+18".parse().unwrap(),
+        // 11d8+33 = 45 average per MM.
+        hitpoints: "11d8+33".parse().unwrap(),
         strength: 15,
         dexterity: 14,
         constitution: 16,

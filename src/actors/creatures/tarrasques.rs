@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Tarrasque — CR 30, the apex 5e creature. Gargantuan (4×4 footprint),
-/// AC 25, ~676 average HP. Apex-tier defense profile:
+/// AC 25, ~697 average HP. Apex-tier defense profile:
 /// - Resistant to bludgeoning / piercing / slashing from non-magical
 ///   weapons (we collapse to a flat physical-resistance for simplicity
 ///   since the engine doesn't track magic-weapon properties).
@@ -40,8 +40,8 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Tarrasque",
         glyph: 'T',
         ac: 25,
-        // 33d20+330 = ~676 average per MM (CR 30).
-        hitpoints: "33d20+330".parse().unwrap(),
+        // 34d20+340 = ~697 average per MM (CR 30).
+        hitpoints: "34d20+340".parse().unwrap(),
         speed: 40.,
         strength: 30,
         dexterity: 11,

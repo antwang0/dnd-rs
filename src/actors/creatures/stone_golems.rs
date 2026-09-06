@@ -32,7 +32,7 @@ use std::sync::LazyLock;
 /// "anti-caster" boss — the party must whittle it down with magical
 /// weapons rather than spells.
 ///
-/// Stat shape: AC 17, ~178 average HP (17d10+85), STR 22, INT 3, no
+/// Stat shape: AC 18, ~220 average HP (21d10+105), STR 22, INT 3, no
 /// senses beyond darkvision (constructs don't perceive the world like
 /// living things). No languages — they understand commands from their
 /// creator but don't speak. CR 10.
@@ -45,9 +45,9 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Stone Golem",
         // 'G' (uppercase) — golem glyph distinct from 'g' (goblin).
         glyph: 'G',
-        ac: 17,
-        // 17d10+85 ≈ 178 average per MM (CR 10).
-        hitpoints: "17d10+85".parse().unwrap(),
+        ac: 18,
+        // 21d10+105 ≈ 220 average per MM (CR 10).
+        hitpoints: "21d10+105".parse().unwrap(),
         speed: 30.,
         strength: 22,
         dexterity: 9,

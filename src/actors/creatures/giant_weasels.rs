@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 /// and is where the giant weasel's +5 to hit comes from — it is quicker
 /// than it is strong, and its damage says so.
 ///
-/// Stat shape per the SRD: AC 13, 9 HP (2d8), STR 11 / DEX 16 / CON 10
+/// Stat shape per the SRD: AC 13, 9 HP (2d8), STR 11 / DEX 17 / CON 10
 /// / INT 4 / WIS 12 / CHA 5. Speed 40. Darkvision 60. Skills:
 /// Perception, Stealth. CR ⅛.
 pub static GIANT_WEASEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -30,7 +30,7 @@ pub static GIANT_WEASEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         hitpoints: "2d8".parse().unwrap(),
         speed: 40.,
         strength: 11,
-        dexterity: 16,
+        dexterity: 17,
         constitution: 10,
         intelligence: 4,
         wisdom: 12,

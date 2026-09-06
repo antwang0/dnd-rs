@@ -112,7 +112,7 @@ use crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE;
 use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
 use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
-use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+use crate::actors::creatures::giant_spiders::GIANT_SPIDER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
 use crate::actors::creatures::stone_giants::STONE_GIANT_TEMPLATE;
 use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
@@ -9699,7 +9699,7 @@ impl EncounterInstance {
             &SHADOW_TEMPLATE,
             &SHAMBLING_MOUND_TEMPLATE,
             &SPECTER_TEMPLATE,
-            &SPIDER_TEMPLATE,
+            &GIANT_SPIDER_TEMPLATE,
             &STIRGE_TEMPLATE,
             &STONE_GIANT_TEMPLATE,
             &STORM_GIANT_TEMPLATE,

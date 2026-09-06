@@ -43,7 +43,7 @@ use std::sync::LazyLock;
 /// turtle is a "physical dragon" without the spell-shrug envelope of
 /// its surface-dwelling kin.
 ///
-/// Stat shape: AC 20 (heavy shell), ~341 average HP (22d20+110), STR 25,
+/// Stat shape: AC 20 (heavy shell), ~356 average HP (23d20+115), STR 25,
 /// CON 20. Darkvision 120 ft. Languages: Aquan, Draconic. CR 17.
 ///
 /// RAW also gives the dragon turtle proficient DEX/CON/WIS saves — the
@@ -64,8 +64,8 @@ pub static DRAGON_TURTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // monstrosity pool.
         glyph: 't',
         ac: 20,
-        // 22d20+110 ≈ 341 average per MM (CR 17).
-        hitpoints: "22d20+110".parse().unwrap(),
+        // 23d20+115 ≈ 356 average per MM (CR 17).
+        hitpoints: "23d20+115".parse().unwrap(),
         speed: 20.,
         strength: 25,
         intelligence: 10,

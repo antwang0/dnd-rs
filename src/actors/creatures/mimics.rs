@@ -21,11 +21,11 @@ pub static MIMIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'm' (lowercase) — distinct from 'M' (Mage / Wizard).
         glyph: 'm',
         ac: 12,
-        hitpoints: "9d8+9".parse().unwrap(),
+        hitpoints: "9d8+18".parse().unwrap(),
         speed: 15.,
         strength: 17,
         dexterity: 12,
-        constitution: 12,
+        constitution: 15,
         intelligence: 5,
         wisdom: 13,
         charisma: 8,

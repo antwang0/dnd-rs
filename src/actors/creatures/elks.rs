@@ -35,14 +35,14 @@ use std::sync::LazyLock;
 /// from the boar's single tusks option, giving the elk a
 /// slightly richer tactical surface at the same CR.
 ///
-/// Defensive identity: AC 10 (no natural hide, no armor), 13 HP
-/// (2d10+2). Vanilla beast envelope — no resistances or
+/// Defensive identity: AC 10 (no natural hide, no armor), 11 HP
+/// (2d10). Vanilla beast envelope — no resistances or
 /// condition immunities. Speed 50 is the load-bearing tactical
 /// stat — faster than every other CR-¼ beast (the horse cohort
 /// caps at 60 only on the Warhorse; the Boar / Goat / Camel sit
 /// at 40), letting the elk dictate engagement range.
 ///
-/// Stat shape: AC 10, ~13 HP (2d10+2), STR 16, DEX 10, CON 12,
+/// Stat shape: AC 10, ~11 HP (2d10), STR 16, DEX 10, CON 11,
 /// INT 2, WIS 10, CHA 6. Speed 50. Size Large. CR ¼. XP: 50
 /// per RAW.
 pub static ELK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -60,14 +60,14 @@ pub static ELK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // beside 'b' (Boar), 'h' (Horse).
         glyph: 'e',
         ac: 10,
-        // 2d10+2 = 13 average per MM (CR ¼).
-        hitpoints: "2d10+2".parse().unwrap(),
+        // 2d10 = 11 average per MM (CR ¼).
+        hitpoints: "2d10".parse().unwrap(),
         speed: 50.,
         strength: 16,
         intelligence: 2,
         dexterity: 10,
         wisdom: 10,
-        constitution: 12,
+        constitution: 11,
         charisma: 6,
         cr: 0.25,
         size: Size::Large,

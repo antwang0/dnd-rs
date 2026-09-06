@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 /// outside the reach of most of what it restrains, and a Restrained
 /// creature cannot close the gap.
 ///
-/// Stat shape per the SRD: AC 16 (natural armor), 85 HP (10d8+40), STR
+/// Stat shape per the SRD: AC 15 (natural armor), 85 HP (10d8+40), STR
 /// 18 / DEX 15 / CON 18 / INT 11 / WIS 12 / CHA 14. Speed 30. Proficient
 /// CON / WIS / CHA saves. Darkvision 120. Languages: Infernal. CR 8.
 pub static CHAIN_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -46,7 +46,7 @@ pub static CHAIN_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Barbed Devils. Named for the family rather than the word, so
         // the map reads "a devil" at a glance and the panel says which.
         glyph: 'B',
-        ac: 16,
+        ac: 15,
         // 10d8+40 ≈ 85 average per the SRD (CR 8).
         hitpoints: "10d8+40".parse().unwrap(),
         speed: 30.,

@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 /// advantage), Foresight (level-9 single-target buff), Mass Heal +
 /// Resurrection for sustain.
 ///
-/// Stats target MM solar: 243 HP (22d10+121), AC 21, STR 26, immune to
+/// Stats target MM solar: 243 HP (22d10+176), AC 21, STR 26, immune to
 /// fire/poison/radiant + the standard celestial condition immunities
 /// (Charmed / Exhausted / Frightened / Poisoned). Spell slots tuned so
 /// the marquee high-level spells each fire once.
@@ -36,7 +36,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Solar",
         glyph: 'O', // 'S' is already Skeleton; 'O' for the angelic Ouranos figure.
         ac: 21,
-        hitpoints: "22d10+121".parse().unwrap(),
+        hitpoints: "22d10+176".parse().unwrap(),
         // RAW speed line: Speed 50 ft., fly 150 ft. (hover)
         speed: 50.0,
         fly_speed: 150.0,

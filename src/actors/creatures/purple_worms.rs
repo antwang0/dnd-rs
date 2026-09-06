@@ -105,27 +105,8 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 mod tests {
     use super::*;
     use crate::actors::actor_template::ActorInstance;
-    use crate::engine::actor_gen::ActorGenParams;
     use crate::engine::dice::FastRandRoller;
-    use crate::engine::encounter::EncounterInstance;
-    use crate::engine::terrain_gen::TerrainGenParams;
     use crate::engine::types::Coordinate;
-
-    fn empty_encounter() -> EncounterInstance {
-        let tp = TerrainGenParams {
-            width: 30,
-            height: 30,
-            branch_depth: 0,
-            branch_prob: 0.0,
-        };
-        let ap = ActorGenParams {
-            cr_target: 0.0,
-            n_teams: 0,
-            pc_template: None,
-            start_team: 0,
-        };
-        EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
-    }
 
     #[test]
     fn purple_worm_template_shape() {
@@ -152,42 +133,23 @@ mod tests {
         // is ONE bite + ONE stinger, not two bites or two stingers.
         // Future refactor of the `CompoundAttack` chassis shouldn't strip
         // the mixed-limb pairing.
-        let mut e = empty_encounter();
-        let worm = e
-            .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let target = e
-            .instantiate_creature(
-                &crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE,
-                // Reach-2 (10 ft) — place inside the worm's stinger
-                // reach window.
-                Coordinate::new(5, 2),
-                1,
-                0,
-            )
-            .unwrap();
-        let multi = e.actors[&worm]
-            .find_action("purple worm multiattack")
-            .expect("worm should have multiattack");
-        // Execute the multi; pull the resulting effects out of the worm's
-        // log to verify the limb shape rather than poking at the chassis
-        // internals.
-        let effects = multi.side_effects(
-            &mut e,
-            worm,
-            Some(&vec![target]),
-            None,
-            None,
-        );
-        // The compound queues two swings — bite + stinger — each of which
-        // may or may not produce a DealDamage depending on the to-hit
-        // roll. We just verify the action resolved without panicking and
-        // produced at most 2 hit effects (a third would mean the chassis
-        // double-counted a limb).
-        assert!(
-            effects.len() <= 2,
-            "compound attack should produce at most 2 effects (bite + stinger), got {}",
-            effects.len(),
+        //
+        // Read off the compound's declared limbs rather than counted out
+        // of a resolved swing. The effect count cannot express this: a
+        // stinger that hits and whose save fails pushes *two* payloads
+        // (the piercing and the venom), so "at most two effects" is not
+        // the shape of one bite and one stinger — it is the shape of a
+        // fight in which something missed, which is a fact about the
+        // dice rather than about the stat block.
+        let parts: Vec<(&str, u32)> = PURPLE_WORM_MULTI
+            .parts
+            .iter()
+            .map(|(action, count)| (action.name(), *count))
+            .collect();
+        assert_eq!(
+            parts,
+            vec![("purple worm bite", 1), ("purple worm tail stinger", 1)],
+            "the worm bites once and stings once"
         );
     }
 }

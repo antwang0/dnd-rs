@@ -29,8 +29,8 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'v' (lowercase) to avoid clashing with 'V' (Vampire Spawn).
         glyph: 'v',
         ac: 16,
-        // 17d8+68 ≈ 144 average per the MM Vampire stat block.
-        hitpoints: "17d8+68".parse().unwrap(),
+        // 23d8+92 ≈ 195 average per the MM Vampire stat block.
+        hitpoints: "23d8+92".parse().unwrap(),
         strength: 18,
         dexterity: 18,
         constitution: 18,

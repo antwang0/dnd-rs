@@ -34,7 +34,7 @@ use std::sync::LazyLock;
 /// Damage envelope: **Lightning immunity** (the kraken is a creature of
 /// the storm — its own bolts can't hurt it). No physical resistance —
 /// kraken flesh is mortal even at gargantuan scale, unlike the dragons
-/// or fiends; the load-bearing defense is raw HP (472 average) plus the
+/// or fiends; the load-bearing defense is raw HP (481 average) plus the
 /// triple Legendary Resistance.
 ///
 /// Condition immunities: **Frightened + Paralyzed** per MM. The kraken
@@ -43,8 +43,8 @@ use std::sync::LazyLock;
 /// theoretically work, though the Magic Resistance lane gives the kraken
 /// advantage on the save.
 ///
-/// Stat shape: AC 18 (slick hide), 472 average HP (27d20+189), STR 30
-/// (the engine's tied-highest after Tarrasque), CON 25. Truesight 120 ft
+/// Stat shape: AC 18 (slick hide), 481 average HP (26d20+208), STR 30
+/// (the engine's tied-highest after Tarrasque), CON 26. Truesight 120 ft
 /// (the kraken sees through illusion and into the Ethereal Plane). No
 /// Darkvision needed — Truesight subsumes it. Speed 20 ft (slow on
 /// land) — RAW's 60 ft swim is the larger number and the engine models
@@ -84,14 +84,14 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (Tarrasque) and 't' (Dragon Turtle).
         glyph: 'k',
         ac: 18,
-        // 27d20+189 ≈ 472 average per MM (CR 23).
-        hitpoints: "27d20+189".parse().unwrap(),
+        // 26d20+208 ≈ 481 average per MM (CR 23).
+        hitpoints: "26d20+208".parse().unwrap(),
         speed: 20.,
         strength: 30,
         intelligence: 22,
         dexterity: 11,
         wisdom: 18,
-        constitution: 25,
+        constitution: 26,
         charisma: 20,
         senses: HashSet::from([SpecialSense::Truesight(120)]),
         languages: HashSet::from([Language::Primordial]),

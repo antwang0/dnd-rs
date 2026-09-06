@@ -31,8 +31,8 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // monster (lowercase 'v' is vampire spawn).
         glyph: 'V',
         ac: 15,
-        // 14d10+28 = 104 average per MM (CR 6 demon HP envelope).
-        hitpoints: "14d10+28".parse().unwrap(),
+        // 16d10+64 = 104 average per MM (CR 6 demon HP envelope).
+        hitpoints: "16d10+64".parse().unwrap(),
         // RAW speed line: Speed 40 ft., fly 60 ft.
         speed: 40.0,
         fly_speed: 60.0,
@@ -40,7 +40,7 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         dexterity: 15,
         constitution: 18,
         intelligence: 8,
-        wisdom: 11,
+        wisdom: 13,
         charisma: 8,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Abyssal]),

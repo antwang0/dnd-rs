@@ -31,7 +31,7 @@ use std::sync::LazyLock;
 /// are the magical fey; the blink dog is the canid-mobility variant.)
 ///
 /// Stat shape: AC 13 (the slim wolf's natural armor), 22 HP (4d8+4),
-/// STR 12, DEX 17 (the canid burst), CON 13, INT 10, WIS 13, CHA 11.
+/// STR 12, DEX 17 (the canid burst), CON 12, INT 10, WIS 13, CHA 11.
 /// Speed 40 (the canid burst speed, matching dire wolves). Senses:
 /// Darkvision 60. Languages: Blink Dog (RAW — its own racial tongue,
 /// understands Sylvan but can't speak it). We surface only Sylvan
@@ -56,7 +56,7 @@ pub static BLINK_DOG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 10,
         dexterity: 17,
         wisdom: 13,
-        constitution: 13,
+        constitution: 12,
         charisma: 11,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Sylvan]),

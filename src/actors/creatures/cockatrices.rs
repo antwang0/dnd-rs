@@ -21,7 +21,7 @@ pub static COCKATRICE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // claim lowercase k).
         glyph: 'k',
         ac: 11,
-        hitpoints: "5d6".parse().unwrap(),
+        hitpoints: "5d6+5".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 40 ft.
         speed: 20.0,
         fly_speed: 40.0,

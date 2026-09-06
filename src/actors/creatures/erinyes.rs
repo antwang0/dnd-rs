@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 /// or charmed). At CR 12, the multiattack burst can land 6d8+12 slashing
 /// + 9d8 poison on a full connect — a true threat to a mid-tier party.
 ///
-/// Stats target the MM Erinyes block: 153 HP, AC 18, STR 18 / DEX 16 /
+/// Stats target the SRD 5.2 Erinyes block: 178 HP, AC 18, STR 18 / DEX 16 /
 /// CON 18 / WIS 14 / CHA 18. Proficient DEX / CON / WIS / CHA saves —
 /// devils are tough across the mental save lane, and the high DEX save
 /// is the defining "flying angel" survivability.
@@ -28,8 +28,8 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Mind Flayer, lowercase 'i' is Imp).
         glyph: 'E',
         ac: 18,
-        // 18d8+72 ≈ 153 average per the MM Erinyes stat block.
-        hitpoints: "18d8+72".parse().unwrap(),
+        // 21d8+84 ≈ 178 average per the MM Erinyes stat block.
+        hitpoints: "21d8+84".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 60 ft.
         speed: 30.0,
         fly_speed: 60.0,

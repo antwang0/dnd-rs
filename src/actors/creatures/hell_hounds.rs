@@ -23,8 +23,8 @@ pub static HELL_HOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // is free. Visual reads as a small fiery dog on the map.
         glyph: 'h',
         ac: 15,
-        // 7d8+14 = ~45 average per MM (CR 3).
-        hitpoints: "7d8+14".parse().unwrap(),
+        // 9d8+18 = ~58 average per MM (CR 3).
+        hitpoints: "9d8+18".parse().unwrap(),
         speed: 50.,
         strength: 17,
         dexterity: 12,

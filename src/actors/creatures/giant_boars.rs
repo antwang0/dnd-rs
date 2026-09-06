@@ -29,13 +29,13 @@ use std::sync::LazyLock;
 /// anchored at the "tough forest brute" silhouette without the
 /// recharge-or-rest mini-systems.
 ///
-/// Defensive identity: AC 12 (natural hide), 42 HP (5d10+15). Vanilla
+/// Defensive identity: AC 13 (natural hide), 42 HP (5d10+15). Vanilla
 /// beast envelope — no resistances or condition immunities. The
 /// chunky HP envelope is the giant boar's primary defense — it
 /// outlasts the regular Boar's 11 HP roughly 4x while still hitting
 /// just as hard as a brown bear bite.
 ///
-/// Stat shape: AC 12, ~42 HP (5d10+15), STR 17, DEX 10, CON 16,
+/// Stat shape: AC 13, ~42 HP (5d10+15), STR 17, DEX 10, CON 16,
 /// INT 2, WIS 7, CHA 5. Speed 40. Size Large. CR 2. XP: 450 per RAW.
 pub static GIANT_BOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -49,7 +49,7 @@ pub static GIANT_BOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Uppercase 'B' reads as "large bristled brute" at the small
         // UI scale.
         glyph: 'B',
-        ac: 12,
+        ac: 13,
         // 5d10+15 = 42 average per MM (CR 2).
         hitpoints: "5d10+15".parse().unwrap(),
         speed: 40.,

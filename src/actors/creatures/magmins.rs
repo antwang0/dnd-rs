@@ -41,7 +41,7 @@ pub static MAGMIN_DEATH_BURST: DeathBurst = DeathBurst {
 ///   both the damage and the install.
 ///
 /// Defensive identity: AC 14 (natural armor — the magmin's smoldering
-/// rock crust), 9 HP (2d6+2). Fire immunity (the magmin IS fire — its
+/// rock crust), 13 HP (3d6+3). Fire immunity (the magmin IS fire — its
 /// own touch would self-incinerate without the immunity). Poison
 /// immunity + non-magical BPS resistance via the shared
 /// `elemental_defaults` baseline; the magmin inherits the
@@ -53,7 +53,7 @@ pub static MAGMIN_DEATH_BURST: DeathBurst = DeathBurst {
 /// / Prone / Grappled / Restrained) is shared via
 /// `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
-/// Stat shape: AC 14, ~9 HP (2d6+2), STR 7, DEX 15, CON 12, INT 8,
+/// Stat shape: AC 14, ~13 HP (3d6+3), STR 7, DEX 15, CON 12, INT 8,
 /// WIS 11, CHA 10. Speed 30 (the magmin's small frame compensates with
 /// canid burst speed). Senses: Darkvision 60 (standard elemental
 /// envelope). Languages: Primordial (the engine collapses the four
@@ -83,8 +83,8 @@ pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // smoldering small elemental silhouette.
         glyph: 'm',
         ac: 14,
-        // 2d6+2 ≈ 9 average per MM (CR ½). The cheap-elemental pool.
-        hitpoints: "2d6+2".parse().unwrap(),
+        // 3d6+3 ≈ 13 average per MM (CR ½). The cheap-elemental pool.
+        hitpoints: "3d6+3".parse().unwrap(),
         speed: 30.,
         strength: 7,
         intelligence: 8,

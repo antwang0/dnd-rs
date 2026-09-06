@@ -32,7 +32,7 @@ pub static GIANT_CRAB_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         speed: 30.,
         strength: 13,
         intelligence: 1,
-        dexterity: 15,
+        dexterity: 13,
         wisdom: 9,
         constitution: 11,
         charisma: 3,

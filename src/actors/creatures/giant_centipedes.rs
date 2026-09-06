@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// CON 11) and the Stirge (CR ⅛ tiny, blood-drain) on the venom-flavored
 /// low-CR ambusher bench — the centipede's edge is the *heavier* poison
 /// rider (3d6 vs the spider's 2d6) at the same DC, balanced against the
-/// fragile 4-HP frame.
+/// fragile 9-HP frame.
 ///
 /// Action lane:
 /// - **giant centipede bite** — DEX-based 1d4+DEX piercing melee with a
@@ -30,13 +30,13 @@ use std::sync::LazyLock;
 /// install is hard to model cleanly through the shared chassis. The
 /// pure save-or-damage envelope still captures the load-bearing threat.
 ///
-/// Defensive identity: AC 13 (small + DEX), 4 HP (1d6+1). Vanilla beast
+/// Defensive identity: AC 14 (small + DEX), 9 HP (2d6+2). Vanilla beast
 /// envelope — no resistances or condition immunities. The centipede
 /// dies to a single solid hit (1 HP avg roll); its threat lives in
 /// the bite's venom rider before it goes down. **Blindsight 30** lets
 /// the centipede ambush in the dark of a cave / dungeon biome.
 ///
-/// Stat shape: AC 13, ~4 HP (1d6+1), STR 5, DEX 14, CON 12, INT 1,
+/// Stat shape: AC 14, ~9 HP (2d6+2), STR 5, DEX 14, CON 12, INT 1,
 /// WIS 7, CHA 3. Speed 30 walking + climb 30 (collapsed to walking 30
 /// since the engine doesn't track climbing separately). Senses:
 /// Blindsight 30. Size Small. CR ¼. XP: 50 per RAW.
@@ -52,10 +52,10 @@ pub static GIANT_CENTIPEDE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // reads as "many-legged crawler" beside the Carrion Crawler at
         // the small UI scale.
         glyph: 'C',
-        ac: 13,
-        // 1d6+1 = 4 average per MM (CR ¼). Lowest HP tier on the
+        ac: 14,
+        // 2d6+2 = 9 average per MM (CR ¼). Lowest HP tier on the
         // CR-¼ bench — fragile glass-cannon venom-rider profile.
-        hitpoints: "1d6+1".parse().unwrap(),
+        hitpoints: "2d6+2".parse().unwrap(),
         speed: 30.,
         strength: 5,
         intelligence: 1,

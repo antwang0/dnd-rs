@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 /// Action lane:
 /// - **goat ram** — STR-based 1d4+STR bludgeoning melee via the
 ///   shared `GOAT_RAM` static. The goat's only swing. ~3 avg per hit
-///   (1d4 = 2.5 + STR 12 = +1), too light to credibly threaten
+///   (1d4 = 2.5 + STR 11 = +1), too light to credibly threaten
 ///   anything but a fellow CR-0 fauna or an already-bloodied PC.
 ///
 /// **Charge** (RAW: 20 ft straight charge → extra 2d4 + DC-10 STR
@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 /// immunities. Dies to any solid hit; threat profile is "ambient
 /// hillside texture," not credible damage.
 ///
-/// Stat shape: AC 10, ~4 HP (1d8), STR 12, DEX 10, CON 11, INT 2,
+/// Stat shape: AC 10, ~4 HP (1d8), STR 11, DEX 10, CON 11, INT 2,
 /// WIS 10, CHA 5. Speed 40. Size Medium. CR 0. XP: 10 per RAW.
 pub static GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -51,7 +51,7 @@ pub static GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 1d8 = 4 average per MM (CR 0).
         hitpoints: "1d8".parse().unwrap(),
         speed: 40.,
-        strength: 12,
+        strength: 11,
         intelligence: 2,
         dexterity: 10,
         wisdom: 10,

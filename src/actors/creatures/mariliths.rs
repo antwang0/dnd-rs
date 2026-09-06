@@ -33,14 +33,14 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'Y' was free — uppercase letter to mark a CR-16 boss; visually
         // suggests the six-armed silhouette branching off the body.
         glyph: 'Y',
-        ac: 18,
-        // 19d10+85 ≈ 189 average per MM (CR 16 demon HP envelope).
-        hitpoints: "19d10+85".parse().unwrap(),
+        ac: 16,
+        // 21d10+105 ≈ 220 average per MM (CR 16 demon HP envelope).
+        hitpoints: "21d10+105".parse().unwrap(),
         speed: 40.,
         strength: 18,
         dexterity: 20,
         constitution: 20,
-        intelligence: 20,
+        intelligence: 18,
         wisdom: 16,
         charisma: 20,
         senses: HashSet::from([SpecialSense::Truesight(120)]),

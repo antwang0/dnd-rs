@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 ///   Flame but on the heftier 5d6 die.
 ///
 /// Defensive identity: AC 17 (natural armor — the brass-skinned hide),
-/// 200 HP (16d10+112). Heavier than the djinni's 161 HP (14d10+84) —
+/// 212 HP (17d10+119). Heavier than the djinni's 161 HP (14d10+84) —
 /// the efreeti's heat-forged body soaks more punishment. Standard
 /// elemental envelope: non-magical BPS resistance, poison immunity.
 /// Fire immunity (the efreeti IS heat). Magic Resistance gives
@@ -42,8 +42,8 @@ use std::sync::LazyLock;
 /// Asleep / Prone / Grappled / Restrained) via the shared
 /// `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
-/// Stat shape: AC 17, ~200 HP (16d10+112), STR 22, DEX 12, CON 24,
-/// INT 16, WIS 15, CHA 16. Speed 40 (RAW also grants fly 60 which we
+/// Stat shape: AC 17, ~212 HP (17d10+119), STR 22, DEX 12, CON 24,
+/// INT 16, WIS 15, CHA 19. Speed 40 (RAW also grants fly 60 which we
 /// don't model). Senses: Darkvision 120ft. Languages: Ignan collapsed
 /// to Primordial in this engine. Size Large. CR 11.
 pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -58,8 +58,8 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // up 'E' for the four base elementals.
         glyph: 'F',
         ac: 17,
-        // 16d10+112 ≈ 200 average per MM (CR 11).
-        hitpoints: "16d10+112".parse().unwrap(),
+        // 17d10+119 ≈ 212 average per MM (CR 11).
+        hitpoints: "17d10+119".parse().unwrap(),
         // RAW speed line: Speed 40 ft., fly 60 ft. (hover)
         speed: 40.0,
         fly_speed: 60.0,
@@ -69,7 +69,7 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         dexterity: 12,
         wisdom: 15,
         constitution: 24,
-        charisma: 16,
+        charisma: 19,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Primordial]),
         cr: 11.0,

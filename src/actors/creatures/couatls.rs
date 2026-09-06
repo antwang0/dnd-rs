@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 /// the resistance envelope rewards a varied damage party (psychic and
 /// radiant slip through; fire / cold / lightning eat half).
 ///
-/// Stats target the MM couatl (CR 4): 97 HP, AC 19, DEX-primary,
+/// Stats target the SRD 5.2 couatl (CR 4): 60 HP, AC 19, DEX-primary,
 /// proficient in CON / WIS / CHA saves, immune to psychic damage.
 pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -26,8 +26,8 @@ pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'c' (lowercase) — distinct from 'C' (Cleric / Cockatrice).
         glyph: 'c',
         ac: 19,
-        // 13d10+26 ≈ 97 average per the MM Couatl stat block.
-        hitpoints: "13d10+26".parse().unwrap(),
+        // 8d8+24 ≈ 60 average per the MM Couatl stat block.
+        hitpoints: "8d8+24".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 90 ft.
         speed: 30.0,
         fly_speed: 90.0,

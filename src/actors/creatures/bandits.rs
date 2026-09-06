@@ -16,7 +16,7 @@ pub static BANDIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Bandit",
         glyph: 'B',
         ac: 12,
-        hitpoints: "2d8".parse().unwrap(),
+        hitpoints: "2d8+2".parse().unwrap(),
         speed: 30.,
         strength: 11,
         intelligence: 10,

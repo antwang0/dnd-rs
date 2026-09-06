@@ -33,7 +33,7 @@ use std::sync::LazyLock;
 /// immunity and the slashing resistance are RAW's own admission that
 /// neither type is how you kill this thing.
 ///
-/// Stat shape per the SRD: AC 8, 45 HP (6d10+12), STR 15 / DEX 6 / CON
+/// Stat shape per the SRD: AC 8, 52 HP (7d10+14), STR 15 / DEX 6 / CON
 /// 14 / INT 2 / WIS 6 / CHA 1. Speed 10 — the slowest thing on the
 /// board, and the reason an ochre jelly is a corridor problem rather
 /// than an open-field one. Blindsight 60 (blind beyond). CR 2.
@@ -46,8 +46,8 @@ pub static OCHRE_JELLY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Ogre / Owlbear / Otyugh pool and lowercase 'o' the Orc's.
         glyph: 'J',
         ac: 8,
-        // 6d10+12 ≈ 45 average per the SRD (CR 2).
-        hitpoints: "6d10+12".parse().unwrap(),
+        // 7d10+14 ≈ 52 average per the SRD (CR 2).
+        hitpoints: "7d10+14".parse().unwrap(),
         speed: 10.,
         strength: 15,
         dexterity: 6,

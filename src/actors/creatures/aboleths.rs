@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 
 /// Aboleth — CR 10 aquatic aberration. Ancient psychic horror with a
 /// tentacle burst as its workhorse and a slow regenerating HP pool.
-/// Stats target MM aboleth: 135 HP, AC 17, three tentacles per
+/// Stats target the SRD 5.2 aboleth: 150 HP, AC 17, three tentacles per
 /// Action (2d6 bludgeoning each), reach 10ft, immune to mundane
 /// fear-style mind effects (Charmed / Frightened).
 ///
@@ -26,7 +26,7 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Aboleth",
         glyph: 'A',
         ac: 17,
-        hitpoints: "18d10+36".parse().unwrap(),
+        hitpoints: "20d10+40".parse().unwrap(),
         speed: 30.,
         strength: 21,
         intelligence: 18,

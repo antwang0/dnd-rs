@@ -31,8 +31,8 @@ use std::sync::LazyLock;
 /// dies in Avernus reforms after 1d10 days) is a flavor clause with no
 /// in-combat effect, dropped from the template.
 ///
-/// Stat shape: AC 7 (the wretched, formless body — the lowest AC in
-/// the bestiary), ~13 HP (2d8+4), STR 10, DEX 5, CON 11, INT 1, WIS 11,
+/// Stat shape: AC 9 (the wretched, formless body — the lowest AC in
+/// the bestiary), ~9 HP (2d8), STR 10, DEX 5, CON 11, INT 1, WIS 11,
 /// CHA 3. Speed 15 (the petitioner shuffle). Senses: Darkvision 120.
 /// Languages: understanding of Infernal but cannot speak (we drop the
 /// listener-only flag and use an empty language set since the engine
@@ -46,9 +46,9 @@ pub static LEMURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // lowercase reads as a low-tier grunt; pairs with 'd' (Dretch)
         // and 'q' (Quasit) in the lowercase-fiend cohort.
         glyph: 'l',
-        ac: 7,
-        // 2d8+4 ≈ 13 average per MM (CR 0).
-        hitpoints: "2d8+4".parse().unwrap(),
+        ac: 9,
+        // 2d8 ≈ 9 average per MM (CR 0).
+        hitpoints: "2d8".parse().unwrap(),
         speed: 15.,
         strength: 10,
         intelligence: 1,

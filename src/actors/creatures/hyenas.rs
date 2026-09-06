@@ -18,8 +18,8 @@ pub static HYENA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // by Half-Orc / Harpy / Hippogriff / Hobgoblin / Hydra family.
         glyph: 'h',
         ac: 11,
-        // 2d8 = 9 average per MM (CR 0).
-        hitpoints: "2d8".parse().unwrap(),
+        // 1d8+1 = 5 average per MM (CR 0).
+        hitpoints: "1d8+1".parse().unwrap(),
         speed: 50.,
         strength: 11,
         intelligence: 2,

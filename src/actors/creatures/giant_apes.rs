@@ -20,10 +20,10 @@ pub static GIANT_APE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'A' for Ape — capital because Huge.
         glyph: 'A',
         ac: 12,
-        hitpoints: "12d12+36".parse().unwrap(),
+        hitpoints: "16d12+64".parse().unwrap(),
         speed: 40.,
         strength: 23,
-        intelligence: 7,
+        intelligence: 5,
         dexterity: 14,
         wisdom: 12,
         constitution: 18,

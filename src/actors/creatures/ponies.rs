@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 /// (2d8+2). Vanilla beast envelope — no resistances or condition
 /// immunities. Same HP envelope as the mule at the same CR tier.
 ///
-/// Stat shape: AC 10, ~11 HP (2d8+2), STR 15, DEX 10, CON 11,
+/// Stat shape: AC 10, ~11 HP (2d8+2), STR 15, DEX 10, CON 13,
 /// INT 2, WIS 11, CHA 7. Speed 40. Size Medium. CR ⅛. XP: 25 per
 /// RAW.
 pub static PONY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -50,7 +50,7 @@ pub static PONY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 2,
         dexterity: 10,
         wisdom: 11,
-        constitution: 11,
+        constitution: 13,
         charisma: 7,
         cr: 0.125,
         size: Size::Medium,

@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 /// Minotaur — CR 3 monstrosity. Mid-tier melee bruiser with two action
 /// options: a big greataxe swing (1d12+STR slashing) or a gore charge
 /// (2d8+STR piercing) — both single-target heavy hitters tuned for the
-/// AI to pick between depending on what's in reach. AC 14 with 76
+/// AI to pick between depending on what's in reach. AC 14 with 85
 /// average HP makes them notably tankier than the bandit-tier mooks.
 pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -19,8 +19,8 @@ pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'N' for miNotaur — distinct from existing glyphs.
         glyph: 'N',
         ac: 14,
-        // 9d10+27 = 76 average per MM.
-        hitpoints: "9d10+27".parse().unwrap(),
+        // 10d10+30 = 85 average per MM.
+        hitpoints: "10d10+30".parse().unwrap(),
         speed: 40.,
         strength: 18,
         dexterity: 11,

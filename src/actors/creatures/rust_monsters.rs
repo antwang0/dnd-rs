@@ -12,7 +12,7 @@ pub static RUST_MONSTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         name: "Rust Monster",
         glyph: 'r',
         ac: 14,
-        hitpoints: "5d8+5".parse().unwrap(),
+        hitpoints: "6d8+6".parse().unwrap(),
         speed: 40.,
         strength: 13,
         dexterity: 12,

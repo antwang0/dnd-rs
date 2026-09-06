@@ -17,8 +17,8 @@ pub static BUGBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Bugbear",
         // 'B' for bugbear — distinct from 'b' (boots-of-striding glyph).
         glyph: 'B',
-        ac: 16,
-        hitpoints: "5d8+5".parse().unwrap(),
+        ac: 14,
+        hitpoints: "6d8+6".parse().unwrap(),
         speed: 30.,
         strength: 15,
         intelligence: 8,

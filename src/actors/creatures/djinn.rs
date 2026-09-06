@@ -29,7 +29,7 @@ use std::sync::LazyLock;
 ///   the 1d6 thunder rider for the AI's single-target fallback.
 ///
 /// Defensive identity: AC 17 (natural armor — the air genie's gleaming
-/// scaled hide), 161 HP (14d10+84). Standard elemental envelope:
+/// scaled hide), 218 HP (19d10+114). Standard elemental envelope:
 /// non-magical BPS resistance, poison immunity. Lightning + thunder
 /// damage resistance (the air genie's affinity for its own element).
 /// Magic Resistance gives advantage on every save vs spells. Standard
@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 /// Paralyzed / Petrified / Poisoned / Asleep / Prone / Grappled /
 /// Restrained) via the shared `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
-/// Stat shape: AC 17, ~161 HP (14d10+84), STR 21, DEX 15, CON 22,
+/// Stat shape: AC 17, ~218 HP (19d10+114), STR 21, DEX 15, CON 22,
 /// INT 15, WIS 16, CHA 20. Speed 30 (RAW also grants fly 90 which we
 /// don't model). Senses: Darkvision 120ft. Languages: Auran collapsed
 /// to Primordial in this engine. Size Large. CR 11.
@@ -51,8 +51,8 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Drider). 'D' for the towering djinn silhouette.
         glyph: 'D',
         ac: 17,
-        // 14d10+84 ≈ 161 average per MM (CR 11).
-        hitpoints: "14d10+84".parse().unwrap(),
+        // 19d10+114 ≈ 218 average per MM (CR 11).
+        hitpoints: "19d10+114".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 90 ft. (hover)
         speed: 30.0,
         fly_speed: 90.0,

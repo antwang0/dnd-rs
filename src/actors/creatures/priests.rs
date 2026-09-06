@@ -30,11 +30,11 @@ use std::sync::LazyLock;
 /// extra 10 (3d6) radiant damage" — is deliberately absent, and
 /// Spiritual Weapon is why. Both spend a slot on a bonus action to add
 /// damage; the engine already carries one of them exactly, and the one
-/// it carries is the one a priest with a mace and STR 10 should
+/// it carries is the one a priest with a mace and STR 16 should
 /// actually be casting.
 ///
-/// Stat shape per the SRD NPC appendix: AC 13 (chain shirt), 27 HP
-/// (5d8+5), STR 10 / DEX 10 / CON 12 / INT 13 / WIS 16 / CHA 13. Speed
+/// Stat shape per the SRD NPC appendix: AC 13 (chain shirt), 38 HP
+/// (7d8+7), STR 16 / DEX 10 / CON 12 / INT 13 / WIS 16 / CHA 13. Speed
 /// 25 — the priest's mail is heavy and RAW says so. Skills: Medicine,
 /// Persuasion, Religion. CR 2. Slots: 4 × level 1, 3 × level 2.
 pub static PRIEST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -51,10 +51,10 @@ pub static PRIEST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fiend / Pegasus / Phase Spider pool.
         glyph: 'p',
         ac: 13,
-        // 5d8+5 ≈ 27 average per the SRD NPC appendix (CR 2).
-        hitpoints: "5d8+5".parse().unwrap(),
+        // 7d8+7 ≈ 38 average per the SRD NPC appendix (CR 2).
+        hitpoints: "7d8+7".parse().unwrap(),
         speed: 25.,
-        strength: 10,
+        strength: 16,
         dexterity: 10,
         constitution: 12,
         intelligence: 13,

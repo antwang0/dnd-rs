@@ -28,8 +28,8 @@ use std::sync::LazyLock;
 ///   bludgeoning melee, reach 1 (5 ft). Standalone so the AI can fall
 ///   back to a single swing when bonus-action-tagged or moving in.
 ///
-/// Defensive identity: AC 14 (the air variant's chassis), 104 HP
-/// (16d10+16). The headline trait is the **always-invisible** envelope
+/// Defensive identity: AC 14 (the air variant's chassis), 97 HP
+/// (13d10+26). The headline trait is the **always-invisible** envelope
 /// installed at instantiation via the template's `innate_conditions`
 /// lane — `(Invisible, Permanent)` — so the stalker's first swing of
 /// the fight already benefits from the attacker-side advantage AND
@@ -53,7 +53,7 @@ use std::sync::LazyLock;
 /// Frightened / Paralyzed / Petrified / Poisoned / Asleep / Prone /
 /// Grappled / Restrained) via the shared `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
-/// Stat shape: AC 14, ~104 HP (16d10+16), STR 16, DEX 19, CON 14,
+/// Stat shape: AC 14, ~97 HP (13d10+26), STR 16, DEX 19, CON 14,
 /// INT 10, WIS 15, CHA 11. Speed 50 (RAW 30 ft walk + 50 ft fly hover
 /// — we collapse to the faster of the two since the engine isn't 3D).
 /// Senses: Darkvision 60 ft. Languages: Auran collapsed to Primordial
@@ -74,8 +74,8 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // celestials and ascended elementals.
         glyph: 'Ξ',
         ac: 14,
-        // 16d10+16 ≈ 104 average per MM (CR 6).
-        hitpoints: "16d10+16".parse().unwrap(),
+        // 13d10+26 ≈ 97 average per MM (CR 6).
+        hitpoints: "13d10+26".parse().unwrap(),
         // RAW speed line: Speed 50 ft., fly 50 ft. (hover)
         speed: 50.0,
         fly_speed: 50.0,

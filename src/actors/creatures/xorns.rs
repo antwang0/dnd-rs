@@ -37,7 +37,7 @@ pub static XORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // with any other creature glyph in the pool.
         glyph: 'X',
         ac: 19,
-        hitpoints: "9d8+33".parse().unwrap(),
+        hitpoints: "8d8+48".parse().unwrap(),
         speed: 20.,
         strength: 17,
         intelligence: 11,
@@ -99,7 +99,7 @@ mod tests {
             0,
         )
         .unwrap();
-        // 9d8+33 averages ~73 HP; the bruiser elemental should be well
+        // 8d8+48 averages ~84 HP; the bruiser elemental should be well
         // above the CR-5 baseline tank threshold.
         assert!(a.max_hitpoints() >= 40);
     }

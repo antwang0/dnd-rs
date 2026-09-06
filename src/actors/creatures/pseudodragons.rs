@@ -23,8 +23,8 @@ pub static PSEUDODRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // 'p' lowercase for the Tiny dragon — keeps it visually
         // distinct from the bigger 'D' / 'd' dragon family.
         glyph: 'p',
-        ac: 13,
-        hitpoints: "2d4+2".parse().unwrap(),
+        ac: 14,
+        hitpoints: "3d4+3".parse().unwrap(),
         // RAW: 15 ft walk, 60 ft fly. The engine collapses to one
         // ground speed so we land at 30 to reflect the airborne tier
         // without overstating the walk.

@@ -22,7 +22,7 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Gargoyle",
         glyph: 'G',
         ac: 15,
-        hitpoints: "7d8+21".parse().unwrap(),
+        hitpoints: "9d8+27".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 60 ft.
         speed: 30.0,
         fly_speed: 60.0,

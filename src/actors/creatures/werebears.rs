@@ -29,7 +29,7 @@ use std::sync::LazyLock;
 ///   melee. Vanilla `SimpleWeapon`; the chunky damage lane that pairs
 ///   with the curse-flavored bite.
 ///
-/// Defensive identity: AC 11 (natural armor — the bear-hide), 135 HP
+/// Defensive identity: AC 15 (natural armor — the bear-hide), 135 HP
 /// (18d8+54). Non-magical BPS resistance via the shared
 /// `damage_modifiers_from` helper — RAW: "Damage Immunities
 /// Bludgeoning, Piercing, and Slashing from Nonmagical Attacks that
@@ -40,7 +40,7 @@ use std::sync::LazyLock;
 /// using smell) omitted — the engine doesn't tag Perception by sense
 /// channel.
 ///
-/// Stat shape: AC 11, ~135 HP (18d8+54), STR 19, DEX 10, CON 17, INT
+/// Stat shape: AC 15, ~135 HP (18d8+54), STR 19, DEX 10, CON 17, INT
 /// 11, WIS 12, CHA 12. Speed 40 (hybrid-form burst speed, matching the
 /// werewolf's tuned-up 40-ft for the same hybrid-form flavor).
 /// Languages: Common (the humanoid-half retains speech). Size Large.
@@ -65,7 +65,7 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // imposing of the bear-themed creatures (distinguished from
         // 'B' the Brown Bear by the lycanthrope envelope below).
         glyph: 'B',
-        ac: 11,
+        ac: 15,
         // 18d8+54 ≈ 135 average per MM (CR 5).
         hitpoints: "18d8+54".parse().unwrap(),
         speed: 40.,

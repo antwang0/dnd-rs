@@ -23,14 +23,14 @@ use std::sync::LazyLock;
 ///   dangerous" territory if cornered.
 ///
 /// Defensive identity: AC 10 (no armor, no shield, no natural
-/// hide), 19 HP (3d10+3). Vanilla beast envelope — no resistances
+/// hide), 15 HP (2d10+4). Vanilla beast envelope — no resistances
 /// or condition immunities. Slightly tougher than the riding
 /// horse's 13 HP envelope, matching the "heavy / sturdier" flavor.
 /// Still dies to two or three solid hits at its CR; the template
 /// exists for cargo / farm encounters and as the second floor of
 /// the equine CR ladder rather than as a combat threat.
 ///
-/// Stat shape: AC 10, ~19 HP (3d10+3), STR 18, DEX 10, CON 12,
+/// Stat shape: AC 10, ~15 HP (2d10+4), STR 18, DEX 10, CON 15,
 /// INT 2, WIS 11, CHA 7. Speed 40 (heavier / slower than the
 /// riding horse). Size Large. CR ¼. XP: 50 per RAW.
 pub static DRAFT_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -47,14 +47,14 @@ pub static DRAFT_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // without needing a distinct glyph.
         glyph: 'H',
         ac: 10,
-        // 3d10+3 = 19 average per MM (CR ¼).
-        hitpoints: "3d10+3".parse().unwrap(),
+        // 2d10+4 = 15 average per MM (CR ¼).
+        hitpoints: "2d10+4".parse().unwrap(),
         speed: 40.,
         strength: 18,
         intelligence: 2,
         dexterity: 10,
         wisdom: 11,
-        constitution: 12,
+        constitution: 15,
         charisma: 7,
         cr: 0.25,
         size: Size::Large,

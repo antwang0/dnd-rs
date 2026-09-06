@@ -20,9 +20,9 @@ pub static TRICERATOPS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'q' (lowercase) — free in the huge beast slot. 'T' is taken
         // by Treant / Tiger; 'q' reads as a four-legged silhouette.
         glyph: 'q',
-        ac: 13,
-        // 11d12+44 ≈ 95 average per MM (CR 5).
-        hitpoints: "11d12+44".parse().unwrap(),
+        ac: 14,
+        // 12d12+36 ≈ 95 average per MM (CR 5).
+        hitpoints: "12d12+36".parse().unwrap(),
         speed: 50.,
         strength: 22,
         intelligence: 2,

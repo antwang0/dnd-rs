@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// threat than the whole rest of the creature.
 ///
 /// Action lane: **homunculus bite**, 1d4 piercing with a DC 10 CON save
-/// for 2d4 poison and the Poisoned condition. RAW's bite deals *one
+/// for 1d4+2 poison and the Poisoned condition. RAW's bite deals *one
 /// point*; the venom is the attack, and the fail-by-5 unconsciousness
 /// clause is why a CR 0 construct is worth putting on a board. The
 /// engine has no fail-by-N lane, so the poison damage and the condition
@@ -22,8 +22,8 @@ use std::sync::LazyLock;
 /// funny on a creature whose only attack is poison, and RAW), plus
 /// immunity to charm, exhaustion, and being poisoned or paralyzed.
 ///
-/// Stat shape per the SRD: AC 13 (natural armor), 5 HP (2d4), STR 4 /
-/// DEX 15 / CON 11 / INT 10 / WIS 10 / CHA 7. Speed 20 walking, 40
+/// Stat shape per the SRD: AC 13 (natural armor), 4 HP (1d4+2), STR 4 /
+/// DEX 15 / CON 14 / INT 10 / WIS 10 / CHA 7. Speed 20 walking, 40
 /// flying — the engine has one speed and takes the wings. Darkvision
 /// 60. CR 0.
 pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -36,14 +36,14 @@ pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // as either at a glance.
         glyph: 'x',
         ac: 13,
-        // 2d4 ≈ 5 average per the SRD (CR 0).
-        hitpoints: "2d4".parse().unwrap(),
+        // 1d4+2 ≈ 4 average per the SRD (CR 0).
+        hitpoints: "1d4+2".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 40 ft.
         speed: 20.0,
         fly_speed: 40.0,
         strength: 4,
         dexterity: 15,
-        constitution: 11,
+        constitution: 14,
         intelligence: 10,
         wisdom: 10,
         charisma: 7,

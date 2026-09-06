@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 /// the mound by an equal amount — we collapse to immunity since the
 /// engine doesn't model damage-to-heal yet; the load-bearing effect is
 /// "lightning swings are wasted"). Cold + fire resistance is the
-/// standard plant envelope. AC 15, ~80 HP (8d10+24).
+/// standard plant envelope. AC 15, ~80 HP (13d10+39).
 pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SHAMBLING_MOUND_SLAM);
@@ -30,8 +30,8 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // for hippogriff; reads as a hulking plant boss.
         glyph: 'H',
         ac: 15,
-        // 8d10+24 ≈ 80 HP — matches MM CR 5 plant envelope.
-        hitpoints: "8d10+24".parse().unwrap(),
+        // 13d10+39 ≈ 80 HP — matches MM CR 5 plant envelope.
+        hitpoints: "13d10+39".parse().unwrap(),
         speed: 20.,
         strength: 18,
         dexterity: 8,

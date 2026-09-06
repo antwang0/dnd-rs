@@ -46,8 +46,8 @@ use std::sync::LazyLock;
 /// we approximate as a flat Frightened immunity since the engine
 /// doesn't model "see-an-ally" gating cleanly.
 ///
-/// Stat shape: AC 13 (natural armor — the hellish hide), 52 HP (8d8+16),
-/// STR 16, DEX 15, CON 15, INT 9, WIS 11, CHA 11. Speed 30 (the
+/// Stat shape: AC 13 (natural armor — the hellish hide), 58 HP (9d8+18),
+/// STR 16, DEX 15, CON 15, INT 9, WIS 11, CHA 14. Speed 30 (the
 /// barbazu's confident march). Senses: Darkvision 120. Languages:
 /// Infernal (the devil tongue), with telepathy 120ft — we drop
 /// telepathy since the engine doesn't model it as a language. Size
@@ -66,15 +66,15 @@ pub static BEARDED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // map (CR gap surfaces in the encounter generator's pool).
         glyph: 'B',
         ac: 13,
-        // 8d8+16 ≈ 52 average per MM (CR 3).
-        hitpoints: "8d8+16".parse().unwrap(),
+        // 9d8+18 ≈ 58 average per MM (CR 3).
+        hitpoints: "9d8+18".parse().unwrap(),
         speed: 30.,
         strength: 16,
         intelligence: 9,
         dexterity: 15,
         wisdom: 11,
         constitution: 15,
-        charisma: 11,
+        charisma: 14,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Infernal]),
         cr: 3.0,

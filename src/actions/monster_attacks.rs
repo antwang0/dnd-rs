@@ -3020,16 +3020,16 @@ pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 /// Giant-spider melee bite with a poison rider. Hit deals 1d10 piercing
 /// (the biting jaws); on hit, the target also makes a CON save vs DC 11
 /// — fail = 2d4 poison damage and Poisoned for 2 rounds.
-/// Spider Bite — STR-based 1d10+STR piercing melee with a CON DC 11
+/// Giant Spider Bite — STR-based 1d10+STR piercing melee with a CON DC 11
 /// save-or-2d4-poison-AND-Poisoned-2-rounds rider. The "extra damage AND
 /// condition both ride on the same failed save" shape — `also_install`
 /// is `Some((Poisoned, Rounds(2)))` so the chassis adds the condition
 /// install only when the save fails. Routes through the shared
 /// `WeaponWithSaveDamage` chassis alongside Ettercap Bite / Drow
 /// Poisoned Crossbow.
-pub static SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
-    "spider bite",
-    &["sbite"],
+pub static GIANT_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "giant spider bite",
+    &["sbite", "spider-bite"],
     AbilityScoreType::Strength,
     Dice::new(1, 10),
     DamageType::Piercing,
@@ -16229,7 +16229,7 @@ pub static GIANT_LIZARD_BITE: SimpleWeapon = SimpleWeapon::melee(
 
 /// Giant Wolf Spider Bite — STR-based 1d6+STR piercing melee with a
 /// DC 11 CON save-or-2d6-poison rider. Routes through the shared
-/// `WeaponWithSaveDamage` chassis alongside Spider Bite / Ettercap
+/// `WeaponWithSaveDamage` chassis alongside Giant Spider Bite / Ettercap
 /// Bite — same "single save gates both damage and condition" RAW
 /// envelope. RAW: "Hit: 4 (1d6 + 1) piercing damage, and the target
 /// must make a DC 11 Constitution saving throw, taking 7 (2d6)
@@ -17417,6 +17417,47 @@ pub static ASSASSIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack 
     display_name: "assassin multiattack",
     sub_attack: &ASSASSIN_SHORTSWORD,
     count: 2,
+});
+
+// ─── Mage ───────────────────────────────────────────────────────────
+
+/// Mage Arcane Burst — INT-based 3d8 + INT force at 120 ft. RAW:
+/// "Arcane Burst. Melee or Ranged Attack Roll: +6, reach 5 ft. or
+/// range 120 ft. Hit: 16 (3d8 + 3) Force damage."
+///
+/// The clause that turned SRD 5.2's Mage from a caster with a dagger
+/// into a caster with a gun. The 2014 stat block had no at-will attack
+/// worth the name — a dagger, and a Fire Bolt if you gave it one — so a
+/// mage out of slots was a creature the party could ignore. Three
+/// bursts a turn at 3d8+3 apiece is a CR 6 damage lane that never runs
+/// out, and it is the whole reason this stat block is a fight.
+///
+/// Declared as the ranged half only, the same compression the duergar
+/// javelin gets: a weapon that is both is a weapon the AI has to be
+/// taught to pick a mode for, and RAW prints the two on one line
+/// because a stat block is a page, not because they are one attack.
+///
+/// `normal_range` equals the reach, because RAW gives this no
+/// short/long split — 120 feet is the range, not the near band. The
+/// attack ability is Intelligence, which is both RAW's ability and, on
+/// this sheet, exactly the +3 that makes the printed +6 and the printed
+/// 3d8 + 3 come out on their own.
+pub static MAGE_ARCANE_BURST: SimpleWeapon = SimpleWeapon::ranged(
+    "arcane burst",
+    &["burst", "arcane-burst"],
+    AbilityScoreType::Intelligence,
+    Dice::new(3, 8),
+    DamageType::Force,
+    48,
+    48,
+);
+
+/// Mage Multiattack — three Arcane Bursts per Action. RAW: "The mage
+/// makes three Arcane Burst attacks."
+pub static MAGE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "mage multiattack",
+    sub_attack: &MAGE_ARCANE_BURST,
+    count: 3,
 });
 
 // ─── Archmage ───────────────────────────────────────────────────────

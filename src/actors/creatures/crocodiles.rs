@@ -21,12 +21,12 @@ use std::sync::LazyLock;
 ///   save, RAW: the bite latches on automatically. The auto-grapple
 ///   is the load-bearing rider; the bite IS the lock-down.
 ///
-/// Defensive identity: AC 12 (thick scales), ~19 HP (3d10+3). Standard
+/// Defensive identity: AC 12 (thick scales), ~13 HP (2d10+2). Standard
 /// beast envelope — no special resistances or condition immunities.
 /// The crocodile's threat is the grapple lock-down on a target while
 /// allies pile on.
 ///
-/// Stat shape: AC 12, ~19 HP (3d10+3), STR 15, DEX 10, CON 13, INT 2,
+/// Stat shape: AC 12, ~13 HP (2d10+2), STR 15, DEX 10, CON 13, INT 2,
 /// WIS 10, CHA 5. Speed 20 (RAW also swim 30, whose magnitude we don't
 /// model — but the tag ships, so a pool is free to cross).
 /// Size Large. CR ½.
@@ -41,8 +41,8 @@ pub static CROCODILE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // free in the glyph map and reads as the low-slung scaled body.
         glyph: 'k',
         ac: 12,
-        // 3d10+3 ≈ 19 average per MM (CR ½).
-        hitpoints: "3d10+3".parse().unwrap(),
+        // 2d10+2 ≈ 13 average per MM (CR ½).
+        hitpoints: "2d10+2".parse().unwrap(),
         speed: 20.,
         strength: 15,
         intelligence: 2,

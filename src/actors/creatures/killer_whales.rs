@@ -39,7 +39,7 @@ use std::sync::LazyLock;
 /// flavor-only — the engine doesn't surface skill checks through
 /// combat.
 ///
-/// Stat shape: AC 12, ~90 HP (12d12+12), STR 19, DEX 10, CON 13,
+/// Stat shape: AC 12, ~90 HP (12d12+12), STR 19, DEX 14, CON 13,
 /// INT 3, WIS 12, CHA 7. Speed 0 walking + swim 60 (magnitude
 /// collapsed to 30 since the engine tracks a swimming speed as a flag
 /// rather than as a second budget; the orca
@@ -68,7 +68,7 @@ pub static KILLER_WHALE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         speed: 30.,
         strength: 19,
         intelligence: 3,
-        dexterity: 10,
+        dexterity: 14,
         wisdom: 12,
         constitution: 13,
         charisma: 7,

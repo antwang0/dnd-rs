@@ -21,9 +21,9 @@ pub static MANTICORE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Minotaur. The manticore gets its own slot at 'n'.
         glyph: 'n',
         ac: 14,
-        // 9d10+9 = 58 average per MM. Beefy CR 3 frame with the high
+        // 8d10+24 = 68 average per MM. Beefy CR 3 frame with the high
         // AC + ranged option offsetting the smaller HP pool of a CR 3.
-        hitpoints: "9d10+9".parse().unwrap(),
+        hitpoints: "8d10+24".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 50 ft.
         speed: 30.0,
         fly_speed: 50.0,

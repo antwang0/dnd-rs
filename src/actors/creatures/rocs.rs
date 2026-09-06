@@ -31,8 +31,8 @@ pub static ROC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // World "Rukh" spelling of Roc.
         glyph: 'K',
         ac: 15,
-        // 14d12+56 ≈ 248 average per MM (CR 11).
-        hitpoints: "14d12+56".parse().unwrap(),
+        // 16d20+80 ≈ 248 average per MM (CR 11).
+        hitpoints: "16d20+80".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 120 ft.
         speed: 20.0,
         fly_speed: 120.0,

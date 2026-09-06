@@ -20,8 +20,8 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         name: "Vampire Spawn",
         // 'V' for vampire — distinct from 'W' (wolf) and 'R' (wraith).
         glyph: 'V',
-        ac: 15,
-        hitpoints: "11d8+33".parse().unwrap(),
+        ac: 16,
+        hitpoints: "12d8+36".parse().unwrap(),
         strength: 16,
         dexterity: 16,
         constitution: 16,

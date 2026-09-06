@@ -29,14 +29,14 @@ use std::sync::LazyLock;
 /// flavor-only — the engine doesn't surface skill checks through
 /// combat.
 ///
-/// Defensive identity: AC 13 (large + decent DEX), 22 HP (5d10-5).
+/// Defensive identity: AC 13 (large + decent DEX), 22 HP (4d10).
 /// Vanilla beast envelope — no resistances or condition immunities.
 /// The bat dies to two solid hits; its threat lives in the speed-60
 /// mobility and blindsight-60 anti-stealth envelope (an invisible
 /// rogue inside 60ft of the bat loses the Invisible attacker-
 /// disadvantage benefit; see `engine::attack`'s blindsight gate).
 ///
-/// Stat shape: AC 13, ~22 HP (5d10-5), STR 15, DEX 16, CON 11, INT 2,
+/// Stat shape: AC 13, ~22 HP (4d10), STR 15, DEX 16, CON 11, INT 2,
 /// WIS 12, CHA 6. Speed 10 walking + fly 60 (collapsed to fly 60 as
 /// the per-creature speed). Senses: Blindsight 60. Size Large. CR ¼.
 /// XP: 50 per RAW.
@@ -52,9 +52,9 @@ pub static GIANT_BAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'B' reads as "large flier silhouette" at the small UI scale.
         glyph: 'B',
         ac: 13,
-        // 5d10-5 = 22.5 average per MM (CR ¼). Floored at 1 for
+        // 4d10 = 22 average per MM (CR ¼). Floored at 1 for
         // unlucky dice rolls.
-        hitpoints: "5d10-5".parse().unwrap(),
+        hitpoints: "4d10".parse().unwrap(),
         // Fly 60 — the bat's signature mobility, mirroring Hawk /
         // Giant Eagle / Pteranodon. Engine collapses ground + fly to
         // a single per-creature speed since the bat almost never walks.

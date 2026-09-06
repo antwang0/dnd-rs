@@ -15,10 +15,10 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Skeleton",
         glyph: 'S',
-        ac: 13,
+        ac: 14,
         hitpoints: "2d8+4".parse().unwrap(),
         strength: 10,
-        dexterity: 14,
+        dexterity: 16,
         constitution: 15,
         intelligence: 6,
         wisdom: 8,

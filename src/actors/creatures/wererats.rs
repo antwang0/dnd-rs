@@ -24,13 +24,13 @@ use std::sync::LazyLock;
 /// - **wererat shortsword** (standalone) — DEX-based 1d6+DEX piercing
 ///   melee. Vanilla `SimpleWeapon`; the finesse-flavored secondary swing.
 ///
-/// Defensive identity: AC 12 (light armor + DEX). 33 HP (6d8+6). Non-
+/// Defensive identity: AC 13 (light armor + DEX). 60 HP (11d8+11). Non-
 /// magical BPS resistance via the shared `damage_modifiers_from`
 /// helper — the canonical lycanthrope envelope. RAW gives the wererat
 /// **Keen Smell** (advantage on Perception checks using smell) — omitted
 /// because the engine doesn't tag Perception by sense channel.
 ///
-/// Stat shape: AC 12, ~33 HP (6d8+6), STR 10, DEX 15, CON 12, INT 11,
+/// Stat shape: AC 13, ~60 HP (11d8+11), STR 10, DEX 16, CON 12, INT 11,
 /// WIS 10, CHA 8. Speed 30. Senses: Darkvision 60. Languages: Common
 /// (humanoid form retains speech). Size Medium. CR 2.
 pub static WERERAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -44,13 +44,13 @@ pub static WERERAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'w' (Werewolf), 'B' (Werebear). The wererat gets 'r' for
         // "rat" — the rodent silhouette is the read on the map.
         glyph: 'r',
-        ac: 12,
-        // 6d8+6 ≈ 33 average per MM (CR 2).
-        hitpoints: "6d8+6".parse().unwrap(),
+        ac: 13,
+        // 11d8+11 ≈ 60 average per MM (CR 2).
+        hitpoints: "11d8+11".parse().unwrap(),
         speed: 30.,
         strength: 10,
         intelligence: 11,
-        dexterity: 15,
+        dexterity: 16,
         wisdom: 10,
         constitution: 12,
         charisma: 8,

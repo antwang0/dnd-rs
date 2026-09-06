@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 /// proper buffs, the fear aura alone neutralizes most of the front
 /// line, and the multi-bite/claw burst is built to one-shot squishies.
 ///
-/// Stats target the MM pit fiend: 300 HP, AC 19, STR-primary, immune
+/// Stats target the MM pit fiend: 300 HP, AC 21, STR-primary, immune
 /// to fire / poison damage, immune to Poisoned / Charmed / Frightened.
 pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -29,9 +29,9 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Pit Fiend",
         // 'F' for Fiend (uppercase to distinguish from 'f' frost-something).
         glyph: 'F',
-        ac: 19,
-        // 26d10+156 ≈ 300 average per the MM Pit Fiend stat block.
-        hitpoints: "26d10+156".parse().unwrap(),
+        ac: 21,
+        // 27d10+189 ≈ 300 average per the MM Pit Fiend stat block.
+        hitpoints: "27d10+189".parse().unwrap(),
         // RAW speed line: Speed 30 ft., fly 60 ft.
         speed: 30.0,
         fly_speed: 60.0,

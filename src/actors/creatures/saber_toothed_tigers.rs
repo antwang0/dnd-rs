@@ -23,13 +23,13 @@ pub static SABER_TOOTHED_TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         // 't' (lowercase) — distinct from 'T' (Tiger / Troll). Mnemonic:
         // smaller-cased tiger glyph for the upgraded-stat variant.
         glyph: 't',
-        ac: 12,
+        ac: 13,
         // 7d10+14 ≈ 52 average per MM (CR 2).
         hitpoints: "7d10+14".parse().unwrap(),
         speed: 40.,
         strength: 18,
         intelligence: 3,
-        dexterity: 14,
+        dexterity: 17,
         wisdom: 12,
         constitution: 15,
         charisma: 8,

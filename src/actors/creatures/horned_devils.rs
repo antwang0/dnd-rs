@@ -36,8 +36,8 @@ use std::sync::LazyLock;
 ///   cap at 30 tiles). 4d6 fire on hit. At-will (no recharge); the
 ///   devil's "stay out of melee and lob hellfire" stand-off lane.
 ///
-/// Defensive identity: AC 18 (natural armor — the infernal hide), 178
-/// HP (17d10+85). The standard mid-tier devil envelope: resistant to
+/// Defensive identity: AC 18 (natural armor — the infernal hide), 199
+/// HP (19d10+95). The standard mid-tier devil envelope: resistant to
 /// cold (devil family) + RAW's "bludgeoning, piercing, and slashing
 /// from nonmagical attacks", genuinely qualified now that there is a
 /// magic axis for it to be written against. RAW's devil clause also
@@ -54,8 +54,8 @@ use std::sync::LazyLock;
 /// other magical effects. The standard caster-counter lane shared by
 /// the mid-and-upper devils.
 ///
-/// Stat shape: AC 18, ~178 HP (17d10+85), STR 22, DEX 17, CON 21,
-/// INT 12, WIS 16, CHA 17. Speed 20 (the horned devil's bulk hurts its
+/// Stat shape: AC 18, ~199 HP (19d10+95), STR 22, DEX 17, CON 21,
+/// INT 12, WIS 16, CHA 18. Speed 20 (the horned devil's bulk hurts its
 /// land speed; in RAW it has a fly speed of 60 which we don't yet
 /// model). Senses: Darkvision 120. Languages: Infernal (the devil
 /// tongue). Telepathy 120ft RAW — we drop telepathy since the engine
@@ -73,8 +73,8 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // the demon pool). 'H' for the horned silhouette.
         glyph: 'H',
         ac: 18,
-        // 17d10+85 ≈ 178 average per MM (CR 11).
-        hitpoints: "17d10+85".parse().unwrap(),
+        // 19d10+95 ≈ 199 average per MM (CR 11).
+        hitpoints: "19d10+95".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 60 ft.
         speed: 20.0,
         fly_speed: 60.0,
@@ -83,7 +83,7 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         dexterity: 17,
         wisdom: 16,
         constitution: 21,
-        charisma: 17,
+        charisma: 18,
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Infernal]),
         cr: 11.0,

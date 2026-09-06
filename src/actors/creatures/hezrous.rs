@@ -40,9 +40,9 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // glabrezu via uppercase letters elsewhere). 'Z' for the
         // hezrou's hunched silhouette and toad-like sluggishness.
         glyph: 'Z',
-        ac: 16,
-        // 13d10+65 ≈ 136 average per MM (CR 8).
-        hitpoints: "13d10+65".parse().unwrap(),
+        ac: 18,
+        // 15d10+75 ≈ 157 average per MM (CR 8).
+        hitpoints: "15d10+75".parse().unwrap(),
         speed: 30.,
         strength: 19,
         intelligence: 5,

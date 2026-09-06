@@ -36,8 +36,8 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // crossed longsword + whip silhouette on the glyph map.
         glyph: 'X',
         ac: 19,
-        // 20d12+140 ≈ 262 average per MM (CR 19 apex demon).
-        hitpoints: "20d12+140".parse().unwrap(),
+        // 23d12+138 ≈ 262 average per MM (CR 19 apex demon).
+        hitpoints: "23d12+138".parse().unwrap(),
         // RAW speed line: Speed 40 ft., fly 80 ft.
         speed: 40.0,
         fly_speed: 80.0,

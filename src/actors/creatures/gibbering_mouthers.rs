@@ -30,8 +30,8 @@ use std::sync::LazyLock;
 ///    speed reads as the "swampy ground" envelope on its own.
 ///
 /// Stats roughly track MM Gibbering Mouther at CR 2 — STR 10, DEX 8
-/// (the shambling clumsy mass), CON 10, INT 3 (instinct-driven), WIS 10,
-/// CHA 6. AC 9 from no natural armor. HP: 7d8 = 31 average.
+/// (the shambling clumsy mass), CON 16, INT 3 (instinct-driven), WIS 10,
+/// CHA 6. AC 9 from no natural armor. HP: 7d8+21 = 52 average.
 pub static GIBBERING_MOUTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIBBERING_MOUTHER_BITES);
@@ -43,8 +43,8 @@ pub static GIBBERING_MOUTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // pulsating mass; lowercase signals "smaller than a humanoid".
         glyph: 'm',
         ac: 9,
-        // 7d8 = ~31 average per MM.
-        hitpoints: "7d8".parse().unwrap(),
+        // 7d8+21 = ~52 average per MM.
+        hitpoints: "7d8+21".parse().unwrap(),
         // 10 ft RAW — the mouther's "aberrant ground" collapsed to a
         // baked-in slow movement profile.
         speed: 10.,
@@ -52,7 +52,7 @@ pub static GIBBERING_MOUTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         intelligence: 3,
         dexterity: 8,
         wisdom: 10,
-        constitution: 10,
+        constitution: 16,
         charisma: 6,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::new(),

@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 /// a panther is what a low-level party meets in the jungle before it
 /// meets anything with teeth worth the name.
 ///
-/// Stat shape per the SRD: AC 12, 13 HP (3d8), STR 14 / DEX 15 / CON 10
+/// Stat shape per the SRD: AC 13, 13 HP (3d8), STR 14 / DEX 16 / CON 10
 /// / INT 3 / WIS 14 / CHA 7. Speed 50. Skills: Perception, Stealth. CR ¼.
 pub static PANTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -39,12 +39,12 @@ pub static PANTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'f' (lowercase) — the feline band, one rung below the Tiger's
         // and the Lion's, and free.
         glyph: 'f',
-        ac: 12,
+        ac: 13,
         // 3d8 ≈ 13 average per the SRD (CR ¼).
         hitpoints: "3d8".parse().unwrap(),
         speed: 50.,
         strength: 14,
-        dexterity: 15,
+        dexterity: 16,
         constitution: 10,
         intelligence: 3,
         wisdom: 14,

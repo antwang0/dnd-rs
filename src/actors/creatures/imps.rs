@@ -23,7 +23,7 @@ pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Imp",
         glyph: 'I',
         ac: 13,
-        hitpoints: "3d4+3".parse().unwrap(),
+        hitpoints: "6d4+6".parse().unwrap(),
         // RAW speed line: Speed 20 ft., fly 40 ft.
         speed: 20.0,
         fly_speed: 40.0,

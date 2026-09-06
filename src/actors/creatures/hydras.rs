@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// remains alive, severed heads regrow" — is approximated as a flat
 /// regen (we don't model head-counting / fire-cauterize mechanics).
 ///
-/// Stat profile (MM RAW): AC 15, ~172 HP (15d12+75), STR 20, DEX 12,
+/// Stat profile (MM RAW): AC 15, ~184 HP (16d12+80), STR 20, DEX 12,
 /// CON 20. Five heads, 5 attacks per Action. No language slot (the
 /// hydra is non-sentient). Hold Breath, Reactive Heads, Wakeful — none
 /// modeled directly here; the engine's blanket "regen unless suppressed"
@@ -27,8 +27,8 @@ pub static HYDRA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'h' (Hell Hound). Visual reads as a tall serpent-headed beast.
         glyph: 'Y',
         ac: 15,
-        // 15d12+75 ≈ 172 average per MM (CR 8).
-        hitpoints: "15d12+75".parse().unwrap(),
+        // 16d12+80 ≈ 184 average per MM (CR 8).
+        hitpoints: "16d12+80".parse().unwrap(),
         strength: 20,
         dexterity: 12,
         constitution: 20,

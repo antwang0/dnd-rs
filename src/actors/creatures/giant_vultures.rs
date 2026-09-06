@@ -29,12 +29,12 @@ use std::sync::LazyLock;
 /// provokes, because RAW's clause says "when it flies".
 ///
 /// Defensive identity: AC 10 (large + no DEX bonus, no natural armor),
-/// 22 HP (5d10-5). Vanilla beast envelope — no resistances or condition
+/// 25 HP (3d10+9). Vanilla beast envelope — no resistances or condition
 /// immunities. The vulture dies to two solid hits; its threat lives in
 /// the Pack Tactics multiplier on the compound multi when two or more
 /// vultures swarm a single target.
 ///
-/// Stat shape: AC 10, ~22 HP (5d10-5), STR 15, DEX 10, CON 15, INT 6,
+/// Stat shape: AC 10, ~25 HP (3d10+9), STR 15, DEX 10, CON 16, INT 6,
 /// WIS 12, CHA 7. Speed 10 walking + fly 60 (collapsed to fly 60 as
 /// the per-creature speed since the engine doesn't track separate
 /// ground / fly speed lanes — the bird almost never walks). Size Large.
@@ -52,9 +52,9 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // rest of the large-beast bench.
         glyph: 'V',
         ac: 10,
-        // 5d10-5 = 22.5 average per MM (CR 1). Floored at 1 for unlucky
+        // 3d10+9 = 25 average per MM (CR 1). Floored at 1 for unlucky
         // dice rolls.
-        hitpoints: "5d10-5".parse().unwrap(),
+        hitpoints: "3d10+9".parse().unwrap(),
         // Fly 60 — the bird's signature mobility, mirroring Hawk / Giant
         // Eagle. The engine collapses ground + fly to a single per-creature
         // speed; we pin to the fly speed since vultures almost never walk
@@ -66,7 +66,7 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         intelligence: 6,
         dexterity: 10,
         wisdom: 12,
-        constitution: 15,
+        constitution: 16,
         charisma: 7,
         cr: 1.0,
         size: Size::Large,

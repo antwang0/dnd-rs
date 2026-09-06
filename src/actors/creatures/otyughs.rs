@@ -23,13 +23,13 @@ use std::sync::LazyLock;
 ///   of RAW's "grappled + restrained" clause).
 ///
 /// Defensive identity: AC 14 (natural armor — the otyugh's mottled
-/// blubbery hide). 114 HP (12d10+48), CON 19 — the otyugh is a
+/// blubbery hide). 104 HP (11d10+44), CON 19 — the otyugh is a
 /// damage sponge, not an evasive striker. No resistances or immunities
 /// — the otyugh is a flesh-and-tentacle predator, not an elemental or
 /// fiend. CON save proficiency reflects the gut-fortitude RAW for the
 /// otyugh's filth-and-rot diet.
 ///
-/// Stat shape: AC 14, ~114 HP (12d10+48), STR 16, DEX 11, CON 19, INT 6,
+/// Stat shape: AC 14, ~104 HP (11d10+44), STR 16, DEX 11, CON 19, INT 6,
 /// WIS 13, CHA 6. Speed 30. Senses: Darkvision 120. No languages
 /// (otyughs communicate via limited telepathy that the engine doesn't
 /// model). Size Large. CR 5.
@@ -57,8 +57,8 @@ pub static OTYUGH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // "lumbering large monstrosity").
         glyph: 'O',
         ac: 14,
-        // 12d10+48 ≈ 114 average per MM (CR 5).
-        hitpoints: "12d10+48".parse().unwrap(),
+        // 11d10+44 ≈ 104 average per MM (CR 5).
+        hitpoints: "11d10+44".parse().unwrap(),
         speed: 30.,
         strength: 16,
         intelligence: 6,
@@ -123,7 +123,7 @@ mod tests {
         .unwrap();
         // The otyugh is a flesh-and-tentacle predator — no magic
         // resistance, no damage modifiers. The defensive identity is the
-        // 114-HP pool + CON save proficiency, not any immunity envelope.
+        // 104-HP pool + CON save proficiency, not any immunity envelope.
         assert!(!a.has_magic_resistance());
     }
 }

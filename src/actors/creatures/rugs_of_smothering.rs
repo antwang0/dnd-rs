@@ -32,7 +32,7 @@ use std::sync::LazyLock;
 /// blinded (no eyes), charmed or frightened (no mind), or knocked prone
 /// (it is already flat).
 ///
-/// Stat shape per the SRD: AC 12, 33 HP (6d10), STR 17 / DEX 14 / CON
+/// Stat shape per the SRD: AC 12, 27 HP (5d10), STR 17 / DEX 14 / CON
 /// 10 / INT 1 / WIS 3 / CHA 1. Speed 10 — it does not chase. Blindsight
 /// 60 (blind beyond). CR 2.
 pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -44,8 +44,8 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // band and this is not one of those.
         glyph: 'r',
         ac: 12,
-        // 6d10 ≈ 33 average per the SRD (CR 2).
-        hitpoints: "6d10".parse().unwrap(),
+        // 5d10 ≈ 27 average per the SRD (CR 2).
+        hitpoints: "5d10".parse().unwrap(),
         // RAW speed line: Speed 10 ft., fly 10 ft. (hover)
         speed: 10.0,
         fly_speed: 10.0,

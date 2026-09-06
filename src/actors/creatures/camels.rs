@@ -18,20 +18,20 @@ use std::sync::LazyLock;
 /// - **camel bite** — STR-based flat-1d4 bludgeoning melee via the
 ///   shared `CAMEL_BITE` static. RAW: "+5 to hit, reach 5 ft, one
 ///   creature. Hit: 2 (1d4) bludgeoning damage." Note the RAW
-///   omission of STR-to-damage even though the camel sports STR 16
+///   omission of STR-to-damage even though the camel sports STR 15
 ///   (+3) — RAW's MM stat block lists 1d4 flat, not 1d4+3. We follow
 ///   the MM data exactly via the `damage_ability: None` field on the
 ///   `CAMEL_BITE` static — distinguishing the camel from the standard
 ///   "STR-to-hit STR-to-damage" envelope of the rest of the beast
 ///   bench. The flat dice anchor the camel's "incidental nip" flavor.
 ///
-/// Defensive identity: AC 9 (large + low DEX, no natural armor), 15
-/// HP (2d10+4). Vanilla beast envelope — no resistances or condition
+/// Defensive identity: AC 10 (large + low DEX, no natural armor), 17
+/// HP (2d10+6). Vanilla beast envelope — no resistances or condition
 /// immunities. The camel takes a couple of solid hits to drop; its
 /// role is "pack animal," not combatant.
 ///
-/// Stat shape: AC 9, ~15 HP (2d10+4), STR 16, DEX 8, CON 14, INT 2,
-/// WIS 8, CHA 5. Speed 50 — RAW's "fast trot" envelope; faster than
+/// Stat shape: AC 10, ~17 HP (2d10+6), STR 15, DEX 8, CON 17, INT 2,
+/// WIS 11, CHA 5. Speed 50 — RAW's "fast trot" envelope; faster than
 /// the Mule / Mastiff (40) but slower than the Riding Horse (60).
 /// Size Large. CR ⅛. XP: 25 per RAW.
 pub static CAMEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -46,17 +46,17 @@ pub static CAMEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Lowercase 'c' is taken by Cat / Cockatrice; uppercase 'C'
         // reads as "tall four-legged frame" at the small UI scale.
         glyph: 'C',
-        ac: 9,
-        // 2d10+4 = 15 average per MM (CR ⅛).
-        hitpoints: "2d10+4".parse().unwrap(),
+        ac: 10,
+        // 2d10+6 = 17 average per MM (CR ⅛).
+        hitpoints: "2d10+6".parse().unwrap(),
         // Speed 50 — the camel's signature trot. Faster than the Mule
         // / Mastiff and slower than the Riding Horse.
         speed: 50.,
-        strength: 16,
+        strength: 15,
         intelligence: 2,
         dexterity: 8,
-        wisdom: 8,
-        constitution: 14,
+        wisdom: 11,
+        constitution: 17,
         charisma: 5,
         cr: 0.125,
         size: Size::Large,
