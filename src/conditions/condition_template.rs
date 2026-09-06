@@ -79,9 +79,28 @@ pub enum Condition {
     /// Stacks multiplicatively with damage-type resistance.
     DamageResistant,
     /// Hostile-to-hostile attack against the holder is at advantage and
-    /// the holder cannot benefit from being Hidden/Invisible. Used by
+    /// the holder cannot benefit from the Invisible condition. Used by
     /// Faerie Fire / Hunter's Mark style effects.
+    ///
+    /// Both halves are real. The advantage rides
+    /// `grants_advantage_to_attackers`; the invisibility clause rides
+    /// `suppresses_invisibility`, which is what makes an outlined
+    /// invisible creature *worse* off than an outlined visible one
+    /// rather than exactly as well off. See that predicate for the two
+    /// rules that used to cancel each other out.
     Outlined,
+    /// Lit by a **Starry Wisp** (SRD 5.2 cantrip) — the target sheds
+    /// Dim Light in a 10-foot radius and "can't benefit from the
+    /// Invisible condition" until the end of the caster's next turn.
+    ///
+    /// `Outlined`'s narrower sibling, and the reason the invisibility
+    /// clause is a cohort rather than an `Outlined` special case: the
+    /// two spells share exactly that sentence and nothing else. Faerie
+    /// Fire also hands every attacker advantage, and Starry Wisp — a
+    /// cantrip — pointedly does not. Reusing `Outlined` for it would
+    /// have handed a level-1 concentration spell's whole effect out at
+    /// will.
+    WispLit,
     /// Lit by Guiding Bolt — next attack against this actor before the
     /// end of the caster's next turn has advantage. Burns off when the
     /// next attack lands or when its short timer expires.
@@ -2496,6 +2515,7 @@ impl Condition {
             Condition::Shielded => "shielded",
             Condition::DamageResistant => "damage resistant",
             Condition::Outlined => "outlined",
+            Condition::WispLit => "wisp-lit",
             Condition::GuidingBoltLit => "marked by guiding bolt",
             Condition::MarkedForGrave => "marked for the grave",
             Condition::PowerWordPained => "racked with power word pain",
@@ -2915,6 +2935,31 @@ impl Condition {
     /// the containment.
     pub fn countered_by_see_invisibility(&self) -> bool {
         matches!(self, Condition::Invisible)
+    }
+
+    /// True if this condition, held by a creature, stops *that creature*
+    /// benefiting from the Invisible condition — 5e's "the affected
+    /// creature can't benefit from the Invisible condition", which
+    /// Faerie Fire and Starry Wisp both print in those words.
+    ///
+    /// The other side of the concealment coin from
+    /// `countered_by_truesight`: that cohort is about a *viewer* seeing
+    /// through the fog, and this one is about the fog being burned off
+    /// the creature itself, for every viewer at once. Which is why it
+    /// cannot ride `ConcealmentPiercing` — there is nobody whose senses
+    /// are doing it.
+    ///
+    /// **This used to be a docstring rather than a rule.** `Outlined`
+    /// claimed the clause and nothing read the claim, so an invisible
+    /// creature under Faerie Fire got the advantage from being outlined
+    /// and the disadvantage from being invisible, and the two cancelled
+    /// at the tally to a straight roll. RAW is that the outline wins
+    /// outright: the attacker has advantage and the invisibility is
+    /// worth nothing. Read at both ends of `attack_mode_tally`, because
+    /// an outlined creature loses the concealment it was hiding
+    /// *behind* and the concealment it was attacking *from* alike.
+    pub fn suppresses_invisibility(&self) -> bool {
+        matches!(self, Condition::Outlined | Condition::WispLit)
     }
 
     /// True if this condition is one of the **Smite-family** primes —

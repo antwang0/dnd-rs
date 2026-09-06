@@ -2381,6 +2381,14 @@ pub const CLEANSING_TOUCH_DEBUFFS: &[Condition] = &[
     // debuff" corner — Cleansing Touch treats both as strippable.
     Condition::PowerWordPained,
     Condition::Outlined,
+    // Starry Wisp's mote, on the same lane as Faerie Fire's outline
+    // above it and for the same reason: both are spell-installed marks
+    // that say "you cannot hide", and Cleansing Touch's RAW clause is
+    // "end one spell on you or a creature you touch". The light source
+    // the cantrip also hangs on the target is not lifted — it is
+    // encounter state rather than a condition, and it burns out on its
+    // own one round later.
+    Condition::WispLit,
     Condition::Burning,
 ];
 

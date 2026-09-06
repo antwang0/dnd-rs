@@ -35890,6 +35890,134 @@ fn gust_of_wind_pushes_in_wind_path() {
     assert!(pushed, "Gust of Wind should eventually push the goblin away on a failed STR save");
 }
 
+/// 5e Faerie Fire / Starry Wisp: *"the affected creature can't benefit
+/// from the Invisible condition."*
+///
+/// The rule the engine used to carry only in a docstring. An outlined
+/// invisible creature contributed one advantage (the outline) and one
+/// disadvantage (the invisibility) and the tally cancelled them to a
+/// straight roll — so casting Faerie Fire on something already
+/// invisible bought the party nothing at all, which is the opposite of
+/// what the spell is for.
+#[test]
+fn an_outline_burns_off_the_invisibility_underneath_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+
+    // Invisible alone: the swing is at disadvantage.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Rounds(5));
+    assert_eq!(
+        e.attack_mode_tally(fighter, goblin, true).resolve(),
+        RollMode::Disadvantage,
+        "an invisible target is hard to hit"
+    );
+
+    // Outlined on top of it: the outline's advantage lands and the
+    // invisibility is worth nothing, so the swing comes out at
+    // advantage rather than cancelling to a straight roll.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Outlined, ConditionTimer::Rounds(5));
+    assert_eq!(
+        e.attack_mode_tally(fighter, goblin, true).resolve(),
+        RollMode::Advantage,
+        "faerie fire beats the invisibility it is painted over"
+    );
+
+    // And from the other end: an invisible attacker who is themselves
+    // outlined stops swinging out of concealment. Starry Wisp's
+    // condition carries the same clause without the outline's
+    // advantage, which is what makes it the narrower of the two.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let sneak = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&sneak)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Rounds(5));
+    assert_eq!(
+        e.attack_mode_tally(sneak, mark, true).resolve(),
+        RollMode::Advantage,
+        "an unseen attacker swings at advantage"
+    );
+    e.actors
+        .get_mut(&sneak)
+        .unwrap()
+        .add_condition(Condition::WispLit, ConditionTimer::Rounds(1));
+    assert_eq!(
+        e.attack_mode_tally(sneak, mark, true).resolve(),
+        RollMode::Normal,
+        "a wisp-lit attacker is not unseen, and the wisp grants nothing \
+         else — that is the whole difference from Faerie Fire"
+    );
+}
+
+/// Starry Wisp: the SRD 5.2 bard / druid cantrip. On a hit it leaves
+/// two things behind — a `WispLit` mark and a carried light source —
+/// and between them an invisible target stops being hard to hit and
+/// starts showing up on the lighting layer.
+#[test]
+fn starry_wisp_sticks_a_mote_of_light_to_what_it_hits() {
+    use crate::actions::spells::STARRY_WISP;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut lit = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let costs = STARRY_WISP.cost(&e, bard, Some(&vec![goblin]), None, None);
+        assert!(
+            !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+            "Starry Wisp is a cantrip and must not cost a slot"
+        );
+        let before = e.actors[&goblin].hitpoints();
+        for ef in STARRY_WISP.side_effects(&mut e, bard, Some(&vec![goblin]), None, None) {
+            ef.apply(&mut e);
+        }
+        let hit = e.actors[&goblin].hitpoints() < before;
+        // Both riders ride the hit, and neither shows up without one.
+        assert_eq!(
+            e.actors[&goblin].has_condition(Condition::WispLit),
+            hit,
+            "seed {}: the mark and the hit are the same event",
+            seed
+        );
+        assert_eq!(
+            e.actor_carries_light(goblin),
+            hit,
+            "seed {}: so is the light",
+            seed
+        );
+        if hit {
+            lit = true;
+        }
+    }
+    assert!(lit, "Starry Wisp should connect at least once across seeds");
+}
+
 /// Chaos Bolt: lv1 sorcerer attack. Verifies the lv1 slot cost and
 /// that the bolt eventually deals damage to the target across seeds
 /// (the random damage type doesn't change the hit outcome). Drives
@@ -35947,6 +36075,126 @@ fn chaos_bolt_damages_primary_and_eventually_chains() {
     assert!(
         damaged_chain,
         "Chaos Bolt should eventually chain to a nearby enemy across seeds"
+    );
+}
+
+/// The exploding-dice lane's budget is a hard cap, not a target: a
+/// pool of `n` dice with a cap of `k` can never pay out more than
+/// `(n + k) * faces`, however many maxima the chain turns up.
+#[test]
+fn an_exploding_pool_never_outspends_its_budget() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    const POOL: u32 = 4;
+    const FACES: u32 = 8;
+    const CAP: u32 = 2;
+    for seed in 0..200u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let rolled = e.roll_exploding_spell_damage(g, POOL, FACES, CAP);
+        assert!(
+            rolled >= POOL && rolled <= (POOL + CAP) * FACES,
+            "seed {}: {} is outside the {}..={} an exploding {}d{} pool can produce",
+            seed,
+            rolled,
+            POOL,
+            (POOL + CAP) * FACES,
+            POOL,
+            FACES,
+        );
+    }
+}
+
+/// A die showing its maximum face buys another die, and the new die can
+/// buy one in its turn. Rolled on a d2 so the chain is common enough to
+/// observe in a bounded sweep — the rule is about the maximum face, not
+/// about the number eight.
+///
+/// The zero-budget half is the load-bearing assertion for the forty-odd
+/// spells that don't explode: with no budget the pool cannot exceed its
+/// own maximum, which is exactly the behaviour `spell_attack_outcome`
+/// hands to everything that isn't Sorcerous Burst.
+#[test]
+fn a_maximum_face_buys_another_die_until_the_budget_runs_out() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut exploded = false;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // One d2 with three dice of budget: anything above 2 can only
+        // have come from the chain.
+        if e.roll_exploding_spell_damage(g, 1, 2, 3) > 2 {
+            exploded = true;
+        }
+        // The same pool with no budget is a plain 1d2 forever.
+        let capped = e.roll_exploding_spell_damage(g, 1, 2, 0);
+        assert!(
+            (1..=2).contains(&capped),
+            "seed {}: a zero-budget pool rolled {}, which is not a 1d2",
+            seed,
+            capped
+        );
+    }
+    assert!(
+        exploded,
+        "a d2 pool with three dice of budget should chain at least once in sixty seeds"
+    );
+}
+
+/// Sorcerous Burst: the SRD 5.2 sorcerer cantrip. Costs no slot, lands
+/// damage as a ranged spell attack, and its d8 pool can pay out more
+/// than the un-exploded maximum the cantrip ladder allows.
+#[test]
+fn sorcerous_burst_is_a_slotless_attack_whose_dice_can_explode() {
+    use crate::actions::spells::SORCEROUS_BURST;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut damaged = false;
+    let mut chained = false;
+    for seed in 0..120u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let sor = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        // A cantrip: one Action and nothing else.
+        let costs = SORCEROUS_BURST.cost(&e, sor, Some(&vec![goblin]), None, None);
+        assert!(
+            !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+            "Sorcerous Burst is a cantrip and must not cost a slot"
+        );
+        let before = e.actors[&goblin].hitpoints();
+        let log_before = e.messages().len();
+        for ef in SORCEROUS_BURST.side_effects(&mut e, sor, Some(&vec![goblin]), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&goblin].hitpoints() < before {
+            damaged = true;
+        }
+        // The chain announces itself, which is a steadier signal than
+        // the damage total: a d8 that comes up 8 buys a die whether the
+        // swing crit or not, and the two are indistinguishable in the
+        // final number.
+        if e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("exploding dice"))
+        {
+            chained = true;
+        }
+    }
+    assert!(damaged, "Sorcerous Burst should land damage across seeds");
+    assert!(
+        chained,
+        "Sorcerous Burst's d8s should explode at least once across a hundred and twenty seeds"
     );
 }
 

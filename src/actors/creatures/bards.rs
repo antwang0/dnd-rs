@@ -111,6 +111,13 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
     actions.push(&*VICIOUS_MOCKERY);
+    // Starry Wisp — the bard's one radiant cantrip, and their only
+    // at-will answer to an invisible attacker: a ranged spell attack
+    // that leaves the target shedding dim light and unable to benefit
+    // from the Invisible condition until the end of the bard's next
+    // turn. Vicious Mockery is the other at-will pick and is a WIS save
+    // with no damage type at all, so the two do not compete.
+    actions.push(&*crate::actions::spells::STARRY_WISP);
     // Light — the evocation cantrip every one of these classes has on
     // its list, and the party's answer to an unlit board: touch an ally
     // (or yourself) and they carry 20 ft of bright light and 20 ft of

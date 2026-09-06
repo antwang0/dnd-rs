@@ -336,6 +336,51 @@ pub fn spell_attack_outcome(
     damage_type: DamageType,
     is_melee: bool,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+    spell_attack_outcome_exploding(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        damage_dice,
+        damage_bonus,
+        damage_type,
+        is_melee,
+        0,
+    )
+}
+
+/// `spell_attack_outcome` for a spell whose damage dice **explode** —
+/// RAW's *"if you roll an 8 on a d8 for this spell, you can roll
+/// another d8, and add it to the damage"* — capped at `max_exploding`
+/// extra dice for the cast.
+///
+/// A layer under the plain resolver rather than a tenth parameter on
+/// it, for the reason `spell_attack` and `spell_attack_with_bonus` are
+/// layers over it: forty-five call sites have nothing to say about
+/// exploding dice, and making every one of them say `0` would be a
+/// wider diff than the rule is worth. `max_exploding: 0` is exactly
+/// the old behaviour, which is what the wrapper passes.
+///
+/// Sorcerous Burst (SRD 5.2) is the only caller today. The explosion
+/// budget is spent on the base pool only: the crit dice below stay a
+/// plain roll for the same reason they always have, and RAW's cap is
+/// worded per cast rather than per roll, so a burst that already spent
+/// its modifier's worth of extra dice has nothing left to spend on the
+/// crit anyway.
+#[allow(clippy::too_many_arguments)]
+fn spell_attack_outcome_exploding(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
+    damage_type: DamageType,
+    is_melee: bool,
+    max_exploding: u32,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
     let roll = spell_attack_roll(
         encounter,
         caster_id,
@@ -362,7 +407,16 @@ pub fn spell_attack_outcome(
     // Multi-ray spells (Scorching Ray, Eldritch Blast) call this helper
     // once per beam; the once-per-cast latch on the cast frame is what
     // keeps the flat bonuses from being paid per ray.
-    let dmg = encounter.roll_empowered_sum(caster_id, damage_dice.count, damage_dice.faces) as i32;
+    let dmg = if max_exploding > 0 {
+        encounter.roll_exploding_spell_damage(
+            caster_id,
+            damage_dice.count,
+            damage_dice.faces,
+            max_exploding,
+        ) as i32
+    } else {
+        encounter.roll_empowered_sum(caster_id, damage_dice.count, damage_dice.faces) as i32
+    };
     // The crit dice stay a plain roll. RAW doubles the *dice* on a
     // crit and adds flat bonuses once, so folding this through the
     // chokepoint would be asking for a second payout the latch would
@@ -20125,6 +20179,152 @@ impl Action for Light {
 
 pub static LIGHT: LazyLock<Light> = LazyLock::new(|| Light {});
 
+/// **Starry Wisp** — SRD 5.2 evocation cantrip (Bard, Druid).
+///
+/// > You launch a mote of light at one creature or object within range.
+/// > Make a ranged spell attack against the target. On a hit, the
+/// > target takes 1d8 Radiant damage, and until the end of your next
+/// > turn, it emits Dim Light in a 10-foot radius and can't benefit
+/// > from the Invisible condition.
+/// >
+/// > *Cantrip Upgrade.* The damage increases by 1d8 when you reach
+/// > levels 5 (2d8), 11 (3d8), and 17 (4d8).
+///
+/// The 2024 druid and bard's answer to a thing they cannot see, and the
+/// only cantrip in the game that strips invisibility. Both riders are
+/// real on this board: the mote is a genuine `LightSource` anchored to
+/// the target, so it drags a moving island of dim light through a dark
+/// corridor with whatever it is stuck to, and the `WispLit` condition
+/// is read by `attack_mode_tally` so an invisible target that takes one
+/// stops being hard to hit.
+///
+/// The light is the load-bearing half against something already unseen.
+/// A wisp on an invisible rogue tells the whole room where the rogue is
+/// standing — RAW's "emits Dim Light" is an outline you can shoot at,
+/// and the engine's lighting layer is what makes that mean something
+/// rather than being flavour text.
+///
+/// Note the deliberate asymmetry with Faerie Fire, which shares the
+/// invisibility sentence: Faerie Fire also hands every attacker
+/// advantage and this does not. A cantrip that granted advantage on
+/// every subsequent swing would be a level-1 concentration spell for
+/// free, which is why `WispLit` is its own condition rather than a
+/// second name for `Outlined`.
+pub struct StarryWisp {}
+
+impl StarryWisp {
+    /// RAW's "Dim Light in a 10-foot radius" — no bright collar at all,
+    /// which is the whole difference between this and the Light
+    /// cantrip. Four tiles on the 2.5 ft grid.
+    const WISP_DIM_TILES: isize = 4;
+    /// "Until the end of your next turn", the same one-round clock
+    /// Guiding Bolt's mark runs on.
+    const WISP_ROUNDS: u32 = 1;
+}
+
+impl Action for StarryWisp {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+
+    fn name(&self) -> &str {
+        "starry wisp"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wisp", "starry"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft on a 2.5 ft grid.
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+
+    // Cantrip — the default `cost()` (one Action, no slot) is right.
+
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let caster = encounter.actors.get(&caster_id)?;
+        Some(4.5 * crate::engine::util::cantrip_dice_count(caster.level()) as f32)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spellcasting_attack_modifier();
+        let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            Dice::new(dice_count, 8),
+            DamageType::Radiant,
+            false,
+        );
+        // Both riders are on the hit, per RAW's "on a hit" clause. An
+        // empty effect vec is this pipeline's miss.
+        if effects.is_empty() {
+            return effects;
+        }
+        // The mote goes down now rather than as a queued side-effect:
+        // a light source is encounter state rather than something that
+        // happens to an actor, and the same is true of the Light
+        // cantrip one screen up. The condition stays on the stack so it
+        // travels the normal install path (immunities, logging, the
+        // concentration ledger).
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "starry wisp",
+            anchor: LightAnchor::Carried(target_id),
+            bright_tiles: 0,
+            dim_tiles: Self::WISP_DIM_TILES,
+            rounds_remaining: Some(Self::WISP_ROUNDS),
+            // A cantrip, so Darkness snuffs it — the same rung the
+            // Light cantrip sits on.
+            spell_level: 0,
+            // Carried, not innate: the mote is stuck to the creature,
+            // it is not the creature. A body that drops leaves the wisp
+            // burning where it fell, which is what RAW's "emits Dim
+            // Light" describes and what `LightSource::innate` is for.
+            innate: false,
+        });
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!("  a mote of starlight clings to {}.", name));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::WispLit,
+            timer: ConditionTimer::Rounds(Self::WISP_ROUNDS),
+        }));
+        effects
+    }
+}
+
+pub static STARRY_WISP: LazyLock<StarryWisp> = LazyLock::new(|| StarryWisp {});
+
 /// Dissonant Whispers — level-1 enchantment (bard). The caster whispers
 /// a discordant melody at a single creature within 60 ft (24 tiles): the
 /// target makes a WIS save vs the caster's CHA-based DC. Pass = half;
@@ -21404,6 +21604,146 @@ fn chaos_damage_type(roll: u8) -> DamageType {
 }
 
 pub static CHAOS_BOLT: LazyLock<ChaosBolt> = LazyLock::new(|| ChaosBolt {});
+
+/// The seven damage types Sorcerous Burst offers, in RAW's printed
+/// order. Notably *not* Force — the cantrip's menu is one type shorter
+/// than Chaos Bolt's, and the missing entry is the one type almost
+/// nothing in the bestiary resists.
+const SORCEROUS_BURST_TYPES: &[DamageType] = &[
+    DamageType::Acid,
+    DamageType::Cold,
+    DamageType::Fire,
+    DamageType::Lightning,
+    DamageType::Poison,
+    DamageType::Psychic,
+    DamageType::Thunder,
+];
+
+/// **Sorcerous Burst** — SRD 5.2 evocation cantrip (Sorcerer).
+///
+/// > You cast sorcerous energy at one creature or object within range.
+/// > Make a ranged spell attack against the target. On a hit, the
+/// > target takes 1d8 damage of a type you choose: Acid, Cold, Fire,
+/// > Lightning, Poison, Psychic, or Thunder.
+/// >
+/// > If you roll an 8 on a d8 for this spell, you can roll another d8,
+/// > and add it to the damage. When you cast this spell, the maximum
+/// > number of these d8s you can add to the spell's damage equals your
+/// > spellcasting ability modifier.
+/// >
+/// > *Cantrip Upgrade.* The damage increases by 1d8 when you reach
+/// > levels 5 (2d8), 11 (3d8), and 17 (4d8).
+///
+/// The 2024 sorcerer's signature cantrip, and the first spell in the
+/// engine whose dice explode. That clause is the whole reason it is
+/// worth having beside Fire Bolt: the two are the same 120-foot ranged
+/// spell attack on the same cantrip ladder, and what separates them is
+/// a d8 pool with a fat tail instead of a flat d10. At level 17 with a
+/// +5 modifier the spell rolls 4d8 and may add five more, which is a
+/// different shape of damage from anything else a cantrip does.
+///
+/// The explosion resolves at the shared spell-damage chokepoint
+/// (`EncounterInstance::roll_exploding_spell_damage`) rather than here,
+/// so the extra dice are counted off the pool Empowered Spell has
+/// already rerolled instead of off a second pool rolled beside it. See
+/// `spell_attack_outcome_exploding` for why the cap is spent on the
+/// base dice and not on the crit dice.
+///
+/// **The type choice is made for the caster**, by the same
+/// best-against-this-target picker Chromatic Orb uses. RAW leaves it to
+/// the player; the engine has one caster who is a person and dozens who
+/// are not, and a fixed type would make the AI's copy of the spell
+/// strictly worse than Fire Bolt against anything fire-immune.
+pub struct SorcerousBurst {}
+
+impl Action for SorcerousBurst {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+
+    fn name(&self) -> &str {
+        "sorcerous burst"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sb", "sorc burst"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft on a 2.5 ft grid.
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        SORCEROUS_BURST_TYPES.to_vec()
+    }
+
+    // Cantrip — the default `cost()` (one Action, no slot) is right.
+
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let caster = encounter.actors.get(&caster_id)?;
+        let dice = crate::engine::util::cantrip_dice_count(caster.level()) as f32;
+        // 4.5 per base die, plus the explosion's expected tail. Each die
+        // has a 1/8 chance of buying another die worth 4.5 (which can
+        // itself explode), so the pool's mean is `4.5 * n / (1 - 1/8)`
+        // in the uncapped limit. The cap trims that tail; ignoring it
+        // here overstates a low-modifier caster's output slightly and
+        // keeps the estimate a one-line read, which is all the picker
+        // asks of it.
+        Some(4.5 * dice / (1.0 - 1.0 / 8.0))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spellcasting_attack_modifier();
+        let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
+        // RAW's cap is "your spellcasting ability modifier", so it is
+        // read off the same ability the attack bonus above was. Floored
+        // at zero: a negative modifier buys no extra dice rather than
+        // owing the spell any.
+        let ability = caster.best_spellcasting_ability(
+            crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+        );
+        let max_exploding = caster.ability_modifier(ability).max(0) as u32;
+        let damage_type =
+            pick_damage_type_against_target(encounter, target_id, SORCEROUS_BURST_TYPES);
+        spell_attack_outcome_exploding(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            Dice::new(dice_count, 8),
+            0,
+            damage_type,
+            false,
+            max_exploding,
+        )
+        .0
+    }
+}
+
+pub static SORCEROUS_BURST: LazyLock<SorcerousBurst> = LazyLock::new(|| SorcerousBurst {});
 
 /// Arms of Hadar — level-1 conjuration (warlock). The caster slaps the
 /// ground; black tentacles erupt around them in a 10-foot radius (1-tile

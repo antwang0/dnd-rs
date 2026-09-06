@@ -204,6 +204,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     of damage type (best-vs-target picker), DEX save for half.
     actions.push(&*crate::actions::spells::CHAOS_BOLT);
     actions.push(&*crate::actions::spells::DRAGONS_BREATH);
+    // Sorcerous Burst — the 2024 sorcerer's own cantrip, and the only
+    // sorcerer-exclusive one in SRD 5.2. A 120 ft ranged spell attack
+    // for a d8 pool that explodes on maxima, capped at the caster's
+    // Charisma modifier. It sits above Fire Bolt on the sorcerer's
+    // at-will lane for two reasons: the tail, and the seven-type menu,
+    // which keeps the cantrip live against the fire-immune half of the
+    // bestiary that leaves Fire Bolt doing nothing at all.
+    actions.push(&*crate::actions::spells::SORCEROUS_BURST);
     // Telekinetic — cantrip bonus-action shove (5ft pull on STR-save
     // fail). Cheap repositioning tool; the sorcerer's bonus-action lane
     // is otherwise mostly empty (Misty Step / Quickened Spell aren't

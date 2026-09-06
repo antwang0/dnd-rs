@@ -2696,28 +2696,99 @@ impl EncounterInstance {
     /// `roll_empowered`, which rerolls low dice) — different features,
     /// different classes, neither aware of the other.
     pub fn roll_empowered_sum(&mut self, caster_id: usize, count: u32, faces: u32) -> u32 {
+        let base: u32 = self.spell_damage_pool(caster_id, count, faces).iter().sum();
+        self.with_flat_spell_damage_bonus(caster_id, base)
+    }
+
+    /// `roll_empowered_sum` for a spell whose dice **explode**: RAW's
+    /// *"if you roll an 8 on a d8 for this spell, you can roll another
+    /// d8, and add it to the damage"*, capped at `max_extra` additional
+    /// dice for the whole cast.
+    ///
+    /// Sorcerous Burst (SRD 5.2) is the spell the lane exists for, and
+    /// its cap is the caster's spellcasting ability modifier. The
+    /// exploded dice are themselves dice of the spell, so a fresh
+    /// maximum on one of *them* buys another roll — the budget, not the
+    /// chain, is what stops it.
+    ///
+    /// Layered on top of `spell_damage_pool` rather than beside it so
+    /// the explosion sees the pool everything else in the engine sees:
+    /// Empowered Spell has already rerolled the low dice by the time
+    /// the maxima are counted, and an Overchanneled pool is entirely
+    /// maxima and therefore explodes to the cap. The extra dice are
+    /// plain rolls — RAW's clause is about the number rolled, and
+    /// neither metamagic re-reaches a die it has already paid for.
+    pub fn roll_exploding_spell_damage(
+        &mut self,
+        caster_id: usize,
+        count: u32,
+        faces: u32,
+        max_extra: u32,
+    ) -> u32 {
+        let pool = self.spell_damage_pool(caster_id, count, faces);
+        let mut total: u32 = pool.iter().sum();
+        // Dice still owed an explosion. Counting rather than recursing
+        // keeps the walk flat and the RNG draw order deterministic,
+        // which the seeded runs need.
+        let mut owed = pool.iter().filter(|&&v| v == faces).count() as u32;
+        let mut spent = 0;
+        while owed > 0 && spent < max_extra {
+            owed -= 1;
+            spent += 1;
+            let value = self.roll(&Dice::new(1, faces));
+            total = total.saturating_add(value);
+            if value == faces {
+                owed += 1;
+            }
+        }
+        if spent > 0 {
+            self.log(format!(
+                "  exploding dice: +{} d{} (cap {})",
+                spent, faces, max_extra
+            ));
+        }
+        self.with_flat_spell_damage_bonus(caster_id, total)
+    }
+
+    /// The dice one spell-damage roll actually rolls, before anything
+    /// is done with the total.
+    ///
+    /// Split out of `roll_empowered_sum` so a caller that needs the
+    /// individual faces — the exploding lane above, which has to know
+    /// how many of them came up maximum — reads the same pool the sum
+    /// does instead of rolling its own beside it. A second pool would
+    /// have been the wrong shape twice over: it would double the RNG
+    /// draws for one cast, and it would consume neither of the primes
+    /// resolved here, so an Empowered or Overchanneled Sorcerous Burst
+    /// would have exploded off dice the caster never rolled.
+    fn spell_damage_pool(&mut self, caster_id: usize, count: u32, faces: u32) -> Vec<u32> {
         let dice = Dice::new(count, faces);
         // Overchannel replaces the roll outright rather than modifying
         // it, so it is resolved first — there are no dice left for
         // Empowered Spell's reroll to improve once every die is showing
         // its top face, and calling through anyway would burn that
         // separate prime for nothing.
-        let base = match self.consume_overchannel(caster_id, dice) {
-            Some(maxed) => maxed,
-            None => self.roll_empowered(caster_id, count, faces).iter().sum(),
-        };
-        // The `FLAT_SPELL_DAMAGE_BONUSES` cohort hangs off this
-        // chokepoint, and its rows are deliberately additive rather than
-        // exclusive: they belong to different classes reading different
-        // stats on different halves of the spell list, so no legal build
-        // holds two and the sum is never a stack in practice. Each row
-        // gates itself on the in-flight cast.
-        //
-        // All of them are once per *cast*, not once per roll — see
-        // `CastContext::flat_damage_bonus_paid`. The latch is claimed
-        // before any is computed so a spell that rolls two damage pools
-        // (Storm of Vengeance, Acid Arrow) pays the bonus on the first
-        // and not the second, matching RAW's "one damage roll".
+        match self.consume_overchannel(caster_id, dice) {
+            Some(_) => vec![faces; count as usize],
+            None => self.roll_empowered(caster_id, count, faces),
+        }
+    }
+
+    /// Add the once-per-cast flat spell-damage bonus to a rolled total.
+    ///
+    /// The `FLAT_SPELL_DAMAGE_BONUSES` cohort hangs off this
+    /// chokepoint, and its rows are deliberately additive rather than
+    /// exclusive: they belong to different classes reading different
+    /// stats on different halves of the spell list, so no legal build
+    /// holds two and the sum is never a stack in practice. Each row
+    /// gates itself on the in-flight cast.
+    ///
+    /// All of them are once per *cast*, not once per roll — see
+    /// `CastContext::flat_damage_bonus_paid`. The latch is claimed
+    /// before any is computed so a spell that rolls two damage pools
+    /// (Storm of Vengeance, Acid Arrow) pays the bonus on the first
+    /// and not the second, matching RAW's "one damage roll".
+    fn with_flat_spell_damage_bonus(&mut self, caster_id: usize, base: u32) -> u32 {
         if !self.claim_flat_damage_bonus() {
             return base;
         }
@@ -3675,6 +3746,16 @@ impl EncounterInstance {
         let attacker_piercing = self.concealment_piercing_of(attacker_id, target_id);
         let target_piercing = self.concealment_piercing_of(target_id, attacker_id);
 
+        // 5e's *other* way to lose your invisibility: not a viewer who
+        // sees through it, but an outline burned onto you that every
+        // viewer sees. Faerie Fire and Starry Wisp both say "can't
+        // benefit from the Invisible condition", and both halves matter
+        // here — an outlined creature stops hiding behind its
+        // invisibility (target side) and stops attacking out of it
+        // (attacker side). See `Condition::suppresses_invisibility`.
+        let attacker_outlined = self.concealment_burned_off(attacker_id);
+        let target_outlined = self.concealment_burned_off(target_id);
+
         // Attacker-side modifiers. The disadvantage / advantage cohorts
         // live on `Condition` itself (`imposes_attacker_disadvantage` /
         // `grants_self_attack_advantage`) so adding a new condition is a
@@ -3700,7 +3781,13 @@ impl EncounterInstance {
                     // attacker's invisibility-style concealment advantages
                     // (Invisible, Blurred, Displaced). Hidden / Helped /
                     // Bless / etc. are unaffected — they're not concealment.
-                    let suppressed = target_piercing.pierces(*c);
+                    //
+                    // An outline on the attacker themselves takes the
+                    // same advantage away, from the other direction:
+                    // RAW's clause is "can't benefit from the Invisible
+                    // condition", and swinging out of it is a benefit.
+                    let suppressed = target_piercing.pierces(*c)
+                        || (attacker_outlined && c.countered_by_see_invisibility());
                     if !suppressed {
                         tally.add(RollMode::Advantage);
                     }
@@ -3828,7 +3915,13 @@ impl EncounterInstance {
                     // Dodging / Holy Aura / Foreseen / etc. are
                     // unaffected — those are active defenses, not
                     // illusory concealment.
-                    let suppressed = attacker_piercing.pierces(*c);
+                    //
+                    // An outline on the target burns off the same
+                    // concealment without anybody having to see through
+                    // it — this is the half that makes Faerie Fire's
+                    // second sentence mean something.
+                    let suppressed = attacker_piercing.pierces(*c)
+                        || (target_outlined && c.countered_by_see_invisibility());
                     if !suppressed {
                         tally.add(RollMode::Disadvantage);
                     }
@@ -4525,6 +4618,26 @@ impl EncounterInstance {
     /// at the call site (both angles matter in `compute_attack_mode`):
     /// this helper takes an already-directed (viewer, subject) pair
     /// and stays polarity-neutral.
+    /// True when `actor_id` is carrying an outline that burns its own
+    /// invisibility off — 5e's *"the affected creature can't benefit
+    /// from the Invisible condition"*, which Faerie Fire and Starry
+    /// Wisp both print.
+    ///
+    /// The undirected counterpart of `concealment_piercing_of`, and
+    /// deliberately not a `ConcealmentPiercing` tier: piercing is a
+    /// property of a viewer's senses and this is a property of the
+    /// subject's own skin. Nobody is doing the seeing, so there is no
+    /// (viewer, subject) pair to hand it. See
+    /// `Condition::suppresses_invisibility` for the cohort and for what
+    /// the engine did before it existed.
+    pub fn concealment_burned_off(&self, actor_id: usize) -> bool {
+        self.actors.get(&actor_id).is_some_and(|a| {
+            a.conditions()
+                .keys()
+                .any(Condition::suppresses_invisibility)
+        })
+    }
+
     pub fn concealment_piercing_of(
         &self,
         viewer_id: usize,

@@ -38,6 +38,14 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MAGIC_STONE);
     // Frostbite — cold-themed druid cantrip with CON-save / Slowed rider.
     actions.push(&*crate::actions::spells::FROSTBITE);
+    // Starry Wisp — the druid's radiant cantrip, and the only at-will
+    // answer in the game to something invisible: the mote sticks a
+    // 10 ft collar of dim light to whatever it hits and strips the
+    // benefit of the Invisible condition until the end of the druid's
+    // next turn. Sits beside Faerie Fire below rather than duplicating
+    // it — the level-1 spell buys advantage and an area, the cantrip
+    // buys one target and costs nothing.
+    actions.push(&*crate::actions::spells::STARRY_WISP);
     // Level 1
     actions.push(&*GOODBERRY);
     actions.push(&HEALING_WORD);
