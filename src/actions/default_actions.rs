@@ -1466,16 +1466,23 @@ pub fn resolve_hide_attempt(
 
 pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});
 
-/// 5e Search action — Wisdom (Perception) check vs the Stealth DC of
-/// hidden enemies. Costs an Action. On success, every enemy within the
-/// searcher's normal sight range whose Stealth roll the Perception check
-/// beats loses their Hidden / Invisible cover. We approximate the
-/// "Stealth DC" with `12 + DEX modifier` (the standard passive-Stealth
-/// shape) per target, computed at the call site. Range is bounded by
-/// footprint-Chebyshev gap of 12 (60 ft) — a reasonable in-combat
-/// "scan the room" envelope. The Perception check itself routes through
-/// `roll_ability_check` so racial / passive bonuses (Keen Senses, etc.)
-/// stack on top cleanly.
+/// 5e Search action — Wisdom (Perception) check against what a hidden
+/// enemy actually rolled to hide. Costs an Action. On success, every
+/// enemy within the searcher's sight range whose number the Perception
+/// check beats loses their Hidden / Invisible cover.
+///
+/// The DC is SRD 5.2's: *"make note of your check's total, which is the
+/// DC for a creature to find you with a Wisdom (Perception) check"* —
+/// read off `ActorInstance::hidden_check_total`, which the Hide action
+/// writes. The old `12 + DEX modifier` estimate survives as the
+/// fallback for the two cases with no Stealth roll behind them: a
+/// creature holding `Hidden` because something installed it directly,
+/// and the `Invisible` branch, which is a spell rather than a check.
+///
+/// Range is bounded by a footprint-Chebyshev gap of 12 (60 ft) — a
+/// reasonable in-combat "scan the room" envelope. The Perception check
+/// itself routes through `roll_ability_check` so racial / passive
+/// bonuses (Keen Senses, etc.) stack on top cleanly.
 pub struct Search {}
 
 impl Action for Search {
@@ -1568,20 +1575,12 @@ impl Action for Search {
                 None => continue,
             };
             // SRD 5.2: the DC to find a hider is *"your check's
-            // total"* — the number they actually rolled, kept on the
-            // actor by `resolve_hide_attempt`. The `12 + DEX` estimate
-            // below is the fallback for a creature holding `Hidden`
-            // without having rolled for it (a test that installs the
-            // condition directly, or a future effect that hides
-            // somebody by fiat), and for the `Invisible` branch, which
-            // has no Stealth check behind it at all.
-            let dc = target.hidden_check_total().unwrap_or_else(|| {
-                let mut estimate = 12 + target.ability_modifier(AbilityScoreType::Dexterity);
-                if target.has_skill(Skill::Stealth) {
-                    estimate += target.proficiency_bonus();
-                }
-                estimate
-            });
+            // total"* — the number they actually rolled. See
+            // `ActorInstance::hidden_find_dc`, which also carries the
+            // estimate used for a creature that is hiding without
+            // having rolled and for the `Invisible` branch, which has
+            // no Stealth check behind it at all.
+            let dc = target.hidden_find_dc();
             if perception < dc {
                 continue;
             }

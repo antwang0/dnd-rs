@@ -11431,6 +11431,10 @@ impl EncounterInstance {
         // beside each other — all three read the actor's state at the
         // top of the turn and none depends on the others.
         self.apply_sunlight_hypersensitivity(actor_id);
+        // 5e **passive Perception**, doing the one job RAW gives it:
+        // noticing something without consciously looking for it. See
+        // `notice_hidden_enemies`.
+        self.notice_hidden_enemies(actor_id);
         // 5e's attach clause: "the target takes 5 (2d4) Necrotic damage
         // at the start of each of the stirge's turns", and the same
         // tick refreshes whatever the latch imposes on its host.
@@ -15993,6 +15997,78 @@ impl EncounterInstance {
     pub fn resolve_opening_surprise_for_test(&mut self) {
         self.surprise_resolved = true;
         self.resolve_opening_surprise();
+    }
+
+    /// What `actor_id` notices at the top of its turn without going
+    /// looking for it: any hidden enemy standing where it would plainly
+    /// see them, whose Stealth total its **passive Perception** meets.
+    ///
+    /// SRD 5.2's Hide ends *"immediately after […] an enemy finds
+    /// you"*, and the book gives two ways to be found. The Search
+    /// action is the deliberate one — spend your Action, roll Wisdom
+    /// (Perception) against the hider's total — and passive Perception
+    /// is the other: *"a Wisdom (Perception) check made without
+    /// rolling"*, used to decide whether a creature notices something
+    /// it was not consciously watching for.
+    ///
+    /// Without it, hiding was permanent in the only sense that matters.
+    /// A rogue could duck behind a wall, pass the check, and then spend
+    /// the rest of the fight walking around an open, brightly lit room
+    /// with every attack against it at disadvantage, because nothing
+    /// re-asked the question and nobody wanted to spend a whole Action
+    /// on Search. The tighter entry condition SRD 5.2 puts on *getting*
+    /// hidden made that sharper rather than better: hiding is harder to
+    /// start and was still impossible to end.
+    ///
+    /// The gate is the mirror of `can_attempt_hide`'s, asked from the
+    /// other side. A watcher notices a hider only when its own hiding
+    /// is the one thing in the way — the watcher can otherwise see the
+    /// tile (`viewer_can_see` folds blindness, darkness the watcher has
+    /// no darkvision for, fog and walls) and the hider is not behind
+    /// three-quarters cover. So a rogue who stays behind the wall stays
+    /// hidden however sharp the eyes looking for it, which is right:
+    /// there is nothing to notice.
+    ///
+    /// Runs for the creature whose turn is opening rather than for the
+    /// whole board, because that is what "at the top of your turn you
+    /// take stock" means, and because a board-wide sweep on every turn
+    /// would find the same hider once per creature and log it four
+    /// times.
+    fn notice_hidden_enemies(&mut self, watcher_id: usize) {
+        let Some(watcher) = self.actors.get(&watcher_id) else {
+            return;
+        };
+        if !watcher.is_combat_active() {
+            return;
+        }
+        let (team, perception) = (watcher.team(), watcher.passive_perception());
+        let found: Vec<usize> = self
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|&id| {
+                let Some(a) = self.actors.get(&id) else {
+                    return false;
+                };
+                id != watcher_id
+                    && a.team() != team
+                    && a.is_combat_active()
+                    && a.has_condition(Condition::Hidden)
+                    && perception >= a.hidden_find_dc()
+                    && self.viewer_can_see(watcher_id, id)
+                    && self.cover_ac_bonus(watcher_id, id) < Self::THREE_QUARTERS_COVER_AC
+            })
+            .collect();
+        let watcher_name = self.actor_name(watcher_id);
+        for id in found {
+            let name = self.actor_name(id);
+            if self
+                .actors
+                .get_mut(&id)
+                .is_some_and(|a| a.remove_condition(Condition::Hidden))
+            {
+                self.log(format!("{} spots {}.", watcher_name, name));
+            }
+        }
     }
 
     fn resolve_opening_surprise(&mut self) {

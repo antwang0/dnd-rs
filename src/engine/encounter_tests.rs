@@ -41576,6 +41576,57 @@ fn hide_rolls_against_a_flat_dc_whoever_is_watching() {
     );
 }
 
+/// SRD 5.2: hiding ends *"immediately after […] an enemy finds you"*,
+/// and passive Perception is how an enemy finds you without spending
+/// its Action on Search.
+///
+/// The rule that keeps hiding from being permanent. A creature that
+/// stays behind its wall stays hidden however sharp the eyes looking
+/// for it — there is nothing to notice — and one that walks out into
+/// the open is seen at the top of the next enemy's turn, by anyone
+/// whose passive Perception meets the number it rolled.
+#[test]
+fn walking_out_of_cover_is_how_a_hidden_creature_gets_noticed() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+    // A wall down the middle, and a rogue hiding behind it.
+    let wall: Vec<(isize, isize)> = (0..12isize).map(|y| (9isize, y)).collect();
+    let mut e = ei_with_terrain(24, 12, &wall);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let watcher = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+    // A total the fighter's passive Perception cannot beat would make
+    // the second half of the test vacuous, so pin the contest at
+    // something it can.
+    e.actors.get_mut(&rogue).unwrap().set_hidden_check_total(1);
+
+    e.start_turn_for(watcher);
+    assert!(
+        e.actors[&rogue].has_condition(Condition::Hidden),
+        "a wall is a wall: there is nothing for the fighter to notice"
+    );
+
+    // Out from behind the wall, in plain sight.
+    e.relocate_actor(rogue, Coordinate::new(14, 8), false).ok();
+    e.start_turn_for(watcher);
+    assert!(
+        !e.actors[&rogue].has_condition(Condition::Hidden),
+        "standing in the open in front of somebody is not hiding"
+    );
+    assert!(
+        e.actors[&rogue].hidden_check_total().is_none(),
+        "and the number that hid them goes with it"
+    );
+}
+
 /// SRD 5.2's *"while you're Heavily Obscured or behind Three-Quarters
 /// Cover or Total Cover, and you must be out of any enemy's line of
 /// sight"* — the sentence the engine could not enforce until it had a

@@ -7441,6 +7441,25 @@ impl ActorInstance {
         self.hidden_check_total = Some(total);
     }
 
+    /// The DC to find this creature — SRD 5.2's *"your check's total"*,
+    /// or a `12 + DEX` estimate of one for a creature that is hiding
+    /// without having rolled.
+    ///
+    /// The two consumers are the Search action, which rolls Perception
+    /// against it, and the passive sweep at the top of every turn,
+    /// which compares passive Perception against it. They used to hold
+    /// one copy of the fallback each, which is one copy too many for a
+    /// number that decides the same question twice.
+    pub fn hidden_find_dc(&self) -> i32 {
+        self.hidden_check_total.unwrap_or_else(|| {
+            let mut estimate = 12 + self.ability_modifier(AbilityScoreType::Dexterity);
+            if self.has_skill(Skill::Stealth) {
+                estimate += self.proficiency_bonus();
+            }
+            estimate
+        })
+    }
+
     pub fn xp(&self) -> u32 {
         self.xp
     }
