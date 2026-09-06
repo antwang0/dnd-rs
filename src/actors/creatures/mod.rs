@@ -1117,6 +1117,7 @@ mod tests {
         (&*basilisks::BASILISK_TEMPLATE, 15, "8d8+16", [16, 8, 15, 2, 8, 7], 20, 0, 3.0),
         (&*berserkers::BERSERKER_TEMPLATE, 13, "9d8+27", [16, 12, 17, 9, 11, 9], 30, 0, 2.0),
         (&*bugbears::BUGBEAR_TEMPLATE, 14, "6d8+6", [15, 14, 13, 8, 11, 9], 30, 0, 1.0),  // SRD 5.2: Bugbear Warrior
+        (&*bugbears::BUGBEAR_STALKER_TEMPLATE, 15, "10d8+20", [17, 14, 14, 11, 12, 11], 30, 0, 3.0),
         (&*chimeras::CHIMERA_TEMPLATE, 14, "12d10+48", [19, 11, 19, 3, 14, 10], 30, 60, 6.0),
         (&*chuuls::CHUUL_TEMPLATE, 16, "9d10+27", [19, 10, 16, 5, 11, 5], 30, 0, 4.0),
         (&*cloakers::CLOAKER_TEMPLATE, 14, "14d10+14", [17, 15, 12, 13, 14, 7], 10, 40, 8.0),
@@ -1134,12 +1135,14 @@ mod tests {
         (&*gnolls::GNOLL_TEMPLATE, 15, "6d8", [14, 12, 11, 6, 10, 7], 30, 0, 0.5),  // SRD 5.2: Gnoll Warrior
         (&*gricks::GRICK_TEMPLATE, 14, "12d8", [14, 14, 11, 3, 14, 5], 30, 0, 2.0),
         (&*goblins::GOBLIN_TEMPLATE, 15, "3d6", [8, 15, 10, 10, 8, 8], 30, 0, 0.25),  // SRD 5.2: Goblin Warrior
+        (&*goblins::GOBLIN_MINION_TEMPLATE, 12, "2d6", [8, 15, 10, 10, 8, 8], 30, 0, 0.125),
         (&*goblin_bosses::GOBLIN_BOSS_TEMPLATE, 17, "6d6", [10, 15, 10, 10, 8, 10], 30, 0, 1.0),
         (&*harpies::HARPY_TEMPLATE, 11, "7d8+7", [12, 13, 12, 7, 10, 13], 20, 40, 1.0),
         (&*hell_hounds::HELL_HOUND_TEMPLATE, 15, "9d8+18", [17, 12, 14, 6, 13, 6], 50, 0, 3.0),
         (&*hill_giants::HILL_GIANT_TEMPLATE, 13, "10d12+40", [21, 8, 19, 5, 9, 6], 40, 0, 5.0),
         (&*hippogriffs::HIPPOGRIFF_TEMPLATE, 11, "4d10+4", [17, 13, 13, 2, 12, 8], 40, 60, 1.0),
         (&*hobgoblins::HOBGOBLIN_TEMPLATE, 18, "2d8+2", [13, 12, 12, 10, 10, 9], 30, 0, 0.5),  // SRD 5.2: Hobgoblin Warrior
+        (&*hobgoblins::HOBGOBLIN_CAPTAIN_TEMPLATE, 17, "9d8+18", [15, 14, 14, 12, 10, 13], 30, 0, 3.0),
         (&*hydras::HYDRA_TEMPLATE, 15, "16d12+80", [20, 12, 20, 2, 10, 7], 40, 0, 8.0),
         (&*kobolds::KOBOLD_TEMPLATE, 14, "3d6-3", [7, 15, 9, 8, 7, 8], 30, 0, 0.125),  // SRD 5.2: Kobold Warrior
         (&*knights::KNIGHT_TEMPLATE, 18, "8d8+16", [16, 11, 14, 11, 11, 15], 30, 0, 3.0),
@@ -1268,6 +1271,7 @@ mod tests {
         (&*plesiosauruses::PLESIOSAURUS_TEMPLATE, 13, "8d10+24", [18, 15, 16, 2, 12, 5], 20, 0, 2.0),
         (&*pteranodons::PTERANODON_TEMPLATE, 13, "3d8", [12, 15, 10, 2, 9, 5], 10, 60, 0.25),
         (&*thugs::THUG_TEMPLATE, 12, "5d8+10", [15, 12, 14, 10, 10, 11], 30, 0, 0.5),  // SRD 5.2: Tough
+        (&*thugs::TOUGH_BOSS_TEMPLATE, 16, "11d8+33", [17, 14, 16, 11, 10, 11], 30, 0, 4.0),  // SRD 5.2: Tough Boss
         (&*tribal_warriors::TRIBAL_WARRIOR_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),  // SRD 5.2: Warrior Infantry
         (&*scouts::SCOUT_TEMPLATE, 13, "3d8+3", [11, 14, 12, 11, 13, 11], 30, 0, 0.5),
         (&*giant_rats::GIANT_RAT_TEMPLATE, 13, "2d6", [7, 16, 11, 2, 10, 4], 30, 0, 0.125),
@@ -1275,6 +1279,7 @@ mod tests {
         (&*commoners::COMMONER_TEMPLATE, 10, "1d8", [10, 10, 10, 10, 10, 10], 30, 0, 0.0),
         (&*mastiffs::MASTIFF_TEMPLATE, 12, "1d8+1", [13, 14, 12, 3, 12, 7], 40, 0, 0.125),
         (&*guards::GUARD_TEMPLATE, 16, "2d8+2", [13, 12, 12, 10, 11, 10], 30, 0, 0.125),
+        (&*guards::GUARD_CAPTAIN_TEMPLATE, 18, "10d8+30", [18, 14, 16, 12, 14, 13], 30, 0, 4.0),
         (&*grimlocks::GRIMLOCK_TEMPLATE, 11, "2d8+2", [16, 12, 12, 9, 8, 6], 30, 0, 0.25),
         (&*giant_frogs::GIANT_FROG_TEMPLATE, 11, "4d8", [12, 13, 11, 2, 10, 3], 30, 0, 0.25),
         (&*hawks::HAWK_TEMPLATE, 13, "1d4-1", [5, 16, 8, 2, 14, 6], 10, 60, 0.0),

@@ -1,5 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{HEAVY_CROSSBOW, MACE, THUG_MULTI};
+use crate::actions::monster_attacks::{
+    HEAVY_CROSSBOW, MACE, THUG_MULTI, TOUGH_BOSS_CROSSBOW, TOUGH_BOSS_MULTI,
+    TOUGH_BOSS_WARHAMMER,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::HashSet;
@@ -69,6 +72,63 @@ pub static THUG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Pack Tactics — the thug gets advantage when an ally is
         // adjacent to the target. Read at the `compute_attack_mode`
         // chokepoint; no per-attack code needed here.
+        has_pack_tactics: true,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Tough Boss — CR 4 humanoid enforcer, the rung above the Thug. SRD
+/// 5.2 files the pair as Tough and Tough Boss; the bestiary keeps the
+/// older, better name for the first and takes the book's for the
+/// second, because "Thug Boss" is nobody's name for anything.
+///
+/// What it adds over the thug is not size but *organisation*: **Pack
+/// Tactics**, and a warhammer that shoves. A boss alone is a slightly
+/// heavier thug; a boss with two thugs beside it has advantage on every
+/// swing all three of them make, which is the whole reason the stat
+/// block exists and the reason it is priced four rungs up.
+///
+/// Action lanes:
+/// - **tough boss multiattack** — two warhammer swings.
+/// - **boss warhammer** — 2d8 with the **Push** mastery, RAW's "the
+///   tough pushes the target up to 10 feet straight away from itself".
+/// - **boss crossbow** — 2d10 at range.
+///
+/// Stat shape: AC 16 (chain mail), 82 HP (11d8+33), STR 17 / DEX 14 /
+/// CON 16 / INT 11 / WIS 10 / CHA 11. Speed 30. CR 4.
+pub static TOUGH_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*TOUGH_BOSS_MULTI);
+    actions.push(&TOUGH_BOSS_WARHAMMER);
+    actions.push(&TOUGH_BOSS_CROSSBOW);
+    CreatureTemplate {
+        name: "Tough Boss",
+        // 'Y' — the thug holds 'T'. Glyphs are chosen to read against
+        // the creatures a fight is likely to put beside them rather
+        // than to be unique across four hundred stat blocks (the
+        // Artificer and the Cyclops also answer to it, and neither
+        // turns up in an alley), and a 'Y' has the right heft for a
+        // boss.
+        glyph: 'Y',
+        ac: 16,
+        // 11d8+33 = 82 average per SRD 5.2 (CR 4).
+        hitpoints: "11d8+33".parse().unwrap(),
+        speed: 30.,
+        strength: 17,
+        dexterity: 14,
+        constitution: 16,
+        intelligence: 11,
+        wisdom: 10,
+        charisma: 11,
+        languages: HashSet::from([Language::Common]),
+        cr: 4.0,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        // RAW: "the tough has Advantage on an attack roll against a
+        // creature if at least one of the tough's allies is within 5
+        // feet of the creature." The engine's shared flag, the same one
+        // the wolves and the giant rats read.
         has_pack_tactics: true,
         ..CreatureTemplate::defaults()
     }

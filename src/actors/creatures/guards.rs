@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::SPEAR;
+use crate::actions::monster_attacks::{
+    GUARD_CAPTAIN_JAVELIN, GUARD_CAPTAIN_LONGSWORD, GUARD_CAPTAIN_MULTI, SPEAR,
+};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -57,6 +59,61 @@ pub static GUARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Guard Captain — CR 4 humanoid soldier, and the officer the city
+/// watch was missing.
+///
+/// The Guard above is CR ⅛ and the bestiary's next lawful martial rung
+/// was the Knight at CR 3; the captain is the sergeant between the two,
+/// and 5.2 prices it above both. Seventy-five hit points behind AC 18,
+/// two swings a turn, and either of them worth about fifteen — this is
+/// the creature a party meets when it has annoyed a city rather than a
+/// gate.
+///
+/// Action lanes:
+/// - **guard captain multiattack** — two longsword swings.
+/// - **captain longsword** — 2d10, the single swing.
+/// - **captain javelin** — 3d6 thrown, for the round it spends closing.
+///
+/// Note what the officer's kit is *not*: the same longsword the guards
+/// carry with a bigger number beside it. RAW gives the captain 2d10
+/// where the armoury weapon rolls 1d8, which is a stat block saying
+/// the difference is the swordsman rather than the sword — the same
+/// thing the Bugbear Stalker's 3d6 javelin says.
+///
+/// Stat shape: AC 18 (breastplate + shield), 75 HP (10d8+30), STR 18 /
+/// DEX 14 / CON 16 / INT 12 / WIS 14 / CHA 13. Speed 30. Skills:
+/// Athletics, Perception. CR 4.
+pub static GUARD_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*GUARD_CAPTAIN_MULTI);
+    actions.push(&GUARD_CAPTAIN_LONGSWORD);
+    actions.push(&GUARD_CAPTAIN_JAVELIN);
+    CreatureTemplate {
+        name: "Guard Captain",
+        // 'U' — 'G' is the Goblin's, 'g' the Minion's, and the Guard
+        // already holds its own letter. The captain takes the vowel out
+        // of the middle of the word.
+        glyph: 'U',
+        ac: 18,
+        // 10d8+30 = 75 average per SRD 5.2 (CR 4).
+        hitpoints: "10d8+30".parse().unwrap(),
+        speed: 30.,
+        strength: 18,
+        dexterity: 14,
+        constitution: 16,
+        intelligence: 12,
+        wisdom: 14,
+        charisma: 13,
+        languages: HashSet::from([Language::Common]),
+        cr: 4.0,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

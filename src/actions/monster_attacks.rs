@@ -1376,6 +1376,13 @@ pub struct WeaponWithRider {
     pub damage_type: DamageType,
     pub reach: isize,
     pub is_melee: bool,
+    /// 5e's "normal range" — the band beyond which a shot rolls at
+    /// disadvantage, and beyond which Underwater Combat says it misses
+    /// outright. `None` for every melee entry, where reach *is* the
+    /// range; `Some` for every ranged one, which
+    /// `every_ranged_weapon_declares_the_normal_range_two_rules_read`
+    /// enforces across the whole bestiary.
+    pub normal_range: Option<isize>,
     pub rider_dice: Dice,
     pub rider_type: DamageType,
     pub rider_name: &'static str,
@@ -1437,6 +1444,52 @@ impl WeaponWithRider {
             damage_type,
             reach,
             is_melee: true,
+            normal_range: None,
+            rider_dice,
+            rider_type,
+            rider_name,
+        }
+    }
+
+    /// Const constructor for the "shot with a flat typed rider" shape —
+    /// the Hobgoblin Captain's poisoned longbow, and the first thing on
+    /// this chassis that is not a swing.
+    ///
+    /// The chassis has carried an `is_melee` field and an
+    /// `is_melee`-gated line-of-sight rule since it was written; what it
+    /// had no way to build was a `WeaponWithRider` with that field set
+    /// to false, so every ranged weapon whose hit adds a second damage
+    /// type had to route through `WeaponWithSaveDamage` and invent a
+    /// save the stat block does not print.
+    ///
+    /// `normal_range` is not optional at this constructor, and the
+    /// engine has a sweep that says so: two separate rules read it —
+    /// 5e's long-range disadvantage and Underwater Combat's automatic
+    /// miss past normal range — and a ranged weapon that left it unset
+    /// would be a bow with no falloff that also works at the bottom of
+    /// a lake. It would look like a weapon that was simply good.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+        reach: isize,
+        normal_range: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: false,
+            normal_range: Some(normal_range),
             rider_dice,
             rider_type,
             rider_name,
@@ -1462,6 +1515,9 @@ impl Action for WeaponWithRider {
         // Ranged variants need LOS like every other ranged attack; melee
         // doesn't. Matches `SimpleWeapon`'s `is_melee`-gated LOS rule.
         !self.is_melee
+    }
+    fn normal_range(&self) -> Option<isize> {
+        self.normal_range
     }
 
     /// Declared rather than derived, for the same reason
@@ -15192,6 +15248,7 @@ pub static GIANT_CONSTRICTOR_SNAKE_BITE: WeaponWithRider = WeaponWithRider {
     damage_type: DamageType::Piercing,
     reach: 2,
     is_melee: true,
+    normal_range: None,
     rider_dice: Dice::new(1, 4),
     rider_type: DamageType::Poison,
     rider_name: "snake venom",
@@ -19450,3 +19507,201 @@ pub static PLANETAR_HOLY_BURST: PointBurstSaveDamage = PointBurstSaveDamage {
     range: tiles_from_feet(120) as isize,
     enemies_only: true,
 };
+
+// ─── The officers and the minions ────────────────────────────────────
+//
+// SRD 5.2 gives most of its rank-and-file humanoids a rung above and a
+// rung below the one the bestiary already carried. What follows is the
+// weapons those rungs swing; the stat blocks are in
+// `actors::creatures`, filed beside the creature they outrank.
+
+/// Bugbear Stalker Morningstar — STR-based 2d8+STR piercing at reach 2.
+/// RAW: "Morningstar. Melee Attack Roll: +5 (with Advantage if the
+/// target is Grappled by the bugbear), reach 10 ft. Hit: 12 (2d8 + 3)
+/// Piercing damage."
+///
+/// A separate static from `BUGBEAR_MORNINGSTAR` rather than a bigger
+/// die on it, because the two are different weapons in every way that
+/// matters: the CR-1 bugbear's carries a Surprise Attack rider and
+/// swings once, and this one carries none and swings twice. Sharing a
+/// name would have meant one of the two stat blocks quietly getting the
+/// other's clause.
+///
+/// The grapple-advantage clause is dropped. It reads on the sheet as a
+/// bonus for a bugbear that has used Quick Grapple, and Quick Grapple
+/// is a bonus-action save-or-grapple the engine would need a new
+/// chassis for; a to-hit bonus conditioned on a grapple that never
+/// happens is a clause that would never fire.
+pub static BUGBEAR_STALKER_MORNINGSTAR: SimpleWeapon = SimpleWeapon::reach_melee(
+    "stalker morningstar",
+    &["sm", "stalker-morningstar"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+    2,
+);
+
+/// Bugbear Stalker Javelin — STR-based 3d6+STR piercing, thrown. RAW:
+/// "Javelin. Melee or Ranged Attack Roll: +5, reach 10 ft. or range
+/// 30/120 ft. Hit: 13 (3d6 + 3) Piercing damage."
+///
+/// Declared as the ranged half only, the same compression every
+/// dual-mode weapon in this file gets. Three d6 rather than the
+/// armoury javelin's one: the stalker throws these the way the CR-1
+/// bugbear swings its club, and the die is the difference between a
+/// creature with a ranged option and one with a ranged threat.
+pub static BUGBEAR_STALKER_JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
+    "stalker javelin",
+    &["sj", "stalker-javelin"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Piercing,
+    48,
+    12,
+);
+
+/// Bugbear Stalker Multiattack — two morningstar swings per Action.
+/// RAW: "The bugbear makes two Javelin or Morningstar attacks."
+///
+/// Pinned to the morningstar, with the javelin left on the action list
+/// as its own entry — the shape every "X or Y in any combination"
+/// multiattack in this file takes, because the chassis chains one
+/// sub-attack and the AI picks between the wrapper and the loose
+/// weapon by what is in range.
+pub static BUGBEAR_STALKER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "bugbear stalker multiattack",
+    sub_attack: &BUGBEAR_STALKER_MORNINGSTAR,
+    count: 2,
+});
+
+/// Hobgoblin Captain Greatsword — STR-based 2d6+STR slashing with a
+/// flat 1d6 poison rider. RAW: "Greatsword. Melee Attack Roll: +4,
+/// reach 5 ft. Hit: 9 (2d6 + 2) Slashing damage plus 3 (1d6) Poison
+/// damage."
+///
+/// The poison is the captain's whole identity in 5.2 and is new to the
+/// printing: the 2014 hobgoblin hit for plain steel. Rides
+/// `WeaponWithRider` as an unconditional second damage type, which is
+/// what the stat block says — no save, no condition, just a blade that
+/// has been dipped.
+pub static HOBGOBLIN_CAPTAIN_GREATSWORD: WeaponWithRider = WeaponWithRider::melee(
+    "captain greatsword",
+    &["cgs", "captain-greatsword"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    Dice::new(1, 6),
+    DamageType::Poison,
+    "envenomed blade",
+);
+
+/// Hobgoblin Captain Longbow — DEX-based 1d8+DEX piercing with a flat
+/// 2d4 poison rider. RAW: "Longbow. Ranged Attack Roll: +4, range
+/// 150/600 ft. Hit: 6 (1d8 + 2) Piercing damage plus 5 (2d4) Poison
+/// damage."
+///
+/// Note which die is bigger. The captain's arrows carry *more* venom
+/// than its sword does, which is the stat block telling you what it
+/// would rather be doing: a hobgoblin captain that has been allowed to
+/// stand at range is a hobgoblin captain that is winning.
+pub static HOBGOBLIN_CAPTAIN_LONGBOW: WeaponWithRider = WeaponWithRider::ranged(
+    "captain longbow",
+    &["clb", "captain-longbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "envenomed arrow",
+    20,
+    12,
+);
+
+/// Hobgoblin Captain Multiattack — two attacks per Action. RAW: "The
+/// hobgoblin makes two attacks, using Greatsword or Longbow in any
+/// combination."
+pub static HOBGOBLIN_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "hobgoblin captain multiattack",
+    sub_attack: &HOBGOBLIN_CAPTAIN_GREATSWORD,
+    count: 2,
+});
+
+/// Guard Captain Longsword — STR-based 2d10+STR slashing. RAW:
+/// "Longsword. Melee Attack Roll: +6, reach 5 ft. Hit: 15 (2d10 + 4)
+/// Slashing damage."
+///
+/// Two d10 where the armoury longsword rolls one d8, which is 5.2's way
+/// of pricing an officer: the captain is not carrying a better sword
+/// than the guards outside its door, it is a better swordsman, and a
+/// stat block has one place to put that.
+pub static GUARD_CAPTAIN_LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "captain longsword",
+    &["cls", "captain-longsword"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Slashing,
+);
+
+/// Guard Captain Javelin — STR-based 3d6+STR piercing, thrown. RAW:
+/// "Javelin. Melee or Ranged Attack Roll: +6, reach 5 ft. or range
+/// 30/120 ft. Hit: 14 (3d6 + 4) Piercing damage."
+pub static GUARD_CAPTAIN_JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
+    "captain javelin",
+    &["cj", "captain-javelin"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Piercing,
+    48,
+    12,
+);
+
+/// Guard Captain Multiattack — two attacks per Action. RAW: "The guard
+/// makes two attacks, using Javelin or Longsword in any combination."
+pub static GUARD_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "guard captain multiattack",
+    sub_attack: &GUARD_CAPTAIN_LONGSWORD,
+    count: 2,
+});
+
+/// Tough Boss Warhammer — STR-based 2d8+STR bludgeoning. RAW:
+/// "Warhammer. Melee Attack Roll: +5, reach 5 ft. Hit: 12 (2d8 + 3)
+/// Bludgeoning damage. If the target is a Large or smaller creature,
+/// the tough pushes the target up to 10 feet straight away from
+/// itself."
+///
+/// The push ships through the weapon's **Push** mastery property rather
+/// than as a bespoke rider — the armoury warhammer already carries it,
+/// and `engine::mastery` is where "this weapon shoves what it hits"
+/// lives. RAW's ten feet is the mastery's five, which is the one place
+/// the translation loses something; the alternative is a second shove
+/// implementation that only the boss can reach.
+pub static TOUGH_BOSS_WARHAMMER: SimpleWeapon = SimpleWeapon::melee(
+    "boss warhammer",
+    &["bwh", "boss-warhammer"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+)
+.mastery(WeaponMastery::Push);
+
+/// Tough Boss Heavy Crossbow — DEX-based 2d10+DEX piercing. RAW:
+/// "Heavy Crossbow. Ranged Attack Roll: +4, range 100/400 ft. Hit: 13
+/// (2d10 + 2) Piercing damage."
+pub static TOUGH_BOSS_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "boss crossbow",
+    &["bcb", "boss-crossbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 10),
+    DamageType::Piercing,
+    40,
+    16,
+);
+
+/// Tough Boss Multiattack — two attacks per Action. RAW: "The tough
+/// makes two attacks, using Warhammer or Heavy Crossbow in any
+/// combination."
+pub static TOUGH_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "tough boss multiattack",
+    sub_attack: &TOUGH_BOSS_WARHAMMER,
+    count: 2,
+});

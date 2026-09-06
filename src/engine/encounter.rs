@@ -63,7 +63,7 @@ use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
 use crate::actors::creatures::basilisks::BASILISK_TEMPLATE;
 use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
-use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
+use crate::actors::creatures::bugbears::{BUGBEAR_STALKER_TEMPLATE, BUGBEAR_TEMPLATE};
 use crate::actors::creatures::chimeras::CHIMERA_TEMPLATE;
 use crate::actors::creatures::chuuls::CHUUL_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -83,13 +83,13 @@ use crate::actors::creatures::giant_scorpions::GIANT_SCORPION_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::gricks::GRICK_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
-use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::goblins::{GOBLIN_MINION_TEMPLATE, GOBLIN_TEMPLATE};
 use crate::actors::creatures::harpies::HARPY_TEMPLATE;
 use crate::actors::creatures::hell_hounds::HELL_HOUND_TEMPLATE;
 use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
 use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
 use crate::actors::creatures::hobgoblin_warlords::HOBGOBLIN_WARLORD_TEMPLATE;
-use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
+use crate::actors::creatures::hobgoblins::{HOBGOBLIN_CAPTAIN_TEMPLATE, HOBGOBLIN_TEMPLATE};
 use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
 use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
 use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
@@ -242,14 +242,14 @@ use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
 use crate::actors::creatures::giant_octopuses::GIANT_OCTOPUS_TEMPLATE;
 use crate::actors::creatures::plesiosauruses::PLESIOSAURUS_TEMPLATE;
 use crate::actors::creatures::pteranodons::PTERANODON_TEMPLATE;
-use crate::actors::creatures::thugs::THUG_TEMPLATE;
+use crate::actors::creatures::thugs::{THUG_TEMPLATE, TOUGH_BOSS_TEMPLATE};
 use crate::actors::creatures::tribal_warriors::TRIBAL_WARRIOR_TEMPLATE;
 use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
 use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
 use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
 use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
 use crate::actors::creatures::mastiffs::MASTIFF_TEMPLATE;
-use crate::actors::creatures::guards::GUARD_TEMPLATE;
+use crate::actors::creatures::guards::{GUARD_CAPTAIN_TEMPLATE, GUARD_TEMPLATE};
 use crate::actors::creatures::grimlocks::GRIMLOCK_TEMPLATE;
 use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
 use crate::actors::creatures::hawks::HAWK_TEMPLATE;
@@ -9651,6 +9651,7 @@ impl EncounterInstance {
             &BASILISK_TEMPLATE,
             &BERSERKER_TEMPLATE,
             &BUGBEAR_TEMPLATE,
+            &BUGBEAR_STALKER_TEMPLATE,
             &CHIMERA_TEMPLATE,
             &CHUUL_TEMPLATE,
             &CLERIC_TEMPLATE,
@@ -9670,12 +9671,14 @@ impl EncounterInstance {
             &GNOLL_TEMPLATE,
             &GRICK_TEMPLATE,
             &GOBLIN_TEMPLATE,
+            &GOBLIN_MINION_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &HARPY_TEMPLATE,
             &HELL_HOUND_TEMPLATE,
             &HILL_GIANT_TEMPLATE,
             &HIPPOGRIFF_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
+            &HOBGOBLIN_CAPTAIN_TEMPLATE,
             &HOBGOBLIN_WARLORD_TEMPLATE,
             &HYDRA_TEMPLATE,
             &KOBOLD_TEMPLATE,
@@ -10282,6 +10285,7 @@ impl EncounterInstance {
             //     ladder; the paralysis-auto-crit envelope is the load-
             //     bearing threat.
             &THUG_TEMPLATE,
+            &TOUGH_BOSS_TEMPLATE,
             &TRIBAL_WARRIOR_TEMPLATE,
             &SCOUT_TEMPLATE,
             &GIANT_RAT_TEMPLATE,
@@ -10313,6 +10317,7 @@ impl EncounterInstance {
             &COMMONER_TEMPLATE,
             &MASTIFF_TEMPLATE,
             &GUARD_TEMPLATE,
+            &GUARD_CAPTAIN_TEMPLATE,
             &GRIMLOCK_TEMPLATE,
             &GIANT_FROG_TEMPLATE,
             // Newest additions filling the tiny-flier / large-reptile /
