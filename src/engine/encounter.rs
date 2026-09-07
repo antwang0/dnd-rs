@@ -9711,6 +9711,31 @@ impl EncounterInstance {
         out
     }
 
+    /// How many swings an attack routine actually gets to make.
+    ///
+    /// 5e **Slow**: *"it can make only one attack if it takes the Attack
+    /// action."* `declared` is what the stat block prints — a
+    /// multiattack's `count`, a compound routine's part list — and this
+    /// is the number the chassis should loop.
+    ///
+    /// A clamp on the routine rather than a refusal of it, which is the
+    /// difference between RAW and a bug. Refusing the wrapper outright
+    /// reads the same on an ogre, whose sheet also carries the single
+    /// greatclub swing underneath — and leaves a Chimera, whose sheet
+    /// carries a multiattack and nothing else, with no attack at all
+    /// while slowed. RAW cuts a routine down to one swing; it never
+    /// cuts it to none.
+    pub fn attack_routine_swings(&self, caster_id: usize, declared: u32) -> u32 {
+        if self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::Slowed))
+        {
+            return declared.min(1);
+        }
+        declared
+    }
+
     /// Whether the damage instance currently resolving came off a
     /// critical hit. The read side of `within_critical_hit`; see
     /// `critical_depth` for why the bit lives on the encounter rather

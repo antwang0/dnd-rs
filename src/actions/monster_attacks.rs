@@ -4543,7 +4543,12 @@ impl Action for Multiattack {
         // `EncounterInstance::in_multiattack`).
         encounter.enter_multiattack();
         let mut all = Vec::new();
-        for _ in 0..self.count {
+        // 5e Slow cuts a routine down to one swing — see
+        // `EncounterInstance::attack_routine_swings`. Read here rather
+        // than gated at `validate`, so a creature whose sheet carries a
+        // multiattack and nothing else still gets its one attack.
+        let swings = encounter.attack_routine_swings(caster_id, self.count);
+        for _ in 0..swings {
             all.extend(self.sub_attack.side_effects(
                 encounter,
                 caster_id,
@@ -4951,8 +4956,20 @@ impl Action for CompoundAttack {
         // Same depth-gate as Multiattack — see in_multiattack docs.
         encounter.enter_multiattack();
         let mut all = Vec::new();
+        // 5e Slow's "only one attack" — a routine of mixed parts is cut
+        // to the first swing of the first part, which is the same
+        // clamp `Multiattack` makes and the closest a compound routine
+        // gets to "one attack".
+        let mut budget = encounter.attack_routine_swings(
+            caster_id,
+            self.parts.iter().map(|(_, n)| *n).sum(),
+        );
         for (sub, count) in &self.parts {
             for _ in 0..*count {
+                if budget == 0 {
+                    break;
+                }
+                budget -= 1;
                 all.extend(sub.side_effects(
                     encounter,
                     caster_id,
@@ -13199,7 +13216,11 @@ fn clay_golem_slam_count(encounter: &EncounterInstance, caster_id: usize) -> u32
         .actors
         .get(&caster_id)
         .is_some_and(|a| a.once_per_turn_used(CLAY_GOLEM_HASTEN_TAG));
-    if hastened { 3 } else { 2 }
+    // 5e Slow cuts the routine to one swing, whichever end of the
+    // ledger it started at. Folded in here rather than at the caller so
+    // the AI's damage estimate — which reads this same function — prices
+    // a slowed golem's Action honestly.
+    encounter.attack_routine_swings(caster_id, if hastened { 3 } else { 2 })
 }
 
 pub static CLAY_GOLEM_MULTI: LazyLock<ClayGolemMulti> = LazyLock::new(|| ClayGolemMulti {});

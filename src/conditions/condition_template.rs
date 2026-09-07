@@ -427,10 +427,18 @@ pub enum Condition {
     ///     the holder's, which is what RAW's "either… not both" means
     ///     and what a flat "you lose your bonus action" would take
     ///     away.
-    ///   - **Only one attack on the Attack action** — a validate gate
-    ///     against `Action::chains_multiple_attacks`, which is the
-    ///     engine's name for exactly the routines RAW is cutting down.
-    ///     A slowed marid throws one trident.
+    ///   - **Only one attack on the Attack action** — a clamp inside
+    ///     the chained-attack chassis, through
+    ///     `EncounterInstance::attack_routine_swings`. A slowed hydra
+    ///     bites once instead of five times, and a slowed chimera makes
+    ///     the first attack of its three.
+    ///
+    ///     A clamp and not a refusal, which is the difference between
+    ///     RAW and a bug: refusing the wrapper reads correctly on an
+    ///     ogre, whose sheet also carries the bare greatclub, and leaves
+    ///     a Chimera — whose sheet carries a routine and nothing else —
+    ///     with no attack at all. RAW cuts a routine to one swing and
+    ///     never to none.
     ///
     /// RAW's fourth clause — a 25 percent chance a somatic spell fails
     /// — is not modeled: the engine tracks no spell components, so

@@ -1696,17 +1696,6 @@ pub trait Action {
             {
                 return false;
             }
-            // 5e **Slow**: "it can make only one attack if it takes the
-            // Attack action." `chains_multiple_attacks` is the engine's
-            // name for exactly the routines RAW is cutting down — the
-            // multiattack wrappers and the class Extra Attack chains —
-            // so a slowed creature is refused the wrapper and left with
-            // the single swings underneath it.
-            if self.chains_multiple_attacks()
-                && actor.has_condition(crate::conditions::Condition::Slowed)
-            {
-                return false;
-            }
         }
         self.custom_validate_input(
             encounter,

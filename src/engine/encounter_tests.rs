@@ -14419,46 +14419,67 @@ fn an_unslowed_creature_keeps_both_halves_of_its_turn() {
 }
 
 /// 5e **Slow**: *"it can make only one attack if it takes the Attack
-/// action."* The multiattack wrapper is refused; the single swing
-/// underneath it is not.
+/// action."*
+///
+/// A clamp on the routine, not a refusal of it. Refusing the wrapper
+/// would read correctly on an ogre — whose sheet also carries the bare
+/// greatclub — and leave a Chimera, whose sheet carries a multiattack
+/// and nothing else, unable to attack at all. RAW cuts a routine to one
+/// swing and never to none, so this counts swings in the log rather
+/// than asking whether the action validates.
 #[test]
-fn a_slowed_creature_is_refused_its_multiattack() {
+fn a_slowed_creature_makes_one_attack_instead_of_a_routine() {
+    use crate::actors::creatures::chimeras::CHIMERA_TEMPLATE;
+    use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
     use crate::actors::creatures::ogres::OGRE_TEMPLATE;
-    let mut e = ei_with_terrain(15, 15, &[]);
-    let ogre = e
-        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
-        .unwrap();
-    e.pop_prompt();
-    // Any routine on the sheet that chains swings, plus a single one.
-    let (chained, single) = {
-        let a = &e.actors[&ogre];
-        (
-            a.actions.iter().find(|x| x.chains_multiple_attacks()).copied(),
-            a.actions
-                .iter()
-                .find(|x| x.is_weapon_attack() && !x.chains_multiple_attacks())
-                .copied()
-                .expect("the ogre swings a greatclub"),
-        )
-    };
-    e.actors
-        .get_mut(&ogre)
-        .unwrap()
-        .add_condition(Condition::Slowed, ConditionTimer::Rounds(10));
-    if let Some(chained) = chained {
-        assert!(
-            !ActionExecutionInfo::new(chained, ogre, Some(vec![goblin]), None, None)
-                .validate(&e),
-            "a slowed creature makes one attack, not a routine"
+
+    fn swings(template: &'static crate::actors::actor_template::CreatureTemplate, slowed: bool) -> usize {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // A durable punching bag, so no swing is skipped for want of a
+        // living target.
+        let target = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 1)
+            .unwrap();
+        e.pop_prompt();
+        let routine = e.actors[&attacker]
+            .actions
+            .iter()
+            .find(|x| x.chains_multiple_attacks())
+            .copied()
+            .expect("this template's whole Action is a routine");
+        if slowed {
+            e.actors
+                .get_mut(&attacker)
+                .unwrap()
+                .add_condition(Condition::Slowed, ConditionTimer::Rounds(10));
+        }
+        let aei = ActionExecutionInfo::new(routine, attacker, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "the routine is still a legal Action");
+        let before = e.messages().len();
+        e.push_action(aei);
+        e.process_stack();
+        e.messages()[before..]
+            .iter()
+            .filter(|m| m.contains("1d20"))
+            .count()
+    }
+
+    // A hydra (one sub-attack, five times) and a chimera (three
+    // different attacks in one routine) — the two chained-attack
+    // chassis, each of which does its own clamping.
+    for template in [&*HYDRA_TEMPLATE, &*CHIMERA_TEMPLATE] {
+        let full = swings(template, false);
+        assert!(full >= 2, "{} should swing more than once", template.name);
+        assert_eq!(
+            swings(template, true),
+            1,
+            "{}: a slowed routine is one attack",
+            template.name
         );
     }
-    assert!(
-        ActionExecutionInfo::new(single, ogre, Some(vec![goblin]), None, None).validate(&e),
-        "and the one attack is still available"
-    );
 }
 
 /// 5e **Haste**: *"it gains an additional action on each of its
