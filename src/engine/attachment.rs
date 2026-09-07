@@ -204,8 +204,7 @@ impl AttachProfile {
 
     /// Whether a host of this size suffers `host_conditions`.
     fn conditions_reach(&self, host_size: Size) -> bool {
-        self.host_conditions_max_size
-            .is_none_or(|max| host_size.ordinal() <= max.ordinal())
+        host_size.clears_gate(self.host_conditions_max_size)
     }
 }
 
@@ -359,10 +358,7 @@ impl EncounterInstance {
         if attacher.mounted_on().is_some() || attacher.ridden_by().is_some() {
             return Err(AttachRefusal::Mounted);
         }
-        if profile
-            .max_host_size
-            .is_some_and(|max| host.size().ordinal() > max.ordinal())
-        {
+        if !host.size().clears_gate(profile.max_host_size) {
             return Err(AttachRefusal::TooBig);
         }
         Ok(profile)

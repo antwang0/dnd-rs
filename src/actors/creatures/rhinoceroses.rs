@@ -20,10 +20,11 @@ use std::sync::LazyLock;
 ///   rider when it earns one.
 ///
 /// RAW's charge knocks the target prone outright and gates on the
-/// target being Large or smaller. The engine's chassis rolls a Strength
-/// save against the rhino's derived DC instead and has no size gate —
-/// the convention every other charge in the bestiary follows, so the
-/// rhino is not a special case.
+/// target being Large or smaller. The size gate is
+/// `ChargeRider::max_target_size`; the knockdown is a Strength save
+/// against the rhino's derived DC rather than automatic, which is the
+/// convention every other charge in the bestiary follows, so the rhino
+/// is not a special case.
 ///
 /// Stat shape: AC 13, ~45 HP (6d10+12), STR 21, DEX 8, CON 15, INT 2,
 /// WIS 12, CHA 6. Speed 40. Size Large. CR 2. XP 450 per RAW.

@@ -26,10 +26,10 @@ use std::sync::LazyLock;
 /// - **allosaurus bite** — STR-based 2d10+STR piercing, both as a
 ///   standalone Action and as the pounce's follow-up.
 ///
-/// RAW gates the pounce on the target being Large or smaller and knocks
-/// it prone outright; the engine's chassis has no size gate and rolls a
-/// Strength save at the allosaurus's derived DC, which is the
-/// convention every charge on the roster follows.
+/// RAW gates the pounce on the target being Large or smaller — that is
+/// `ChargeRider::max_target_size` — and knocks it prone outright, where
+/// the engine's chassis rolls a Strength save at the allosaurus's
+/// derived DC, the convention every charge on the roster follows.
 ///
 /// Stat shape: AC 13, ~51 HP (6d10+18), STR 19, DEX 13, CON 17, INT 2,
 /// WIS 12, CHA 5. Speed 60. Skills Perception. Size Large. CR 2.

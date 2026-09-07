@@ -264,6 +264,35 @@ impl Size {
         target.ordinal() <= self.ordinal() + 1
     }
 
+    /// True when this size clears a "…or smaller" ceiling.
+    ///
+    /// The single most repeated clause in the bestiary: *"If the target
+    /// is a Large or smaller creature, it has the Grappled condition"*,
+    /// *"If the target is a Medium or smaller creature, it has the Prone
+    /// condition"*. Fifty-odd stat blocks in SRD 5.2 print one, always
+    /// in the same shape — a rider that fires only against a target at
+    /// or below a named category — and the whole of the rule is this
+    /// comparison.
+    ///
+    /// Spelled once here rather than as `a.ordinal() <= b.ordinal()` at
+    /// each site, because the direction of that inequality is exactly
+    /// the thing a reader has to stop and re-derive, and it is easy to
+    /// write backwards. `size.is_at_most(cap)` cannot be read the wrong
+    /// way round.
+    pub fn is_at_most(self, cap: Size) -> bool {
+        self.ordinal() <= cap.ordinal()
+    }
+
+    /// The same question against an *optional* ceiling: `None` is a
+    /// clause that names no size at all, which every target clears.
+    ///
+    /// Every rider chassis that carries a size gate stores it as
+    /// `Option<Size>` — `None` for the majority of clauses RAW leaves
+    /// ungated — so this is the form the gates are actually read in.
+    pub fn clears_gate(self, cap: Option<Size>) -> bool {
+        cap.is_none_or(|c| self.is_at_most(c))
+    }
+
     /// Inverse of `ordinal`, clamped to the enum's range at both ends.
     ///
     /// The clamp is the point. 5e's growth and shrink effects all say

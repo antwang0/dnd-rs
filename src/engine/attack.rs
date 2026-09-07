@@ -6,7 +6,7 @@ use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
     ApplicableSideEffect, ApplyCondition, ChargeFollowUpAttack, DealDamage, PushActor, Resource,
 };
-use crate::engine::types::{AbilityScoreType, DamageType};
+use crate::engine::types::{AbilityScoreType, DamageType, Size};
 use crate::engine::underwater::UnderwaterVerdict;
 
 /// Caster-side attack-bump source: a labeled scalar computed from the
@@ -3852,6 +3852,31 @@ pub struct ChargeRider {
     /// typo fails closed as "this creature has no such attack" rather
     /// than swinging the wrong limb.
     pub prone_follow_up: Option<&'static str>,
+    /// The largest target the clause reaches, or `None` for a charge RAW
+    /// leaves ungated.
+    ///
+    /// Every charge in SRD 5.2 that can knock something down names a
+    /// ceiling, and the ceilings differ by animal in a way that is the
+    /// whole flavour of the clause: a boar floors anything **Medium or
+    /// smaller**, a warhorse **Large or smaller**, an elephant, a
+    /// mammoth and a triceratops **Huge or smaller**. Read as a pack
+    /// they say the obvious thing — you cannot be trampled by something
+    /// you tower over — and the engine said none of it, so a goat could
+    /// flatten a storm giant by running at it.
+    ///
+    /// Unlike the weapon-rider chassis, the gate here covers the
+    /// *whole* clause rather than just the knockdown, because that is
+    /// how the sentence is punctuated: *"If the target is a Large or
+    /// smaller creature and the rhinoceros moved 20+ feet straight
+    /// toward it…, the target takes an extra 9 (2d8) Piercing damage
+    /// and has the Prone condition."* Size and run-up are two halves of
+    /// one condition, and the extra dice hang off the same "if".
+    ///
+    /// `None` is a real answer rather than a gap: the pounces the cats
+    /// carry, the unicorn's horn and the centaur's pike are printed
+    /// with no size clause at all, and so is the one charge here that
+    /// belongs to a player character.
+    pub max_target_size: Option<Size>,
 }
 
 /// A charge clause's run-up, converted from the feet the stat block
@@ -3907,11 +3932,13 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
 /// pounces would have been unreachable and every bear and ape in the
 /// bestiary would have inherited whichever row won.
 ///
-/// Four gates, cheapest first:
+/// Five gates, cheapest first:
 ///   - melee only. Every charge clause in the book is a melee attack.
 ///   - the attacker has a charge clause, this swing is the attack it
-///     names (or the clause names none, and rides any melee swing), and
-///     a once-per-turn clause hasn't already fired this turn.
+///     names (or the clause names none, and rides any melee swing), the
+///     target is inside the clause's size ceiling (`max_target_size` —
+///     you cannot be trampled by something you tower over), and a
+///     once-per-turn clause hasn't already fired this turn.
 ///   - the attacker spent movement of its own this turn. RAW says "if
 ///     the creature *moves*", and a boar shoved twenty feet into a
 ///     bystander by a Thunderwave has not charged anybody.
@@ -3944,6 +3971,7 @@ fn push_charge_rider(
     let Some(rider) = attacker
         .charge()
         .filter(|r| r.weapon.is_none_or(|w| w == p.action_name))
+        .filter(|r| target.size().clears_gate(r.max_target_size))
         .filter(|r| {
             r.once_per_turn_tag
                 .is_none_or(|tag| !attacker.once_per_turn_used(tag))

@@ -25891,7 +25891,7 @@ fn a_grapple_ends_when_the_two_are_pulled_apart() {
 #[test]
 fn a_monsters_grapple_names_the_monster() {
     use crate::actions::action_template::Action;
-    use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
     use crate::conditions::Condition;
     // The creatures whose attacks grapple, one per chassis the
     // anchoring travels through: the auto-install-on-hit chassis
@@ -25912,8 +25912,13 @@ fn a_monsters_grapple_names_the_monster() {
             let monster = e
                 .instantiate_creature(template, Coordinate::new(4, 4), 0, 0)
                 .unwrap();
+            // A Medium victim rather than the Large brown bear this
+            // used to grab: the giant frog's and the constrictor
+            // snake's holds are gated at "Medium or smaller", so a bear
+            // put two of the five chassis under test out of reach and
+            // the sweep would have passed on the other three alone.
             let victim = e
-                .instantiate_creature(&BROWN_BEAR_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 1, 0)
                 .unwrap();
             let actions: Vec<&'static (dyn Action + Send + Sync)> =
                 e.actors[&monster].available_actions();
@@ -74073,12 +74078,19 @@ fn walk_straight(
 fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
     use crate::actions::monster_attacks::BOAR_TUSKS;
     use crate::actors::creatures::boars::BOAR_TEMPLATE;
-    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
     use crate::engine::attack::{AttackParams, resolve_attack};
 
-    // An ogre rather than a commoner: the measurement is average damage
-    // per landed hit, and a four-hit-point victim caps every swing at
-    // four whether the boar charged or strolled.
+    // A gladiator rather than a commoner: the measurement is average
+    // damage per landed hit, and a four-hit-point victim caps every
+    // swing at four whether the boar charged or strolled.
+    //
+    // And a gladiator rather than an ogre, which is what this used to
+    // be: RAW's boar charges "a Medium or smaller creature", so the
+    // clause the test is measuring does not reach a Large one at all.
+    // See `ChargeRider::max_target_size` — and
+    // `a_boar_cannot_trample_something_it_only_comes_up_to` for the
+    // other half of that rule.
     let charge_damage = |ran: bool| -> u32 {
         let mut total = 0;
         let mut hits = 0;
@@ -74088,7 +74100,7 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
                 .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(2, 5), 1, 0)
                 .unwrap();
             let victim = e
-                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 5), 0, 0)
+                .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(14, 5), 0, 0)
                 .unwrap();
             e.actors.get_mut(&boar).unwrap().reset_for_new_round();
             // Ten tiles east down an open lane, comfortably past the
@@ -74138,6 +74150,154 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
         "a charging boar ({} avg) should out-damage a standing one ({} avg)",
         charged,
         standing
+    );
+}
+
+/// Size ceilings read the same way round from either end.
+///
+/// `Size::is_at_most` is one comparison, and the one comparison is
+/// exactly the thing that is easy to write backwards — which is why the
+/// bestiary spells its fifty-odd "…or smaller" clauses through it
+/// rather than through a bare `ordinal()` inequality at each site.
+#[test]
+fn a_size_ceiling_reads_the_same_way_round_from_either_end() {
+    use crate::engine::types::Size;
+
+    assert!(Size::Medium.is_at_most(Size::Large));
+    assert!(Size::Large.is_at_most(Size::Large), "the ceiling includes itself");
+    assert!(!Size::Huge.is_at_most(Size::Large));
+
+    // The optional form every rider chassis stores. `None` is a clause
+    // RAW leaves ungated, which everything clears — including the
+    // largest thing on the board.
+    assert!(Size::Gargantuan.clears_gate(None));
+    assert!(Size::Tiny.clears_gate(Some(Size::Tiny)));
+    assert!(!Size::Gargantuan.clears_gate(Some(Size::Huge)));
+}
+
+/// A boar cannot trample something it only comes up to.
+///
+/// RAW gates the boar's charge on "a Medium or smaller creature", and
+/// the engine's charge chassis had no size lane at all until
+/// `ChargeRider::max_target_size` — so a CR-¼ pig could put a hill
+/// giant on its back by running at it. The run, the straight line and
+/// the connecting swing are all identical here; the only difference
+/// between the two halves is how big the thing standing there is.
+#[test]
+fn a_boar_cannot_trample_something_it_only_comes_up_to() {
+    use crate::actions::monster_attacks::BOAR_TUSKS;
+    use crate::actors::creatures::boars::BOAR_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+
+    let knocked_down = |victim_template: &'static crate::actors::actor_template::CreatureTemplate| {
+        (0..40u64).any(|seed| {
+            let mut e = ei_with_terrain_seeded(30, 10, &[], seed);
+            let boar = e
+                .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(victim_template, Coordinate::new(14, 5), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&boar).unwrap().reset_for_new_round();
+            walk_straight(&mut e, boar, 1, 0, 10);
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: boar,
+                    target_id: victim,
+                    action_name: BOAR_TUSKS.display_name,
+                    attack_bonus: 20,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 1,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    min_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            e.actors
+                .get(&victim)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+        })
+    };
+
+    assert!(
+        knocked_down(&GLADIATOR_TEMPLATE),
+        "a Medium target is inside the clause; forty seeds should find one failed save"
+    );
+    assert!(
+        !knocked_down(&HILL_GIANT_TEMPLATE),
+        "a Huge target is outside RAW's 'Medium or smaller', so the clause never fires"
+    );
+}
+
+/// A hold that RAW gates on size leaves the wound and drops the grip.
+///
+/// The two rider chassis put the gate in different places, and both are
+/// checked here because the sentence RAW writes is the same one:
+/// `WeaponWithCondition` installs on the hit and `WeaponWithSaveCondition`
+/// rolls a save first, but *"If the target is a Medium or smaller
+/// creature, it has the Grappled condition"* sits outside both. The
+/// damage is not gated — an oversized victim still gets bitten.
+#[test]
+fn an_oversized_victim_takes_the_bite_and_shrugs_off_the_hold() {
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+
+    // `WeaponWithCondition`: the frog's tongue grabs on a hit, no save,
+    // "Medium or smaller".
+    let grabbed = |victim_template: &'static crate::actors::actor_template::CreatureTemplate| {
+        let mut held = false;
+        let mut wounded = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+            let frog = e
+                .instantiate_creature(&GIANT_FROG_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(victim_template, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let before = e.actors[&victim].hitpoints();
+            let bite = crate::actions::monster_attacks::GIANT_FROG_BITE.name().to_string();
+            let action = e.actors[&frog]
+                .available_actions()
+                .into_iter()
+                .find(|a| a.name() == bite)
+                .expect("the frog carries its bite");
+            let targets = vec![victim];
+            let effects = action.side_effects(&mut e, frog, Some(&targets), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let Some(v) = e.actors.get(&victim) else {
+                continue;
+            };
+            held |= v.has_condition(Condition::Grappled);
+            wounded |= v.hitpoints() < before;
+        }
+        (held, wounded)
+    };
+
+    let (medium_held, medium_wounded) = grabbed(&GLADIATOR_TEMPLATE);
+    assert!(medium_held, "a Medium target is inside the frog's clause");
+    assert!(medium_wounded);
+
+    let (huge_held, huge_wounded) = grabbed(&HILL_GIANT_TEMPLATE);
+    assert!(
+        !huge_held,
+        "RAW's 'Medium or smaller' should keep the tongue off a Huge target"
+    );
+    assert!(
+        huge_wounded,
+        "the size clause gates the hold, not the damage — the giant still gets bitten"
     );
 }
 

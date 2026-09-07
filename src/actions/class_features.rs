@@ -3595,6 +3595,14 @@ pub const FEROCIOUS_CHARGER: crate::engine::attack::ChargeRider =
         knockdown_label: "ferocious charger knockdown",
         once_per_turn_tag: Some(FEROCIOUS_CHARGER_TAG),
         prone_follow_up: None,
+        // The one charge clause in the engine that is a *character's*
+        // rather than an animal's, and the only one with no size
+        // ceiling: RAW's Ferocious Charger says "force the target to
+        // make a Strength saving throw" and stops there, where every
+        // beast in the bestiary first asks how big the target is. A
+        // cavalier can therefore knock over a giant, which is the point
+        // of the feature.
+        max_target_size: None,
     };
 
 /// 5e Fighter **Cavalier** subclass — **Warding Maneuver** (level 7,

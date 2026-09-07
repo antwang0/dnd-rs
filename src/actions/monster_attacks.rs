@@ -15,7 +15,7 @@ use crate::{
         encounter::EncounterInstance,
         mastery::{MasteryRider, WeaponMastery},
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
-        types::{AbilityScoreType, Coordinate, DamageType},
+        types::{AbilityScoreType, Coordinate, DamageType, Size},
         util::tiles_from_feet,
     },
 };
@@ -206,6 +206,48 @@ pub fn save_or_damage_rider(
         }));
     }
     save
+}
+
+/// Whether a rider gated on target size reaches `target_id`, logging the
+/// refusal when it doesn't.
+///
+/// SRD 5.2 prints the clause fifty-odd times and always the same way —
+/// *"If the target is a Large or smaller creature, it has the Grappled
+/// condition"* — so the whole family of rider chassis asks this one
+/// question, in the one shape, and says so in one voice. `None` is a
+/// clause RAW leaves ungated; every target clears it.
+///
+/// The log line is why this is a helper rather than an `is_none_or`
+/// inline at each chassis. A rider that silently does not fire is
+/// indistinguishable at the table from a rider the engine forgot to
+/// implement, and this is a rule players actively plan around: a druid
+/// who wild-shapes into something Huge specifically to stop being
+/// grappled wants to see the hold fail to take.
+///
+/// A missing actor reads as "no" — the same fail-closed answer every
+/// other rider gate in the file gives when the target has left the
+/// board mid-resolution.
+pub fn rider_reaches_size(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    max_target_size: Option<Size>,
+    rider_name: &str,
+) -> bool {
+    let Some(max) = max_target_size else {
+        return true;
+    };
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return false;
+    };
+    if target.size().is_at_most(max) {
+        return true;
+    }
+    let (name, size) = (target.name().to_string(), target.size());
+    encounter.log(format!(
+        "  {}: {} is {}, too big for it ({} or smaller only)",
+        rider_name, name, size, max
+    ));
+    false
 }
 
 /// On a weapon-attack hit, roll `target_id`'s saving throw against `dc`
@@ -853,6 +895,7 @@ pub const BOAR_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "boar charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Medium),
 };
 
 /// Giant Boar **Charge** (RAW): extra 7 (2d6) slashing, DC 13 Strength
@@ -867,6 +910,7 @@ pub const GIANT_BOAR_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "giant boar charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 /// Elk **Charge** (RAW): extra 7 (2d6) bludgeoning, DC 13 Strength or
@@ -881,6 +925,7 @@ pub const ELK_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "elk charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 /// Goat **Charge** (RAW): extra 2 (1d4) bludgeoning, DC 10 Strength or
@@ -895,6 +940,7 @@ pub const GOAT_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "goat charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: None,
 };
 
 /// Giant Goat **Charge** (RAW): extra 5 (2d4) bludgeoning, DC 13
@@ -909,6 +955,7 @@ pub const GIANT_GOAT_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "giant goat charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 /// Unicorn **Charge** (RAW): extra 9 (2d8) piercing, DC 15 Strength or
@@ -924,6 +971,7 @@ pub const UNICORN_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "unicorn charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: None,
 };
 
 /// Centaur **Charge** (RAW): "If the centaur moves at least 30 feet
@@ -940,6 +988,7 @@ pub const CENTAUR_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: None,
 };
 
 /// Triceratops **Trampling Charge** (RAW): no extra damage, "that target
@@ -962,6 +1011,7 @@ pub const TRICERATOPS_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "trampling charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("stomp"),
+    max_target_size: Some(Size::Huge),
 };
 
 /// Warhorse **Trampling Charge** (RAW): DC 14 Strength or prone, "and if
@@ -982,6 +1032,7 @@ pub const WARHORSE_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "warhorse trampling charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("warhorse hooves"),
+    max_target_size: Some(Size::Large),
 };
 
 /// Tiger **Pounce** (RAW): "If the tiger moves at least 20 feet straight
@@ -1003,6 +1054,7 @@ pub const TIGER_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "tiger pounce knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("bite"),
+    max_target_size: None,
 };
 
 /// Lion **Pounce** (RAW): identical to the tiger's, on the lion's own
@@ -1020,6 +1072,7 @@ pub const LION_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "lion pounce knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("bite"),
+    max_target_size: None,
 };
 
 /// Minotaur **Charge** (RAW): "If the minotaur moves at least 10 feet
@@ -1043,6 +1096,7 @@ pub const MINOTAUR_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "minotaur charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 /// Wereboar **Charge** (RAW): fifteen feet, extra 7 (2d6) slashing, DC
@@ -1059,6 +1113,7 @@ pub const WEREBOAR_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "wereboar charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Medium),
 };
 
 /// Saber-toothed Tiger **Pounce** (RAW): twenty feet, claw attack, DC 14
@@ -1077,6 +1132,7 @@ pub const SABER_TIGER_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "saber-toothed pounce knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("saber bite"),
+    max_target_size: None,
 };
 
 /// Mammoth **Trampling Charge** (RAW): twenty feet, gore attack, DC 18
@@ -1109,6 +1165,7 @@ pub const MAMMOTH_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "trampling charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("mammoth stomp"),
+    max_target_size: Some(Size::Huge),
 };
 
 /// A vanilla weapon attack: roll d20 + ability mod vs AC, on hit roll
@@ -1985,6 +2042,18 @@ pub struct WeaponWithSaveCondition {
     pub condition: Condition,
     pub timer: ConditionTimer,
     pub rider_name: &'static str,
+    /// The largest target the rider reaches, or `None` for a clause RAW
+    /// leaves ungated. Set with `against_at_most`.
+    ///
+    /// Same field, same meaning, and the same RAW sentence as
+    /// `WeaponWithCondition::max_target_size` — the difference between
+    /// the two chassis is only whether the target gets a save, and the
+    /// size clause sits outside that either way. The gate is checked
+    /// *before* the save is rolled, because a target the clause cannot
+    /// reach is not a target that rolled well: no die should be spent,
+    /// and no "target fails the save" line should appear for a hold
+    /// that was never on offer.
+    pub max_target_size: Option<Size>,
 }
 
 impl WeaponWithSaveCondition {
@@ -2018,6 +2087,7 @@ impl WeaponWithSaveCondition {
             condition,
             timer,
             rider_name,
+            max_target_size: None,
         }
     }
 
@@ -2054,7 +2124,16 @@ impl WeaponWithSaveCondition {
             condition,
             timer,
             rider_name,
+            max_target_size: None,
         }
+    }
+
+    /// Chainable: RAW gates this rider on the target's size. Mirrors
+    /// `WeaponWithCondition::against_at_most` — see that method for why
+    /// the gate is a builder rather than another positional argument.
+    pub const fn against_at_most(mut self, max: Size) -> Self {
+        self.max_target_size = Some(max);
+        self
     }
 }
 
@@ -2152,6 +2231,13 @@ impl Action for WeaponWithSaveCondition {
             // case (RAW: a trip-prone save fires on hit, not on
             // damage > 0).
             if effects.is_empty() {
+                return effects;
+            }
+            // Ahead of the save, not after it: a target the clause
+            // cannot reach never had a save to make, and rolling one
+            // would put a "target fails the save" line in the log for a
+            // rider that was never on offer.
+            if !rider_reaches_size(e, target_id, self.max_target_size, self.rider_name) {
                 return effects;
             }
             save_or_condition_rider(
@@ -2624,6 +2710,20 @@ pub struct WeaponWithCondition {
     /// ...). Mirrors the `rider_name` slot on the sibling chassis so log
     /// shapes stay uniform across the weapon-rider family.
     pub rider_name: &'static str,
+    /// The largest target the rider reaches, or `None` for a clause RAW
+    /// leaves ungated. Set with `against_at_most`.
+    ///
+    /// SRD 5.2's single most-printed rider clause: *"If the target is a
+    /// Large or smaller creature, it has the Grappled condition"*. Half
+    /// the entries on this chassis carry one, and before this field
+    /// existed every one of them installed on everything — a giant frog
+    /// could hold a storm giant in its mouth, and a swarm of crawling
+    /// hands could floor a mammoth.
+    ///
+    /// The gate covers the *rider*, not the swing: RAW puts the size
+    /// clause on the sentence after the damage, so an oversized target
+    /// takes the hit in full and simply shrugs off what rides on it.
+    pub max_target_size: Option<Size>,
 }
 
 impl WeaponWithCondition {
@@ -2685,7 +2785,22 @@ impl WeaponWithCondition {
             conditions,
             timer,
             rider_name,
+            max_target_size: None,
         }
+    }
+
+    /// Chainable: RAW gates this rider on the target's size — *"If the
+    /// target is a Large or smaller creature…"*.
+    ///
+    /// A builder rather than a tenth positional argument on both
+    /// constructors, for the reason `ZoneClause::also_breaking_
+    /// concentration` is one: the clause is a minority case, and
+    /// threading `None` through every ungated declaration to serve the
+    /// gated ones makes each row harder to read than the rule it
+    /// encodes.
+    pub const fn against_at_most(mut self, max: Size) -> Self {
+        self.max_target_size = Some(max);
+        self
     }
 }
 
@@ -2782,6 +2897,14 @@ impl Action for WeaponWithCondition {
             // RAW: an auto-install rider fires on hit, not on damage > 0,
             // so a 1-damage swing zeroed by Uncanny Dodge still grapples.
             if effects.is_empty() {
+                return effects;
+            }
+            // RAW puts the size clause on the sentence *after* the
+            // damage — "Hit: 21 Piercing damage. If the target is a
+            // Large or smaller creature, it has the Grappled condition"
+            // — so an oversized target keeps the wound and loses only
+            // the hold.
+            if !rider_reaches_size(e, target_id, self.max_target_size, self.rider_name) {
                 return effects;
             }
             let named: Vec<String> = self
@@ -3502,7 +3625,8 @@ pub static WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
     Condition::Prone,
     ConditionTimer::Permanent,
     "wolf trip",
-);
+)
+.against_at_most(Size::Large);
 
 /// Frightful Howl — wolf bonus action. Every enemy within 4 tiles must
 /// make a WIS save against DC 11 or be Frightened for 3 rounds.
@@ -4817,7 +4941,8 @@ pub static DIRE_WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::me
     Condition::Prone,
     ConditionTimer::Permanent,
     "dire wolf trip",
-);
+)
+.against_at_most(Size::Large);
 
 /// Re-export the spell-table FIRE_BOLT here so monster files that import
 /// `crate::actions::monster_attacks::FIRE_BOLT` keep working — the
@@ -9505,7 +9630,8 @@ pub static CHUUL_PINCER: WeaponWithCondition = WeaponWithCondition::melee(
     &[Condition::Grappled],
     ConditionTimer::Rounds(10),
     "chuul pincer",
-);
+)
+.against_at_most(Size::Large);
 
 /// Chuul tentacles — paralyzing tentacle attack. Deals 1d6+4 poison
 /// and forces a CON save (DC 13) or Paralyzed (1 round). In 5e, this
@@ -9710,7 +9836,8 @@ pub static GIANT_SCORPION_CLAW: WeaponWithCondition = WeaponWithCondition::melee
     &[Condition::Grappled],
     ConditionTimer::Rounds(10),
     "scorpion claw",
-);
+)
+.against_at_most(Size::Large);
 
 /// Giant Scorpion sting — STR-based 1d10+2 piercing + 4d10 poison
 /// (CON save DC 12 for half).
@@ -15414,7 +15541,8 @@ pub static CONSTRICTOR_SNAKE_CONSTRICT: WeaponWithSaveCondition = WeaponWithSave
     Condition::Grappled,
     ConditionTimer::Rounds(10),
     "constrict",
-);
+)
+.against_at_most(Size::Medium);
 
 /// Giant Constrictor Snake Bite — STR-based 2d6+STR piercing melee with a
 /// flat 1d4 poison rider at reach 2 tiles (10ft — the huge serpent's
@@ -16376,7 +16504,8 @@ pub static MASTIFF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::mele
     Condition::Prone,
     ConditionTimer::Permanent,
     "mastiff trip",
-);
+)
+.against_at_most(Size::Medium);
 
 // ─── Grimlock ────────────────────────────────────────────────────────
 
@@ -16430,7 +16559,8 @@ pub static GIANT_FROG_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     &[Condition::Grappled],
     ConditionTimer::Permanent,
     "tongue grab",
-);
+)
+.against_at_most(Size::Medium);
 
 // ─── Hawk ───────────────────────────────────────────────────────────
 
@@ -16668,7 +16798,8 @@ pub static VINE_BLIGHT_CONSTRICT: WeaponWithSaveCondition = WeaponWithSaveCondit
     Condition::Restrained,
     ConditionTimer::Rounds(10),
     "vine constrict",
-);
+)
+.against_at_most(Size::Large);
 
 // ─── Twig Blight ────────────────────────────────────────────────────
 
@@ -17557,13 +17688,10 @@ pub static GLADIATOR_SPEAR: SimpleWeapon = SimpleWeapon::melee(
 /// creature, it must succeed on a DC 15 Strength saving throw or be
 /// knocked prone."
 ///
-/// RAW's size gate is dropped. The engine has no per-action size filter
-/// on a save rider, and the alternative — a bespoke `impl Action` that
-/// exists only to skip the save against a Large target — would be forty
-/// lines to encode a clause that fires against roughly one creature in
-/// six. The overreach is in the target's favour exactly as often as it
-/// is not: a gladiator that trips an ogre is a gladiator that spent its
-/// third swing on a save the ogre very probably makes at STR +4.
+/// RAW's size gate is `max_target_size` on the chassis, checked ahead
+/// of the save: an ogre is not a Large creature that made its save
+/// against the shield, it is a creature the shield was never going to
+/// trip, and the log says so rather than spending a die on it.
 pub static GLADIATOR_SHIELD_BASH: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
     "gladiator shield bash",
     &["gl-bash", "shield-bash"],
@@ -17575,7 +17703,8 @@ pub static GLADIATOR_SHIELD_BASH: WeaponWithSaveCondition = WeaponWithSaveCondit
     Condition::Prone,
     ConditionTimer::Permanent,
     "shield bash",
-);
+)
+.against_at_most(Size::Medium);
 
 /// Gladiator Multiattack — 2 spears + 1 shield bash per Action. RAW:
 /// "The gladiator makes three melee attacks or two ranged attacks."
@@ -17835,7 +17964,8 @@ pub static CHAIN_DEVIL_CHAIN: WeaponWithSaveCondition = WeaponWithSaveCondition:
     ConditionTimer::Rounds(2),
     "animated chains",
     2,
-);
+)
+.against_at_most(Size::Large);
 
 /// Chain Devil Multiattack — 2 chains per Action. RAW: "The devil makes
 /// two attacks with its chains."
@@ -18128,6 +18258,7 @@ pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "panther pounce knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("panther bite"),
+    max_target_size: None,
 };
 
 // ─── Remorhaz ───────────────────────────────────────────────────────
@@ -18190,7 +18321,8 @@ pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::rea
     ConditionTimer::Rounds(2),
     "coiling water",
     2,
-);
+)
+.against_at_most(Size::Medium);
 
 // ─── Rug of Smothering ──────────────────────────────────────────────
 
@@ -18232,7 +18364,8 @@ pub static RUG_OF_SMOTHERING_SMOTHER: WeaponWithCondition = WeaponWithCondition:
     &[Condition::Restrained, Condition::Choking],
     ConditionTimer::Rounds(2),
     "smothering weave",
-);
+)
+.against_at_most(Size::Medium);
 
 // ─── Merfolk ────────────────────────────────────────────────────────
 
@@ -19117,12 +19250,11 @@ pub static RHINOCEROS_GORE: SimpleWeapon = SimpleWeapon::melee(
 /// immediately before the hit, the target takes an extra 9 (2d8)
 /// Piercing damage and has the Prone condition."
 ///
-/// The size clause is not modeled — the engine's charge chassis has no
-/// target-size gate, and every clause in the bestiary that carries one
-/// carries it at a size the charger is already too big to meet in
-/// practice. The knockdown is a Strength save at the rhino's own
-/// derived DC rather than RAW's automatic Prone, which is the
-/// convention every other charge on the chassis follows.
+/// The knockdown is a Strength save at the rhino's own derived DC
+/// rather than RAW's automatic Prone, which is the convention every
+/// other charge on the chassis follows. The size clause is
+/// `max_target_size`: a rhinoceros can flatten anything up to Large and
+/// bounces off a giant.
 pub const RHINOCEROS_CHARGE: ChargeRider = ChargeRider {
     weapon: Some("rhinoceros gore"),
     dice: Dice::new(2, 8),
@@ -19133,6 +19265,7 @@ pub const RHINOCEROS_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "rhinoceros charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 // ─── Scorpion ────────────────────────────────────────────────────────
@@ -19233,6 +19366,7 @@ pub const GIANT_ELK_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "giant elk charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Huge),
 };
 
 // ─── Giant Seahorse ──────────────────────────────────────────────────
@@ -19270,6 +19404,7 @@ pub const GIANT_SEAHORSE_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "giant seahorse charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: None,
 };
 
 // ─── Axe Beak ────────────────────────────────────────────────────────
@@ -19372,6 +19507,7 @@ pub const ELEPHANT_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "elephant charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("elephant trample"),
+    max_target_size: Some(Size::Huge),
 };
 
 // ─── Hippopotamus ────────────────────────────────────────────────────
@@ -19441,6 +19577,7 @@ pub const ALLOSAURUS_POUNCE: ChargeRider = ChargeRider {
     knockdown_label: "allosaurus pounce knockdown",
     once_per_turn_tag: None,
     prone_follow_up: Some("allosaurus bite"),
+    max_target_size: Some(Size::Large),
 };
 
 // ─── Ankylosaurus ────────────────────────────────────────────────────
@@ -19469,7 +19606,8 @@ pub static ANKYLOSAURUS_TAIL: WeaponWithSaveCondition = WeaponWithSaveCondition:
     ConditionTimer::Permanent,
     "ankylosaurus knockdown",
     2,
-);
+)
+.against_at_most(Size::Huge);
 
 /// Ankylosaurus Multiattack — "The ankylosaurus makes two Tail attacks."
 pub static ANKYLOSAURUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
@@ -19948,11 +20086,8 @@ pub static MINOTAUR_SKELETON_SLAM: SimpleWeapon = SimpleWeapon::melee(
 /// which is one of the two places the ladder disagrees with itself and
 /// is RAW both times.
 ///
-/// RAW's "Large or smaller" size gate on the knockdown is not modeled —
-/// the charge lane has no size field, and every other knockdown clause
-/// in the bestiary is missing the same gate. What it costs is a
-/// Huge creature that can be knocked over by a skeleton, which is a
-/// smaller wrong than the clause never firing.
+/// RAW's "Large or smaller" size gate rides `max_target_size`, so the
+/// Huge creatures the clause was never meant to reach stay standing.
 pub const MINOTAUR_SKELETON_CHARGE: ChargeRider = ChargeRider {
     weapon: Some("skeleton gore"),
     dice: Dice::new(2, 8),
@@ -19963,6 +20098,7 @@ pub const MINOTAUR_SKELETON_CHARGE: ChargeRider = ChargeRider {
     knockdown_label: "skeleton charge knockdown",
     once_per_turn_tag: None,
     prone_follow_up: None,
+    max_target_size: Some(Size::Large),
 };
 
 // ─── Animated Flying Sword ───────────────────────────────────────────
@@ -20322,14 +20458,13 @@ pub static TROLL_LIMB_REND: SimpleWeapon = SimpleWeapon::melee(
 /// second lane, no ranged option, and nothing to do about a party that
 /// stays six feet up.
 ///
-/// Two clauses are not modeled. The **size gate** — Prone only against
-/// a Medium or smaller target — has no lane on `WeaponWithCondition`,
-/// which installs on every hit; the creatures it would spare are the
-/// Large-and-up ones, so a giant fighting this swarm is knocked down
-/// when RAW would leave it standing. And the **bloodied clause**, the
-/// half-damage-when-thinned line every swarm carries, is the standing
-/// omission across all seven: the engine's `bloodied_dice` lane reads
-/// the *target's* hit points, and a swarm's clause reads its own.
+/// The **size gate** — Prone only against a Medium or smaller target —
+/// is `max_target_size` on the chassis, so the Large-and-up creatures
+/// RAW spares stay on their feet while still taking the necrotic in
+/// full. What is still not modeled is the **bloodied clause**, the
+/// half-damage-when-thinned line every swarm carries: the engine's
+/// `bloodied_dice` lane reads the *target's* hit points, and a swarm's
+/// clause reads its own.
 pub static SWARM_OF_CRAWLING_CLAWS_HANDS: WeaponWithCondition = WeaponWithCondition::melee(
     "grasping hands",
     &["gh", "claws"],
@@ -20339,7 +20474,8 @@ pub static SWARM_OF_CRAWLING_CLAWS_HANDS: WeaponWithCondition = WeaponWithCondit
     &[Condition::Prone],
     ConditionTimer::Permanent,
     "grasping hands",
-);
+)
+.against_at_most(Size::Medium);
 
 // ─── Incubus ─────────────────────────────────────────────────────────
 
