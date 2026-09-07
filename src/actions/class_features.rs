@@ -3091,6 +3091,12 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     FORM_OF_DREAD_TAG,
     LIGHTNING_LAUNCHER_TAG,
     ARCANE_JOLT_TAG,
+    // The first entry that is a *feat* rather than a class or subclass
+    // feature — SRD 5.2's **Savage Attacker**, whose "once per turn"
+    // window is the same one every row above measures. Nothing about
+    // the ledger cared where the tag came from, which is the argument
+    // for it being keyed by plain tag; see `crate::actions::feats`.
+    crate::actions::feats::SAVAGE_ATTACKER_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).

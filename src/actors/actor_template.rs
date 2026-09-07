@@ -2774,6 +2774,15 @@ const PROFICIENCY_INITIATIVE_BONUSES: &[ProficiencyInitiativeBonus] = &[
         flag: |a| a.has_passive_feature(crate::actions::class_features::AURA_OF_THE_SENTINEL_TAG),
         fraction: PbFraction::Full,
     },
+    // The **Alert** feat's first clause, arriving at the same lane from
+    // a different direction: "When you roll Initiative, you can add
+    // your Proficiency Bonus to the roll." The cohort docstring above
+    // has been naming a "hypothetical Alert-style feat" as its example
+    // of a future row since it was written; this is that row.
+    ProficiencyInitiativeBonus {
+        flag: |a| a.has_passive_feature(crate::actions::feats::ALERT_TAG),
+        fraction: PbFraction::Full,
+    },
 ];
 
 /// Lifecycle state of an actor's hit points. Replaces the previous

@@ -2,6 +2,7 @@ pub mod action_template;
 pub mod class_attacks;
 pub mod class_features;
 pub mod default_actions;
+pub mod feats;
 pub mod item_actions;
 pub mod metamagic;
 pub mod monster_attacks;

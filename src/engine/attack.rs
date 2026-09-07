@@ -2151,6 +2151,24 @@ pub fn resolve_attack_outcome_with_rider(
     } else {
         0
     };
+    // The **Savage Attacker** feat: "Once per turn when you hit a
+    // target with a weapon, you can roll the weapon's damage dice twice
+    // and use either roll against the target."
+    //
+    // The whole pool is rerolled, crit dice included, because RAW's
+    // unit is "the weapon's damage dice" for this attack and a critical
+    // hit's doubled dice are those dice. Flat modifiers are outside it,
+    // which is the rule crit doubling itself follows.
+    //
+    // "Either roll" resolves to the better one: RAW gives the choice to
+    // the player and no player takes the smaller number, so the choice
+    // is not one. Weapon attacks only — `p.is_spell` rolls through a
+    // different chokepoint above and a Fire Bolt is not a weapon.
+    let (raw_damage, crit_extra) = if !p.is_spell {
+        savage_attacker_reroll(encounter, &p, apply_gwf, raw_damage, crit_extra)
+    } else {
+        (raw_damage, crit_extra)
+    };
     // 5e Brutal Critical (Barbarian level 9 / 13 / 17) + Half-Orc
     // Savage Attacks: both add extra weapon damage dice on a critical
     // melee hit. Spell attacks don't qualify — gated on `is_melee` +
@@ -3025,6 +3043,57 @@ const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
         label: "shadow of moil",
     },
 ];
+
+/// The **Savage Attacker** feat's reroll. Returns the (base, crit)
+/// damage pair the swing should actually use.
+///
+/// Rolls the whole dice pool a second time and keeps whichever total is
+/// larger, spending the holder's once-per-turn charge only when the
+/// second roll is actually better — a reroll that came up worse is a
+/// reroll the holder would not have taken, and RAW's "you can" makes
+/// the use optional. That keeps the charge available for a later swing
+/// in the same turn, which is what a player would do with it.
+///
+/// The pair is rerolled together rather than separately, because RAW's
+/// unit is the attack's whole dice pool: taking the better base and the
+/// better crit half independently would be two rerolls, not one.
+///
+/// A no-op — and one cheap set lookup — for the overwhelming majority
+/// of swings, which are made by somebody without the feat.
+fn savage_attacker_reroll(
+    encounter: &mut EncounterInstance,
+    p: &AttackParams,
+    apply_gwf: bool,
+    base: i32,
+    crit_extra: i32,
+) -> (i32, i32) {
+    use crate::actions::feats::SAVAGE_ATTACKER_TAG;
+    let ready = encounter.actors.get(&p.caster_id).is_some_and(|a| {
+        a.has_passive_feature(SAVAGE_ATTACKER_TAG) && !a.once_per_turn_used(SAVAGE_ATTACKER_TAG)
+    });
+    if !ready {
+        return (base, crit_extra);
+    }
+    let second_base = encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32;
+    let second_crit = if crit_extra > 0 {
+        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
+    } else {
+        0
+    };
+    if second_base + second_crit <= base + crit_extra {
+        return (base, crit_extra);
+    }
+    if let Some(actor) = encounter.actors.get_mut(&p.caster_id) {
+        actor.mark_once_per_turn_used(SAVAGE_ATTACKER_TAG);
+    }
+    encounter.log(format!(
+        "  savage attacker: {} rerolls the dice for {} instead of {}",
+        p.action_name,
+        second_base + second_crit,
+        base + crit_extra
+    ));
+    (second_base, second_crit)
+}
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per
 /// 5e RAW. Used by every "per-hit weapon-bonus damage" effect — Hex /

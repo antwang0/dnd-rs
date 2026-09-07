@@ -91,7 +91,28 @@ fn subclass_barbarian_template(
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
         ]),
-        features: HashSet::from([RAGE_TAG, subclass_tag, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
+        // The two SRD 5.2 feats the chassis takes, and both read as
+        // barbarian for the same reason: this is the class whose plan
+        // is to put its hands on something and hit it very hard.
+        //
+        //   - **Savage Attacker** (Origin) — once a turn, roll the
+        //     weapon's damage dice twice and keep the better. Worth
+        //     most to whoever swings the biggest die, which on this
+        //     roster is the greataxe.
+        //   - **Grappler** (General) — advantage on attacks against a
+        //     creature you are holding. Pairs with Rage's melee damage
+        //     bonus and with `Grappled`'s own clause taxing the
+        //     captive's swings at everyone but the grappler.
+        //
+        // See `crate::actions::feats`.
+        features: HashSet::from([
+            RAGE_TAG,
+            subclass_tag,
+            RELENTLESS_RAGE_TAG,
+            FAST_MOVEMENT_TAG,
+            crate::actions::feats::SAVAGE_ATTACKER_TAG,
+            crate::actions::feats::GRAPPLER_TAG,
+        ]),
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,
@@ -197,7 +218,18 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // AND on the shared totem helper below. +10 ft walking speed
         // always-on (RAW gates on "not wearing heavy armor" but our
         // engine doesn't model armor tiers).
-        features: HashSet::from([RAGE_TAG, FRENZY_TAG, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
+        // The same two feats the shared subclass chassis takes — see
+        // `subclass_barbarian_template`. Spelled out again because the
+        // Berserker builds its own literal rather than going through
+        // that helper.
+        features: HashSet::from([
+            RAGE_TAG,
+            FRENZY_TAG,
+            RELENTLESS_RAGE_TAG,
+            FAST_MOVEMENT_TAG,
+            crate::actions::feats::SAVAGE_ATTACKER_TAG,
+            crate::actions::feats::GRAPPLER_TAG,
+        ]),
         has_danger_sense: true,
         has_extra_attack: true,
         // Level 9 Brutal Critical: +1 weapon die on melee crits.

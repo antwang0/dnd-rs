@@ -14354,6 +14354,199 @@ fn warded_target_taxes_an_aberration_the_proxy_missed() {
     );
 }
 
+/// Every feat in `feats::FEAT_TAGS` is actually carried by something a
+/// player can be.
+///
+/// The failure this catches is silent by construction: a feat nobody
+/// can take is a passive that never fires, no test goes red, no
+/// encounter behaves differently, and the constant sits in the module
+/// reading as implemented. Same contract, and for the same reason, as
+/// the sweep over `pc_template_families` in `engine::prompt`.
+#[test]
+fn every_feat_is_carried_by_a_playable_chassis() {
+    use crate::actions::feats::FEAT_TAGS;
+    use crate::actors::creatures::pc_template_families;
+    for tag in FEAT_TAGS {
+        assert!(
+            pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts)
+                .any(|t| t.features.contains(tag)),
+            "no playable template carries {tag} — the feat can never fire"
+        );
+    }
+}
+
+/// The **Alert** feat: *"When you roll Initiative, you can add your
+/// Proficiency Bonus to the roll."*
+#[test]
+fn alert_adds_the_proficiency_bonus_to_initiative() {
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&rogue].has_passive_feature(crate::actions::feats::ALERT_TAG),
+        "the rogue chassis takes Alert"
+    );
+    assert_eq!(
+        e.actors[&rogue].initiative_flat_bonus(),
+        e.actors[&rogue].proficiency_bonus(),
+        "the whole of the feat's first clause"
+    );
+    assert_eq!(
+        e.actors[&fighter].initiative_flat_bonus(),
+        0,
+        "and nobody who did not take it"
+    );
+}
+
+/// Alert survives into the rogue's subclasses.
+///
+/// Three of them built their feature set with `HashSet::from([TAG])`
+/// beside a `..ROGUE_TEMPLATE.clone()` tail, which replaces the
+/// baseline set rather than extending it — so every feature the chassis
+/// has or ever gains silently missed them. The feat is what made that
+/// visible; this is what keeps it visible.
+#[test]
+fn every_rogue_subclass_inherits_the_chassis_features() {
+    use crate::actors::creatures::pc_template_families;
+    let rogues = pc_template_families()
+        .into_iter()
+        .find(|(name, _)| *name == "rogue")
+        .expect("the rogue family is on the registry")
+        .1;
+    let baseline = &crate::actors::creatures::rogues::ROGUE_TEMPLATE.features;
+    assert!(!baseline.is_empty(), "the chassis has features to inherit");
+    for template in rogues {
+        for tag in baseline {
+            assert!(
+                template.features.contains(tag),
+                "{} dropped the chassis feature {}",
+                template.name,
+                tag
+            );
+        }
+    }
+}
+
+/// The **Grappler** feat: *"You have Advantage on attack rolls against
+/// a creature Grappled by you."*
+///
+/// Both halves of "by you" — the grappler gets it, and a bystander
+/// swinging at the same held creature does not.
+#[test]
+fn grappler_swings_at_advantage_against_what_it_is_holding() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let barbarian = e
+        .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 3), 0, 1)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&barbarian].has_passive_feature(crate::actions::feats::GRAPPLER_TAG),
+        "the barbarian chassis takes Grappler"
+    );
+    assert!(!matches!(
+        e.compute_attack_mode(barbarian, ogre, true),
+        RollMode::Advantage
+    ));
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        ogre,
+        barbarian,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        matches!(
+            e.compute_attack_mode(barbarian, ogre, true),
+            RollMode::Advantage
+        ),
+        "the grappler swings at advantage against what it is holding"
+    );
+    assert!(
+        !matches!(
+            e.compute_attack_mode(bystander, ogre, true),
+            RollMode::Advantage
+        ),
+        "and nobody else does — RAW says \"Grappled by you\""
+    );
+}
+
+/// The **Savage Attacker** feat: *"Once per turn when you hit a target
+/// with a weapon, you can roll the weapon's damage dice twice and use
+/// either roll against the target."*
+///
+/// Asserted as a distribution rather than as one roll, because the feat
+/// *is* a distribution: over many swings a rerolled greataxe averages
+/// visibly higher than one that is not rerolled, and no single swing
+/// proves anything.
+#[test]
+fn savage_attacker_shifts_the_damage_up() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+
+    fn total_damage(with_feat: bool, seed: u64) -> u32 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let mut template = BARBARIAN_TEMPLATE.clone();
+        if !with_feat {
+            template.features.remove(crate::actions::feats::SAVAGE_ATTACKER_TAG);
+        }
+        let template: &'static CreatureTemplate = Box::leak(Box::new(template));
+        let barbarian = e
+            .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // A wall of hit points, so the swings all land on something
+        // that is still standing.
+        let dummy = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let before = e.actors[&dummy].hitpoints();
+        let swing = e.actors[&barbarian]
+            .actions
+            .iter()
+            .find(|a| a.name() == "greataxe")
+            .copied()
+            .expect("the barbarian swings a greataxe");
+        for _ in 0..30 {
+            // One swing per turn, so the once-per-turn charge is
+            // available for each of them.
+            e.actors.get_mut(&barbarian).unwrap().reset_for_new_round();
+            let aei =
+                ActionExecutionInfo::new(swing, barbarian, Some(vec![dummy]), None, None);
+            if aei.validate(&e) {
+                e.push_action(aei);
+                e.process_stack();
+            }
+        }
+        before.saturating_sub(e.actors[&dummy].hitpoints())
+    }
+
+    let with: u32 = (0..6).map(|s| total_damage(true, s)).sum();
+    let without: u32 = (0..6).map(|s| total_damage(false, s)).sum();
+    assert!(
+        with > without,
+        "rerolling the damage dice should land more damage over 180 swings \
+         (with={with}, without={without})"
+    );
+}
+
 /// 5e **Slow**: *"it can't take Reactions."*
 #[test]
 fn a_slowed_creature_has_no_reaction() {
@@ -78720,9 +78913,12 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
     /// Tags on the ledger that belong to no cohort row, because their
     /// rider is open-coded rather than declarative. Four damage riders
     /// whose log or bonus shape doesn't fit either table (Sneak Attack,
-    /// Foe Slayer, Divine Fury, Ferocious Charger) and one that isn't a
+    /// Foe Slayer, Divine Fury, Ferocious Charger), one that isn't a
     /// damage rider at all — Ancestral Protectors uses the ledger to
-    /// enforce "the first creature you hit on your turn".
+    /// enforce "the first creature you hit on your turn" — and one that
+    /// is neither a rider nor a class feature: the **Savage Attacker**
+    /// feat rerolls the swing's existing dice rather than adding any of
+    /// its own, so there is no die pool for either cohort to describe.
     ///
     /// Listed rather than allowed by default, so the day one of them
     /// moves onto a cohort this test says so instead of shrugging.
@@ -78732,6 +78928,7 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         DIVINE_FURY_TAG,
         FEROCIOUS_CHARGER_TAG,
         ANCESTRAL_PROTECTORS_TAG,
+        crate::actions::feats::SAVAGE_ATTACKER_TAG,
     ];
 
     let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();

@@ -4107,6 +4107,29 @@ impl EncounterInstance {
                 Condition::Vexed,
                 RollMode::Advantage,
             ));
+            // The **Grappler** feat's Attack Advantage clause:
+            // "Advantage on attack rolls against a creature Grappled by
+            // you." The third arrival at the matched-link shape, and
+            // the first that gates on the *attacker* carrying something
+            // as well as the target — hence the extra clause rather
+            // than a bare `matched_link_mode` call.
+            //
+            // The `Grappled` link is what makes RAW's "by you"
+            // enforceable: a creature held by somebody else, or
+            // restrained by a Web that nobody is holding, gives this
+            // feat nothing.
+            if self
+                .actors
+                .get(&attacker_id)
+                .is_some_and(|a| a.has_passive_feature(crate::actions::feats::GRAPPLER_TAG))
+            {
+                tally.add(matched_link_mode(
+                    target,
+                    attacker_id,
+                    Condition::Grappled,
+                    RollMode::Advantage,
+                ));
+            }
         }
         tally
     }

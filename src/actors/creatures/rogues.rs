@@ -62,6 +62,15 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
             AbilityScoreType::Intelligence,
         ]),
+        // SRD 5.2's **Alert** Origin feat, and the rogue is where it
+        // reads truest: the class whose whole plan is to be somewhere
+        // before anybody has decided where anybody is. The proficiency
+        // bonus on the initiative roll is the first thing a rogue
+        // spends a feat on at most tables, and in this engine going
+        // early is worth more than the number suggests — the opening
+        // round decides who is standing where when the first area spell
+        // lands. See `crate::actions::feats::ALERT_TAG`.
+        features: HashSet::from([crate::actions::feats::ALERT_TAG]),
         has_evasion: true,
         has_uncanny_dodge: true,
         // 5e Rogue Elusive (level 18 capstone): no attack roll has
@@ -118,6 +127,20 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     }
 });
 
+/// The baseline rogue's feature set plus `extra` — the shape every
+/// rogue subclass in this file should build its own set with.
+///
+/// Exists because the obvious alternative is wrong in a way that is
+/// invisible: `features: HashSet::from([SUBCLASS_TAG])` sitting beside
+/// a `..ROGUE_TEMPLATE.clone()` tail *replaces* the baseline set rather
+/// than adding to it, so a subclass written that way quietly opts out
+/// of every feature the chassis has or ever gains. Three did.
+fn rogue_features_with(extra: &[&'static str]) -> HashSet<&'static str> {
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.extend(extra.iter().copied());
+    features
+}
+
 /// Assassin Rogue — subclass build. Identical envelope to the baseline
 /// `ROGUE_TEMPLATE` (level-7 build, shortsword + cunning suite, evasion,
 /// uncanny dodge) with one subclass feature layered on: **Assassinate**
@@ -148,7 +171,16 @@ pub static ASSASSIN_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     CreatureTemplate {
         name: "Assassin Rogue",
         glyph: 'A',
-        features: HashSet::from([ASSASSINATE_TAG]),
+        // Extended rather than replaced. `features: HashSet::from([..])`
+        // beside a `..ROGUE_TEMPLATE.clone()` tail overwrites the
+        // baseline set outright, which reads as "add this feature" and
+        // means "have only this feature" — so every feature the
+        // baseline rogue gains from here on would silently miss this
+        // subclass. Three of these did exactly that, and the Alert feat
+        // landing on the chassis is what made it visible. The
+        // clone-and-insert shape the Soulknife and the Thief already
+        // use is the one that says what it means.
+        features: rogue_features_with(&[ASSASSINATE_TAG]),
         ..ROGUE_TEMPLATE.clone()
     }
 });
@@ -334,7 +366,7 @@ pub static SCOUT_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Scout Rogue",
         glyph: 'K',
-        features: HashSet::from([SUPERIOR_MOBILITY_TAG]),
+        features: rogue_features_with(&[SUPERIOR_MOBILITY_TAG]),
         ..ROGUE_TEMPLATE.clone()
     }
 });
@@ -434,7 +466,7 @@ pub static ARCANE_TRICKSTER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
         intelligence: 16,
         spell_slots_by_level: vec![4, 3],
         actions,
-        features: HashSet::from([MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG]),
+        features: rogue_features_with(&[MAGICAL_AMBUSH_TAG, VERSATILE_TRICKSTER_TAG]),
         ..ROGUE_TEMPLATE.clone()
     }
 });
