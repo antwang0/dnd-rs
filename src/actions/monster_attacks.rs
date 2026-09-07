@@ -20749,11 +20749,13 @@ pub static FLYING_SWORD_SLASH: SimpleWeapon = SimpleWeapon::melee(
 /// Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage,
 /// or 2 (1d4) Piercing damage if the swarm is Bloodied."
 ///
-/// The half-strength-when-thinned clause is not modeled, which is the
-/// standing choice on all five swarms already on the bench rather than
-/// a new one: the engine's `bloodied_dice` lane swaps a die when the
-/// *target* is bloodied — the blood hawk's clause — and a swarm's reads
-/// its own hit points, which is the other creature entirely.
+/// The half-strength-when-thinned clause is carried, and not here: it
+/// is the same sentence on every swarm in the book, so it lives once on
+/// `ActorInstance::is_thinned_swarm` and is read at the damage
+/// chokepoint rather than as a second die on each of seven attack
+/// lines. Distinct from `SimpleWeapon::bloodied_dice`, which swaps a die
+/// when the *target* is bloodied — the blood hawk's clause, and the
+/// other creature entirely.
 pub static SWARM_OF_RAVENS_BEAKS: SimpleWeapon = SimpleWeapon::melee(
     "raven beaks",
     &["rb", "beaks"],
@@ -21083,13 +21085,14 @@ pub static TROLL_LIMB_REND: SimpleWeapon = SimpleWeapon::melee(
 /// second lane, no ranged option, and nothing to do about a party that
 /// stays six feet up.
 ///
-/// The **size gate** — Prone only against a Medium or smaller target —
-/// is `max_target_size` on the chassis, so the Large-and-up creatures
-/// RAW spares stay on their feet while still taking the necrotic in
-/// full. What is still not modeled is the **bloodied clause**, the
-/// half-damage-when-thinned line every swarm carries: the engine's
-/// `bloodied_dice` lane reads the *target's* hit points, and a swarm's
-/// clause reads its own.
+/// Both clauses are carried. The **size gate** — Prone only against a
+/// Medium or smaller target — is `max_target_size` on the chassis, so
+/// the Large-and-up creatures RAW spares stay on their feet while still
+/// taking the necrotic in full. The **bloodied clause**, the
+/// half-damage-when-thinned line every swarm shares, is
+/// `ActorInstance::is_thinned_swarm` read at the damage chokepoint;
+/// see `crate::actors::creatures::swarms` for why it lives there rather
+/// than as a second die on each of the seven attack lines.
 pub static SWARM_OF_CRAWLING_CLAWS_HANDS: WeaponWithCondition = WeaponWithCondition::melee(
     "grasping hands",
     &["gh", "claws"],

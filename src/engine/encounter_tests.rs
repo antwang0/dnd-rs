@@ -85802,6 +85802,37 @@ fn a_swallower_eats_only_what_it_is_already_holding() {
     );
 }
 
+/// Three mechanisms take a body off the occupancy grid and a body
+/// cannot be off it twice.
+///
+/// RAW says nothing about this because nothing in the book stacks a
+/// saddle, an attach and a swallow — but all three write the same grid,
+/// and a swallowed knight whose horse still points at him is a link
+/// nothing can resolve. The engine refuses rather than untangles: the
+/// honest answer is that the worm has to eat one of them.
+#[test]
+fn a_swallow_refuses_a_body_that_is_already_half_of_another_link() {
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    use crate::engine::swallow::SwallowRefusal;
+
+    let (mut e, worm, victim) = worm_pair();
+    assert!(e.can_swallow(worm, victim).is_ok());
+
+    // A stirge on the victim's neck is a third body whose footprint is
+    // the victim's.
+    let stirge = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(14, 6), 1, 0)
+        .unwrap();
+    assert!(e.attach(stirge, victim).is_ok());
+    assert_eq!(
+        e.can_swallow(worm, victim),
+        Err(SwallowRefusal::Entangled),
+        "the worm cannot swallow somebody who is carrying a passenger"
+    );
+    assert!(e.detach(stirge, crate::engine::attachment::DetachCause::Voluntary));
+    assert!(e.can_swallow(worm, victim).is_ok());
+}
+
 /// RAW's **Total Cover**, in both directions: the party cannot reach
 /// their friend and their friend cannot reach them — but the thing
 /// around them is reachable from inside, which is the entire escape

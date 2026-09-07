@@ -252,6 +252,17 @@ pub enum SwallowRefusal {
     /// The target is already inside something — this creature or
     /// another one. RAW never nests the doll.
     AlreadyInside,
+    /// One of the two is half of some *other* link that owns a
+    /// footprint: a saddle, or an attach. RAW has nothing to say about
+    /// it because nothing in the book stacks them; the engine has to,
+    /// because all three mechanisms write the same occupancy grid and a
+    /// body cannot be off it twice.
+    ///
+    /// Refused rather than silently untangled. Swallowing a knight off
+    /// his horse would leave the horse's saddle pointing at somebody who
+    /// is inside a worm, and the honest answer is that the worm has to
+    /// eat one of them.
+    Entangled,
 }
 
 impl SwallowRefusal {
@@ -265,6 +276,7 @@ impl SwallowRefusal {
             SwallowRefusal::Full => "it has no room left inside",
             SwallowRefusal::NotHeld => "it has not got hold of them",
             SwallowRefusal::AlreadyInside => "they are already inside something",
+            SwallowRefusal::Entangled => "it cannot get a clean hold on them",
         }
     }
 }
@@ -365,6 +377,20 @@ impl EncounterInstance {
         };
         if target.swallowed_by().is_some() {
             return Err(SwallowRefusal::AlreadyInside);
+        }
+        // Nothing nests. A swallower that is itself inside something is
+        // sharing a stomach rather than holding a fight, and a target
+        // that is half of a saddle or an attach has a footprint that
+        // belongs to a third body — see `SwallowRefusal::Entangled`.
+        if swallower.swallowed_by().is_some() {
+            return Err(SwallowRefusal::AlreadyInside);
+        }
+        if target.mounted_on().is_some()
+            || target.ridden_by().is_some()
+            || target.attached_to().is_some()
+            || !self.attachers_on(target_id).is_empty()
+        {
+            return Err(SwallowRefusal::Entangled);
         }
         // RAW: "one Large or smaller creature **Grappled by** the worm".
         // Read off the grapple's own back-link rather than off distance,
