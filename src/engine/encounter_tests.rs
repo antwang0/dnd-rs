@@ -86580,3 +86580,106 @@ fn the_absorb_elements_rider_returns_the_element_that_was_thrown() {
         e.messages()
     );
 }
+
+/// Continual Flame is the light the party leaves behind: fixed to the
+/// floor, still burning after its caster has gone, and — being exactly
+/// at the ceiling Darkness names — snuffable by a level-2 spell.
+///
+/// The lighting layer had three lights before it and every one of them
+/// was borrowed. Light rides whoever it was touched onto, Dancing
+/// Lights costs the caster's concentration, and Daylight lapses in ten
+/// rounds. Nothing could put a lamp on the ground and walk away from
+/// it, which is the one thing this spell does.
+#[test]
+fn a_continual_flame_outlives_the_caster_who_lit_it() {
+    use crate::engine::lighting::{AmbientLight, LightLevel};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let cleric = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(5, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    let sconce = Coordinate::new(6, 5);
+    assert_eq!(e.light_at(sconce), LightLevel::Dark);
+
+    let action = e.actors[&cleric]
+        .find_action("continual flame")
+        .expect("cleric should have continual flame");
+    assert!(action.custom_validate_input(&e, cleric, None, Some(&vec![sconce]), None));
+    for eff in action.side_effects(&mut e, cleric, None, Some(&vec![sconce]), None) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(e.light_at(sconce), LightLevel::Bright);
+
+    // The caster leaves, by the most permanent route available. A
+    // carried light would go dark here; this one does not.
+    e.actors.get_mut(&cleric).unwrap().take_damage(9_999);
+    e.drop_light_sources_carried_by(cleric);
+    assert_eq!(
+        e.light_at(sconce),
+        LightLevel::Bright,
+        "the flame is anchored to the floor, not to whoever lit it"
+    );
+
+    // And it does not lapse: "until dispelled" is `None`, not a large
+    // number pretending to be forever.
+    for _ in 0..40 {
+        e.tick_light_sources();
+    }
+    assert_eq!(e.light_at(sconce), LightLevel::Bright);
+
+    // The one thing that does put it out. RAW: Darkness dispels light
+    // "created by a spell of 2nd level or lower", and this is a 2nd —
+    // at the ceiling, not under it.
+    let snuffed = e.dispel_light_in(sconce, 4, 2);
+    assert_eq!(snuffed, 1, "a level-2 Darkness reaches a level-2 flame");
+    assert_eq!(e.light_at(sconce), LightLevel::Dark);
+}
+
+/// The flame declines a tile that is already bright — the same refusal
+/// the Light cantrip makes, read off the *tile* rather than off the
+/// sky, because this spell is aimed at a place.
+///
+/// A dark corner of a lit room is worth a flame, and an ambient check
+/// would have refused it; a tile already inside a torch's bright core
+/// is not, and a check on the ambient alone would have allowed it.
+#[test]
+fn a_continual_flame_is_not_lit_where_it_would_add_nothing() {
+    use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let cleric = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(5, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    let action = e.actors[&cleric]
+        .find_action("continual flame")
+        .expect("cleric should have continual flame");
+    let spot = Coordinate::new(6, 5);
+    assert!(action.custom_validate_input(&e, cleric, None, Some(&vec![spot]), None));
+
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(spot),
+        bright_tiles: 3,
+        dim_tiles: 0,
+        rounds_remaining: None,
+        spell_level: 0,
+        innate: false,
+    });
+    assert!(
+        !action.custom_validate_input(&e, cleric, None, Some(&vec![spot]), None),
+        "a tile already in a torch's bright core has nothing for a level-2 slot to do"
+    );
+}

@@ -1745,6 +1745,44 @@ fn try_make_light(
     // searches the template list, where a torch has never been.
     try_self_action_inc_items(encounter, actor_id, "light torch")
         .or_else(|| try_self_action(encounter, actor_id, "light"))
+        .or_else(|| try_continual_flame(encounter, actor_id))
+}
+
+/// Strike a **Continual Flame** on the floor underfoot, when the free
+/// lights have already been tried and refused.
+///
+/// Last in `try_make_light`'s chain and deliberately so: a torch is a
+/// bonus action, the cantrip is an Action, and this is an Action *and*
+/// a 2nd-level slot. Nothing reaches it that a cheaper light could have
+/// answered. What it is for is the caster who has neither — a cleric
+/// with no torch in the pack and no Light on the list — standing in a
+/// dark corridor with something in it.
+///
+/// Aimed at the caster's own tile, which is the one point a touch-range
+/// spell can always reach and the one the AI can pick without a
+/// placement heuristic. RAW's object is a coin or a sconce; the tile is
+/// where the caster is standing, and the flame stays there when they
+/// do not — see `CONTINUAL_FLAME`.
+///
+/// **Nothing on the current roster reaches it through the chain**, and
+/// the reason is the clause `try_make_light` documents two functions
+/// up: a creature with darkvision never gets to that rung, and all
+/// three chassis carrying this spell — cleric, druid, wizard — have
+/// Darkvision 60. It is wired there rather than somewhere it would fire
+/// because "last, behind the two free lights" is where a light belongs
+/// in a chain of lights, and because the alternative gate would be a
+/// second, different answer to the same question. A fourth chassis
+/// without darkvision that picks the spell up reaches it with no edit
+/// here.
+fn try_continual_flame(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("continual flame")?;
+    let here = actor.location();
+    let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![here]), None);
+    aei.validate(encounter).then_some(aei)
 }
 
 /// True if the actor's current HP fraction is below `frac`. Stable /
@@ -15777,6 +15815,52 @@ mod tests {
         assert!(
             super::try_darkvision(&e, ranger).is_none(),
             "the drow needs nothing and the ranger already has it"
+        );
+    }
+
+    /// The Continual Flame picker aims at the caster's own tile, and
+    /// stands down where the flame would add nothing.
+    ///
+    /// Exercised directly rather than through `try_make_light`,
+    /// because the chain above it cannot be reached by any chassis that
+    /// carries the spell — see `try_continual_flame` for why, and for
+    /// why the rung is wired there anyway.
+    #[test]
+    fn the_continual_flame_picker_lights_the_tile_it_is_standing_on() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+
+        let mut e = empty_arena();
+        e.set_ambient_light(AmbientLight::Darkness);
+        let here = Coordinate::new(5, 5);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, here, 0, 0)
+            .unwrap();
+
+        let pick = super::try_continual_flame(&e, cleric).expect("a dark tile wants a flame");
+        assert_eq!(pick.action().name(), "continual flame");
+        assert_eq!(
+            pick.target_locations(),
+            Some(&[here][..]),
+            "aimed at the tile the caster is standing on"
+        );
+
+        // Light that tile by other means and the slot stays in the
+        // pocket — the action's own validator reads the tile, not the
+        // sky.
+        e.add_light_source(LightSource {
+            id: 0,
+            name: "torch",
+            anchor: LightAnchor::Fixed(here),
+            bright_tiles: 3,
+            dim_tiles: 0,
+            rounds_remaining: None,
+            spell_level: 0,
+            innate: false,
+        });
+        assert!(
+            super::try_continual_flame(&e, cleric).is_none(),
+            "a tile already bright has nothing for a level-2 slot to do"
         );
     }
 

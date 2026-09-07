@@ -187,6 +187,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // somebody who is already lit, so it costs nothing on the ambient
     // default and is there when the lights are out.
     actions.push(&*crate::actions::spells::LIGHT);
+    // Continual Flame — the lighting layer's only fixed, permanent
+    // light. Not a light the party carries but one it leaves behind:
+    // level 2, anchored to the floor, and still burning after the
+    // caster has fallen back down the corridor. Last in the AI's light
+    // chain behind the torch and the cantrip, both of which are free.
+    actions.push(&*crate::actions::spells::CONTINUAL_FLAME);
     // Warding Bond — lv2 abjuration. Touch-range damage-share bond:
     // bonded ally gains +1 AC, +1 saves, resistance to all damage; the
     // caster takes the same (post-resistance) damage every time the

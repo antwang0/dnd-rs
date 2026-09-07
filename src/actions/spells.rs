@@ -20354,6 +20354,145 @@ impl Action for Light {
 
 pub static LIGHT: LazyLock<Light> = LazyLock::new(|| Light {});
 
+/// **Continual Flame** — SRD 5.2 level-2 evocation (Cleric, Druid,
+/// Wizard), action, touch, *until dispelled*.
+///
+/// > A flame springs from an object that you touch. The effect casts
+/// > Bright Light in a 20-foot radius and Dim Light for an additional 20
+/// > feet. It looks like a regular flame, but it creates no heat and
+/// > consumes no fuel. The flame can be covered or hidden but not
+/// > smothered or quenched.
+///
+/// The fourth light in the engine's lighting layer, and the corner the
+/// other three between them could not reach. Light is free and *goes
+/// with somebody*; Dancing Lights is free, remote, and dim, and costs
+/// the caster's concentration; Daylight is bright and remote and lapses
+/// after ten rounds. All three are lights the party carries or borrows.
+/// This is the one you **leave behind**: fixed to the ground, as bright
+/// as a torch, and outliving both its caster and the fight.
+///
+/// Which is the whole tactical point, and it is a point about retreat
+/// rather than about seeing. A party that lights a corridor with Light
+/// takes the corridor's light with it when it falls back; a corridor lit
+/// with this one stays lit, so the thing chasing them through it is the
+/// one standing in the open. `LightAnchor::Fixed` is that sentence, and
+/// `rounds_remaining: None` is "until dispelled".
+///
+/// **Level 2, and the level is load-bearing in both directions.**
+/// `LightSource::spell_level` is read by exactly one rule, stated twice
+/// from opposite ends: Darkness dispels light "created by a spell of
+/// 2nd level or lower", and Daylight dispels darkness "created by a
+/// spell of 3rd level or lower". So a Darkness cast over this flame
+/// does snuff it — it is exactly at the ceiling, not under it — and a
+/// Daylight can then burn the darkness away, but the flame does not
+/// come back. That is RAW, and it is the counterplay the spell has.
+///
+/// **The object is the tile.** The engine has no object layer, and the
+/// distinction has no consequence for a flame that never moves: the
+/// coin or the sconce the caster actually touched is at the tile they
+/// touched it at, and it stays there.
+///
+/// RAW's ruby dust is not modeled, for the reason no other material
+/// component is.
+pub struct ContinualFlame {}
+
+impl ContinualFlame {
+    /// RAW's "Bright Light in a 20-foot radius and Dim Light for an
+    /// additional 20 feet" — the same pair a torch and the Light
+    /// cantrip shed, and read off the same two constants so the three
+    /// cannot drift.
+    const BRIGHT_TILES: isize = crate::engine::lighting::TORCH_BRIGHT_TILES;
+    const DIM_TILES: isize = crate::engine::lighting::TORCH_DIM_TILES;
+    /// "Until dispelled." Not a long timer standing in for forever —
+    /// see `LightSource::rounds_remaining`.
+    const BURNS_FOR: Option<u32> = None;
+    /// The level the flame records, and the number Darkness compares
+    /// against. See the docstring.
+    const SPELL_LEVEL: u32 = 2;
+}
+
+impl Action for ContinualFlame {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
+    fn name(&self) -> &str {
+        "continual flame"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cflame", "everburning"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(Self::SPELL_LEVEL)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        // One refusal, and it is the same one Light makes for the same
+        // reason: a tile that is already bright has nothing for a
+        // second-level slot to do. Read off the tile rather than off
+        // the ambient, because unlike the cantrip this spell is aimed
+        // at a *place* — a dark corner of a lit room is worth a flame,
+        // and the ambient check would refuse it.
+        encounter.light_at(point) != crate::engine::lighting::LightLevel::Bright
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "continual flame",
+            anchor: LightAnchor::Fixed(point),
+            bright_tiles: Self::BRIGHT_TILES,
+            dim_tiles: Self::DIM_TILES,
+            rounds_remaining: Self::BURNS_FOR,
+            spell_level: Self::SPELL_LEVEL,
+            // Nothing is carrying it — see `LightSource::innate`, whose
+            // whole subject is a light that dies with its bearer. This
+            // one has no bearer to die.
+            innate: false,
+        });
+        encounter.log(format!("  a continual flame springs up at {}.", point));
+        Vec::new()
+    }
+}
+
+pub static CONTINUAL_FLAME: LazyLock<ContinualFlame> = LazyLock::new(|| ContinualFlame {});
+
 /// **Starry Wisp** — SRD 5.2 evocation cantrip (Bard, Druid).
 ///
 /// > You launch a mote of light at one creature or object within range.

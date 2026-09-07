@@ -39,6 +39,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // somebody who is already lit, so it costs nothing on the ambient
     // default and is there when the lights are out.
     actions.push(&*crate::actions::spells::LIGHT);
+    // Continual Flame — the lighting layer's only fixed, permanent
+    // light. Not a light the party carries but one it leaves behind:
+    // level 2, anchored to the floor, and still burning after the
+    // caster has fallen back down the corridor. Last in the AI's light
+    // chain behind the torch and the cantrip, both of which are free.
+    actions.push(&*crate::actions::spells::CONTINUAL_FLAME);
     // Dancing Lights — the cantrip that lights ground the party has
     // not walked onto yet. Free and remote at once, which neither the
     // Light cantrip (free, but has to be touched onto somebody) nor
