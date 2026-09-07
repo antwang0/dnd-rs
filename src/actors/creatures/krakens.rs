@@ -2,7 +2,7 @@ use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     KRAKEN_LIGHTNING_STORM, KRAKEN_MULTI, KRAKEN_TENTACLE,
-    SWALLOW_BONUS,
+    SWALLOW_ACTION,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -78,7 +78,7 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*KRAKEN_MULTI);
     actions.push(&KRAKEN_TENTACLE);
     actions.push(&*KRAKEN_LIGHTNING_STORM);
-    actions.push(&SWALLOW_BONUS);
+    actions.push(&SWALLOW_ACTION);
     CreatureTemplate {
         name: "Kraken",
         // 'K' is taken by Rakshasa; 'k' (lowercase) reads as "kraken" and

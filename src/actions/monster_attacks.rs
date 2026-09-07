@@ -3189,19 +3189,32 @@ impl Action for WeaponWithCondition {
 // attack to hold one halfling to a CR-30 titan with six people inside
 // it and nothing slowed down at all.
 
-/// The Bonus Action five of the seven print it as. One object rather
-/// than five identical ones — nothing about the doorway differs between
-/// them, and everything that does differ lives on the creature's
-/// `SwallowProfile`.
+/// The Bonus Action four of the seven print it as — the behir, the
+/// purple worm, the remorhaz and the tarrasque all list Swallow under
+/// **Bonus Actions**, which is what makes swallowing somebody free on
+/// top of a full Multiattack and why those four are so much more
+/// frightening once they have hold of you.
+///
+/// One object rather than four identical ones: nothing about the
+/// doorway differs between them, and everything that does differ lives
+/// on the creature's `SwallowProfile`.
 pub static SWALLOW_BONUS: SwallowAttack = SwallowAttack {
     display_name: "swallow",
     aliases: &["swallow", "gulp", "engulf"],
     cost_resource: Resource::BonusAction,
 };
 
-/// The Action the frog and the toad spend on it. Their whole turn, and
-/// for the frog it also costs the bite it would otherwise be making —
-/// see `SwallowProfile::blocked_while_full`.
+/// The Action the other three spend on it. The frog and the toad give
+/// up their whole turn — and, while they are full, the bite they would
+/// otherwise be making (`SwallowProfile::blocked_while_full`).
+///
+/// The kraken is the odd one of the three: RAW folds its Swallow into
+/// the Multiattack — *"the kraken makes two Tentacle attacks and uses
+/// Fling, Lightning Strike, or Swallow"* — so the cost is the Action,
+/// but the two tentacle swings come with it. The engine prices it as
+/// the Action alone, which costs the kraken the two swings RAW would
+/// have let it keep; the alternative is a Multiattack variant that
+/// exists to hold one creature's punctuation.
 pub static SWALLOW_ACTION: SwallowAttack = SwallowAttack {
     display_name: "swallow",
     aliases: &["swallow", "gulp", "engulf"],
@@ -3395,12 +3408,9 @@ pub static TARRASQUE_SWALLOW: SwallowProfile = SwallowProfile {
 pub struct SwallowAttack {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
-    /// What the action costs. A Bonus Action on five of the seven — the
-    /// behir, the kraken, the purple worm, the remorhaz and the
-    /// tarrasque all print it under **Bonus Actions**, which is what
-    /// makes swallowing something free on top of a full Multiattack and
-    /// why those five are so much more frightening once they have hold
-    /// of you. The frog and the toad spend their Action on it.
+    /// What the action costs. A Bonus Action on four of the seven — see
+    /// `SWALLOW_BONUS` — and the Action on the other three; see
+    /// `SWALLOW_ACTION`.
     pub cost_resource: Resource,
 }
 

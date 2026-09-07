@@ -111,7 +111,7 @@ impl Controller for SimpleAi {
 
         // 2d. Swallow the catch. Same argument as the rung above it and
         //     one place below: a hold is worth more cashed in than kept,
-        //     and for five of the seven swallowers cashing it in is a
+        //     and for four of the seven swallowers cashing it in is a
         //     Bonus Action that costs the turn nothing. Below `try_reel`
         //     because a roper's reel and a swallow never appear on the
         //     same sheet, so the order between them is documentation
@@ -6549,9 +6549,9 @@ fn try_reel(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExec
 ///
 /// Sits beside `try_reel` and one rung below it, because it is the same
 /// shape of decision: a creature that has spent an attack getting hold
-/// of somebody should cash that hold in before it swings again. For five
+/// of somebody should cash that hold in before it swings again. For four
 /// of the seven swallowers the action is a Bonus Action, so cashing it
-/// in costs the turn nothing at all; for the frog and the toad it is the
+/// in costs the turn nothing at all; for the other three it is the
 /// Action, and the rung still fires — a frog with a halfling in its
 /// mouth has done more with its turn than a frog that bit one again.
 ///

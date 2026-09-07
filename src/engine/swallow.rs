@@ -4,7 +4,7 @@
 //! Seven creatures in SRD 5.2 carry one: the Behir, the Giant Frog, the
 //! Giant Toad, the Kraken, the Purple Worm, the Remorhaz and the
 //! Tarrasque. All seven word it the same way. The victim is already
-//! Grappled; the swallower spends an action (a Bonus Action, for five of
+//! Grappled; the swallower spends an action (a Bonus Action, for four of
 //! the seven) and the target *stops being grappled and starts being
 //! inside*, at which point four things become true at once:
 //!
