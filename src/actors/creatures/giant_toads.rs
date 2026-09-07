@@ -1,22 +1,26 @@
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GIANT_TOAD_BITE;
+use crate::actions::monster_attacks::{GIANT_TOAD_BITE, SWALLOW_ACTION};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Toad — CR 1 large beast. Poison-bite specialist: 1d10+2
-/// piercing + 1d10 poison rider on every hit (lands as a flat
-/// secondary damage instance, not a save-or-suck condition — the
-/// `GiantToadBite` action carries the rider). RAW grapples Medium-
-/// or-smaller targets on hit; that grapple half isn't modeled, but
-/// the toad still feels like a toad — a slow (20 ft on land) ambush
-/// croaker with a venomous chomp. Common low-CR boss in swamp
-/// encounters.
+/// piercing + 1d10 poison rider on every hit (a flat secondary damage
+/// instance rather than a save-or-suck condition), and RAW's grapple on
+/// anything Medium or smaller.
+///
+/// The grapple is what the toad is for. It leads to **Swallow**, which
+/// takes one party member out of the fight entirely — 3d6 acid a round,
+/// Total Cover from every heal and every arrow outside — at the price of
+/// the toad's own bite for as long as it holds them down. Thirty-nine
+/// hit points is the clock the rest of the party is racing. See
+/// `GIANT_TOAD_SWALLOW`.
 pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_TOAD_BITE);
+    actions.push(&SWALLOW_ACTION);
     CreatureTemplate {
         name: "Giant Toad",
         // 't' for toad — lowercase even though Large, since the
@@ -42,6 +46,7 @@ pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        swallow: Some(&crate::actions::monster_attacks::GIANT_TOAD_SWALLOW),
         ..CreatureTemplate::defaults()
     }
 });

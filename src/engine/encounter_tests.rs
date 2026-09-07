@@ -85123,3 +85123,503 @@ fn the_goblin_hides_and_the_thrall_runs() {
         &[Maneuver::Dash, Maneuver::Disengage]
     );
 }
+
+// ─── Swallow ─────────────────────────────────────────────────────────
+
+/// A worm with a guard already in its jaws, one tile apart, on a clear
+/// board.
+///
+/// The grapple is installed through the same linked installer the bite
+/// uses, because everything the swallow gate asks is asked of *that
+/// link*: "one Large or smaller creature **Grappled by** the worm" is a
+/// question about who is holding whom, and a bare `Grappled` with no
+/// back-link answers it wrong in the party's favour.
+fn swallower_pair(
+    template: &'static CreatureTemplate,
+) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let swallower = e
+        .instantiate_creature(template, Coordinate::new(6, 6), 1, 0)
+        .unwrap();
+    // A gladiator rather than a guard: Medium, so every ceiling in the
+    // module still applies to it, but with a hundred and twelve hit
+    // points it survives more than one tick of a purple worm's stomach.
+    // A guard dies to the first 5d6 and takes the fixture with it.
+    let victim = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(12, 6), 0, 0)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        victim,
+        swallower,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    (e, swallower, victim)
+}
+
+/// Walk the initiative queue round until `actor_id` holds the slot.
+///
+/// Needed because `start_turn_for` opens a turn without moving the
+/// queue, and the regurgitation clause attributes damage "from a
+/// creature inside it" through `current_turn_actor_id` — the same
+/// initiative slot every other "on your turn" lane in the engine reads.
+/// A test that only called `start_turn_for` would be asking about a turn
+/// the engine does not think is happening.
+fn hand_the_turn_to(e: &mut EncounterInstance, actor_id: usize) {
+    for _ in 0..64 {
+        if e.current_turn_actor_id() == Some(actor_id) {
+            e.start_turn_for(actor_id);
+            return;
+        }
+        e.advance_initiative();
+    }
+    panic!(
+        "the queue never came round to actor {} (queue: {:?}, at {:?})",
+        actor_id,
+        e.initiative_slots().iter().map(|s| s.actor_id).collect::<Vec<_>>(),
+        e.current_turn_actor_id()
+    );
+}
+
+fn worm_pair() -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    swallower_pair(&PURPLE_WORM_TEMPLATE)
+}
+
+/// The board invariant the whole module rests on: a swallowed creature
+/// owns no tiles, its location mirrors its swallower's, and it is still
+/// a creature every distance query can find.
+///
+/// The same three assertions the mount and attach chassis make about
+/// their links — all three put a body off the occupancy grid, and all
+/// three would be silently corrupting the map if any one of these were
+/// false.
+#[test]
+fn a_swallowed_creature_leaves_the_grid_and_the_swallower_keeps_the_tiles() {
+    let (mut e, worm, victim) = worm_pair();
+    let gullet = e.actors[&worm].location();
+    let stood = e.actors[&victim].location();
+    assert!(e.swallow(worm, victim).is_ok());
+
+    assert!(e.is_swallowed(victim));
+    assert_eq!(e.swallowed_by(victim), Some(worm));
+    assert_eq!(e.swallowed_in(worm), vec![victim]);
+    assert_eq!(
+        e.actors[&victim].location(),
+        gullet,
+        "a swallowed creature is where the thing that ate it is"
+    );
+    assert_eq!(
+        e.actor_id_at(stood),
+        None,
+        "and the tile it was standing on is empty"
+    );
+    assert_eq!(
+        e.actor_id_at(gullet),
+        Some(worm),
+        "the swallower still owns its own tiles"
+    );
+    // RAW: "the target is swallowed by the worm, and the Grappled
+    // condition ends."
+    assert!(!e.actors[&victim].has_condition(Condition::Grappled));
+    assert!(e.actors[&victim].has_condition(Condition::Restrained));
+    assert!(e.actors[&victim].has_condition(Condition::Blinded));
+    // Restrained zeroes the speed; the link zeroes it again, which is
+    // what stops a Dash from pouring a second helping back in.
+    e.actors.get_mut(&victim).unwrap().reset_for_new_round();
+    assert_eq!(e.actors[&victim].remaining_movement(), 0.0);
+}
+
+/// Every gate RAW prints, refused for the reason RAW prints it.
+///
+/// Worth a test of its own because the failure mode of getting one wrong
+/// is invisible: a swallow that fires when it should not simply removes
+/// a player from the fight, and one that never fires looks exactly like
+/// a creature the engine forgot to give the action to.
+#[test]
+fn a_swallower_eats_only_what_it_is_already_holding() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::swallow::SwallowRefusal;
+
+    let (mut e, worm, victim) = worm_pair();
+    // A bystander standing right beside the worm, un-grappled.
+    let bystander = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(11, 8), 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.can_swallow(worm, bystander),
+        Err(SwallowRefusal::NotHeld),
+        "RAW eats a creature Grappled by the worm, not one merely nearby"
+    );
+    assert!(e.can_swallow(worm, victim).is_ok());
+
+    // A creature held by somebody *else* is not on this worm's menu.
+    let other = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(14, 6), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&other)
+        .unwrap()
+        .add_condition(Condition::Grappled, ConditionTimer::Permanent);
+    assert_eq!(
+        e.can_swallow(worm, other),
+        Err(SwallowRefusal::NotHeld),
+        "an unlinked hold names nobody, and so cannot name this worm"
+    );
+
+    // The size ceiling — "one Large or smaller creature".
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(16, 10), 0, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        giant,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert_eq!(e.can_swallow(worm, giant), Err(SwallowRefusal::TooBig));
+
+    // And the capacity, which the worm prints as three.
+    assert!(e.swallow(worm, victim).is_ok());
+    assert_eq!(
+        e.can_swallow(worm, victim),
+        Err(SwallowRefusal::AlreadyInside)
+    );
+}
+
+/// RAW's **Total Cover**, in both directions: the party cannot reach
+/// their friend and their friend cannot reach them — but the thing
+/// around them is reachable from inside, which is the entire escape
+/// route.
+#[test]
+fn a_swallowed_creature_has_total_cover_in_both_directions() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+
+    let (mut e, worm, victim) = worm_pair();
+    let ally = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(8, 6), 0, 0)
+        .unwrap();
+    assert!(e.swallow(worm, victim).is_ok());
+
+    let spear = e.actors[&ally]
+        .find_action("gladiator spear")
+        .expect("a gladiator carries a spear");
+    let reach_out = ActionExecutionInfo::new(spear, ally, Some(vec![victim]), None, None);
+    assert!(
+        !reach_out.validate(&e),
+        "nothing outside can reach a creature inside the worm"
+    );
+
+    let inside_out = e.actors[&victim]
+        .find_action("gladiator spear")
+        .expect("a gladiator carries a spear");
+    let at_ally = ActionExecutionInfo::new(inside_out, victim, Some(vec![ally]), None, None);
+    assert!(
+        !at_ally.validate(&e),
+        "and the swallowed creature cannot reach out either"
+    );
+    let at_worm = ActionExecutionInfo::new(inside_out, victim, Some(vec![worm]), None, None);
+    assert!(
+        at_worm.validate(&e),
+        "but the stomach wall is right there, and hitting it is the way out"
+    );
+
+    // "…and other effects outside the worm": an area centred on the
+    // worm does not reach through it.
+    let caught = e.actors_in_burst(e.actors[&worm].location(), 4);
+    assert!(caught.contains(&worm));
+    assert!(
+        !caught.contains(&victim),
+        "a Fireball on the worm does not cook the person inside it"
+    );
+}
+
+/// The acid rides the *swallower's* turn, and it routes through the
+/// damage pipeline rather than around it.
+#[test]
+fn the_stomach_ticks_on_its_owners_turn_and_respects_resistance() {
+    use crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE;
+
+    let (mut e, worm, victim) = worm_pair();
+    assert!(e.swallow(worm, victim).is_ok());
+    let before = e.actors[&victim].hitpoints();
+    e.start_turn_for(victim);
+    assert_eq!(
+        e.actors[&victim].hitpoints(),
+        before,
+        "the victim's own turn costs them nothing"
+    );
+    e.start_turn_for(worm);
+    let dealt = before - e.actors[&victim].hitpoints();
+    assert!(
+        (5..=30).contains(&dealt),
+        "5d6 acid at the start of the worm's turn, got {}",
+        dealt
+    );
+
+    // The remorhaz is the one stomach that does two things at once —
+    // 3d6 acid *plus* 3d6 fire — which is the reason `digest` is a
+    // slice and not a pair.
+    let (mut e, remorhaz, victim) = swallower_pair(&REMORHAZ_TEMPLATE);
+    assert!(e.swallow(remorhaz, victim).is_ok());
+    let before = e.actors[&victim].hitpoints();
+    e.start_turn_for(remorhaz);
+    let dealt = before - e.actors[&victim].hitpoints();
+    assert!(
+        (6..=36).contains(&dealt),
+        "3d6 acid plus 3d6 fire, got {}",
+        dealt
+    );
+}
+
+/// RAW's escape clause, end to end: hurt it enough from inside in one
+/// turn, and it brings *everybody* up.
+///
+/// The "everybody" is not a rounding — it is the sentence RAW writes,
+/// and it is what makes the clause worth aiming for when half the party
+/// is already down there.
+#[test]
+fn hurting_a_worm_from_inside_makes_it_bring_everybody_up() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+    let (mut e, worm, victim) = worm_pair();
+    let second = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(13, 6), 0, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        second,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.swallow(worm, victim).is_ok());
+    assert!(e.swallow(worm, second).is_ok());
+
+    // Damage from *outside* is not eligible, however much of it there
+    // is: the clause counts blows struck by a creature inside.
+    hand_the_turn_to(&mut e, worm);
+    DealDamage {
+        actor_id: worm,
+        amount: 90,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&worm].damage_from_inside_this_turn(),
+        0,
+        "the worm's own turn is nobody's inside turn"
+    );
+    // The digest tick that came with the worm's turn is not what this
+    // test is measuring; heal it back out so the two swallowed
+    // gladiators are still standing when the save sweep runs.
+    for id in [victim, second] {
+        let a = e.actors.get_mut(&id).unwrap();
+        let missing = a.max_hitpoints() - a.hitpoints();
+        a.heal(missing);
+    }
+
+    // Now the same blow, struck on the swallowed guard's turn.
+    hand_the_turn_to(&mut e, victim);
+    DealDamage {
+        actor_id: worm,
+        amount: 40,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&worm].damage_from_inside_this_turn() >= 30);
+
+    // The worm's Constitution save is DC 21 against a +11 modifier, so
+    // sweep seeds rather than assert one roll; what is under test is
+    // that the failure brings up *both* guards, not just the one that
+    // did the hurting.
+    let mut brought_up = false;
+    for _ in 0..40 {
+        e.resolve_regurgitation_checks();
+        if !e.is_swallowed(victim) {
+            brought_up = true;
+            break;
+        }
+        // Re-arm: a passed save clears the tally, so the next sweep
+        // needs the damage dealt again.
+        e.actors.get_mut(&worm).unwrap().add_damage_from_inside(40);
+    }
+    assert!(brought_up, "forty tries should find one failed DC 21 save");
+    assert!(
+        !e.is_swallowed(second),
+        "RAW brings up all swallowed creatures, not just the one that hurt it"
+    );
+    assert!(
+        e.actors[&victim].has_condition(Condition::Prone),
+        "and each of them lands prone"
+    );
+    assert!(e.actors[&second].has_condition(Condition::Prone));
+}
+
+/// The tally is per-turn, which is the clause that stops a creature
+/// nibbling from inside a tarrasque from eventually adding up to sixty.
+#[test]
+fn the_from_inside_tally_does_not_carry_across_turns() {
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    let (mut e, worm, victim) = worm_pair();
+    assert!(e.swallow(worm, victim).is_ok());
+    hand_the_turn_to(&mut e, victim);
+    DealDamage {
+        actor_id: worm,
+        amount: 20,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&worm].damage_from_inside_this_turn(), 20);
+    // Twenty is under the worm's thirty, so the sweep rolls nothing —
+    // and clears the slate anyway.
+    e.resolve_regurgitation_checks();
+    assert_eq!(e.actors[&worm].damage_from_inside_this_turn(), 0);
+    assert!(e.is_swallowed(victim), "twenty is not thirty");
+}
+
+/// "If the worm dies, any swallowed creature no longer has the
+/// Restrained condition and can escape from the corpse, exiting Prone."
+#[test]
+fn killing_the_swallower_frees_what_is_inside_it() {
+    let (mut e, worm, victim) = worm_pair();
+    assert!(e.swallow(worm, victim).is_ok());
+    let gullet = e.actors[&worm].location();
+
+    let hp = e.actors[&worm].hitpoints();
+    e.actors.get_mut(&worm).unwrap().take_damage(hp + 100);
+    e.cleanup_dead_actors();
+
+    assert!(!e.actors.contains_key(&worm), "the worm is dead");
+    assert!(!e.is_swallowed(victim));
+    assert!(!e.actors[&victim].has_condition(Condition::Restrained));
+    assert!(e.actors[&victim].has_condition(Condition::Prone));
+    assert_eq!(
+        e.actor_id_at(e.actors[&victim].location()),
+        Some(victim),
+        "and the survivor is back on the grid, not a ghost in the corpse's tiles"
+    );
+    assert_eq!(
+        e.actors[&victim].location(),
+        gullet,
+        "on the tiles the corpse just vacated, which is where they already were"
+    );
+}
+
+/// A swallower that swims off carries its lunch with it.
+#[test]
+fn a_swallower_that_moves_takes_what_is_inside_it_along() {
+    let (mut e, worm, victim) = worm_pair();
+    assert!(e.swallow(worm, victim).is_ok());
+    let there = Coordinate::new(20, 12);
+    e.place_actor_at(worm, there).unwrap();
+    assert_eq!(
+        e.actors[&victim].location(),
+        there,
+        "the passenger's location mirrors the body carrying it"
+    );
+}
+
+/// "The frog can't use Bite while it has a swallowed target."
+///
+/// The whole price of the CR-¼ creature's signature move: a frog with
+/// somebody inside it has taken one party member out of the fight and
+/// itself with them.
+#[test]
+fn a_frog_with_something_inside_it_stops_biting() {
+    use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let frog = e
+        .instantiate_creature(&GIANT_FROG_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    // A goblin, because the frog's clause stops at Small and the guard
+    // the other fixtures use is Medium — the one place the frog's
+    // grapple reaches further than its gullet does.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        goblin,
+        frog,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+
+    let bite = e.actors[&frog]
+        .find_action("giant frog bite")
+        .expect("frogs bite");
+    let before = ActionExecutionInfo::new(bite, frog, Some(vec![goblin]), None, None);
+    assert!(before.validate(&e), "an empty frog bites");
+
+    assert!(e.swallow(frog, goblin).is_ok());
+    let after = ActionExecutionInfo::new(bite, frog, Some(vec![goblin]), None, None);
+    assert!(
+        !after.validate(&e),
+        "a full frog has given up its only attack"
+    );
+}
+
+/// The frog's ceiling is the one place in the bestiary where a
+/// creature's grapple reaches further than its throat: RAW grapples
+/// Medium and swallows Small.
+#[test]
+fn the_frogs_throat_is_narrower_than_its_tongue() {
+    use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
+    use crate::engine::swallow::SwallowRefusal;
+    let (e, frog, held) = swallower_pair(&GIANT_FROG_TEMPLATE);
+    assert!(
+        e.actors[&held].has_condition(Condition::Grappled),
+        "the frog's tongue reaches a Medium creature"
+    );
+    assert_eq!(
+        e.can_swallow(frog, held),
+        Err(SwallowRefusal::TooBig),
+        "…and its throat does not"
+    );
+}
+
+/// The seven stat blocks that print a Swallow all carry the action that
+/// opens it, and nothing else does.
+///
+/// A sweep rather than seven spot-checks, because the failure it catches
+/// is the one nobody writes a test for: a profile declared on a template
+/// whose action list was never updated is a creature with a stomach and
+/// no mouth, and every other test in this module would still pass.
+#[test]
+fn every_swallower_carries_the_action_that_opens_it() {
+    let mut found = 0;
+    for template in EncounterInstance::template_pool() {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(4, 4), 1, 0) else {
+            continue;
+        };
+        let has_profile = e.actors[&id].swallow_profile().is_some();
+        let has_action = e.actors[&id]
+            .available_actions()
+            .iter()
+            .any(|a| a.name() == "swallow");
+        assert_eq!(
+            has_profile, has_action,
+            "{} declares one half of Swallow and not the other",
+            template.name
+        );
+        if has_profile {
+            found += 1;
+        }
+    }
+    assert_eq!(found, 7, "SRD 5.2 prints seven Swallow clauses");
+}

@@ -1483,6 +1483,16 @@ pub trait Action {
         {
             return false;
         }
+        // 5e Swallow: "the toad can't use Bite while it has a swallowed
+        // target." A named attack rather than a general block — a
+        // tarrasque with six people inside it is not slowed down at all
+        // — so the gate reads the action's own name against the one
+        // `SwallowProfile::blocked_while_full` names. Beside the two
+        // caster-state gates above because it is the same shape: a fact
+        // about the swinger that no target can change.
+        if encounter.swallow_blocks_action(caster_id, self.name()) {
+            return false;
+        }
         // 5e Antimagic Field: "spells and other magical effects … are
         // suppressed in the sphere and can't protrude into it." Same
         // lane as the `blocked_from_casting` gate above and for the
@@ -1575,6 +1585,19 @@ pub trait Action {
                 && targets
                     .iter()
                     .any(|&tid| encounter.attachment_blocks_hostility(caster_id, tid))
+            {
+                return false;
+            }
+            // 5e's Swallow clause: a creature inside another one "has
+            // Total Cover against attacks and other effects outside"
+            // it, in both directions. Beside the two gates above
+            // because it binds the same way — on each name in the list
+            // independently — and *not* gated on `is_harmful`, because
+            // Total Cover stops a Cure Wounds from reaching somebody
+            // inside a kraken exactly as firmly as it stops an arrow.
+            if targets
+                .iter()
+                .any(|&tid| encounter.swallow_blocks_targeting(caster_id, tid))
             {
                 return false;
             }

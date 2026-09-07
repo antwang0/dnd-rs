@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     BEHIR_BITE, BEHIR_CONSTRICT, BEHIR_LIGHTNING_BREATH, BEHIR_MULTI,
+    SWALLOW_BONUS,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
@@ -20,9 +21,10 @@ use std::sync::LazyLock;
 pub static BEHIR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&BEHIR_BITE);
-    actions.push(&*BEHIR_CONSTRICT);
+    actions.push(&BEHIR_CONSTRICT);
     actions.push(&BEHIR_LIGHTNING_BREATH);
     actions.push(&*BEHIR_MULTI);
+    actions.push(&SWALLOW_BONUS);
     CreatureTemplate {
         name: "Behir",
         // 'B' for Behir — capital because Huge; collides with Bear
@@ -55,6 +57,7 @@ pub static BEHIR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // shared with the dragon family — only one breath per recharge
         // window across every breath-bearing creature in the engine.
         recharge_abilities: vec![("breath_weapon", 5)],
+        swallow: Some(&crate::actions::monster_attacks::BEHIR_SWALLOW),
         ..CreatureTemplate::defaults()
     }
 });

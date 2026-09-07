@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     FRIGHTFUL_PRESENCE, TARRASQUE_BITE, TARRASQUE_CLAW, TARRASQUE_MULTI, TARRASQUE_TAIL,
+    SWALLOW_BONUS,
 };
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
@@ -36,6 +37,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&TARRASQUE_CLAW);
     actions.push(&*TARRASQUE_TAIL);
     actions.push(&*FRIGHTFUL_PRESENCE);
+    actions.push(&SWALLOW_BONUS);
     CreatureTemplate {
         name: "Tarrasque",
         glyph: 'T',
@@ -97,6 +99,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::TARRASQUE_LEGENDARY,
         has_extra_attack: true,
+        swallow: Some(&crate::actions::monster_attacks::TARRASQUE_SWALLOW),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

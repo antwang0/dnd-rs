@@ -3027,6 +3027,23 @@ pub struct CreatureTemplate {
     /// start-of-turn drain, the damage split, the release action —
     /// never see the swing.
     pub attach: Option<&'static crate::engine::attachment::AttachProfile>,
+    /// This creature's 5e **Swallow** clause — the sentence that turns a
+    /// grapple it is already holding into a creature inside it — or
+    /// `None` for the overwhelming majority of the bestiary that chews.
+    ///
+    /// Seven SRD 5.2 stat blocks carry one: the Behir, the Giant Frog,
+    /// the Giant Toad, the Kraken, the Purple Worm, the Remorhaz and the
+    /// Tarrasque. See `crate::engine::swallow::SwallowProfile` for the
+    /// nine clauses they differ on, and the module docstring above it
+    /// for why being inside something is its own link rather than a
+    /// condition.
+    ///
+    /// Declared on the *creature* rather than on the action that opens
+    /// it, for the same reason `attach` and `charge` are: four of the
+    /// sites that ask about it — the digest tick, the regurgitation
+    /// save, the Total Cover gate, the teardown on death — never see the
+    /// action.
+    pub swallow: Option<&'static crate::engine::swallow::SwallowProfile>,
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -4171,6 +4188,7 @@ impl CreatureTemplate {
             charge: None,
             mountable: false,
             attach: None,
+            swallow: None,
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
@@ -4768,6 +4786,39 @@ pub struct ActorInstance {
     /// aura, line-of-sight and burst query keeps working on it
     /// unchanged.
     attached_to: Option<usize>,
+    /// This creature's 5e Swallow clause, copied from its template. See
+    /// `CreatureTemplate::swallow`.
+    swallow: Option<&'static crate::engine::swallow::SwallowProfile>,
+    /// The creature this actor is currently *inside*, or `None` for
+    /// everything that is having a normal fight.
+    ///
+    /// One-sided for the reason `attached_to` is: RAW caps how many
+    /// creatures fit (`SwallowProfile::capacity`) but does not make the
+    /// swallower's side a list worth storing, so
+    /// `EncounterInstance::swallowed_in` scans for this field rather
+    /// than keeping a second copy of the same truth.
+    ///
+    /// A swallowed creature is *off the occupancy grid*, exactly as an
+    /// attached one and a mounted rider are: the swallower owns the
+    /// tiles and this actor's `location` is kept mirrored onto them, so
+    /// every distance, aura and line-of-sight query keeps working
+    /// unchanged. What does *not* keep working is being targeted from
+    /// outside, and that is the point — see
+    /// `EncounterInstance::swallow_blocks_targeting`.
+    swallowed_by: Option<usize>,
+    /// Damage this actor has taken *from creatures inside it* since the
+    /// last end of turn.
+    ///
+    /// The one piece of bookkeeping RAW's regurgitation clause needs
+    /// that nothing else in the engine had: *"If the worm takes 30
+    /// damage or more on a single turn from a creature inside it"* is a
+    /// sum over one turn, filtered by source, and neither the hit-point
+    /// total nor any existing per-turn ledger answers it. Written by
+    /// `EncounterInstance::note_damage_from_inside` at the damage
+    /// chokepoint and cleared for everybody by
+    /// `resolve_regurgitation_checks`, which is what makes the threshold
+    /// per-turn rather than cumulative.
+    damage_from_inside_this_turn: u32,
     /// Class-feature charges currently unspent, keyed by feature tag
     /// (decremented on use, refilled to `features_max` on long rest and
     /// — for the short-rest cohorts — on short rest).
@@ -5265,6 +5316,9 @@ impl ActorInstance {
             ridden_by: None,
             attach: ct.attach,
             attached_to: None,
+            swallow: ct.swallow,
+            swallowed_by: None,
+            damage_from_inside_this_turn: 0,
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             attack_bonus_buff: 0,
@@ -9057,6 +9111,15 @@ impl ActorInstance {
         if self.attached_to.is_some() {
             return 0.0;
         }
+        // The same rule from the other side of the stomach wall. A
+        // swallowed creature is `Restrained`, which already zeroes the
+        // speed the budget is filled from — but a Dash pours a second
+        // helping back in, and a creature that is off the occupancy grid
+        // must not be able to sprint out of a purple worm on tiles it
+        // does not own. See `crate::engine::swallow`.
+        if self.swallowed_by.is_some() {
+            return 0.0;
+        }
         // 5e exhaustion tier 5: "speed reduced to 0". Read here rather
         // than as another `CONDITION_SPEED_MULTIPLIERS` row with a
         // factor of 0, because those factors scale the *speed* that
@@ -9310,6 +9373,7 @@ impl ActorInstance {
         self.mounted_on = None;
         self.ridden_by = None;
         self.attached_to = None;
+        self.swallowed_by = None;
     }
 
     /// Write one side of the rider/mount link. Crate-visible rather than
@@ -9343,6 +9407,46 @@ impl ActorInstance {
     /// both at once.
     pub(crate) fn set_attached_to(&mut self, host_id: Option<usize>) {
         self.attached_to = host_id;
+    }
+
+    /// This creature's 5e Swallow clause, if its stat block has one. See
+    /// `CreatureTemplate::swallow`.
+    pub fn swallow_profile(&self) -> Option<&'static crate::engine::swallow::SwallowProfile> {
+        self.swallow
+    }
+
+    /// The creature this actor is inside, if any.
+    pub fn swallowed_by(&self) -> Option<usize> {
+        self.swallowed_by
+    }
+
+    /// Write the swallow link. Crate-visible for the same reason
+    /// `set_attached_to` is: the board and the link have to agree about
+    /// who owns which tiles, and only
+    /// `EncounterInstance::{swallow, disgorge, sever_swallows}` can see
+    /// both parties at once.
+    pub(crate) fn set_swallowed_by(&mut self, swallower_id: Option<usize>) {
+        self.swallowed_by = swallower_id;
+    }
+
+    /// Damage taken from creatures inside this one since the last end of
+    /// turn. Read by the regurgitation clause; see the field.
+    pub fn damage_from_inside_this_turn(&self) -> u32 {
+        self.damage_from_inside_this_turn
+    }
+
+    /// Add to the per-turn from-inside tally. Saturating, because the
+    /// only thing the number is ever compared against is a threshold.
+    pub(crate) fn add_damage_from_inside(&mut self, amount: u32) {
+        self.damage_from_inside_this_turn =
+            self.damage_from_inside_this_turn.saturating_add(amount);
+    }
+
+    /// Reset the tally. Called for every actor at the end of every turn,
+    /// which is what makes RAW's "on a single turn" a window rather than
+    /// a running total.
+    pub(crate) fn clear_damage_from_inside(&mut self) {
+        self.damage_from_inside_this_turn = 0;
     }
 
     /// 5e "you can mount or dismount a creature… the cost is movement

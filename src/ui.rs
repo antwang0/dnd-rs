@@ -579,6 +579,34 @@ pub fn render_sideinfo(
                     ));
                 }
             }
+            // The swallow link, both ends, for exactly the reason the
+            // attach link above it is here: a swallowed creature has no
+            // stamp on the grid, so the map draws only the thing that
+            // ate it. Without this row a player watching their fighter
+            // vanish off the map has no line anywhere in the interface
+            // telling them where they went — and Total Cover means they
+            // cannot find out by trying to target them either.
+            //
+            // The count on the swallower's side is the number the
+            // regurgitation clause is worth reading: everybody comes
+            // back up together, so four names is four rescues off one
+            // failed save.
+            if let Some(swallower_id) = actor.swallowed_by() {
+                spans.push(Span::styled(
+                    format!(" inside {}", encounter.actor_name(swallower_id)),
+                    Style::default().fg(Color::LightRed),
+                ));
+            } else {
+                let eaten = encounter.swallowed_in(actor_id);
+                if !eaten.is_empty() {
+                    let names: Vec<String> =
+                        eaten.iter().map(|&a| encounter.actor_name(a)).collect();
+                    spans.push(Span::styled(
+                        format!(" has swallowed {}", names.join(", ")),
+                        Style::default().fg(Color::LightRed),
+                    ));
+                }
+            }
             initiative_lines.push(Line::from(spans));
         }
     }

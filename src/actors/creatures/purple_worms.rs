@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     PURPLE_WORM_BITE, PURPLE_WORM_MULTI, PURPLE_WORM_TAIL_STINGER,
+    SWALLOW_BONUS,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
@@ -40,14 +41,17 @@ use std::sync::LazyLock;
 /// not a magical / elemental holdover. Tunneler trait (RAW: "the worm
 /// can burrow through solid rock at half its burrow speed") lives as
 /// flavor on the template only — the engine isn't 3D and collapses
-/// burrow movement onto the surface speed. Swallow (RAW: a separate
-/// action that one-shots Medium-or-smaller targets on a failed save)
-/// is omitted as a deliberate gameplay scope cut — the engine doesn't
-/// model "swallowed" as a containment state distinct from Grappled,
-/// and replicating the RAW "you take acid damage every turn until you
-/// cut your way out" loop without that state would distort the worm's
-/// damage budget. The Tail Stinger's save-or-7d6-poison clause already
-/// carries the worm's burst-damage identity at this tier.
+/// burrow movement onto the surface speed.
+///
+/// **Swallow** is the clause the whole creature is built around, and it
+/// is here: the bite grapples, the Bonus Action eats what the bite is
+/// holding, and up to three people can be inside the worm at once
+/// taking 5d6 acid at the start of each of its turns with Total Cover
+/// between them and the rest of the party. The way out is the damage
+/// threshold — thirty in one turn from a creature inside it, against a
+/// DC 21 Constitution save — which is the fight that stat block is
+/// describing. See `crate::engine::swallow` for the containment lane
+/// and `PURPLE_WORM_SWALLOW` for this worm's numbers.
 ///
 /// Stat shape: AC 18, ~247 HP (15d20+90), STR 28, DEX 7, CON 22,
 /// INT 1, WIS 8, CHA 4. Speed 50 (RAW 50 ft + 30 ft burrow — we collapse
@@ -60,6 +64,7 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&PURPLE_WORM_BITE);
     actions.push(&PURPLE_WORM_TAIL_STINGER);
     actions.push(&*PURPLE_WORM_MULTI);
+    actions.push(&SWALLOW_BONUS);
     CreatureTemplate {
         name: "Purple Worm",
         // 'P' (uppercase) — distinct mnemonic for Purple Worm. The
@@ -97,6 +102,7 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             crate::engine::types::AbilityScoreType::Strength,
             crate::engine::types::AbilityScoreType::Constitution,
         ]),
+        swallow: Some(&crate::actions::monster_attacks::PURPLE_WORM_SWALLOW),
         ..CreatureTemplate::defaults()
     }
 });

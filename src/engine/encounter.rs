@@ -8622,6 +8622,19 @@ impl EncounterInstance {
                 if !a.is_combat_active() {
                     return None;
                 }
+                // 5e Swallow: a creature inside another one "has Total
+                // Cover against attacks and other effects outside" it,
+                // and an area effect is the *other effects* half of
+                // that sentence. Filtered here rather than at each
+                // burst's own site because this is the one place every
+                // area in the engine collects its hit list — and
+                // because a swallowed creature's `location` is mirrored
+                // onto its swallower's, so without the gate a Fireball
+                // aimed at a purple worm would cook the person inside
+                // it for free.
+                if a.swallowed_by().is_some() {
+                    return None;
+                }
                 let dist = footprint_chebyshev(
                     a.location(),
                     get_tiles_from_size(a.size()),
@@ -11551,6 +11564,13 @@ impl EncounterInstance {
         // host, and a host that goes down should do so on a board the
         // other three have already finished with.
         self.drain_attached_host(actor_id);
+        // 5e's Swallow clause: "takes 17 (5d6) Acid damage at the start
+        // of each of the worm's turns", and the same tick refreshes the
+        // Blinded / Restrained the stomach imposes. Beside the attach
+        // drain because it is the same shape and the same moment; after
+        // it, so a creature that is both latched onto and digesting
+        // resolves the two in a stable order.
+        self.digest_swallowed(actor_id);
         // 5e controlled mount: "it moves as you direct it". The rider
         // walks on the horse's legs, so the turn's movement budget is
         // the horse's speed rather than their own. Runs after
@@ -11773,6 +11793,14 @@ impl EncounterInstance {
         // that creature out — a dragon does not spend legendary actions
         // at the end of its own turn.
         let ended = self.initiative_tracker.current_player();
+        // 5e Swallow, the escape clause: "the worm must succeed on a DC
+        // 21 Constitution saving throw at the end of that turn or
+        // regurgitate all swallowed creatures". Resolved before the
+        // legendary-action dispatcher below, so a kraken that has just
+        // brought four people up takes its legendary actions on the
+        // board that leaves — and before the queue advances, because
+        // the per-turn tally this reads is cleared by the same sweep.
+        self.resolve_regurgitation_checks();
         // The slot moved, so whoever lands in it has not had their turn
         // opened yet — even when the queue has a single actor and the
         // "move" lands back on the same id. `ensure_turn_started` reads
@@ -15222,6 +15250,9 @@ impl EncounterInstance {
         // knight rides wherever the horse goes and the knight's own
         // mirror has already run one block up.
         self.mirror_attachers_onto(body_id, coord, walked);
+        // And whatever is inside it. Always a bare relocation rather
+        // than a walk — see `mirror_swallowed_onto`.
+        self.mirror_swallowed_onto(body_id, coord);
         if let Some(rider_id) = passenger {
             self.mirror_attachers_onto(rider_id, coord, walked);
         }
@@ -15849,8 +15880,14 @@ impl EncounterInstance {
         // owns them.
         let unseated = self.sever_ride_links(id);
         let unlatched = self.sever_attachments(id);
+        // RAW's death clause: "If the worm dies, any swallowed creature
+        // no longer has the Restrained condition and can escape from the
+        // corpse." Third of the three severs and for the same reason
+        // they all run unconditionally — they are repairs, not queries.
+        let disgorged = self.sever_swallows(id);
         unseated
             || unlatched
+            || disgorged
             || self.actors.get(&id).is_some_and(|a| a.is_off_board())
     }
 

@@ -983,6 +983,16 @@ impl ApplicableSideEffect for DealDamage {
             "  {} takes {} {:?} damage",
             name, landed, self.damage_type
         ));
+        // 5e Swallow, the escape clause's bookkeeping: "if the worm
+        // takes 30 damage or more on a single turn **from a creature
+        // inside it**". Tallied here rather than at each attack site
+        // because this is the one place that sees every point of damage
+        // *after* mitigation, which is the number RAW's threshold is
+        // measured in — a worm with resistance to the rogue's daggers
+        // is a worm that stays down. See `note_damage_from_inside` for
+        // how the source is attributed without an attacker on the
+        // payload.
+        ei.note_damage_from_inside(self.actor_id, landed);
         for (condition, label) in flinched {
             ei.log(format!("  {}: {} is {}", label, name, condition.name()));
         }

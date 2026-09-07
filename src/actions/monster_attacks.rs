@@ -15,6 +15,7 @@ use crate::{
         encounter::EncounterInstance,
         mastery::{MasteryRider, WeaponMastery},
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
+        swallow::{RegurgitationClause, SwallowProfile},
         types::{AbilityScoreType, Coordinate, DamageType, Size},
         util::tiles_from_feet,
     },
@@ -2724,6 +2725,30 @@ pub struct WeaponWithCondition {
     /// clause on the sentence after the damage, so an oversized target
     /// takes the hit in full and simply shrugs off what rides on it.
     pub max_target_size: Option<Size>,
+    /// A second, flat typed damage instance the hit also deals, with a
+    /// label for the log — the remorhaz's *"18 (2d10 + 7) Piercing
+    /// damage **plus 14 (4d6) Fire damage**"*, on top of the grapple
+    /// that follows it. `None` for the majority whose hit line names one
+    /// damage type. Set with `plus_damage`.
+    ///
+    /// This is where the two rider chassis meet. `WeaponWithRider` is
+    /// "damage plus damage" and this one is "damage plus a hold"; three
+    /// stat blocks in SRD 5.2 are *both* — the giant toad's venom and
+    /// its grapple, the remorhaz's superheated gullet and its coils, the
+    /// behir's crushing slash. Each of them was previously written as
+    /// whichever half its chassis could express, with the other half in
+    /// a docstring apologising for itself.
+    ///
+    /// It lives here rather than as a condition slot on
+    /// `WeaponWithRider` because *this* chassis is the one that already
+    /// knows how to install a hold correctly — through the linked
+    /// installer, behind a size gate — and a second copy of that
+    /// knowledge is how a grapple ends up naming nobody.
+    ///
+    /// Deliberately not gated by `max_target_size`: RAW's size clause
+    /// governs the sentence it is in, and the extra damage is in the
+    /// sentence before it.
+    pub extra_damage: Option<(Dice, DamageType, &'static str)>,
 }
 
 impl WeaponWithCondition {
@@ -2786,6 +2811,7 @@ impl WeaponWithCondition {
             timer,
             rider_name,
             max_target_size: None,
+            extra_damage: None,
         }
     }
 
@@ -2800,6 +2826,18 @@ impl WeaponWithCondition {
     /// encodes.
     pub const fn against_at_most(mut self, max: Size) -> Self {
         self.max_target_size = Some(max);
+        self
+    }
+
+    /// Chainable: the hit also deals a second, flat instance of typed
+    /// damage — RAW's "plus 14 (4d6) Fire damage". See `extra_damage`.
+    pub const fn plus_damage(
+        mut self,
+        dice: Dice,
+        damage_type: DamageType,
+        label: &'static str,
+    ) -> Self {
+        self.extra_damage = Some((dice, damage_type, label));
         self
     }
 }
@@ -2861,8 +2899,16 @@ impl Action for WeaponWithCondition {
     fn is_melee_attack(&self) -> bool {
         self.is_melee
     }
+    /// Both types when the hit carries a second instance — the
+    /// remorhaz's piercing *and* its fire. Read by the AI's
+    /// "is this worth aiming at that creature?" gate, which would
+    /// otherwise write off a fire-immune target's whole bite for the
+    /// half of it that is piercing.
     fn damage_types(&self) -> Vec<DamageType> {
-        vec![self.damage_type]
+        match self.extra_damage {
+            Some((_, extra_type, _)) => vec![self.damage_type, extra_type],
+            None => vec![self.damage_type],
+        }
     }
     fn side_effects(
         &self,
@@ -2898,6 +2944,13 @@ impl Action for WeaponWithCondition {
             // so a 1-damage swing zeroed by Uncanny Dodge still grapples.
             if effects.is_empty() {
                 return effects;
+            }
+            // Ahead of the size gate, because RAW prints it ahead of
+            // the size gate: "plus 14 (4d6) Fire damage. **If** the
+            // target is a Large or smaller creature…". A remorhaz that
+            // bites something too big to coil around still cooks it.
+            if let Some((dice, damage_type, label)) = self.extra_damage {
+                add_flat_damage_rider(e, target_id, dice, damage_type, label, &mut effects);
             }
             // RAW puts the size clause on the sentence *after* the
             // damage — "Hit: 21 Piercing damage. If the target is a
@@ -2941,6 +2994,336 @@ impl Action for WeaponWithCondition {
         effects
     }
 }
+
+
+// ─── Swallow ─────────────────────────────────────────────────────────
+//
+// The seven SRD 5.2 stat blocks that can eat what they are holding, and
+// the one action they share. Kept together rather than filed beside
+// each creature's other attacks, because the interesting thing about
+// them is the comparison: the same nine clauses, tuned across nineteen
+// levels of challenge rating, from a CR-¼ frog that gives up its only
+// attack to hold one halfling to a CR-30 titan with six people inside
+// it and nothing slowed down at all.
+
+/// The Bonus Action five of the seven print it as. One object rather
+/// than five identical ones — nothing about the doorway differs between
+/// them, and everything that does differ lives on the creature's
+/// `SwallowProfile`.
+pub static SWALLOW_BONUS: SwallowAttack = SwallowAttack {
+    display_name: "swallow",
+    aliases: &["swallow", "gulp", "engulf"],
+    cost_resource: Resource::BonusAction,
+};
+
+/// The Action the frog and the toad spend on it. Their whole turn, and
+/// for the frog it also costs the bite it would otherwise be making —
+/// see `SwallowProfile::blocked_while_full`.
+pub static SWALLOW_ACTION: SwallowAttack = SwallowAttack {
+    display_name: "swallow",
+    aliases: &["swallow", "gulp", "engulf"],
+    cost_resource: Resource::Action,
+};
+
+/// Giant Frog — *"The frog swallows a Small or smaller target it is
+/// grappling."*
+///
+/// No save and no cap on how long it holds on, which sounds generous
+/// until the size line is read: **Small or smaller**, on a creature
+/// whose grapple reaches Medium. The frog can hold a human and can only
+/// swallow a halfling, and the moment it does it has given up its bite
+/// (`blocked_while_full`) for as long as it keeps them down. That is the
+/// whole CR-¼ bargain — one party member removed from the fight, in
+/// exchange for the frog removing itself.
+///
+/// The acid is 2d4 at the start of the frog's turns, where RAW puts it
+/// at the end of the frog's *next* one and then disgorges on a timer.
+/// The engine has one digest lane; the tick is a round earlier and it
+/// keeps ticking, which is the direction that makes a swallowed
+/// halfling's friends hurry.
+pub static GIANT_FROG_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "gulps down",
+    max_target_size: Some(Size::Small),
+    digest: &[(Dice::new(2, 4), DamageType::Acid)],
+    // The engine's name for the frog's bite, which is not "bite": the
+    // giant frog and the giant toad both print "Bite" and the engine
+    // needs two distinct action names, so the frog's carries its
+    // creature. Matched against `Action::name()`, so a typo fails closed
+    // as "this creature has no such attack" rather than as a frog that
+    // bites while full.
+    blocked_while_full: Some("giant frog bite"),
+    ..SwallowProfile::defaults()
+};
+
+/// Giant Toad — the frog's clause one size up and with real teeth:
+/// **Medium or smaller**, 3d6 acid a round, and the same "can't use
+/// Bite while it has a swallowed target" price.
+///
+/// Where the frog is a nuisance this is a genuine threat to a CR-1
+/// party: a swallowed wizard takes an average of ten a round with no
+/// way to be healed from outside, and the toad has thirty-nine hit
+/// points to chew through before anybody reaches them.
+pub static GIANT_TOAD_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Medium),
+    digest: &[(Dice::new(3, 6), DamageType::Acid)],
+    blocked_while_full: Some("bite"),
+    ..SwallowProfile::defaults()
+};
+
+/// Behir — DC 18 Dexterity, one at a time, 6d6 acid a round, and DC 14
+/// Constitution to keep down thirty damage from the inside.
+///
+/// The lowest regurgitation DC of the five that have one, against the
+/// second-highest threshold-to-hit-points ratio: thirty damage out of a
+/// hundred and sixty-eight. A fighter swallowed by a behir who spends
+/// their turn hacking at the stomach wall gets out about half the time,
+/// which is exactly the shape the clause is for.
+pub static BEHIR_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Large),
+    save: Some((AbilityScoreType::Dexterity, 18)),
+    digest: &[(Dice::new(6, 6), DamageType::Acid)],
+    regurgitate: Some(RegurgitationClause {
+        threshold: 30,
+        dc: 14,
+    }),
+    ..SwallowProfile::defaults()
+};
+
+/// Remorhaz — the only stomach in the book that does two things at
+/// once: *"10 (3d6) Acid damage **plus** 10 (3d6) Fire damage at the
+/// start of each of the remorhaz's turns."*
+///
+/// Twenty a round through two damage types is the reason `digest` is a
+/// slice, and it is not a technicality: a creature with fire resistance
+/// really does last half again as long in there, and the remorhaz is
+/// the monster you meet in the one environment where fire resistance is
+/// the thing everybody brought.
+pub static REMORHAZ_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Large),
+    capacity: 2,
+    save: Some((AbilityScoreType::Strength, 19)),
+    digest: &[
+        (Dice::new(3, 6), DamageType::Acid),
+        (Dice::new(3, 6), DamageType::Fire),
+    ],
+    regurgitate: Some(RegurgitationClause {
+        threshold: 30,
+        dc: 15,
+    }),
+    ..SwallowProfile::defaults()
+};
+
+/// Purple Worm — three at a time, 5d6 acid a round, DC 21 Constitution
+/// against a thirty-damage threshold.
+///
+/// The clause the whole creature is built around. A worm that has eaten
+/// half the party is a fight the party is losing from inside a tunnel
+/// they cannot see out of, and the only lever is the threshold — thirty
+/// damage in one turn from one creature in there, which at CR 15 is
+/// one good round from a rogue who knows the rule.
+pub static PURPLE_WORM_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Large),
+    capacity: 3,
+    save: Some((AbilityScoreType::Strength, 19)),
+    digest: &[(Dice::new(5, 6), DamageType::Acid)],
+    regurgitate: Some(RegurgitationClause {
+        threshold: 30,
+        dc: 21,
+    }),
+    ..SwallowProfile::defaults()
+};
+
+/// Kraken — four at a time, 7d6 acid a round, and the only stomach that
+/// does not blind: *"A swallowed creature has the Restrained
+/// condition"*, full stop.
+///
+/// A creature in a kraken's beak can still see, which is a small mercy
+/// worth modeling exactly because it is the one place the seven stat
+/// blocks disagree with each other. It is also the highest
+/// regurgitation bar in the book — fifty damage in one turn against a
+/// DC 25 — which at CR 23 is a bar a swallowed paladin can clear and
+/// almost nobody else can.
+pub static KRAKEN_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Large),
+    capacity: 4,
+    save: Some((AbilityScoreType::Dexterity, 25)),
+    digest: &[(Dice::new(7, 6), DamageType::Acid)],
+    swallowed_conditions: &[Condition::Restrained],
+    regurgitate: Some(RegurgitationClause {
+        threshold: 50,
+        dc: 25,
+    }),
+    ..SwallowProfile::defaults()
+};
+
+/// Tarrasque — six at a time, 16d6 acid a round, DC 27 Strength to
+/// avoid, DC 20 Constitution to keep down sixty damage.
+///
+/// Fifty-six a round inside a creature with six hundred and ninety-seven
+/// hit points and Legendary Resistance six times a day. The threshold is
+/// the only door and it is a wide one relative to the DC: sixty damage
+/// in a turn is a CR-30 party's normal output, and the save that follows
+/// is the *lowest* of the five once the creature is that big. The
+/// tarrasque eats you and then, quite often, is made to bring you back
+/// up — which is the fight that stat block is describing.
+pub static TARRASQUE_SWALLOW: SwallowProfile = SwallowProfile {
+    verb: "swallows",
+    max_target_size: Some(Size::Large),
+    capacity: 6,
+    save: Some((AbilityScoreType::Strength, 27)),
+    digest: &[(Dice::new(16, 6), DamageType::Acid)],
+    regurgitate: Some(RegurgitationClause {
+        threshold: 60,
+        dc: 20,
+    }),
+    ..SwallowProfile::defaults()
+};
+
+/// 5e **Swallow** — the action that turns a grapple you are already
+/// holding into a creature inside you.
+///
+/// Data-only, because all seven SRD 5.2 stat blocks that print one
+/// print the same action with different numbers: a target this creature
+/// is already Grappling, a size it can get down, room left inside, and
+/// on five of the seven a saving throw that avoids it. Everything that
+/// happens *afterwards* — the acid, the Total Cover, the regurgitation
+/// save, the crawl out of the corpse — belongs to
+/// `crate::engine::swallow::SwallowProfile` on the creature rather than
+/// to this action, for the same reason the attach clause is split that
+/// way: four of the sites that read it never see the action.
+///
+/// So this struct is only the *doorway*. It carries the cost and the
+/// alias list, and hands off to `EncounterInstance::swallow` the moment
+/// the save fails.
+///
+/// **Why the profile is not read off this action.** The tempting shape
+/// is one struct with all nine clauses on it. It does not work: the
+/// digest tick fires at the start of the swallower's turn from
+/// `start_turn_for`, which holds an actor id and no action; the
+/// regurgitation sweep runs at the end of *anybody's* turn; the Total
+/// Cover gate is asked by every other action in the engine. Three of
+/// those four would have had to go looking through the creature's
+/// action list for a `SwallowAttack` and downcast it.
+pub struct SwallowAttack {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// What the action costs. A Bonus Action on five of the seven — the
+    /// behir, the kraken, the purple worm, the remorhaz and the
+    /// tarrasque all print it under **Bonus Actions**, which is what
+    /// makes swallowing something free on top of a full Multiattack and
+    /// why those five are so much more frightening once they have hold
+    /// of you. The frog and the toad spend their Action on it.
+    pub cost_resource: Resource,
+}
+
+impl Action for SwallowAttack {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    /// Reach is the grapple's, not a number of its own: RAW names "one
+    /// Large or smaller creature **Grappled by** the worm", and a
+    /// creature the worm is holding is by definition within reach of it.
+    /// Declared anyway so the AI's range filter has something to read,
+    /// and generous enough for the kraken's thirty-foot tentacles.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(SWALLOW_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![self.cost_resource]
+    }
+
+    /// Every gate RAW prints, asked through the one predicate that owns
+    /// them — `can_swallow`. Declining here rather than inside
+    /// `side_effects` is what keeps the action off the AI's candidate
+    /// list and out of the player's prompt when there is nobody in the
+    /// creature's grip.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        first_target_id(target_ids)
+            .is_some_and(|target_id| encounter.can_swallow(caster_id, target_id).is_ok())
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Re-asked rather than trusted from validation: a Multiattack
+        // expansion can put a tentacle swing between the two, and a
+        // target that died to it is no longer on the menu.
+        let profile = match encounter.can_swallow(caster_id, target_id) {
+            Ok(profile) => profile,
+            Err(refusal) => {
+                let name = encounter.actor_name(caster_id);
+                encounter.log(format!(
+                    "  {} cannot swallow: {}.",
+                    name,
+                    refusal.describe()
+                ));
+                return Vec::new();
+            }
+        };
+        if let Some((ability, dc)) = profile.save {
+            let target_name = encounter.actor_name(target_id);
+            if encounter.roll_save(target_id, ability, dc).passed() {
+                encounter.log(format!("  {} squirms free of the gullet.", target_name));
+                return Vec::new();
+            }
+        }
+        // Applied here rather than pushed as a side-effect, and it is
+        // the one place in the file that does so. The link writes the
+        // occupancy grid — a footprint comes off it and a `location` is
+        // mirrored — and every queued effect behind this one in the same
+        // vec would otherwise resolve against a board that still had the
+        // victim standing outside. `swallow` is idempotent-safe on its
+        // own gates, so re-entry through a Multiattack is a logged
+        // refusal rather than a second stomach.
+        let _ = encounter.swallow(caster_id, target_id);
+        Vec::new()
+    }
+}
+
+/// The reach `SwallowAttack` declares, in tiles.
+///
+/// Thirty feet, which is the kraken's tentacles — the longest grip in
+/// the bestiary — because the number is a filter on an action whose real
+/// gate is "am I already holding this creature", and a filter that is
+/// tighter than the grip it is filtering would make the kraken unable to
+/// eat what it is holding.
+const SWALLOW_REACH: isize = 12;
 
 /// The weapon-rider family's fourth shape: a melee swing whose hit
 /// latches the swinger onto what it bit.
@@ -7394,12 +7777,15 @@ pub static ASTRAL_ARMS_STRIKE: SimpleWeapon = SimpleWeapon::reach_melee(
 /// the engine compute the modifier from STR + prof so the boss's stat
 /// block stays authoritative).
 // 15ft reach — gargantuan natural reach for the bite.
-pub static TARRASQUE_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+pub static TARRASQUE_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "tarrasque bite",
     &["t-bite", "tbite"],
     AbilityScoreType::Strength,
     Dice::new(4, 12),
     DamageType::Piercing,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "tarrasque jaws",
     4,
 );
 
@@ -10299,16 +10685,18 @@ pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
 /// half-poison-on-CON-pass clauses are deliberately skipped — neither
 /// is modeled cleanly here, and the pure piercing-plus-flat-poison
 /// envelope captures the load-bearing flavor.
-pub static GIANT_TOAD_BITE: WeaponWithRider = WeaponWithRider::melee(
+pub static GIANT_TOAD_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     "bite",
     &["b", "chomp"],
     AbilityScoreType::Strength,
     Dice::new(1, 10),
     DamageType::Piercing,
-    Dice::new(1, 10),
-    DamageType::Poison,
-    "bite poison",
-);
+    &[Condition::Grappled],
+    ConditionTimer::Permanent,
+    "sticky tongue",
+)
+.against_at_most(Size::Medium)
+.plus_damage(Dice::new(1, 10), DamageType::Poison, "bite poison");
 
 /// Pseudodragon sting — DEX 1d4+2 piercing + a DC-11 CON save against
 /// magical sleep. On fail: target falls Unconscious for 1 hour OR until
@@ -10403,76 +10791,45 @@ pub static BEHIR_BITE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Behir constrict — STR 2d10+6 bludgeoning + 2d10 slashing on hit.
-/// RAW grapples Huge-or-smaller targets on hit; the grapple half isn't
-/// modeled — the constrict still lands both damage components via the
-/// dedicated action below.
-pub struct BehirConstrict {}
-
-impl Action for BehirConstrict {
-    fn name(&self) -> &str {
-        "constrict"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["c", "coil", "crush"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning, DamageType::Slashing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let target_id = first_target_id(target_ids);
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 10),
-            DamageType::Bludgeoning,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        let Some(target_id) = target_id else {
-            return effects;
-        };
-        let slash_raw = encounter.roll(&Dice::new(2, 10));
-        encounter.log(format!(
-            "  constrict slash: 2d10({}) = {} slashing",
-            slash_raw, slash_raw
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: slash_raw,
-            damage_type: DamageType::Slashing,
-        }));
-        effects
-    }
-}
-
-pub static BEHIR_CONSTRICT: LazyLock<BehirConstrict> = LazyLock::new(|| BehirConstrict {});
+/// Behir **Constrict** — 2d10+STR bludgeoning plus a flat 2d10
+/// slashing, and the coils that follow: RAW's *"the target has the
+/// Grappled condition (escape DC 16), and it has the Restrained
+/// condition until the grapple ends"*, gated at Large or smaller.
+///
+/// The grapple half used to be the missing half, and it was missing for
+/// a structural reason rather than an oversight: this was a hand-rolled
+/// fifty-line `impl Action` because no chassis could say "damage, plus
+/// damage, plus a hold". `WeaponWithCondition::plus_damage` is that
+/// chassis now, and the fifty lines are one declaration.
+///
+/// It is also the attack the behir's Swallow is waiting on. Nothing on
+/// the sheet could grapple, so the Bonus Action that eats a grappled
+/// creature had nothing to eat.
+///
+/// SRD 5.2 prints Constrict as a Strength save rather than an attack
+/// roll; the engine keeps the attack roll this shipped with, which is
+/// the 2014 wording and the convention every other grapple-on-hit in
+/// the bestiary follows. The difference is who rolls the die, not what
+/// happens when it lands.
+pub static BEHIR_CONSTRICT: WeaponWithCondition = WeaponWithCondition::melee(
+    "constrict",
+    &["c", "coil", "crush"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Bludgeoning,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "behir coils",
+)
+.against_at_most(Size::Large)
+.plus_damage(Dice::new(2, 10), DamageType::Slashing, "constrict slash");
 
 /// Behir multiattack — one bite + one constrict per Action. The
 /// signature melee burst the serpent leads with when its lightning
 /// breath is on cooldown.
 pub static BEHIR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "bite + constrict",
-    parts: vec![(&BEHIR_BITE, 1), (&*BEHIR_CONSTRICT, 1)],
+    parts: vec![(&BEHIR_BITE, 1), (&BEHIR_CONSTRICT, 1)],
 });
 
 /// Tiny Animated Object slam — STR-based 1d4+STR force. The signature
@@ -12866,12 +13223,15 @@ pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
 /// round threat is the burst from triple 30 ft reach swings, which by
 /// itself ranks among the heaviest melee profiles in the engine.
 // 30 ft RAW = reach 6 on this 2.5 ft grid.
-pub static KRAKEN_TENTACLE: SimpleWeapon = SimpleWeapon::reach_melee(
+pub static KRAKEN_TENTACLE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "kraken tentacle",
     &["kt", "tentacle-k"],
     AbilityScoreType::Strength,
     Dice::new(3, 6),
     DamageType::Bludgeoning,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "one of ten tentacles",
     6,
 );
 
@@ -16168,21 +16528,29 @@ pub static DUST_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
 
 // ─── Purple Worm ─────────────────────────────────────────────────────
 
-/// Purple Worm Bite — STR-based 3d8+STR piercing melee at reach 2
-/// (10 ft) — the gargantuan worm's signature maw can engulf a target
-/// from one tile away. Vanilla `SimpleWeapon::reach_melee`; the
-/// signature combat clause is the multi-attack pairing with the Tail
-/// Stinger and the worm's gargantuan Tunneler trait (which lives on the
-/// template as flavor only — the engine isn't 3D and doesn't model
-/// underground movement separately from surface speed).
-pub static PURPLE_WORM_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Purple Worm Bite — STR-based 3d8+STR piercing at reach 2 (10 ft),
+/// and RAW's hold: *"If the target is a Large or smaller creature, it
+/// has the Grappled condition (escape DC 19), and it has the Restrained
+/// condition until the grapple ends."*
+///
+/// The hold is the whole point of the limb. It is what the worm's
+/// Bonus Action Swallow is waiting on — RAW eats "one Large or smaller
+/// creature Grappled by the worm" and nothing else — so a bite that
+/// only dealt damage left the creature's signature clause with nothing
+/// to fire at. The Tunneler trait stays flavour on the template; the
+/// engine isn't 3D.
+pub static PURPLE_WORM_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "purple worm bite",
     &["pw-bite", "worm-bite"],
     AbilityScoreType::Strength,
     Dice::new(3, 8),
     DamageType::Piercing,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "worm jaws",
     2,
-);
+)
+.against_at_most(Size::Large);
 
 /// Purple Worm Tail Stinger — STR-based 3d6+STR piercing melee at
 /// reach 2 (10 ft), with a CON DC 19 save-or-extra-poison rider. RAW
@@ -18279,17 +18647,19 @@ pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
 /// bespoke action, so the two damage types meet the target's resistance
 /// table separately, which is the whole reason a fire-immune creature
 /// takes forty from this and not fifty.
-pub static REMORHAZ_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
+pub static REMORHAZ_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "remorhaz bite",
     &["rz-bite", "remorhaz-bite"],
     AbilityScoreType::Strength,
     Dice::new(6, 10),
     DamageType::Piercing,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "molten coils",
     2,
-    Dice::new(3, 6),
-    DamageType::Fire,
-    "superheated gullet",
-);
+)
+.against_at_most(Size::Large)
+.plus_damage(Dice::new(3, 6), DamageType::Fire, "superheated gullet");
 
 // ─── Water Weird ────────────────────────────────────────────────────
 

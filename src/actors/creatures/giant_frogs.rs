@@ -1,6 +1,6 @@
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GIANT_FROG_BITE;
+use crate::actions::monster_attacks::{GIANT_FROG_BITE, SWALLOW_ACTION};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -9,9 +9,9 @@ use std::sync::LazyLock;
 /// Giant Frog — CR ¼ medium amphibian beast. The "swamp ambusher"
 /// tier: a hopping tongue-grappler that latches onto a target on
 /// hit, then drags them back into the muck. Slots beside the Giant
-/// Toad (CR 1 Large, swallow-on-grapple) as the *smaller* / *cheaper*
-/// auto-grapple amphibian — same flavor envelope, lower CR, lower
-/// dice, no swallow. Pairs naturally as a low-tier wetland encounter
+/// Toad (CR 1 Large) as the *smaller* / *cheaper* auto-grapple
+/// amphibian — same flavour envelope, lower CR, lower dice, and a
+/// throat one size narrower. Pairs naturally as a low-tier wetland encounter
 /// with stirges, giant rats, and the troglodyte cohort.
 ///
 /// Action lane:
@@ -30,13 +30,14 @@ use std::sync::LazyLock;
 /// per-creature speed (30 walking); the swimming half survives as the
 /// tag that makes `TerrainType::Water` free to cross.
 ///
-/// The **Swallow** follow-up (RAW: bite again with a Grappled Small-
-/// or-smaller target → swallow whole, taking acid each turn) is
-/// omitted as a deliberate scope cut. The engine doesn't model the
-/// "stomach" container state, and adding one for a single CR-¼
-/// creature would be over-scope. The auto-grapple bite still carries
-/// the frog's tactical identity — pinning a low-HP target while
-/// allies close in for the kill.
+/// The **Swallow** follow-up is carried, and the frog is the place in
+/// the bestiary where its cost is clearest. Its tongue grapples
+/// anything Medium or smaller; its throat stops at **Small**. So the
+/// frog can hold a human it can never eat, and when it does find a
+/// halfling it gives up its only attack for as long as it keeps them
+/// down — a CR-¼ creature trading itself for one party member. See
+/// `GIANT_FROG_SWALLOW`, and `crate::engine::swallow` for the
+/// containment lane.
 ///
 /// Defensive identity: AC 11 (small + DEX-driven), 18 HP (4d8).
 /// Vanilla beast envelope — no resistances or condition immunities.
@@ -53,6 +54,11 @@ use std::sync::LazyLock;
 pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_FROG_BITE);
+    // RAW's Swallow is an Action for the frog, and one it can only
+    // spend on something already in its tongue. See
+    // `GIANT_FROG_SWALLOW` for what the Small-or-smaller ceiling costs
+    // it.
+    actions.push(&SWALLOW_ACTION);
     CreatureTemplate {
         name: "Giant Frog",
         // 'f' (lowercase) — small-amphibian silhouette. 'F' is taken
@@ -80,6 +86,7 @@ pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        swallow: Some(&crate::actions::monster_attacks::GIANT_FROG_SWALLOW),
         ..CreatureTemplate::defaults()
     }
 });

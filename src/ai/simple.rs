@@ -109,6 +109,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2d. Swallow the catch. Same argument as the rung above it and
+        //     one place below: a hold is worth more cashed in than kept,
+        //     and for five of the seven swallowers cashing it in is a
+        //     Bonus Action that costs the turn nothing. Below `try_reel`
+        //     because a roper's reel and a swallow never appear on the
+        //     same sheet, so the order between them is documentation
+        //     rather than arbitration. See `try_swallow`.
+        if let Some(aei) = try_swallow(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -6534,6 +6545,61 @@ fn try_reel(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExec
     aei.validate(encounter).then_some(aei)
 }
 
+/// Eat what the actor is already holding — 5e's **Swallow**.
+///
+/// Sits beside `try_reel` and one rung below it, because it is the same
+/// shape of decision: a creature that has spent an attack getting hold
+/// of somebody should cash that hold in before it swings again. For five
+/// of the seven swallowers the action is a Bonus Action, so cashing it
+/// in costs the turn nothing at all; for the frog and the toad it is the
+/// Action, and the rung still fires — a frog with a halfling in its
+/// mouth has done more with its turn than a frog that bit one again.
+///
+/// The candidate set is "every enemy `can_swallow` says yes to", which
+/// is the whole of the rule: already Grappled by *this* creature, inside
+/// the size ceiling, with room left. Nothing here re-derives any of it —
+/// the predicate that owns those gates is the same one the action's own
+/// validation calls, and a rung that asked the question a second way
+/// could get a second answer.
+///
+/// Among legal targets it takes the **healthiest**, which is the
+/// opposite of the engine's usual finish-the-wounded instinct and is
+/// right here for two reasons. A swallowed creature is removed from the
+/// fight whatever its hit points, so the swallow is worth the most
+/// against the target that had the most fight left in it; and the
+/// regurgitation clause is a damage race the swallower wins more easily
+/// against somebody who is already nearly out — eating the wounded rogue
+/// buys a round, eating the healthy one buys the fight.
+fn try_swallow(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() || actor.swallow_profile().is_none() {
+        return None;
+    }
+    let action = actor.find_action("swallow")?;
+    let my_team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team {
+            continue;
+        }
+        if encounter.can_swallow(actor_id, tid).is_err() {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = t.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
 /// Sort key for advantage-aware target selection — lower wins.
 fn mode_priority(mode: RollMode) -> u8 {
     match mode {
@@ -9305,6 +9371,59 @@ mod tests {
     /// means every attack, every spell and every approach has already
     /// failed, which is hard to arrange and easy to arrange
     /// accidentally differently.
+    /// A worm that has hold of somebody eats them, and prefers the
+    /// healthiest of the two it is holding.
+    ///
+    /// Pinned at the rung rather than driven through a whole encounter,
+    /// because arranging a grapple *and* a spare turn in a live fight is
+    /// hard to do reproducibly — and because the thing under test is the
+    /// choice between two legal targets, which a whole-encounter test
+    /// would only ever exercise by accident.
+    #[test]
+    fn a_worm_that_has_hold_of_you_would_rather_eat_you() {
+        use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+        use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::install_condition_with_link;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let worm = e
+            .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Nothing held: the rung declines and the worm goes back to
+        // biting, which is what a worm with an empty mouth should do.
+        assert!(try_swallow(&e, worm).is_none());
+
+        let hurt = e
+            .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+            .unwrap();
+        let whole = e
+            .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        for id in [hurt, whole] {
+            for effect in install_condition_with_link(
+                Condition::Grappled,
+                id,
+                worm,
+                ConditionTimer::Permanent,
+            ) {
+                effect.apply(&mut e);
+            }
+        }
+        e.actors.get_mut(&hurt).unwrap().take_damage(80);
+
+        let aei = try_swallow(&e, worm).expect("a full mouth is worth cashing in");
+        assert_eq!(aei.action().name(), "swallow");
+        assert_eq!(
+            aei.target_ids().map(|ids| ids.to_vec()),
+            Some(vec![whole]),
+            "swallowing removes a creature from the fight whatever its hit \
+             points, so it is worth most against the one with the most fight \
+             left in it"
+        );
+    }
+
     #[test]
     fn the_last_resort_holds_a_shot_before_it_ducks() {
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;

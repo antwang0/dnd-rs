@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::REMORHAZ_BITE;
+use crate::actions::monster_attacks::{REMORHAZ_BITE, SWALLOW_BONUS};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::attack::{MeleeReflect, ReflectDamage};
 use crate::engine::dice::Dice;
@@ -40,10 +40,13 @@ pub static REMORHAZ_HEATED_BODY: MeleeReflect = MeleeReflect {
 /// nothing, and fire does nothing, and every round spent in contact
 /// costs 3d6 of the second one back.
 ///
-/// RAW's **Swallow** — the bite's grapple, and the acid tick on
-/// something inside it — is the clause not carried. It needs a
-/// creature-inside-a-creature lane the engine does not have, and it is
-/// named on the bite rather than quietly dropped.
+/// RAW's **Swallow** is carried, and it is the one stomach in the book
+/// that does two things at once: 3d6 acid *plus* 3d6 fire at the start
+/// of each of the remorhaz's turns, on up to two creatures. Which means
+/// the fire immunity above cuts both ways — the remorhaz is the monster
+/// you meet in the one environment where everybody brought fire
+/// resistance, and inside it that resistance halves the tick. See
+/// `REMORHAZ_SWALLOW`.
 ///
 /// Stat shape per the SRD: AC 17 (natural armor), 195 HP (17d12+85),
 /// STR 24 / DEX 13 / CON 21 / INT 4 / WIS 10 / CHA 5. Speed 40 (plus a
@@ -53,6 +56,7 @@ pub static REMORHAZ_HEATED_BODY: MeleeReflect = MeleeReflect {
 pub static REMORHAZ_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&REMORHAZ_BITE);
+    actions.push(&SWALLOW_BONUS);
     CreatureTemplate {
         name: "Remorhaz",
         // 'R' (uppercase) — shared with the Roper and the Rogue at CRs
@@ -78,6 +82,7 @@ pub static REMORHAZ_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Fire, DamageModifier::Immunity),
         ]),
         natural_melee_reflect: Some(REMORHAZ_HEATED_BODY),
+        swallow: Some(&crate::actions::monster_attacks::REMORHAZ_SWALLOW),
         ..CreatureTemplate::defaults()
     }
 });
