@@ -776,8 +776,20 @@ pub fn render_sideinfo(
         Line::from(Span::raw(format!("AC: {}", ac))),
         Line::from(Span::raw(format!("Movement: {:.0}", movement))),
         Line::from(Span::raw(format!(
-            "Actions: {}  Bonus: {}",
-            action_slots, bonus_slots
+            "Actions: {}{}  Bonus: {}",
+            action_slots,
+            // 5e Haste. A bare "Actions: 2" on a hasted creature is a
+            // promise the action list will not keep: one of those two
+            // buys only an attack, a Dash, a Disengage or a Hide, and
+            // the player needs to know that before they plan a turn
+            // around a second Fireball. Absent — as it is for every
+            // creature that is not hasted — the line reads exactly as
+            // it always did.
+            match curr_actor.restricted_action_slots() {
+                0 => String::new(),
+                n => format!(" ({} haste)", n),
+            },
+            bonus_slots
         ))),
     ];
     // Size is fixed for all but a handful of creatures, so this line

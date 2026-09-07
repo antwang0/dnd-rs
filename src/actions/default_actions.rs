@@ -257,6 +257,14 @@ impl Action for Dash {
         "dash"
     }
 
+    /// One of the three Actions SRD 5.2 names by hand in Haste's
+    /// restricted list — the ones the default (`an attack, and only
+    /// one`) cannot recognise because they are not attacks at all.
+    fn hasted_action_eligible(&self) -> bool {
+        true
+    }
+
+
     fn is_harmful(&self) -> bool {
         // Nobody is on the receiving end of this. `is_harmful` defaults
         // to true because most actions are attacks, and these four had
@@ -515,6 +523,14 @@ impl Action for Disengage {
     fn name(&self) -> &str {
         "disengage"
     }
+
+    /// One of the three Actions SRD 5.2 names by hand in Haste's
+    /// restricted list — the ones the default (`an attack, and only
+    /// one`) cannot recognise because they are not attacks at all.
+    fn hasted_action_eligible(&self) -> bool {
+        true
+    }
+
 
     fn aliases(&self) -> Vec<&str> {
         vec!["de", "dis"]
@@ -1331,6 +1347,13 @@ impl Action for Hide {
     fn name(&self) -> &str {
         "hide"
     }
+    /// One of the three Actions SRD 5.2 names by hand in Haste's
+    /// restricted list — the ones the default (`an attack, and only
+    /// one`) cannot recognise because they are not attacks at all.
+    fn hasted_action_eligible(&self) -> bool {
+        true
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["hd"]
     }

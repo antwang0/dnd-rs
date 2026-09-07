@@ -7917,6 +7917,33 @@ impl EncounterInstance {
         }
     }
 
+    /// Install whatever `lifted` leaves behind on the creature it just
+    /// came off — see `conditions::CONDITION_AFTERMATH` for the cohort
+    /// and for why it is a table.
+    ///
+    /// Called from every path a condition can leave an actor by: the
+    /// round-end timer sweep, the concentration teardown, and the
+    /// explicit `RemoveCondition` that Dispel Magic and Cleansing Touch
+    /// go through. A no-op for the overwhelming majority of conditions,
+    /// which leave nothing behind at all.
+    pub(crate) fn apply_condition_aftermath(&mut self, actor_id: usize, lifted: Condition) {
+        for &(when, then, timer) in crate::conditions::CONDITION_AFTERMATH {
+            if when != lifted {
+                continue;
+            }
+            let Some(actor) = self.actors.get_mut(&actor_id) else {
+                return;
+            };
+            // A creature immune to the aftermath simply does not take
+            // it; `add_condition` owns that gate and reports it.
+            if !actor.add_condition(then, timer) {
+                continue;
+            }
+            let name = actor.name().to_string();
+            self.log(format!("  {} is {}.", name, then.name()));
+        }
+    }
+
     /// SRD 5.2 **Protection from Evil and Good**, asked as one question:
     /// is `protected` warded, and is `source` one of the six types the
     /// ward is written about?
@@ -15136,6 +15163,7 @@ impl EncounterInstance {
             let target_name = target.name().to_string();
             if target.remove_condition(condition) {
                 self.log(format!("{} is no longer {}.", target_name, condition.name()));
+                self.apply_condition_aftermath(target_id, condition);
             }
         }
         // Negate any flat buffs the spell installed (Bless, etc.). The
@@ -15633,6 +15661,9 @@ impl EncounterInstance {
                 && !actor.can_consume_resource(crate::engine::side_effects::Resource::LegendaryAction);
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
+                // A lapsed timer is one of the ways Haste ends, and RAW
+                // bills the holder for it whichever way that is.
+                self.apply_condition_aftermath(id, c);
             }
             // Cosmetic debug aid: flag when a legendary creature has burned
             // through all of its legendary action points for the round.

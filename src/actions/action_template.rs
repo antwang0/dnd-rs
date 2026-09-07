@@ -1181,6 +1181,38 @@ pub trait Action {
         false
     }
 
+    /// Whether **Haste**'s extra Action may be spent on this.
+    ///
+    /// SRD 5.2: *"it gains an additional action on each of its turns.
+    /// That action can be used to take only the Attack (one attack
+    /// only), Dash, Disengage, Hide, or Utilize action."* That sentence
+    /// is the whole of the spell's cost control — without it a hasted
+    /// wizard casts two Fireballs a round — and it is the reason the
+    /// extra action is a *restricted* slot rather than a second copy of
+    /// the ordinary one. See `ActorInstance::restricted_action_slots`.
+    ///
+    /// The default reads RAW's first and hardest clause off two flags
+    /// the trait already carries: an attack, and only one of them. A
+    /// multiattack is excluded by `chains_multiple_attacks`, which is
+    /// exactly RAW's parenthesis — a hasted marid gets a fourth trident
+    /// thrust, not a second set of three.
+    ///
+    /// Dash, Disengage and Hide override to `true`; they are the rest of
+    /// RAW's list and they are three actions rather than a category.
+    /// Utilize has no engine equivalent — item use here is a family of
+    /// bespoke actions rather than one verb — so it is left out, which
+    /// is the conservative direction: an action that says nothing can
+    /// never be paid for with the haste slot, and the spell is never
+    /// stronger than RAW.
+    ///
+    /// Bespoke natural weapons that leave `is_weapon_attack` false (the
+    /// trait doc says they may) inherit `false` here too. A hasted
+    /// ghoul gets a slot it cannot spend, which is a rendering of the
+    /// spell that is too weak rather than too strong.
+    fn hasted_action_eligible(&self) -> bool {
+        self.is_weapon_attack() && !self.chains_multiple_attacks()
+    }
+
     /// True if this action's primary effect is HP loss on the target.
     /// Hostile control actions like Shove return false so the AI's
     /// focus-fire pipeline doesn't pick them over attacks that actually
@@ -1649,6 +1681,21 @@ pub trait Action {
                     return false;
                 }
             }
+            // 5e **Haste**'s restricted slot. `can_consume_resource`
+            // counts Action slots and cannot tell one kind from the
+            // other — it takes a `Resource` and not an action — so the
+            // one gate that needs to know which action is being paid
+            // for lives here, at the only place that has both.
+            //
+            // Read as: an ineligible action needs an *ordinary* Action
+            // left, which is one that is not the haste grant. See
+            // `ActorInstance::restricted_action_slots`.
+            if costs.contains(&Resource::Action)
+                && !self.hasted_action_eligible()
+                && actor.action_slots() <= actor.restricted_action_slots()
+            {
+                return false;
+            }
         }
         self.custom_validate_input(
             encounter,
@@ -1935,10 +1982,22 @@ pub trait Action {
         );
         side_effects.append(&mut post_cast_effects);
         for cost in costs {
-            side_effects.push(Box::new(ConsumeResource {
-                actor_id: caster_id,
-                resource: cost,
-            }));
+            // An Action spend is billed through the typed path so
+            // Haste's restricted slot is cashed by the actions RAW lets
+            // it buy, rather than being left for last by a spender that
+            // does not know what it is paying for. Everything else goes
+            // out as a plain `ConsumeResource`.
+            side_effects.push(if cost == Resource::Action {
+                Box::new(crate::engine::side_effects::SpendActionSlot {
+                    actor_id: caster_id,
+                    hasted_eligible: self.hasted_action_eligible(),
+                }) as Box<dyn ApplicableSideEffect>
+            } else {
+                Box::new(ConsumeResource {
+                    actor_id: caster_id,
+                    resource: cost,
+                })
+            });
         }
         side_effects
     }

@@ -1294,17 +1294,26 @@ pub static USE_SUPREME_PEARL_OF_POWER: PearlOfPowerItem = PearlOfPowerItem {
     slot_level: 3,
 };
 
-/// Boots of Speed — Bonus Action; installs the `Hasted` condition for 10
-/// rounds (+2 AC, advantage on DEX saves, doubled walking speed). Single-
-/// use consumable. Re-uses the Haste condition so the AC / DEX-save /
-/// speed bundle flows through the same accessors a normal Haste cast
-/// does. Fires through the shared `SelfConditionItem` impl.
+/// Boots of Speed — Bonus Action; installs `Fleet` for 10 rounds, which
+/// is RAW's whole first sentence: *"your walking speed is doubled."*
+/// Single-use consumable, fired through the shared `SelfConditionItem`
+/// impl.
+///
+/// It used to install `Hasted` and this docstring used to say so, on the
+/// grounds that the condition was a convenient bundle of AC, Dexterity
+/// saves and speed. RAW's boots grant none of the first two, and once
+/// `Hasted` grew the spell's extra Action the borrowed bundle would have
+/// handed a bonus-action item a third of a third-level spell. See
+/// `Condition::Fleet`.
+///
+/// Not modeled: RAW's second sentence, "opportunity attacks against you
+/// have disadvantage".
 pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
     action_name: "wear boots of speed",
     action_aliases: &["boots", "speedboots"],
     item_name: BOOTS_OF_SPEED_NAME,
     log_text: "{actor} taps the heels of the boots of speed; everything blurs.",
-    condition: Condition::Hasted,
+    condition: Condition::Fleet,
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,

@@ -14354,6 +14354,206 @@ fn warded_target_taxes_an_aberration_the_proxy_missed() {
     );
 }
 
+/// 5e **Haste**: *"it gains an additional action on each of its
+/// turns."* Granted at the holder's own turn start, because RAW says
+/// each of its turns and the cast happens on somebody else's.
+#[test]
+fn a_hasted_creature_opens_its_turn_with_two_actions() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let actor = e.actors.get_mut(&fighter).unwrap();
+    actor.reset_for_new_round();
+    assert_eq!(actor.action_slots(), 1);
+    assert_eq!(actor.restricted_action_slots(), 0);
+    actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+    actor.reset_for_new_round();
+    assert_eq!(actor.action_slots(), 2, "haste grants a second Action");
+    assert_eq!(
+        actor.restricted_action_slots(),
+        1,
+        "and exactly one of the two is the restricted one"
+    );
+}
+
+/// The grant does not accumulate. Three turns hasted is one extra
+/// Action per turn, not three of them banked.
+#[test]
+fn the_haste_action_does_not_pile_up_across_turns() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let actor = e.actors.get_mut(&fighter).unwrap();
+    actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+    for _ in 0..3 {
+        actor.reset_for_new_round();
+    }
+    assert_eq!(actor.action_slots(), 2);
+    assert_eq!(actor.restricted_action_slots(), 1);
+}
+
+/// RAW's cost control: *"That action can be used to take only the
+/// Attack (one attack only), Dash, Disengage, Hide, or Utilize
+/// action."* A hasted wizard does not cast two Fireballs.
+#[test]
+fn the_haste_action_cannot_buy_a_second_spell() {
+    use crate::actions::spells::{FIREBALL, MAGIC_MISSILE};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(25, 25, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    {
+        let actor = e.actors.get_mut(&wizard).unwrap();
+        actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+        actor.reset_for_new_round();
+    }
+    // Both slots are up: the first leveled spell is fine.
+    let first = ActionExecutionInfo::new(
+        &*FIREBALL,
+        wizard,
+        None,
+        Some(vec![Coordinate::new(8, 2)]),
+        None,
+    );
+    assert!(first.validate(&e), "the ordinary Action pays for this one");
+    e.push_action(first);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&wizard].action_slots(),
+        1,
+        "one Action left, and it is the haste one"
+    );
+    assert_eq!(e.actors[&wizard].restricted_action_slots(), 1);
+    let second =
+        ActionExecutionInfo::new(&*MAGIC_MISSILE, wizard, Some(vec![goblin]), None, None);
+    assert!(
+        !second.validate(&e),
+        "haste's action does not buy a second spell"
+    );
+}
+
+/// The other half of that rule: the restricted slot is real, and an
+/// eligible action can spend it. A hasted creature takes two of them.
+///
+/// Dash rather than a swing, because Dash is one of the three Actions
+/// RAW names in the restricted list by hand and it needs neither a
+/// target nor a target that survives the first one.
+#[test]
+fn the_haste_action_does_buy_a_second_eligible_action() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    {
+        let actor = e.actors.get_mut(&fighter).unwrap();
+        actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+        actor.reset_for_new_round();
+    }
+    let dash = e.actors[&fighter]
+        .find_action("dash")
+        .expect("every creature carries Dash");
+    for _ in 0..2 {
+        let aei = ActionExecutionInfo::new(dash, fighter, None, None, None);
+        assert!(aei.validate(&e), "both slots pay for a Dash");
+        e.push_action(aei);
+        e.process_stack();
+    }
+    assert_eq!(e.actors[&fighter].action_slots(), 0);
+    assert_eq!(e.actors[&fighter].restricted_action_slots(), 0);
+}
+
+/// The ordering that a naive "spend the restricted one last" rule gets
+/// wrong: take the eligible action first, then cast. The Dash should
+/// have been billed to the haste slot, leaving the ordinary Action for
+/// the spell.
+#[test]
+fn dashing_first_still_leaves_a_hasted_caster_its_spell() {
+    use crate::actions::spells::MAGIC_MISSILE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    {
+        let actor = e.actors.get_mut(&wizard).unwrap();
+        actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+        actor.reset_for_new_round();
+    }
+    let dash = e.actors[&wizard].find_action("dash").unwrap();
+    let aei = ActionExecutionInfo::new(dash, wizard, None, None, None);
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&wizard].restricted_action_slots(),
+        0,
+        "the Dash should have cashed the haste slot"
+    );
+    let spell =
+        ActionExecutionInfo::new(&*MAGIC_MISSILE, wizard, Some(vec![goblin]), None, None);
+    assert!(
+        spell.validate(&e),
+        "the ordinary Action is still there to pay for the spell"
+    );
+}
+
+/// The bill. SRD 5.2: *"When the spell ends, the target is
+/// Incapacitated and has a Speed of 0 until the end of its next turn."*
+///
+/// Driven through the concentration teardown, which is one of the four
+/// ways Haste can end — the point of `CONDITION_AFTERMATH` being a
+/// table is that the other three charge it too.
+#[test]
+fn haste_ending_leaves_the_holder_lethargic() {
+    use crate::actions::spells::HASTE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.push_action(ActionExecutionInfo::new(
+        &*HASTE,
+        wizard,
+        Some(vec![fighter]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(e.actors[&fighter].has_condition(Condition::Hasted));
+    e.drop_concentration(wizard);
+    assert!(!e.actors[&fighter].has_condition(Condition::Hasted));
+    assert!(
+        e.actors[&fighter].has_condition(Condition::Lethargic),
+        "the wave of lethargy is RAW and is the spell's whole cost"
+    );
+    // And it does what RAW says it does.
+    assert_eq!(e.actors[&fighter].remaining_movement(), 0.0);
+    assert!(
+        !e.actors[&fighter]
+            .can_consume_resource(crate::engine::side_effects::Resource::Action)
+    );
+}
+
 /// Dispel Evil and Good's duration clause is the ward, and it lands
 /// whether or not there is anything adjacent to dismiss — RAW's range is
 /// Self, and a spell that refused to go up in an empty corridor would be
@@ -46908,11 +47108,18 @@ fn scroll_of_mass_healing_word_heals_allies_and_consumes() {
     );
 }
 
-/// Boots of Speed: bonus-action consumable that installs `Hasted`
-/// for 10 rounds and removes the boots from inventory. Verifies the
-/// condition installs and the item is consumed.
+/// Boots of Speed: bonus-action consumable that installs `Fleet` for
+/// 10 rounds and removes the boots from inventory.
+///
+/// `Fleet` and not `Hasted`, which is what it used to install. RAW's
+/// boots read "your walking speed is doubled" and stop there; borrowing
+/// the spell's condition for that one clause also handed the wearer +2
+/// AC, advantage on Dexterity saves and — once the spell's own extra
+/// Action landed — a second Action every round, off a bonus action and
+/// no spell slot. The doubled speed is asserted here alongside the
+/// install, because it is the only clause either printing agrees on.
 #[test]
-fn boots_of_speed_install_hasted_and_consume() {
+fn boots_of_speed_install_fleet_and_consume() {
     use crate::actions::action_template::Action;
     use crate::actions::item_actions::WEAR_BOOTS_OF_SPEED;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -46923,15 +47130,25 @@ fn boots_of_speed_install_hasted_and_consume() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
     e.actors.get_mut(&fighter).unwrap().pickup_item(&BOOTS_OF_SPEED);
-    assert!(!e.actors[&fighter].has_condition(Condition::Hasted));
+    assert!(!e.actors[&fighter].has_condition(Condition::Fleet));
+    let base_speed = e.actors[&fighter].speed();
 
     let action: &dyn Action = &WEAR_BOOTS_OF_SPEED;
     for ef in action.side_effects(&mut e, fighter, None, None, None) {
         ef.apply(&mut e);
     }
     assert!(
-        e.actors[&fighter].has_condition(Condition::Hasted),
-        "boots should install Hasted"
+        e.actors[&fighter].has_condition(Condition::Fleet),
+        "boots should install Fleet"
+    );
+    assert_eq!(
+        e.actors[&fighter].speed(),
+        base_speed * 2.0,
+        "which is RAW's whole first sentence"
+    );
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Hasted),
+        "and none of the spell that used to come with it"
     );
     assert!(
         !e.actors[&fighter].has_item_named("Boots of Speed"),

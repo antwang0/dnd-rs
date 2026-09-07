@@ -332,13 +332,74 @@ pub enum Condition {
     /// movement-zero mechanic and keep this distinct so the log makes
     /// the cause obvious.
     Adhered,
-    /// Hasted (5e Haste spell, concentration). +2 AC, advantage on DEX
-    /// saves, doubled walking speed. We don't model the extra-action
-    /// rider (action economy stays one Action per turn) — the AC + DEX
-    /// save half is the load-bearing part for survivability and the
-    /// doubled speed lets the holder reposition aggressively. Cleared
-    /// when the caster's concentration ends.
+    /// Hasted — SRD 5.2 **Haste**, concentration.
+    ///
+    /// All four of RAW's clauses ship: +2 AC, advantage on Dexterity
+    /// saves, doubled speed, and *"it gains an additional action on
+    /// each of its turns."*
+    ///
+    /// The fourth one is the spell, and it was the one this condition
+    /// did not carry — the docstring here said so and called the other
+    /// three "the load-bearing part", which is a fair description of
+    /// what was left after the headline clause was dropped. It is
+    /// granted at the holder's own turn start (RAW says *each* of its
+    /// turns, and the cast happens on somebody else's) as a
+    /// **restricted** Action slot: RAW's sentence continues *"That
+    /// action can be used to take only the Attack (one attack only),
+    /// Dash, Disengage, Hide, or Utilize action"*, which is the whole
+    /// of the spell's cost control. See
+    /// `Action::hasted_action_eligible` for what clears that bar and
+    /// `ActorInstance::restricted_action_slots` for how the two kinds
+    /// of Action slot share one pool.
+    ///
+    /// Cleared when the caster's concentration ends — and clearing it
+    /// costs the holder something, which is the other half of RAW this
+    /// condition did not carry. See `Condition::Lethargic`.
     Hasted,
+    /// Moving at twice your walking speed, and nothing else.
+    ///
+    /// The narrow sibling of `Hasted`, and it exists because `Hasted`
+    /// stopped being a bundle and became a spell. Boots of Speed and
+    /// the Alchemist's Swiftness elixir both used to install `Hasted`
+    /// for its speed clause, each with a docstring admitting that the
+    /// AC and Dexterity-save clauses "come along". Once `Hasted` also
+    /// carried an extra Action every round and a wave of lethargy at
+    /// the end, coming along was no longer a rounding error: a pair of
+    /// boots would have handed out a third of the Haste spell's action
+    /// economy for a bonus action and no slot.
+    ///
+    /// So it is one clause, and both users are *more* faithful for it
+    /// than they were. RAW's boots read "your walking speed is doubled"
+    /// and RAW's elixir reads "+10 feet of walking speed"; neither
+    /// mentions armour class or saving throws at all.
+    ///
+    /// Not modeled from the boots: RAW's second sentence, "opportunity
+    /// attacks against you have disadvantage".
+    Fleet,
+    /// The bill for Haste. SRD 5.2: *"When the spell ends, the target
+    /// is Incapacitated and has a Speed of 0 until the end of its next
+    /// turn, as a wave of lethargy washes over it."*
+    ///
+    /// Its own condition rather than `Incapacitated` plus something,
+    /// because RAW's sentence is two clauses and the engine's
+    /// `Incapacitated` is only the first of them (it deliberately
+    /// leaves movement alone — that is what distinguishes it from
+    /// `Stunned`). `Stunned` would have been the other candidate and is
+    /// strictly worse: it also hands every attacker advantage and
+    /// auto-fails the holder's Strength and Dexterity saves, neither of
+    /// which RAW's lethargy does.
+    ///
+    /// Installed wherever `Hasted` comes off — a lapsed timer, a broken
+    /// concentration, a Dispel Magic — through the shared
+    /// `CONDITION_AFTERMATH` table, so the spell's downside cannot be
+    /// dodged by ending it a way nobody thought of.
+    ///
+    /// The timer is `UntilStartOfNextTurn`, which is a half-round short
+    /// of RAW's "until the end of its next turn" and is the engine's
+    /// nearest expressible window. It costs the holder their next turn,
+    /// which is the clause's whole point; RAW would also cost them the
+    /// walk back to cover afterwards.
+    Lethargic,
     /// Slowed (5e Slow spell). Halved walking speed, -2 AC, -2 DEX
     /// saves. The 5e spell also halves the holder's action economy
     /// (no reactions, can only cast a 1-action spell *or* attack);
@@ -2728,7 +2789,9 @@ impl Condition {
             Condition::Blurred => "blurred",
             Condition::Adhered => "stuck",
             Condition::Hasted => "hasted",
+            Condition::Fleet => "fleet",
             Condition::Slowed => "slowed",
+            Condition::Lethargic => "lethargic",
             Condition::DeathWarded => "warded against death",
             Condition::Petrified => "petrified",
             Condition::Sanctuary => "sanctified",
@@ -3005,6 +3068,10 @@ impl Condition {
                 // incapacitated". The clause is the small half of the
                 // condition — see `removes_from_board` for the rest.
                 | Condition::Banished
+                // 5e Haste's lethargy: "the target is Incapacitated and
+                // has a Speed of 0". This cohort is the first half of
+                // that sentence; `zeros_movement` is the second.
+                | Condition::Lethargic
         )
     }
 
@@ -3044,6 +3111,7 @@ impl Condition {
                 | Condition::MageArmored
                 | Condition::Heroic
                 | Condition::Hasted
+                | Condition::Fleet
                 | Condition::Hidden
                 | Condition::Invisible
                 | Condition::DamageResistant
@@ -3372,6 +3440,7 @@ impl Condition {
                 | Condition::Mazed
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
+                | Condition::Lethargic
                 | Condition::EarthenGrasped
                 | Condition::Rooted
                 | Condition::WaterSphered
@@ -3731,6 +3800,34 @@ pub const ARCANE_SHOTS: &[Condition] = &[
     Condition::ArcaneShotGrasping,
     Condition::ArcaneShotShadow,
 ];
+
+/// Conditions that **leave something behind when they lift**.
+///
+/// One row today, and it is the shape the table exists for: SRD 5.2
+/// Haste's *"When the spell ends, the target is Incapacitated and has a
+/// Speed of 0 until the end of its next turn, as a wave of lethargy
+/// washes over it."*
+///
+/// A table rather than a clause at the one place Haste can end, because
+/// Haste can end in at least four places — a lapsed `Rounds` timer, a
+/// broken concentration, a Dispel Magic, a second concentration spell
+/// displacing the first — and a downside that only fires down one of
+/// those paths is a downside a player learns to route around. Every
+/// removal path in the engine funnels through
+/// `EncounterInstance::apply_condition_aftermath`, so a fifth path
+/// added tomorrow inherits the clause for free.
+///
+/// Deliberately narrow. This is not a general "condition ends → do
+/// something" hook; it is the cohort whose *own printed text* names a
+/// consequence of ending, which in SRD 5.2 is a short list. A condition
+/// whose teardown needs to touch anything but the holder's own
+/// condition set belongs in a rollback lane (`ConcentrationData`) rather
+/// than here.
+pub const CONDITION_AFTERMATH: &[(Condition, Condition, ConditionTimer)] = &[(
+    Condition::Hasted,
+    Condition::Lethargic,
+    ConditionTimer::UntilStartOfNextTurn,
+)];
 
 /// How long a condition application persists. `Permanent` requires an
 /// explicit removal (e.g. Stand-up clears Prone, Lesser Restoration clears

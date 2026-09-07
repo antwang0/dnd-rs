@@ -354,6 +354,41 @@ impl ApplicableSideEffect for ConsumeResource {
     }
 }
 
+/// Spend one Action slot, saying what it is being spent on.
+///
+/// The typed sibling of `ConsumeResource { resource: Action }`, and the
+/// reason it exists is 5e **Haste**: the extra action it grants may only
+/// buy part of the action list, so the spender has to know which part it
+/// is paying for. `ConsumeResource` takes a `Resource` and cannot know;
+/// this carries the one bit that decides which of the actor's two kinds
+/// of Action slot gets cashed.
+///
+/// Emitted by `Action::execute`'s cost tail for every declared Action
+/// cost, so every action an actor *declares* takes this path. The
+/// untyped path stays for the handful of sites that spend an Action from
+/// outside the action pipeline, and it errs the safe way — see
+/// `ActorInstance::consume_resource`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpendActionSlot {
+    pub actor_id: usize,
+    /// Whether Haste's restricted slot may pay for this — see
+    /// `Action::hasted_action_eligible`.
+    pub hasted_eligible: bool,
+}
+
+impl ApplicableSideEffect for SpendActionSlot {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.spend_action_slot(self.hasted_eligible);
+        } else {
+            ei.log(format!(
+                "SpendActionSlot: actor {} missing, ignoring",
+                self.actor_id
+            ));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GiveResource {
     pub actor_id: usize,
@@ -1751,6 +1786,10 @@ impl ApplicableSideEffect for RemoveCondition {
             return;
         }
         announce_condition_lifted(ei, self.actor_id, &name, self.condition);
+        // The third of the three ways a condition can leave an actor —
+        // an explicit strip, which is what Dispel Magic and Cleansing
+        // Touch are. See `EncounterInstance::apply_condition_aftermath`.
+        ei.apply_condition_aftermath(self.actor_id, self.condition);
     }
 }
 

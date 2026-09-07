@@ -2137,7 +2137,13 @@ struct ConditionSpeedMultiplier {
 ///     Laughter / Flesh to Stone.
 const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
     ConditionSpeedMultiplier {
-        flag: |a| a.has_condition(Condition::Hasted),
+        // One row for both of the engine's doubled-speed conditions —
+        // the Haste spell and the narrower `Fleet` the boots and the
+        // Swiftness elixir install. Deliberately one row and not two:
+        // a creature that somehow held both would otherwise move at
+        // four times its speed, and no printing of either effect says
+        // it stacks with the other.
+        flag: |a| a.has_condition(Condition::Hasted) || a.has_condition(Condition::Fleet),
         factor: 2.0,
     },
     ConditionSpeedMultiplier {
@@ -4637,6 +4643,19 @@ pub struct ActorInstance {
     hitpoints: u32,
     movement: f32,
     action_slots: u32,
+    /// How many of `action_slots` are **Haste** slots — Actions that
+    /// may only be spent on what SRD 5.2 lets the spell's extra action
+    /// buy. See `restricted_action_slots` and
+    /// `Action::hasted_action_eligible`.
+    ///
+    /// A count of a subset rather than a second pool, because the two
+    /// kinds are interchangeable in one direction: an eligible action
+    /// can be paid for with either, so keeping one pool and marking how
+    /// much of it is restricted means every existing reader of
+    /// `action_slots` — the AI's "can I still act?" gates, the prompt,
+    /// the resource display — keeps giving the same answer it always
+    /// did.
+    restricted_action_slots: u32,
     bonus_action_slots: u32,
     reaction_slots: u32,
     legendary_action_slots: u32,
@@ -5340,6 +5359,7 @@ impl ActorInstance {
             hitpoints: hp_roll_val,
             movement: 0.0,
             action_slots: 0,
+            restricted_action_slots: 0,
             bonus_action_slots: 0,
             reaction_slots: 0,
             legendary_action_slots: 0,
@@ -8597,7 +8617,16 @@ impl ActorInstance {
             Resource::SpellSlot(lvl) => {
                 self.spell_slot_manager.consume_spell_slot(lvl);
             }
-            Resource::Action => self.action_slots -= 1,
+            // The untyped spend: it does not know what the Action is
+            // being used for, so it assumes the worst and leaves the
+            // restricted slot for last. `spend_action_slot` is the
+            // typed path every declared action takes, and it is what
+            // lets an eligible one cash the haste slot first.
+            Resource::Action => {
+                self.action_slots -= 1;
+                self.restricted_action_slots =
+                    self.restricted_action_slots.min(self.action_slots);
+            }
             Resource::BonusAction => self.bonus_action_slots -= 1,
             Resource::Reaction => self.reaction_slots -= 1,
             Resource::LegendaryAction => self.legendary_action_slots -= 1,
@@ -9792,6 +9821,18 @@ impl ActorInstance {
         self.break_run();
         self.movement_spent_this_turn = 0.0;
         self.action_slots = 1;
+        // A haste slot is granted per turn and does not accumulate: the
+        // grant is re-made below, and last turn's unspent one is gone.
+        self.restricted_action_slots = 0;
+        // 5e **Haste**: "it gains an additional action on each of its
+        // turns." Granted here rather than at the cast, because RAW
+        // says *each* of its turns and the cast happens on somebody
+        // else's. What the extra Action may buy is the restricted half
+        // — see `Action::hasted_action_eligible`.
+        if self.conditions.contains_key(&Condition::Hasted) {
+            self.action_slots += 1;
+            self.restricted_action_slots += 1;
+        }
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         self.legendary_action_slots = self.legendary_actions_per_round;
@@ -9803,6 +9844,7 @@ impl ActorInstance {
         // start-of-turn cleanup is the action-loss half.
         if self.conditions.remove(&Condition::MindWhipped).is_some() {
             self.action_slots = 0;
+            self.restricted_action_slots = 0;
         }
         // Once-per-turn attack-rider ledger — every entry in
         // `ONCE_PER_TURN_RIDER_TAGS` (Sneak Attack, Colossus Slayer,
@@ -9915,6 +9957,44 @@ impl ActorInstance {
     /// d4 average) when the actor is Blessed; otherwise 0.
     pub fn bless_bonus(&self) -> i32 {
         if self.is_blessed() { 2 } else { 0 }
+    }
+
+    /// How many of this actor's remaining Action slots are Haste's, and
+    /// therefore spendable only on what SRD 5.2 lets the spell's extra
+    /// action buy.
+    ///
+    /// The number every gate on the restricted lane is written against:
+    /// an action that is not `hasted_action_eligible` needs
+    /// `action_slots() > restricted_action_slots()`, which is "there is
+    /// an ordinary Action left under the haste one".
+    pub fn restricted_action_slots(&self) -> u32 {
+        self.restricted_action_slots
+    }
+
+    /// Spend one Action slot, saying whether the thing being paid for
+    /// is one Haste's extra action may buy.
+    ///
+    /// The ordering is the whole content of this function, and it is
+    /// what a naive "spend the restricted one last" rule gets wrong: a
+    /// hasted fighter who swings *first* and then wants to cast has an
+    /// ordinary Action left, because the swing should have been billed
+    /// to the haste slot. So an eligible action cashes the restricted
+    /// slot while one is available, and an ineligible one takes an
+    /// ordinary slot and re-clamps.
+    ///
+    /// Returns false when there was nothing to spend.
+    pub fn spend_action_slot(&mut self, eligible: bool) -> bool {
+        if self.action_slots == 0 {
+            return false;
+        }
+        self.action_slots -= 1;
+        if eligible && self.restricted_action_slots > 0 {
+            self.restricted_action_slots -= 1;
+        } else {
+            self.restricted_action_slots =
+                self.restricted_action_slots.min(self.action_slots);
+        }
+        true
     }
 
     pub fn action_slots(&self) -> u32 {

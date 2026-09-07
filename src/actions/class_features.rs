@@ -17995,11 +17995,13 @@ const EXPERIMENTAL_ELIXIRS: &[(&str, ElixirEffect)] = &[
     (
         "swiftness",
         // RAW Swiftness is "+10 ft walking speed for 1 hour", which is
-        // the `Hasted` condition's speed clause; the condition's AC and
-        // DEX-save clauses come along, which makes this row the
-        // strongest of the three and is why it is one roll in three
-        // rather than a choice.
-        ElixirEffect::Posture(Condition::Hasted, ConditionTimer::Rounds(10)),
+        // the doubled-speed clause and nothing else. It used to borrow
+        // `Hasted` and pick up that condition's AC and Dexterity-save
+        // clauses on the way past; `Fleet` is the clause on its own,
+        // which is both closer to RAW and no longer a way for one of
+        // three elixir rolls to hand out the Haste spell's extra
+        // Action.
+        ElixirEffect::Posture(Condition::Fleet, ConditionTimer::Rounds(10)),
     ),
     (
         "resilience",

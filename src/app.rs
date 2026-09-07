@@ -566,8 +566,25 @@ impl App {
                     .get(&caster_id)
                     .is_none_or(|a| !a.can_consume_resource(**c))
             });
+            // 5e Haste's restricted slot. The actor has an Action —
+            // `can_consume_resource` says so, because it counts slots
+            // and cannot tell one kind from the other — and still
+            // cannot spend it on this. Without this arm the player is
+            // told "no targets in reach" while looking at a panel that
+            // says two Actions and an enemy standing in front of them,
+            // which is the exact confusion the affordability branch
+            // above exists to prevent.
+            let blocked_by_haste = costs.contains(&crate::engine::side_effects::Resource::Action)
+                && !action.hasted_action_eligible()
+                && self
+                    .encounter
+                    .actors
+                    .get(&caster_id)
+                    .is_some_and(|a| a.action_slots() <= a.restricted_action_slots());
             let reason = if let Some(c) = unaffordable_cost {
                 c.lack_description()
+            } else if blocked_by_haste {
+                "only haste's action is left (attack, dash, disengage or hide)".to_string()
             } else {
                 "no targets in reach".to_string()
             };

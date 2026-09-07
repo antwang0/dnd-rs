@@ -18215,4 +18215,79 @@ mod tests {
         }
     }
 
+    /// 5e **Haste**'s extra action, seen from where it actually has to
+    /// work: an AI turn.
+    ///
+    /// The slot is granted at turn start and gated at validate time, and
+    /// neither of those is worth anything unless the ladder reaches for
+    /// the second action once the first is spent. It does — the engine
+    /// re-prompts while a slot remains, which is the same path Action
+    /// Surge has always taken — and this is what says so.
+    ///
+    /// Counted as declared Actions rather than as damage, because what
+    /// is being asserted is the action economy: a hasted creature takes
+    /// two Actions on the turn where an unhasted one takes a single
+    /// Action.
+    ///
+    /// An ogre rather than a fighter, deliberately. A fighter carries
+    /// Action Surge, which grants an extra Action of its own, so the
+    /// control arm would already read two and the test would prove
+    /// nothing.
+    #[test]
+    fn a_hasted_creature_takes_two_actions_on_its_turn() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        fn actions_taken_in_one_turn(hasted: bool) -> usize {
+            let mut e = empty_arena();
+            let fighter = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+                .unwrap();
+            {
+                let actor = e.actors.get_mut(&fighter).unwrap();
+                if hasted {
+                    actor.add_condition(Condition::Hasted, ConditionTimer::Rounds(10));
+                }
+                actor.reset_for_new_round();
+            }
+            let mut taken = 0usize;
+            for _ in 0..20 {
+                e.process_stack();
+                let Some(prompt) = e.peek_prompt() else { break };
+                if prompt.actor_id() != fighter {
+                    break;
+                }
+                match SimpleAi.decide(&e, fighter) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        let costs_action = aei
+                            .action()
+                            .cost(&e, fighter, None, None, None)
+                            .contains(&crate::engine::side_effects::Resource::Action);
+                        if costs_action {
+                            taken += 1;
+                        }
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            taken
+        }
+
+        assert_eq!(
+            actions_taken_in_one_turn(false),
+            1,
+            "an unhasted ogre has one Action and takes it"
+        );
+        assert_eq!(
+            actions_taken_in_one_turn(true),
+            2,
+            "a hasted one has two and should take both"
+        );
+    }
+
 }
