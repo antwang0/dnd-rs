@@ -1129,7 +1129,31 @@ impl ApplicableSideEffect for DealDamage {
                     ei.drop_concentration(self.actor_id);
                 }
             }
-            DamageOutcome::Reduced | DamageOutcome::DyingFailure => {}
+            DamageOutcome::DyingFailure => {
+                // SRD 5.2: *"If you take any damage while you have 0 Hit
+                // Points, you suffer a death saving throw failure. If
+                // the damage is from a Critical Hit, you suffer two
+                // failures instead."*
+                //
+                // `take_damage` charged the first one. This is the
+                // second, and it is the reason the critical-hit guard
+                // exists at all beyond Undead Fortitude: a downed
+                // creature is auto-crit by anything swinging at it from
+                // within five feet, so RAW's finishing rule is that two
+                // melee hits on a body on the floor kill it.
+                if landed > 0
+                    && ei.in_critical_hit()
+                    && let Some(actor) = ei.get_actor(self.actor_id)
+                    && actor.suffer_death_save_failures(1)
+                {
+                    let name = ei.actor_name(self.actor_id);
+                    ei.log(format!(
+                        "  {} takes a critical hit while down — two failures.",
+                        name
+                    ));
+                }
+            }
+            DamageOutcome::Reduced => {}
         }
         // 5e Warding Bond reflect: mirror the post-resistance damage onto
         // the bonding partner. Skip when the partner is the actor itself

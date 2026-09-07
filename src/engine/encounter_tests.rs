@@ -85753,6 +85753,108 @@ fn radiant_damage_puts_a_zombie_down_for_good() {
     }
 }
 
+/// SRD 5.2: *"Three Failures. You die."* Three blows on a body already
+/// at 0 hit points is three failures, and the third one is fatal.
+///
+/// This used to be off by a whole outcome. The failure count climbed
+/// past three and nothing looked at the ceiling until the creature's
+/// next death saving throw — which it could pass, or roll a natural 20
+/// on and stand straight back up, having been beaten unconscious four
+/// times over in the interval.
+#[test]
+fn three_blows_on_a_downed_creature_kill_it() {
+    use crate::engine::side_effects::DealDamage;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hp = e.actors[&fighter].hitpoints();
+    DealDamage {
+        actor_id: fighter,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&fighter].is_dying(), "down but not out");
+    for expected_failures in 1..=2 {
+        DealDamage {
+            actor_id: fighter,
+            amount: 1,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&fighter].death_save_record().1,
+            expected_failures,
+            "each blow is one failure"
+        );
+    }
+    DealDamage {
+        actor_id: fighter,
+        amount: 1,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    e.cleanup_dead_actors();
+    assert!(
+        e.actors
+            .get(&fighter)
+            .is_none_or(|a| matches!(a.hp_state(), crate::actors::actor_template::HpState::Dead)),
+        "the third failure is death"
+    );
+}
+
+/// SRD 5.2: *"If the damage is from a Critical Hit, you suffer two
+/// failures instead."*
+///
+/// Which is the finishing rule the whole engine hangs off, because a
+/// downed creature is auto-crit by anything swinging at it from within
+/// five feet: two melee hits on a body on the floor kill it.
+#[test]
+fn a_critical_hit_on_a_downed_creature_costs_two_failures() {
+    use crate::engine::side_effects::{CriticalDamage, DealDamage};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hp = e.actors[&fighter].hitpoints();
+    DealDamage {
+        actor_id: fighter,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&fighter].is_dying());
+    CriticalDamage(DealDamage {
+        actor_id: fighter,
+        amount: 1,
+        damage_type: DamageType::Slashing,
+    })
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&fighter].death_save_record().1,
+        2,
+        "a crit is worth two of them"
+    );
+    // And the second one finishes the job.
+    CriticalDamage(DealDamage {
+        actor_id: fighter,
+        amount: 1,
+        damage_type: DamageType::Slashing,
+    })
+    .apply(&mut e);
+    e.cleanup_dead_actors();
+    assert!(
+        e.actors.get(&fighter).is_none_or(|a| matches!(
+            a.hp_state(),
+            crate::actors::actor_template::HpState::Dead
+        )),
+        "two critical hits on a downed creature are four failures"
+    );
+}
+
 /// RAW's other exemption: *"unless the damage is … from a Critical
 /// Hit."* A blow that crit finishes a zombie, and there is no save.
 ///

@@ -6758,11 +6758,18 @@ impl Action for Blur {
 pub static BLUR: LazyLock<Blur> = LazyLock::new(|| Blur {});
 
 /// Haste — level-3 transmutation, concentration. Target one willing
-/// ally (or self with no args): they gain +2 AC, advantage on DEX saves,
-/// and double walking speed for up to 10 rounds. We don't model the
-/// extra-Action rider (would require a second Action slot the engine
-/// doesn't currently track); the AC + DEX save + speed half is the
-/// load-bearing part for repositioning support casters.
+/// ally (or self with no args): +2 AC, advantage on Dexterity saves,
+/// doubled walking speed, and an extra Action on each of their turns
+/// that buys an attack, a Dash, a Disengage or a Hide.
+///
+/// All four clauses live on `Condition::Hasted`, including the extra
+/// Action — the restricted-slot lane it needed is
+/// `ActorInstance::restricted_action_slots`, and this docstring spent a
+/// long time saying the rider "would require a second Action slot the
+/// engine doesn't currently track". So does the bill: dropping the
+/// concentration leaves the target `Lethargic`, which is RAW's wave of
+/// lethargy and is the reason the spell is a decision rather than a
+/// free +2.
 ///
 /// Targeting is `SingleActor` (the AI typically buffs the lead melee
 /// attacker). Cleared cleanly when concentration drops.
@@ -6840,10 +6847,17 @@ pub static HASTE: LazyLock<Haste> = LazyLock::new(|| Haste {});
 
 /// Slow — level-3 transmutation, concentration. Target a 40-ft cube;
 /// every enemy within takes a WIS save vs the caster's spell DC. On
-/// fail: Slowed for up to 10 rounds (−2 AC, halved speed, disadvantage
-/// on DEX saves; we skip the action-economy half of the 5e effect to
-/// keep AI behavior predictable). Hostile-only — allies in the cube
+/// fail: Slowed for up to 10 rounds. Hostile-only — allies in the cube
 /// are spared by the caster-team filter.
+///
+/// The whole of RAW's envelope now rides `Condition::Slowed`: −2 AC,
+/// halved speed, disadvantage on Dexterity saves, no reactions, an
+/// action *or* a bonus action but not both, and one attack instead of a
+/// routine. This docstring used to say the action-economy half was
+/// skipped "to keep AI behavior predictable", which left the spell
+/// buying a −2 to two rolls for a third-level slot and the caster's
+/// concentration. Each affected target rolls the save again at the end
+/// of its turns, per RAW — see `ROUND_END_SAVES`.
 ///
 /// Like Faerie Fire, this picks the burst origin via SinglePoint and
 /// iterates the radius itself so the friendly-fire filter can run.

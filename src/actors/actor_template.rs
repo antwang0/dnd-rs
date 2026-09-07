@@ -2789,6 +2789,13 @@ pub enum HpState {
     Dead,
 }
 
+/// SRD 5.2: *"Three Successes. You become Stable. Three Failures. You
+/// die."* Named because the same two numbers are read from two places —
+/// the death save itself and the damage-at-0 ledger — and a literal 3
+/// in each was one edit away from disagreeing with the other.
+pub const DEATH_SAVE_FAILURES_TO_DIE: u32 = 3;
+pub const DEATH_SAVE_SUCCESSES_TO_STABILISE: u32 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeathSaveOutcome {
     NotDying,
@@ -10308,20 +10315,26 @@ impl ActorInstance {
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         match self.hp_state {
             HpState::Stable => {
+                // SRD 5.2: a Stable creature that takes damage is Dying
+                // again, and the blow is its first failure.
                 self.hp_state = HpState::Dying {
                     successes: 0,
-                    failures: 1,
+                    failures: 0,
                 };
+                self.suffer_death_save_failures(1);
                 DamageOutcome::DyingFailure
             }
-            HpState::Dying {
-                successes,
-                failures,
-            } => {
-                self.hp_state = HpState::Dying {
-                    successes,
-                    failures: failures + 1,
-                };
+            HpState::Dying { .. } => {
+                // SRD 5.2: *"If you take any damage while you have 0 Hit
+                // Points, you suffer a death saving throw failure."*
+                //
+                // Three of those is death, which this used to leave out:
+                // the failure count simply climbed past three and the
+                // creature waited for its next death save to notice —
+                // and could roll a natural 20 on that save and stand
+                // back up, having been beaten unconscious four times
+                // over. `suffer_death_save_failures` owns the ceiling.
+                self.suffer_death_save_failures(1);
                 DamageOutcome::DyingFailure
             }
             HpState::Dead => DamageOutcome::DyingFailure,
@@ -10492,6 +10505,40 @@ impl ActorInstance {
         }
     }
 
+    /// Charge `n` further death-saving-throw failures against a
+    /// creature that is already dying, and kill it at three.
+    ///
+    /// The write half of the damage-at-0-hit-points rule, split out
+    /// because SRD 5.2 bills it at two different rates: *"If you take
+    /// any damage while you have 0 Hit Points, you suffer a death
+    /// saving throw failure. If the damage is from a Critical Hit, you
+    /// suffer two failures instead."* The second sentence is why this
+    /// takes a count rather than incrementing by one.
+    ///
+    /// Returns true when the failures reached three and the creature
+    /// died. A no-op for anybody who is not currently dying — a Stable
+    /// or Active creature has no failure ledger to add to, and a Dead
+    /// one is past caring.
+    pub fn suffer_death_save_failures(&mut self, n: u32) -> bool {
+        let HpState::Dying {
+            successes,
+            failures,
+        } = self.hp_state
+        else {
+            return false;
+        };
+        let failures = failures.saturating_add(n);
+        if failures >= DEATH_SAVE_FAILURES_TO_DIE {
+            self.hp_state = HpState::Dead;
+            return true;
+        }
+        self.hp_state = HpState::Dying {
+            successes,
+            failures,
+        };
+        false
+    }
+
     pub fn apply_death_save(&mut self, raw_d20: u32) -> DeathSaveOutcome {
         debug_assert!(
             (1..=20).contains(&raw_d20),
@@ -10518,10 +10565,10 @@ impl ActorInstance {
         } else {
             (successes, failures.saturating_add(1))
         };
-        if fail >= 3 {
+        if fail >= DEATH_SAVE_FAILURES_TO_DIE {
             self.hp_state = HpState::Dead;
             DeathSaveOutcome::Dead
-        } else if succ >= 3 {
+        } else if succ >= DEATH_SAVE_SUCCESSES_TO_STABILISE {
             self.hp_state = HpState::Stable;
             DeathSaveOutcome::Stabilized
         } else {
