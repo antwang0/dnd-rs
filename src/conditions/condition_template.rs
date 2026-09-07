@@ -2879,6 +2879,51 @@ impl Condition {
         matches!(self, Condition::Banished | Condition::Mazed)
     }
 
+    /// True if holding this condition **breaks concentration** — SRD
+    /// 5.2's Incapacitated, third clause: *"No Concentration. Your
+    /// Concentration is broken."*
+    ///
+    /// The rule the engine had no site for. Concentration dropped for
+    /// four reasons — a failed CON save on damage, casting a second
+    /// concentration spell, going unconscious or dying, and a spell
+    /// that says it breaks on attack — and being *stunned* was not one
+    /// of them. So a Stunning Strike, a Hold Person, a Hypnotic Pattern
+    /// and a Flesh to Stone all left the caster's Web up while the
+    /// caster stood there unable to move, which turns the game's
+    /// hardest counter to a concentration spell into no counter at all.
+    ///
+    /// Deliberately **narrower than `blocks_action_economy`**, and the
+    /// two conditions it excludes are the reason it is its own list
+    /// rather than a call to that one:
+    ///
+    ///   - **`Sphered`** (Otiluke's Resilient Sphere). RAW seals the
+    ///     occupant away and does not incapacitate them — "nothing can
+    ///     pass through the barrier" is a statement about the barrier.
+    ///     The engine blocks their action economy anyway, which is a
+    ///     reasonable approximation of being in a bubble and is not a
+    ///     reason to take their spell.
+    ///   - **`Surprised`**. SRD 5.2's surprise is a penalty on the
+    ///     initiative roll, not the Incapacitated condition; the engine
+    ///     models the older printing's lost first turn. Breaking
+    ///     concentration on it would end every pre-cast buff in an
+    ///     ambush, which no printing of the rules does.
+    ///
+    /// `Mazed` and `Banished` are in, because both are RAW's demiplane
+    /// and RAW's demiplane says "incapacitated" in as many words.
+    pub fn breaks_concentration(&self) -> bool {
+        matches!(
+            self,
+            Condition::Incapacitated
+                | Condition::Stunned
+                | Condition::Paralyzed
+                | Condition::Unconscious
+                | Condition::Asleep
+                | Condition::Petrified
+                | Condition::Mazed
+                | Condition::Banished
+        )
+    }
+
     /// True if this condition completely blocks Action / BonusAction /
     /// Reaction usage (5e's Incapacitated clause). Stunned and Paralyzed
     /// inherit this clause.

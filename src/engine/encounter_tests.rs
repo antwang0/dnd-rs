@@ -86927,3 +86927,136 @@ fn a_grappled_creature_swings_freely_only_at_whoever_is_holding_it() {
         RollMode::Normal
     ));
 }
+
+/// SRD 5.2's Incapacitated has a clause about concentration, and the
+/// engine had no site for it.
+///
+/// > *No Concentration.* Your Concentration is broken.
+///
+/// Concentration dropped for four reasons — a failed CON save on
+/// damage, casting a second concentration spell, going unconscious or
+/// dying, and a spell that says it breaks on attack — and being
+/// **stunned** was not one of them. A Stunning Strike, a Hold Person, a
+/// Hypnotic Pattern and a Flesh to Stone all left the caster's Web up
+/// while the caster stood there unable to move, which turns the game's
+/// hardest counter to a concentration spell into no counter at all.
+#[test]
+fn a_stunned_caster_cannot_hold_the_spell() {
+    use crate::actors::actor_template::ConcentrationData;
+
+    for breaker in [
+        Condition::Stunned,
+        Condition::Paralyzed,
+        Condition::Incapacitated,
+        Condition::Petrified,
+        Condition::Banished,
+    ] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Web"));
+        assert!(e.actors[&caster].is_concentrating());
+
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .add_condition(breaker, ConditionTimer::Rounds(3));
+        e.reconcile_broken_concentration();
+        assert!(
+            !e.actors[&caster].is_concentrating(),
+            "{:?} should have taken the spell",
+            breaker
+        );
+    }
+}
+
+/// The two members of the neighbouring action-economy cohort that this
+/// rule deliberately leaves alone.
+///
+/// `Sphered` is Otiluke's Resilient Sphere, which RAW seals its
+/// occupant away without incapacitating them — the engine blocks their
+/// action economy as an approximation of being in a bubble, and that is
+/// not a reason to take their spell. `Surprised` is a lost first turn in
+/// the printing this engine models and a penalty on the initiative roll
+/// in SRD 5.2; neither is the Incapacitated condition, and breaking
+/// concentration on it would end every pre-cast buff in an ambush.
+#[test]
+fn a_bubble_and_an_ambush_do_not_take_the_spell() {
+    use crate::actors::actor_template::ConcentrationData;
+
+    for kept in [Condition::Sphered, Condition::Surprised] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Web"));
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .add_condition(kept, ConditionTimer::Rounds(3));
+        e.reconcile_broken_concentration();
+        assert!(
+            e.actors[&caster].is_concentrating(),
+            "{:?} blocks the action economy without incapacitating",
+            kept
+        );
+    }
+}
+
+/// And it fires in play, not merely when the sweep is called by hand.
+///
+/// The rule is a sweep at three chokepoints, and the one that matters
+/// is per-side-effect: a Hold Person lands and the target's spell is
+/// gone before the next effect in the queue measures the board — rather
+/// than at the end of the round, which is a full turn of free Web.
+#[test]
+fn the_hold_lands_and_the_web_is_down_before_the_next_effect() {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::engine::side_effects::ApplyCondition;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let caster = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&caster)
+        .unwrap()
+        .start_concentration(ConcentrationData::new("Web"));
+
+    // Straight through the event stack, which is the path every action
+    // in the engine takes.
+    e.enqueue_event(crate::engine::encounter::StackElementEntry::SideEffect(
+        Box::new(ApplyCondition {
+            actor_id: caster,
+            condition: Condition::Paralyzed,
+            timer: ConditionTimer::Rounds(5),
+        }),
+    ));
+    e.process_stack();
+    assert!(
+        !e.actors[&caster].is_concentrating(),
+        "the paralysis took the spell on the same pass that installed it"
+    );
+}

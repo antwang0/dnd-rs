@@ -7835,6 +7835,44 @@ impl EncounterInstance {
             .unwrap_or(0)
     }
 
+    /// SRD 5.2 **Incapacitated**: *"No Concentration. Your
+    /// Concentration is broken."* Take the spell off every caster
+    /// currently holding a condition that says so — see
+    /// `Condition::breaks_concentration` for the list and for the two
+    /// members of the neighbouring action-economy cohort it leaves out.
+    ///
+    /// A **sweep** rather than a hook on the install, and for the
+    /// reason `reconcile_footprints` and `reconcile_altitudes` beside
+    /// it are sweeps: the rule is a consequence of the creature's
+    /// state, not of the code path that changed it. Eight conditions
+    /// break concentration and rather more than eight things install
+    /// them — a spell's side effect, a monster's on-hit rider, a
+    /// round-end save, a lair action, a `add_condition` called directly
+    /// on the actor by something that has never heard of concentration.
+    /// Every one of them is wired by this being a sweep, and a ninth
+    /// condition is one row on the cohort.
+    ///
+    /// Runs at the same three chokepoints the other reconcilers do, and
+    /// the per-side-effect one is what makes it prompt: a Stunning
+    /// Strike lands, and the caster's Web is down before the next
+    /// effect in the queue measures the board.
+    pub fn reconcile_broken_concentration(&mut self) {
+        let doomed: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                a.is_concentrating()
+                    && a.conditions().keys().any(|c| c.breaks_concentration())
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in doomed {
+            let name = self.actor_name(id);
+            self.log(format!("{} cannot hold the spell.", name));
+            self.drop_concentration(id);
+        }
+    }
+
     pub fn reconcile_altitudes(&mut self) {
         // Resolved before the walk because the closure below cannot
         // borrow `self.actors` again to look a mount up.
@@ -11993,6 +12031,10 @@ impl EncounterInstance {
         // its holder now rather than at the end of the round they no
         // longer have a spell for.
         self.reconcile_altitudes();
+        // And the fourth: a caster who is still Stunned or Paralyzed at
+        // the top of their turn has no spell to be holding. See
+        // `reconcile_broken_concentration`.
+        self.reconcile_broken_concentration();
         // A new turn is a fresh "first time on a turn" for everybody, so
         // the ledger is cleared for the whole board rather than for the
         // actor whose turn is opening. RAW scopes the clause to *a
@@ -15470,11 +15512,17 @@ impl EncounterInstance {
         // which "does this caster still have a spell up" has a stable
         // answer.
         self.release_concentration_with_nothing_left();
-        // Dead last in the round, and it has to be: the sweep above is
-        // the one that ends a Fly whose anchor lapsed, and a caster
-        // released a line earlier is a flier who is still in the air on
-        // this line. Anything ordered before it would leave the drop to
-        // wait a full round.
+        // Ahead of the altitude sweep and behind the anchor sweep, and
+        // both halves of that are load-bearing. A caster whose spell
+        // this takes away is a caster whose Fly has just ended, so the
+        // drop has to be measured after it; and a caster the anchor
+        // sweep already released is one this has nothing to say about.
+        self.reconcile_broken_concentration();
+        // Dead last in the round, and it has to be: the sweeps above
+        // are the ones that end a Fly whose anchor lapsed or whose
+        // holder was stunned, and a caster released a line earlier is a
+        // flier who is still in the air on this line. Anything ordered
+        // before them would leave the drop to wait a full round.
         self.reconcile_altitudes();
     }
 
@@ -16868,6 +16916,12 @@ impl EncounterInstance {
                     // by a neighbour lands the instant that neighbour
                     // falls.
                     self.reconcile_footprints();
+                    // Per-effect, and this is the chokepoint that
+                    // makes the rule prompt rather than round-ended: a
+                    // Stunning Strike lands here, and the monk's target
+                    // loses the Web before the next effect in the queue
+                    // measures the board.
+                    self.reconcile_broken_concentration();
                     // Per-effect for the same reason: one action can
                     // break a wizard's concentration and a second can
                     // Dispel what held the next flier up, and each drop
