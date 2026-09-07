@@ -14659,6 +14659,20 @@ fn haste_ending_leaves_the_holder_lethargic() {
         !e.actors[&fighter]
             .can_consume_resource(crate::engine::side_effects::Resource::Action)
     );
+    // The clause has to survive into the holder's next turn or it costs
+    // them nothing at all. `UntilStartOfNextTurn` — the timer the name
+    // suggests — is cleared by `reset_for_new_round` *before* they act,
+    // so a lethargy on that timer would be free; `Rounds(1)` is not.
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    assert!(
+        e.actors[&fighter].has_condition(Condition::Lethargic),
+        "the lethargy must still be there when the holder's turn opens"
+    );
+    assert!(
+        !e.actors[&fighter]
+            .can_consume_resource(crate::engine::side_effects::Resource::Action),
+        "which is the whole cost of the spell"
+    );
 }
 
 /// Dispel Evil and Good's duration clause is the ward, and it lands

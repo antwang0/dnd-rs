@@ -394,11 +394,16 @@ pub enum Condition {
     /// `CONDITION_AFTERMATH` table, so the spell's downside cannot be
     /// dodged by ending it a way nobody thought of.
     ///
-    /// The timer is `UntilStartOfNextTurn`, which is a half-round short
-    /// of RAW's "until the end of its next turn" and is the engine's
-    /// nearest expressible window. It costs the holder their next turn,
-    /// which is the clause's whole point; RAW would also cost them the
-    /// walk back to cover afterwards.
+    /// The timer is `Rounds(1)`, which lapses at the round-end sweep.
+    /// RAW's window is "until the end of its next turn", and the engine
+    /// has no per-actor timer that says that — `UntilStartOfNextTurn`
+    /// is cleared at the holder's turn start, i.e. *before* they act,
+    /// which would make the whole clause free. So the lethargy runs to
+    /// the end of the round it was installed in, and costs the holder a
+    /// turn whenever their turn is still to come. A holder who had
+    /// already acted this round gets away with it, which is the one
+    /// case the coarser timer loses and the direction it is safer to
+    /// lose in.
     Lethargic,
     /// Slowed — SRD 5.2 **Slow**, and the mirror of `Hasted` on every
     /// axis the two share.
@@ -3861,7 +3866,14 @@ pub const ARCANE_SHOTS: &[Condition] = &[
 pub const CONDITION_AFTERMATH: &[(Condition, Condition, ConditionTimer)] = &[(
     Condition::Hasted,
     Condition::Lethargic,
-    ConditionTimer::UntilStartOfNextTurn,
+    // `Rounds(1)`, and pointedly not `UntilStartOfNextTurn` — which is
+    // the timer the name suggests and which would make the whole clause
+    // free. That one is cleared by `reset_for_new_round` at the
+    // *holder's* turn start, which is before they act, so a lethargy
+    // installed on anybody else's turn would lift the instant it came
+    // due. `Rounds(1)` lapses at the round-end sweep instead, which is
+    // after the holder has had a turn to lose.
+    ConditionTimer::Rounds(1),
 )];
 
 /// How long a condition application persists. `Permanent` requires an
