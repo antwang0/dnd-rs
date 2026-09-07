@@ -746,6 +746,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f''. Drop and Roll — the Burning hazard's own escape clause,
+        //       and the same trade `try_wipe_acid` above makes: an
+        //       Action and a fall to the ground against a drip that
+        //       otherwise runs for the rest of the fight. Gated on the
+        //       same half-HP heuristic, and on not already being in
+        //       water — the lake does it for free at round-end.
+        if let Some(aei) = try_drop_and_roll(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3f'''. Paladin Cleansing Touch — once-per-long-rest cleanse on
         //        an adjacent ally (or self) afflicted with a heavyweight
         //        lockdown debuff (Paralyzed / Stunned / Charmed / Confused
@@ -5623,6 +5633,39 @@ fn try_wipe_acid(
         return None;
     }
     try_self_action(encounter, actor_id, "wipe acid")
+}
+
+/// **Drop and Roll** — beat out the fire, at the price of your feet.
+///
+/// Sibling to `try_wipe_acid` directly above and gated the same way,
+/// because it is the same trade with different numbers: an Action and a
+/// standing position against a drip that will otherwise run for the
+/// rest of the fight. The HP gate is what stops a healthy creature
+/// spending its turn on 1d4 — burning is cheap while there is a buffer
+/// to burn through, and expensive when there is not.
+///
+/// One gate the acid version does not need: **the lake is better**. A
+/// creature already standing in water has had the fire put out for it
+/// at round-end for free (see
+/// `EncounterInstance::douse_burning_in_the_water`), so spending an
+/// Action and going Prone in the water on top of that is strictly
+/// worse. The flag will be gone by the time this creature's next turn
+/// comes around; the rung stands down and lets it swing.
+fn try_drop_and_roll(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::Burning) {
+        return None;
+    }
+    if encounter.is_immersed(actor_id) {
+        return None;
+    }
+    if !is_low_hp(encounter, actor_id, 0.5) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "drop and roll")
 }
 
 /// Paladin Cleansing Touch — once-per-long-rest action that ends one
@@ -15815,6 +15858,63 @@ mod tests {
         assert!(
             super::try_darkvision(&e, ranger).is_none(),
             "the drow needs nothing and the ranger already has it"
+        );
+    }
+
+    /// The Drop and Roll rung waits for the fire to be worth an Action,
+    /// and stands down entirely for a creature already in the water.
+    ///
+    /// Three gates and each is doing work. Burning at full health is
+    /// cheap — 1d4 against a buffer — so the healthy creature swings
+    /// through it. Burning at half is not, so the Action goes on the
+    /// fire. And a creature standing in a lake gets the fire put out at
+    /// round-end for nothing, so paying an Action *and* going Prone in
+    /// the water on top of that is strictly worse.
+    #[test]
+    fn the_drop_and_roll_rung_waits_until_the_fire_costs_more_than_the_turn() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            super::try_drop_and_roll(&e, fighter).is_none(),
+            "a creature that is not on fire has nothing to put out"
+        );
+
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Burning, ConditionTimer::Rounds(5));
+        assert!(
+            super::try_drop_and_roll(&e, fighter).is_none(),
+            "at full health the buffer is worth more than the Action"
+        );
+
+        // Down to the last few hit points, and 1d4 a round is now the
+        // thing most likely to kill.
+        {
+            let f = e.actors.get_mut(&fighter).unwrap();
+            let bleed = f.hitpoints().saturating_sub(1);
+            f.take_damage(bleed);
+        }
+        let pick = super::try_drop_and_roll(&e, fighter)
+            .expect("a nearly-dead creature on fire should put itself out");
+        assert_eq!(pick.action().name(), "drop and roll");
+
+        // Put it in a lake and the rung stands down: the water does the
+        // same job at round-end and charges nothing for it.
+        for dx in 0..2 {
+            for dy in 0..2 {
+                e.set_terrain_at(Coordinate::new(5 + dx, 5 + dy), TerrainType::Water);
+            }
+        }
+        assert!(
+            super::try_drop_and_roll(&e, fighter).is_none(),
+            "the lake puts it out for free at round-end"
         );
     }
 

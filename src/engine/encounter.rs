@@ -14959,6 +14959,44 @@ impl EncounterInstance {
     /// condition-based DoT (e.g. Earthen Grasp's 2d6 bludgeoning, the
     /// Vitriolic Sphere drip) is a one-line table entry in
     /// `ROUND_END_DOTS` rather than a hand-rolled if-block.
+    /// 5e Burning's other escape clause: *"the fire also goes out if it
+    /// is doused, **submerged**, or suffocated."*
+    ///
+    /// The deliberate half of the hazard's escape is the **Drop and
+    /// Roll** action; this is the half that costs nothing and is
+    /// therefore the interesting one on a map with water on it. A
+    /// creature on fire has a reason to be in the lake, and a caster
+    /// who set it alight has a reason to keep it out — which is a
+    /// tactical question the board could not previously ask, because
+    /// the two layers had never been introduced.
+    ///
+    /// Reads `is_immersed`, which is the same predicate the underwater
+    /// combat rules use and carries the two exceptions this clause
+    /// wants for free: a flier over the water is not in it, and neither
+    /// is a creature standing on it under Water Walk. A creature only
+    /// half over the shoreline is not immersed either — the whole
+    /// footprint has to be wet — which is the conservative direction
+    /// for a rule that takes a hazard away.
+    ///
+    /// "Doused" and "suffocated" are not modeled: nothing in the engine
+    /// throws a bucket, and reading suffocation off the breath clock
+    /// would put the fire out for every creature that had merely run
+    /// out of air on dry land, which is a different sentence.
+    fn douse_burning_in_the_water(&mut self, actor_id: usize) {
+        let burning = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Burning));
+        if !burning || !self.is_immersed(actor_id) {
+            return;
+        }
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.remove_condition(Condition::Burning);
+        }
+        let name = self.actor_name(actor_id);
+        self.log(format!("  the water puts out the flames on {}.", name));
+    }
+
     fn apply_condition_round_end_dots(&mut self, actor_id: usize) {
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, Heal};
         for dot in ROUND_END_DOTS {
@@ -15300,6 +15338,12 @@ impl EncounterInstance {
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
+            // 5e Burning: "the fire also goes out if it is doused,
+            // submerged, or suffocated." Ahead of the drip rather than
+            // after it, because a creature that spent its turn getting
+            // into the lake has already put the fire out and should not
+            // be billed for a round of burning underwater.
+            self.douse_burning_in_the_water(id);
             // Run every condition-triggered round-end DoT through the
             // central table. Order in `ROUND_END_DOTS` is the order in
             // which damage rolls — keeps logs deterministic. Damage

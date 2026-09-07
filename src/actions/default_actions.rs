@@ -1695,6 +1695,103 @@ impl Action for WipeAcid {
 
 pub static WIPE_ACID: LazyLock<WipeAcid> = LazyLock::new(|| WipeAcid {});
 
+/// **Drop and Roll** — the escape clause SRD 5.2 prints inside the
+/// Burning hazard itself, and the half the engine never had.
+///
+/// > A burning creature or object takes 1d4 Fire damage at the start of
+/// > each of its turns. **As an action, you can extinguish fire on
+/// > yourself by giving yourself the Prone condition and rolling on the
+/// > ground.** The fire also goes out if it is doused, submerged, or
+/// > suffocated.
+///
+/// The engine had the first sentence — `Condition::Burning` is a row on
+/// `ROUND_END_DOTS` — and neither of the other two. So a creature
+/// caught by a Searing Smite or a Fire Bolt's rider burned for the full
+/// timer with nothing at all it could do about it, which is not a
+/// hazard, it is a countdown. Both halves land here: this action is the
+/// deliberate one, and
+/// `EncounterInstance::douse_burning_in_the_water` is "submerged".
+///
+/// **The Prone is the price, and it is the whole of the decision.** RAW
+/// does not offer a save or a check; it offers a trade — an Action and
+/// your feet against 1d4 a round — and the trade is a bad one for a
+/// creature at full health and a good one for a creature two rounds
+/// from dying with a caster still concentrating on the flames. Modeled
+/// exactly as written: no roll, an unconditional Prone, and the fire
+/// out.
+///
+/// Universal rather than a class feature, for `WipeAcid`'s reason
+/// directly above and `StandUp`'s before it: anything that can catch
+/// fire can put itself out, and the validator is the gate.
+///
+/// One divergence from the letter, and it is in the engine's favour: a
+/// creature that is already Prone still pays the Action. RAW's sentence
+/// is "by giving yourself the Prone condition", which a creature
+/// already on the ground has already done — but rolling on the ground
+/// is the thing being paid for, and the alternative reading makes the
+/// fire free to put out for anyone who fell over first.
+pub struct DropAndRoll {}
+
+impl Action for DropAndRoll {
+    fn name(&self) -> &str {
+        "drop and roll"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["roll", "smother", "put out"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        use crate::conditions::Condition;
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.has_condition(Condition::Burning))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::{ApplyCondition, RemoveCondition};
+        encounter.log(format!(
+            "  drop and roll: {} beats out the flames.",
+            encounter.actor_name(caster_id)
+        ));
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Prone,
+                timer: crate::conditions::ConditionTimer::Permanent,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: caster_id,
+                condition: Condition::Burning,
+            }),
+        ]
+    }
+}
+
+pub static DROP_AND_ROLL: LazyLock<DropAndRoll> = LazyLock::new(|| DropAndRoll {});
+
 /// 5e's attach clause, the attacher's half: "the stirge can detach
 /// itself by spending 5 feet of its movement."
 ///
@@ -1877,6 +1974,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*HIDE,
             &*SEARCH,
             &*WIPE_ACID,
+            &*DROP_AND_ROLL,
         ]
     },
 );

@@ -86735,3 +86735,123 @@ fn absorb_elements_fires_hardest_against_an_element_the_caster_is_vulnerable_to(
         "resistance cancels the vulnerability: 4 lands as 4, not as 8"
     );
 }
+
+/// The Burning hazard has an escape clause, and the engine had the
+/// countdown without it.
+///
+/// SRD 5.2 prints all three sentences in one paragraph: 1d4 at the top
+/// of each turn, *"as an action, you can extinguish fire on yourself by
+/// giving yourself the Prone condition and rolling on the ground"*, and
+/// *"the fire also goes out if it is doused, submerged, or
+/// suffocated."* Only the first of the three shipped, which made a
+/// Searing Smite a timer rather than a hazard — nothing a burning
+/// creature could do about it at any price.
+///
+/// The Prone is not a side effect of the action, it *is* the price. RAW
+/// offers no save and no check, only a trade, and the trade is what
+/// makes it a decision.
+#[test]
+fn a_burning_creature_can_beat_the_flames_out_at_the_price_of_its_feet() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::default_actions::DROP_AND_ROLL;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let aei = ActionExecutionInfo::new(&*DROP_AND_ROLL, fighter, None, None, None);
+    assert!(
+        !aei.validate(&e),
+        "a creature that is not on fire has nothing to put out"
+    );
+
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Burning, ConditionTimer::Rounds(5));
+    assert!(aei.validate(&e));
+    for se in aei.execute(&mut e) {
+        se.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Burning),
+        "the fire is out"
+    );
+    assert!(
+        e.actors[&fighter].has_condition(Condition::Prone),
+        "and the creature is on the ground, which is the price RAW sets"
+    );
+}
+
+/// The free half of the same clause: *"the fire also goes out if it is
+/// … submerged …"*.
+///
+/// Two layers that had never been introduced. The water tile has
+/// carried the underwater combat rules since it arrived, and Burning
+/// has been a round-end drip for longer than that, and neither knew the
+/// other existed — so a creature could stand in a lake and burn.
+///
+/// It reads `is_immersed`, which brings the two exceptions with it: a
+/// creature flying over the water is not in it, and neither is one
+/// standing on the surface under Water Walk.
+#[test]
+fn the_lake_puts_out_a_fire_the_creature_standing_in_it_did_not_have_to_pay_for() {
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let dry = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let wet = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(9, 9),
+            0,
+            1,
+        )
+        .unwrap();
+    // A Medium creature's footprint is 2x2 on this grid, and
+    // `is_immersed` wants the whole of it wet — a creature half over
+    // the shoreline is not submerged.
+    for dx in 0..2 {
+        for dy in 0..2 {
+            e.set_terrain_at(Coordinate::new(9 + dx, 9 + dy), TerrainType::Water);
+        }
+    }
+    for id in [dry, wet] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Burning, ConditionTimer::Rounds(5));
+    }
+
+    let hp_before = e.actors[&wet].hitpoints();
+    e.round_end();
+    assert!(
+        !e.actors[&wet].has_condition(Condition::Burning),
+        "the water put it out"
+    );
+    assert_eq!(
+        e.actors[&wet].hitpoints(),
+        hp_before,
+        "and put it out before the drip, so the round was not billed"
+    );
+    assert!(
+        e.actors[&dry].has_condition(Condition::Burning),
+        "the creature on dry ground is still alight"
+    );
+    assert!(
+        e.actors[&dry].hitpoints() < e.actors[&dry].max_hitpoints(),
+        "and paid for the round"
+    );
+}
