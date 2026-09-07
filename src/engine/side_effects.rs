@@ -2295,23 +2295,109 @@ pub fn condition_link_side_effect(
 /// a charmed creature that still happily attacks its charmer, with no
 /// error anywhere.
 ///
-/// Conditions with no link (Frightened, Prone, Restrained, …) come back
-/// as a one-element vec, so callers never need to know which is which.
+/// Conditions with no link (Prone, Blinded, Poisoned, …) come back as a
+/// one-element `ApplyCondition`; the linked ones come back as a
+/// one-element [`ApplyLinkedCondition`], which does both halves in one
+/// `apply`. Callers never need to know which is which.
 pub fn install_condition_with_link(
     condition: crate::conditions::Condition,
     target_id: usize,
     caster_id: usize,
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let mut out: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+    if LINKED_CONDITIONS.contains(&condition) {
+        return vec![Box::new(ApplyLinkedCondition {
+            actor_id: target_id,
+            condition,
+            timer,
+            source_id: caster_id,
+        })];
+    }
+    vec![Box::new(ApplyCondition {
         actor_id: target_id,
         condition,
         timer,
-    })];
-    if let Some(link) = condition_link_side_effect(condition, target_id, caster_id) {
-        out.push(link);
+    })]
+}
+
+/// A back-linked condition and its link, installed together as one
+/// effect.
+///
+/// The fused form of what `install_condition_with_link` used to emit as
+/// a pair, and it exists because there is one rule in 5e that needs the
+/// condition and its source **at the same instant**: Protection from
+/// Evil and Good's second clause, *"the target also can't be possessed
+/// by or gain the Charmed or Frightened conditions from them"*.
+///
+/// A pair could not carry it. `ApplyCondition` knows what is being
+/// installed and not by whom; `SetConditionLink` knows by whom and runs
+/// *after* the condition is already on the sheet, so the best it could
+/// do is take back a charm that had already landed — which would also
+/// take back an older charm from somebody else, since an actor holds one
+/// instance of a condition and not one per charmer. Fusing them is the
+/// only shape where the ward can decline the install rather than undo
+/// it.
+///
+/// Two secondary wins, both of which argue for the fusion on their own:
+/// the two halves can no longer be separated by a future edit (which the
+/// helper's docstring already called the cautionary case), and a linked
+/// install is now one boxed effect instead of two.
+///
+/// Non-linked conditions keep going out as a plain `ApplyCondition` —
+/// there is nothing for this to fuse, and the ward's clause names only
+/// Charmed and Frightened, both of which are on `LINKED_CONDITIONS`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct ApplyLinkedCondition {
+    pub actor_id: usize,
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    /// Who is doing this. Recorded as the condition's back-link, and
+    /// consulted by the ward gate before anything is installed at all.
+    pub source_id: usize,
+}
+
+impl ApplicableSideEffect for ApplyLinkedCondition {
+    /// Extended Spell reaches the timer through the same rule
+    /// `ApplyCondition` uses — the fusion must not make a linked
+    /// condition invisible to the metamagic.
+    fn extend_duration(&mut self) -> bool {
+        let mut inner = ApplyCondition {
+            actor_id: self.actor_id,
+            condition: self.condition,
+            timer: self.timer,
+        };
+        let extended = inner.extend_duration();
+        self.timer = inner.timer;
+        extended
     }
-    out
+
+    fn apply(&self, ei: &mut EncounterInstance) {
+        // The ward's second clause. Checked before the install rather
+        // than after it, which is the whole reason this effect is fused
+        // — see the type doc.
+        if matches!(self.condition, Condition::Charmed | Condition::Frightened)
+            && ei.protection_shields_against(self.actor_id, self.source_id)
+        {
+            let (name, source) = (ei.actor_name(self.actor_id), ei.actor_name(self.source_id));
+            ei.log(format!(
+                "  protection from evil and good: {} cannot be {} by {}.",
+                name, self.condition, source
+            ));
+            return;
+        }
+        ApplyCondition {
+            actor_id: self.actor_id,
+            condition: self.condition,
+            timer: self.timer,
+        }
+        .apply(ei);
+        SetConditionLink {
+            target_id: self.actor_id,
+            condition: self.condition,
+            source: Some(self.source_id),
+        }
+        .apply(ei);
+    }
 }
 
 /// Conditions that carry a **chosen damage type** rather than a chosen

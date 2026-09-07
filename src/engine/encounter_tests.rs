@@ -14354,6 +14354,141 @@ fn warded_target_taxes_an_aberration_the_proxy_missed() {
     );
 }
 
+/// The ward's second clause, which is the half that decides fights:
+/// *"The target also can't be possessed by or gain the Charmed or
+/// Frightened conditions from them."*
+///
+/// Driven through `install_condition_with_link`, because that is the
+/// path every charm and every one of the five fear chassis in the
+/// engine funnels into, and the fused `ApplyLinkedCondition` it now
+/// emits is the only place the condition and its source are known at
+/// the same instant.
+#[test]
+fn a_warded_creature_refuses_a_charm_from_the_undead() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let ward_holder = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let vampire = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&ward_holder)
+        .unwrap()
+        .add_condition(Condition::Warded, ConditionTimer::Rounds(10));
+    for effect in install_condition_with_link(
+        Condition::Charmed,
+        ward_holder,
+        vampire,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&ward_holder].has_condition(Condition::Charmed),
+        "the ward names Undead; the charm should never have landed"
+    );
+    assert!(
+        e.actors[&ward_holder].linked_by(Condition::Charmed).is_none(),
+        "a declined install must leave no back-link behind either"
+    );
+}
+
+/// Fear is the same clause and the same lane, and it is worth its own
+/// case because the two conditions reach the install through different
+/// chassis — a charm through the save-or-charm helper, a fear through
+/// the burst-save one — and both land here.
+#[test]
+fn a_warded_creature_refuses_a_fear_from_a_fiend() {
+    use crate::actors::creatures::imps::IMP_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let ward_holder = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let imp = e
+        .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(5, 3), 1, 0)
+        .unwrap();
+    assert!(e.actors[&imp].creature_type().affected_by_protection());
+    e.actors
+        .get_mut(&ward_holder)
+        .unwrap()
+        .add_condition(Condition::Warded, ConditionTimer::Rounds(10));
+    for effect in install_condition_with_link(
+        Condition::Frightened,
+        ward_holder,
+        imp,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(!e.actors[&ward_holder].has_condition(Condition::Frightened));
+}
+
+/// The ward is type-scoped, not blanket immunity. A goblin's charm is
+/// a Humanoid's charm, and RAW's list does not contain Humanoids — so
+/// the same install through the same lane lands normally, back-link and
+/// all.
+#[test]
+fn a_warded_creature_is_still_charmed_by_a_humanoid() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let ward_holder = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+        .unwrap();
+    assert!(!e.actors[&goblin].creature_type().affected_by_protection());
+    e.actors
+        .get_mut(&ward_holder)
+        .unwrap()
+        .add_condition(Condition::Warded, ConditionTimer::Rounds(10));
+    for effect in install_condition_with_link(
+        Condition::Charmed,
+        ward_holder,
+        goblin,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.actors[&ward_holder].has_condition(Condition::Charmed));
+    assert_eq!(
+        e.actors[&ward_holder].linked_by(Condition::Charmed),
+        Some(goblin),
+        "the fused install still records who did it"
+    );
+}
+
+/// An unwarded creature is unprotected, which is the control that keeps
+/// the two cases above from passing for the wrong reason.
+#[test]
+fn an_unwarded_creature_is_charmed_by_the_undead_as_before() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Charmed,
+        victim,
+        zombie,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.actors[&victim].has_condition(Condition::Charmed));
+    assert_eq!(e.actors[&victim].linked_by(Condition::Charmed), Some(zombie));
+}
+
 #[test]
 fn hobgoblin_template_instantiable() {
     let mut e = ei_with_terrain(10, 10, &[]);

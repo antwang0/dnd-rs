@@ -280,12 +280,42 @@ pub enum Condition {
     /// hit a duplicate instead, popping one. Drops to 0 ends the spell.
     /// Doesn't require concentration.
     MirroredImages,
-    /// Protected by Protection from Evil and Good. Aberrations, celestials,
-    /// elementals, fey, fiends, and undead have disadvantage on attacks
-    /// against this target. We approximate by giving disadvantage to *any*
-    /// attacker that is undead-flavored (i.e. has the Poisoned condition
-    /// immunity that mortal humanoids lack) — close enough for our pool of
-    /// fiends / undead / etc.
+    /// Protected by **Protection from Evil and Good** — or, at fifth
+    /// level, by **Dispel Evil and Good**, whose duration clause is the
+    /// same sentence one slot up.
+    ///
+    /// SRD 5.2 gives the ward two clauses against Aberrations,
+    /// Celestials, Elementals, Fey, Fiends and Undead, and the engine
+    /// now carries both. `CreatureType::affected_by_protection` is that
+    /// list exactly; `EncounterInstance::protection_shields_against` is
+    /// the one predicate both clauses ask.
+    ///
+    ///   - *"Creatures of those types have Disadvantage on attack rolls
+    ///     against the target."* — read by `attack_mode_tally`.
+    ///   - *"The target also can't be possessed by or gain the Charmed
+    ///     or Frightened conditions from them."* — read by
+    ///     `ApplyLinkedCondition`, the one install path that knows who
+    ///     is doing the charming.
+    ///
+    /// The second clause is the reason a linked condition installs as
+    /// one fused effect rather than as an `ApplyCondition` followed by
+    /// a `SetConditionLink`: the ward has to decline a charm before it
+    /// lands, and a pair could only take one back afterwards. Until it
+    /// shipped, this condition's docstring described a proxy ("any
+    /// attacker that is undead-flavored") that the code had already
+    /// stopped using, and the charm clause was not modeled at all — so
+    /// a warded paladin walked into a vampire's gaze exactly as
+    /// unprotected as an unwarded one.
+    ///
+    /// **Possession is not modeled** — the engine has no lane for one
+    /// creature driving another's turns, so the clause's first third
+    /// has nothing to gate.
+    ///
+    /// RAW's last sentence — advantage on new saves against an effect
+    /// already on you when the ward goes up — is also unmodeled: it is
+    /// a rider on a save the engine rolls before it knows a ward is
+    /// involved, and the two clauses above are what a party plays
+    /// toward.
     Warded,
     /// Hexed by the warlock Hex spell. The hex's caster deals +1d6 necrotic
     /// on weapon attacks against this target. Tracked as a condition so

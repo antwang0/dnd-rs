@@ -4009,35 +4009,25 @@ impl EncounterInstance {
             // in the static condition cohort: both read the *attacker's*
             // creature type, not the target's conditions alone.
             //
-            // 5e Protection from Evil and Good: aberrations / celestials /
-            // elementals / fey / fiends / undead have disadvantage on
-            // attacks against the Warded target. `affected_by_protection`
-            // on `CreatureType` is exactly that list.
-            //
-            // The Devotion Paladin's **Purity of Spirit** (subclass level
-            // 15) is RAW "you are always under the effects of a
-            // protection from evil and good spell", so it reads the same
-            // clause from a passive tag instead of from a condition — one
-            // `||` here rather than a permanent condition install the
-            // engine would have to keep re-applying and would have to
-            // exempt from Dispel Magic. See `PURITY_OF_SPIRIT_TAG`.
+            // 5e Protection from Evil and Good's first clause, read
+            // through `protection_shields_against` so the spell's two
+            // clauses cannot drift apart — the second one (no Charmed,
+            // no Frightened, from the same six types) reads the same
+            // predicate from the condition-install lane.
             //
             // Daylight: the engine's simplification of RAW Sunlight
             // Sensitivity — an undead attacker caught in the aura rolls at
             // disadvantage. RAW's own trait belongs to specific undead
             // (and to a few subterranean humanoids the engine doesn't
             // tag), so undead is the load-bearing cohort.
-            if let Some(attacker) = self.actors.get(&attacker_id) {
-                let attacker_type = attacker.creature_type();
-                let warded = target.has_condition(Condition::Warded)
-                    || target.has_passive_feature(
-                        crate::actions::class_features::PURITY_OF_SPIRIT_TAG,
-                    );
-                if (warded && attacker_type.affected_by_protection())
-                    || (target.has_condition(Condition::Daylit) && attacker_type.is_undead())
-                {
-                    tally.add(RollMode::Disadvantage);
-                }
+            if self.protection_shields_against(target_id, attacker_id) {
+                tally.add(RollMode::Disadvantage);
+            }
+            if let Some(attacker) = self.actors.get(&attacker_id)
+                && target.has_condition(Condition::Daylit)
+                && attacker.creature_type().is_undead()
+            {
+                tally.add(RollMode::Disadvantage);
             }
             // 5e Battle Master Distracting Strike — target-side mirror
             // of the Dueled / Goaded pattern. A distracted creature is
@@ -7886,6 +7876,51 @@ impl EncounterInstance {
             Some(source) => self.viewer_can_see(actor_id, source),
             None => actor.has_condition(Condition::Frightened),
         }
+    }
+
+    /// SRD 5.2 **Protection from Evil and Good**, asked as one question:
+    /// is `protected` warded, and is `source` one of the six types the
+    /// ward is written about?
+    ///
+    /// > *"…one willing creature you touch is protected against
+    /// > creatures that are Aberrations, Celestials, Elementals, Fey,
+    /// > Fiends, or Undead. The protection grants several benefits.
+    /// > Creatures of those types have Disadvantage on attack rolls
+    /// > against the target. The target also can't be possessed by or
+    /// > gain the Charmed or Frightened conditions from them."*
+    ///
+    /// Two clauses, two consumers, one predicate. The attack half reads
+    /// it from `attack_mode_tally`; the condition half reads it from
+    /// `ApplyLinkedCondition`, which is the one install path that knows
+    /// who is doing the charming. Before this, the attack half was
+    /// written inline at its single call site and the condition half
+    /// did not exist at all, so a warded paladin walked into a
+    /// vampire's gaze exactly as unprotected as an unwarded one.
+    ///
+    /// Both halves of the *source* side are here too: the `Warded`
+    /// condition the spell installs, and the Devotion Paladin's
+    /// **Purity of Spirit** (subclass level 15), which is RAW "you are
+    /// always under the effects of a protection from evil and good
+    /// spell" and therefore has to answer this question the same way. A
+    /// passive tag rather than a permanent condition install, because a
+    /// standing condition is something the engine would have to keep
+    /// re-applying and would have to exempt from Dispel Magic.
+    ///
+    /// Fails closed on either id being absent, which is the right
+    /// direction for a ward: a missing actor grants no protection
+    /// rather than blanket immunity.
+    pub fn protection_shields_against(&self, protected_id: usize, source_id: usize) -> bool {
+        let Some(protected) = self.actors.get(&protected_id) else {
+            return false;
+        };
+        let warded = protected.has_condition(Condition::Warded)
+            || protected
+                .has_passive_feature(crate::actions::class_features::PURITY_OF_SPIRIT_TAG);
+        warded
+            && self
+                .actors
+                .get(&source_id)
+                .is_some_and(|s| s.creature_type().affected_by_protection())
     }
 
     /// SRD 5.2 **Incapacitated**: *"No Concentration. Your

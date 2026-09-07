@@ -5083,10 +5083,21 @@ impl Action for EldritchBlast {
 pub static ELDRITCH_BLAST: LazyLock<EldritchBlast> = LazyLock::new(|| EldritchBlast {});
 
 /// Protection from Evil and Good — level-1 abjuration, concentration.
-/// Target gains the Warded condition: aberrations, celestials, elementals,
-/// fey, fiends, and undead have disadvantage on attacks against them.
-/// The condition is read by `compute_attack_mode`, which gates it on
-/// `CreatureType::affected_by_protection` — RAW's six types, exactly.
+/// Target gains the `Warded` condition, which carries both of RAW's
+/// combat clauses against Aberrations, Celestials, Elementals, Fey,
+/// Fiends and Undead: those types attack the warded creature at
+/// disadvantage, and they cannot Charm or Frighten it at all.
+/// `CreatureType::affected_by_protection` is that list exactly; see
+/// `EncounterInstance::protection_shields_against` for the single
+/// predicate both clauses ask, and `Condition::Warded` for what RAW
+/// says that the engine still does not model.
+///
+/// The charm clause is what makes this a level-1 slot worth spending
+/// mid-fight rather than a small accuracy tax. A vampire's gaze, a
+/// succubus's kiss, a dragon's Frightful Presence and a mummy's
+/// dreadful glare are all sources this ward now simply refuses, and
+/// three of those four are the reason a party loses the fight rather
+/// than the round.
 ///
 /// This docstring spent some time claiming the gate was approximated
 /// "via the target's necrotic/poison immunity profile (a rough but
