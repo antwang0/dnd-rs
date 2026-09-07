@@ -492,11 +492,15 @@ fn push(
     p: &AttackParams,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
 ) {
-    let too_big = encounter
+    // Through `is_at_most` rather than an inequality on `ordinal`: the
+    // direction of that comparison is the one thing a reader has to
+    // stop and re-derive, and `size.is_at_most(cap)` cannot be read the
+    // wrong way round. A missing target fails the gate closed.
+    let reaches = encounter
         .actors
         .get(&p.target_id)
-        .is_none_or(|t| t.size().ordinal() > Size::Large.ordinal());
-    if too_big {
+        .is_some_and(|t| t.size().is_at_most(Size::Large));
+    if !reaches {
         return;
     }
     let Some(from) = encounter.actors.get(&p.caster_id).map(|c| c.location()) else {

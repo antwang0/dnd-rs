@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*BALOR_LONGSWORD);
-    actions.push(&*BALOR_WHIP);
+    actions.push(&BALOR_WHIP);
     actions.push(&*BALOR_MULTI);
     actions.push(&*BALOR_FIRE_AURA);
     CreatureTemplate {

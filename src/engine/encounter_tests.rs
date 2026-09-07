@@ -85201,6 +85201,243 @@ fn the_goblin_hides_and_the_thrall_runs() {
     );
 }
 
+/// Every ranged weapon in the bestiary that declares a normal range
+/// actually rolls at disadvantage past it.
+///
+/// The sibling of `every_ranged_weapon_declares_the_normal_range_two_
+/// rules_read`, and the half that one could not see. That sweep checks
+/// the *field* is set; this one checks the field is *read*, and the two
+/// are not the same question — a chassis can carry a `normal_range`,
+/// pass the bestiary sweep, and then hand `resolve_attack` a `None`.
+///
+/// Two chassis were doing exactly that. `WeaponWithSaveDamage` has one
+/// ranged entry, the drow's poisoned hand crossbow, which had declared
+/// its eighty feet since it was written and never once suffered for
+/// shooting past them; `WeaponWithCondition` grew a ranged constructor
+/// and inherited the same hole on its first entry. Both were invisible:
+/// the number was right on the sheet and simply never reached the die.
+///
+/// The same `long_range` field carries 5e's Underwater Combat clause —
+/// a shot past normal range under water misses outright — so the bug
+/// was two rules deep, not one.
+#[test]
+fn every_ranged_weapon_actually_rolls_at_disadvantage_past_its_range() {
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+
+    let mut checked = 0;
+    for template in EncounterInstance::template_pool() {
+        // Collected first so the encounter can be rebuilt per action —
+        // a swing that drops the dummy would poison every later one.
+        let ranged: Vec<&'static (dyn Action + Send + Sync)> = template
+            .actions
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.is_weapon_attack() && !a.is_melee_attack() && a.normal_range().is_some()
+            })
+            .collect();
+        for action in ranged {
+            let nr = action.normal_range().unwrap();
+            let reach = action.reach_tiles().unwrap_or(nr);
+            // A weapon whose two bands coincide has no long range to
+            // test — the shot is either in range or impossible.
+            if reach <= nr {
+                continue;
+            }
+            let mut e = ei_with_terrain((reach + 24) as usize, 24, &[]);
+            let Ok(shooter) = e.instantiate_creature(template, Coordinate::new(1, 8), 1, 0)
+            else {
+                continue;
+            };
+            // A tarrasque as the dummy: 697 hit points, so no shot in
+            // the bestiary can drop it and cut the swing short.
+            let Ok(dummy) =
+                e.instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(6, 8), 0, 0)
+            else {
+                continue;
+            };
+            // Walk it out until the gap is strictly past the normal
+            // range, measured the way the die measures it — footprint to
+            // footprint, which for a Gargantuan dummy is several tiles
+            // short of the anchor-to-anchor distance.
+            let mut placed = None;
+            for x in 6..(reach + 20) {
+                if e.place_actor_at(dummy, Coordinate::new(x, 8)).is_err() {
+                    continue;
+                }
+                match e.footprint_distance(shooter, dummy) {
+                    Some(d) if d > nr && d <= reach => {
+                        placed = Some(d);
+                        break;
+                    }
+                    Some(d) if d > reach => break,
+                    _ => {}
+                }
+            }
+            let Some(dist) = placed else {
+                continue;
+            };
+            // Open and close the dummy's turn before the shot. The
+            // assassin's **Assassinate** grants advantage against
+            // "any creature that hasn't taken a turn in the combat
+            // yet", and advantage plus disadvantage nets to a straight
+            // roll — so without this the sweep reads a correctly-applied
+            // long-range penalty as a missing one.
+            e.start_turn_for(dummy);
+            let before = e.messages().len();
+            let targets = vec![dummy];
+            let effects = action.side_effects(&mut e, shooter, Some(&targets), None, None);
+            drop(effects);
+            let rolled: Vec<&String> = e.messages()[before..]
+                .iter()
+                .filter(|m| m.contains("d20"))
+                .collect();
+            if rolled.is_empty() {
+                // Some ranged actions decline for reasons of their own
+                // — a spent recharge, an empty target set after their
+                // own filtering. Nothing was rolled, so there is nothing
+                // to assert about how it was rolled.
+                continue;
+            }
+            assert!(
+                rolled.iter().all(|m| m.contains("(dis)")),
+                "{}'s {} rolled at {} tiles with a normal range of {} and no \
+                 disadvantage: {:?}",
+                template.name,
+                action.name(),
+                dist,
+                nr,
+                rolled
+            );
+            checked += 1;
+        }
+    }
+    // A floor rather than `> 0`, because the interesting failure of a
+    // sweep is not "it found nothing" but "it quietly stopped finding
+    // most things": every one of the three bugs this caught was on a
+    // chassis with a handful of entries, and a filter that silently
+    // narrowed to one template would still have passed a `> 0`. Forty
+    // is comfortably under the current forty-seven and comfortably over
+    // any one chassis's share.
+    assert!(
+        checked >= 40,
+        "the sweep only reached {} ranged weapons — something narrowed it",
+        checked
+    );
+}
+
+/// A harpoon drags what it catches, and only what it can lift.
+///
+/// The rider chassis grew a displacement lane, and the merrow is what it
+/// grew it for: RAW's *"the merrow pulls the target up to 15 feet
+/// straight toward itself"* is the whole reason the creature carries a
+/// harpoon rather than a spear. Both halves are pinned — a Medium target
+/// arrives, a Huge one stands where it was — because a pull with no
+/// ceiling and a ceiling with no pull are each half the rule.
+#[test]
+fn a_merrows_harpoon_hauls_what_it_can_lift_and_leaves_the_rest() {
+    use crate::actions::monster_attacks::MERROW_HARPOON;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::merrow::MERROW_TEMPLATE;
+
+    let hauled_from = |victim: &'static crate::actors::actor_template::CreatureTemplate| {
+        let mut moved = 0;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+            let merrow = e
+                .instantiate_creature(&MERROW_TEMPLATE, Coordinate::new(3, 6), 1, 0)
+                .unwrap();
+            // At the far edge of the harpoon's reach-2 envelope, which is
+            // the only place the drag has anywhere to drag *to*: the
+            // merrow is Large, so a target one tile closer is already
+            // touching its footprint and RAW's fifteen feet buy nothing.
+            // That is a real property of the weapon as modeled — the
+            // haul is what the thrown form is for, and the engine
+            // surfaces only the swing.
+            let target = e
+                .instantiate_creature(victim, Coordinate::new(9, 6), 0, 0)
+                .unwrap();
+            let before = e.actors[&target].location();
+            let targets = vec![target];
+            let effects =
+                MERROW_HARPOON.side_effects(&mut e, merrow, Some(&targets), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&target)
+                .is_some_and(|t| t.location() != before)
+            {
+                moved += 1;
+            }
+        }
+        moved
+    };
+
+    assert!(
+        hauled_from(&GLADIATOR_TEMPLATE) > 0,
+        "a Medium target inside the clause gets dragged in"
+    );
+    assert_eq!(
+        hauled_from(&HILL_GIANT_TEMPLATE),
+        0,
+        "RAW's 'Large or smaller' leaves a Huge target exactly where it stood"
+    );
+}
+
+/// The size gate covers the hold and the haul together, and covers
+/// neither the damage nor the second damage type.
+///
+/// RAW's punctuation is what decides this, and it is the same in every
+/// printing that has both: the damage is one sentence, and "if the
+/// target is a Large or smaller creature…" opens the next. So a remorhaz
+/// that bites a storm giant cooks it in full and fails to hold it — and
+/// the fire is not a rider on the grapple, it is the other half of the
+/// bite.
+#[test]
+fn an_oversized_target_takes_both_damage_types_and_neither_rider() {
+    use crate::actions::monster_attacks::REMORHAZ_BITE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE;
+
+    let mut wounded = false;
+    let mut held = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let remorhaz = e
+            .instantiate_creature(&REMORHAZ_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let giant = e
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(8, 4), 0, 0)
+            .unwrap();
+        let before = e.actors[&giant].hitpoints();
+        let targets = vec![giant];
+        let effects = REMORHAZ_BITE.side_effects(&mut e, remorhaz, Some(&targets), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let Some(g) = e.actors.get(&giant) else {
+            continue;
+        };
+        wounded |= g.hitpoints() < before;
+        held |= g.has_condition(Condition::Grappled);
+    }
+    assert!(wounded, "the giant is bitten");
+    assert!(
+        !held,
+        "RAW's 'Large or smaller' keeps a Huge creature out of the coils"
+    );
+    // And the fire is on the bite, not on the hold: the chassis reports
+    // both types, which is what the AI's "is this worth aiming there?"
+    // gate reads.
+    assert_eq!(
+        REMORHAZ_BITE.damage_types(),
+        vec![DamageType::Piercing, DamageType::Fire]
+    );
+}
+
 // ─── Swallow ─────────────────────────────────────────────────────────
 
 /// A worm with a guard already in its jaws, one tile apart, on a clear

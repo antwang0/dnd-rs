@@ -577,13 +577,15 @@ fn consume_cunning_strike(
             }
         }
         Condition::CunningStrikeTrip => {
-            // Trip RAW: target must be Large or smaller. Sized cap mirrors
-            // Shove / Grapple's footprint gate.
-            let target_too_big = encounter
+            // Trip RAW: target must be Large or smaller. Through
+            // `Size::is_at_most`, the same reading every "…or smaller"
+            // clause in the engine uses; a missing target fails the gate
+            // closed.
+            let reaches = encounter
                 .actors
                 .get(&target_id)
-                .is_some_and(|t| t.size().ordinal() > crate::engine::types::Size::Large.ordinal());
-            if target_too_big {
+                .is_some_and(|t| t.size().is_at_most(crate::engine::types::Size::Large));
+            if !reaches {
                 encounter
                     .log("  cunning strike (trip): target too large to knock down.".to_string());
             } else {

@@ -31,6 +31,23 @@ pub const fn tiles_from_feet(feet: u32) -> u32 {
     (feet * 2).div_ceil(5)
 }
 
+/// The inverse: a tile count back into the feet a player reads.
+///
+/// Log lines are written in the rulebook's units, not the board's — "the
+/// target is shoved back 10 ft" is a sentence somebody can check against
+/// a stat block and "shoved back 4 tiles" is not — so the conversion has
+/// to run in both directions, and this is the direction that had been
+/// open-coded as `tiles * 5 / 2` wherever it was needed.
+///
+/// Not exactly the inverse of `tiles_from_feet`, and cannot be: that one
+/// rounds up, so an odd distance rounds to a tile boundary on the way in
+/// and comes back as the boundary rather than as what was typed. Every
+/// distance in the book is a multiple of five, where the pair round-trips
+/// exactly.
+pub const fn feet_from_tiles(tiles: u32) -> u32 {
+    tiles * 5 / 2
+}
+
 pub fn get_tiles_from_size(size: Size) -> usize {
     match size {
         Size::Tiny => 1,

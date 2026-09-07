@@ -4156,13 +4156,16 @@ impl Action for ThornWhip {
         if effects.is_empty() {
             return effects;
         }
-        // 5e: Large or smaller — Huge / Gargantuan targets ignore the pull.
-        let too_big = encounter
+        // 5e: Large or smaller — Huge / Gargantuan targets ignore the
+        // pull. Through `is_at_most`, like every other "…or smaller"
+        // clause in the engine, rather than by naming the two sizes on
+        // the far side of the line: a seventh size category would leave
+        // a `matches!` list quietly wrong and this reading right.
+        let reaches = encounter
             .actors
             .get(&target_id)
-            .map(|t| matches!(t.size(), Size::Huge | Size::Gargantuan))
-            .unwrap_or(true);
-        if !too_big {
+            .is_some_and(|t| t.size().is_at_most(Size::Large));
+        if reaches {
             effects.push(Box::new(PullActor {
                 actor_id: target_id,
                 toward: caster_loc,
@@ -5030,7 +5033,7 @@ impl Action for EldritchBlast {
             && encounter
                 .actors
                 .get(&target_id)
-                .is_some_and(|t| t.size().ordinal() <= crate::engine::types::Size::Large.ordinal());
+                .is_some_and(|t| t.size().is_at_most(crate::engine::types::Size::Large));
         // Fire each beam as an independent attack roll (1d10 force each).
         // This matches 5e RAW: each beam can hit or miss individually and
         // triggers on-hit riders (Hex, Hunter's Mark, etc.) per beam.

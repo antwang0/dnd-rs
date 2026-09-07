@@ -132,6 +132,12 @@ pub fn weapon_swing_with_flat_rider(
     damage_dice: Dice,
     damage_type: DamageType,
     is_melee: bool,
+    // The weapon's own normal range, or `None` for a melee swing. Two
+    // rules read it — 5e's long-range disadvantage and Underwater
+    // Combat's automatic miss past normal range — and a helper that
+    // hard-coded `None` here made both invisible to every ranged
+    // weapon on the chassis above it.
+    long_range: Option<isize>,
     rider_dice: Dice,
     rider_type: DamageType,
     rider_name: &'static str,
@@ -145,7 +151,7 @@ pub fn weapon_swing_with_flat_rider(
         damage_dice,
         damage_type,
         is_melee,
-        None,
+        long_range,
     );
     // Hit/miss gate: an empty effects list means the d20 didn't connect
     // (`resolve_attack_outcome` returns `(Vec::new(), 0)` on miss /
@@ -1995,6 +2001,7 @@ impl Action for WeaponWithRider {
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
+                self.normal_range,
                 self.rider_dice,
                 self.rider_type,
                 self.rider_name,
@@ -2620,7 +2627,15 @@ impl Action for WeaponWithSaveDamage {
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
-                None,
+                // The weapon's own normal range, not `None`. Two rules
+                // read this number — 5e's long-range disadvantage and
+                // Underwater Combat's automatic miss past normal range —
+                // and a chassis that declared a `normal_range` field and
+                // then handed the die `None` was a ranged weapon with no
+                // falloff that also worked at the bottom of a lake. The
+                // bestiary sweep that enforces the *field* could not see
+                // that the field was never read.
+                self.normal_range,
             );
             // Hit/miss gate via the effects vec — see
             // `weapon_swing_with_flat_rider` for the same chassis-wide
@@ -2749,6 +2764,56 @@ pub struct WeaponWithCondition {
     /// governs the sentence it is in, and the extra damage is in the
     /// sentence before it.
     pub extra_damage: Option<(Dice, DamageType, &'static str)>,
+    /// Forced movement the hit also causes, in tiles, or `None` for the
+    /// majority that simply hit. Set with `pushes` or `pulls`.
+    ///
+    /// The rider-family's third shape, and the one that had no home at
+    /// all: *"the merrow pulls the target up to 15 feet straight toward
+    /// itself"*, *"the tough pushes the target up to 10 feet straight
+    /// away from itself"*, *"the shambling mound pulls the target 5 feet
+    /// straight toward itself"*. Six stat blocks print one; every one of
+    /// them shipped with the clause in a docstring saying the chassis
+    /// had no displacement lane, which was true.
+    ///
+    /// Gated by `max_target_size` alongside the condition install,
+    /// because RAW puts them in the same sentence every time it prints
+    /// both — the balor's whip *"pulls the target up to 25 feet straight
+    /// toward itself, **and** the target has the Prone condition"*, one
+    /// "if", one size clause. A weapon whose push and hold wanted
+    /// different ceilings would be a different field; none exists.
+    ///
+    /// Carried through `PushActor` / `PullActor` rather than by moving
+    /// the actor here, so the drag stops at walls and occupied tiles and
+    /// provokes no opportunity attacks — 5e treats forced movement as
+    /// not a willing move, and those two side-effects are where the
+    /// engine writes that rule down.
+    pub displacement: Option<Displacement>,
+    /// 5e's "normal range" — the band beyond which a shot rolls at
+    /// disadvantage, and beyond which Underwater Combat says it misses
+    /// outright. `None` for every melee entry, where reach *is* the
+    /// range; `Some` for every ranged one, which
+    /// `every_ranged_weapon_declares_the_normal_range_two_rules_read`
+    /// enforces across the whole bestiary — and which is exactly the
+    /// sweep that caught this field being missing the moment the chassis
+    /// grew a `ranged` constructor.
+    pub normal_range: Option<isize>,
+}
+
+/// Forced movement a weapon's hit causes, in tiles.
+///
+/// Two variants rather than a signed magnitude, because the anchor
+/// differs with the direction and the engine spells them as two
+/// side-effects: a push measures *away from* the attacker and a pull
+/// *toward* it. A signed number would have to be unpacked back into
+/// that distinction at the one site that uses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Displacement {
+    /// Away from the attacker — the tough's warhammer, the force
+    /// ballista's bolt.
+    Push(u32),
+    /// Toward the attacker — the merrow's harpoon, the balor's whip,
+    /// the shambling mound's tendril, the water weird's coils.
+    Pull(u32),
 }
 
 impl WeaponWithCondition {
@@ -2812,6 +2877,57 @@ impl WeaponWithCondition {
             rider_name,
             max_target_size: None,
             extra_damage: None,
+            displacement: None,
+            normal_range: None,
+        }
+    }
+
+    /// Const constructor for the ranged shape — a shot whose hit
+    /// installs a condition or shoves what it hits.
+    ///
+    /// The chassis has carried an `is_melee` field and an
+    /// `is_melee`-gated line-of-sight rule since it was written; what it
+    /// had no way to build was a `WeaponWithCondition` with that field
+    /// set to false. The same gap `WeaponWithRider::ranged` closed on
+    /// its own chassis, and closed here for the same three clauses:
+    /// the stone giant's boulder, the efreeti's Rock Launch and the
+    /// Eldritch Cannon's force ballista all print "Ranged Attack Roll"
+    /// followed by a rider.
+    ///
+    /// `normal_range` is not optional here, and the engine has a sweep
+    /// that says so: two rules read it — 5e's long-range disadvantage
+    /// and Underwater Combat's automatic miss past normal range — and a
+    /// ranged weapon that left it unset would be a boulder with no
+    /// falloff that also works at the bottom of a lake. It would look
+    /// like a weapon that was simply good.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        conditions: &'static [Condition],
+        timer: ConditionTimer,
+        rider_name: &'static str,
+        reach: isize,
+        normal_range: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: false,
+            conditions,
+            timer,
+            rider_name,
+            max_target_size: None,
+            extra_damage: None,
+            displacement: None,
+            normal_range: Some(normal_range),
         }
     }
 
@@ -2838,6 +2954,20 @@ impl WeaponWithCondition {
         label: &'static str,
     ) -> Self {
         self.extra_damage = Some((dice, damage_type, label));
+        self
+    }
+
+    /// Chainable: the hit shoves the target `tiles` straight away from
+    /// the attacker. See `displacement`.
+    pub const fn pushes(mut self, tiles: u32) -> Self {
+        self.displacement = Some(Displacement::Push(tiles));
+        self
+    }
+
+    /// Chainable: the hit drags the target `tiles` straight toward the
+    /// attacker. See `displacement`.
+    pub const fn pulls(mut self, tiles: u32) -> Self {
+        self.displacement = Some(Displacement::Pull(tiles));
         self
     }
 }
@@ -2899,6 +3029,9 @@ impl Action for WeaponWithCondition {
     fn is_melee_attack(&self) -> bool {
         self.is_melee
     }
+    fn normal_range(&self) -> Option<isize> {
+        self.normal_range
+    }
     /// Both types when the hit carries a second instance — the
     /// remorhaz's piercing *and* its fire. Read by the AI's
     /// "is this worth aiming at that creature?" gate, which would
@@ -2935,7 +3068,15 @@ impl Action for WeaponWithCondition {
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
-                None,
+                // The weapon's own normal range, not `None`. Two rules
+                // read this number — 5e's long-range disadvantage and
+                // Underwater Combat's automatic miss past normal range —
+                // and a chassis that declared a `normal_range` field and
+                // then handed the die `None` was a ranged weapon with no
+                // falloff that also worked at the bottom of a lake. The
+                // bestiary sweep that enforces the *field* could not see
+                // that the field was never read.
+                self.normal_range,
             );
             // Hit/miss gate via the effects vec — empty on miss /
             // Sanctuary / Mirror Image, non-empty on hit (the DealDamage
@@ -2958,6 +3099,48 @@ impl Action for WeaponWithCondition {
             // — so an oversized target keeps the wound and loses only
             // the hold.
             if !rider_reaches_size(e, target_id, self.max_target_size, self.rider_name) {
+                return effects;
+            }
+            // Behind the same gate as the hold and ahead of it in the
+            // vec, so a creature dragged into reach is dragged before it
+            // is held rather than after — which matters for the one
+            // clause that does both (the water weird pulls you five feet
+            // *and* wraps around you) and for nothing else.
+            if let Some(displacement) = self.displacement
+                && let Some(anchor) = e.actors.get(&caster_id).map(|c| c.location())
+            {
+                let (verb, tiles) = match displacement {
+                    Displacement::Push(tiles) => ("shoved back", tiles),
+                    Displacement::Pull(tiles) => ("dragged in", tiles),
+                };
+                e.log(format!(
+                    "  {}: target is {} {} ft",
+                    self.rider_name,
+                    verb,
+                    crate::engine::util::feet_from_tiles(tiles)
+                ));
+                effects.push(match displacement {
+                    Displacement::Push(tiles) => {
+                        Box::new(crate::engine::side_effects::PushActor {
+                            actor_id: target_id,
+                            from: anchor,
+                            max_tiles: tiles,
+                        }) as Box<dyn ApplicableSideEffect>
+                    }
+                    Displacement::Pull(tiles) => {
+                        Box::new(crate::engine::side_effects::PullActor {
+                            actor_id: target_id,
+                            toward: anchor,
+                            max_tiles: tiles,
+                        }) as Box<dyn ApplicableSideEffect>
+                    }
+                });
+            }
+            // A displacement-only weapon installs nothing — the
+            // merrow's harpoon and the tough's warhammer drag you and
+            // stop there — so the install log and the loop below are
+            // both skipped rather than printing "target is now ".
+            if self.conditions.is_empty() {
                 return effects;
             }
             let named: Vec<String> = self
@@ -6594,16 +6777,27 @@ pub static MANTICORE_MULTIATTACK: LazyLock<CompoundAttack> = LazyLock::new(|| Co
 });
 
 /// Hill Giant Greatclub — STR-based 3d8 bludgeoning, reach 2 tiles
-/// (10 ft). Mirrors the ogre's club but bumped to giant-tier dice; the
-/// extra reach is the hill giant's signature spacing advantage.
-pub static HILL_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+/// (10 ft), and RAW's knockdown: *"If the target is a Large or smaller
+/// creature, it has the Prone condition."*
+///
+/// Mirrors the ogre's club but bumped to giant-tier dice; the extra
+/// reach is the hill giant's signature spacing advantage, and the
+/// knockdown is what turns that reach into a lane nobody wants to be
+/// in — a Medium creature the club connects with is on the floor, ten
+/// feet away, spending half its next turn standing back up inside the
+/// swing's envelope.
+pub static HILL_GIANT_GREATCLUB: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "giant greatclub",
     &["ggc", "giant-club"],
     AbilityScoreType::Strength,
     Dice::new(3, 8),
     DamageType::Bludgeoning,
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "club sweep",
     2,
-);
+)
+.against_at_most(Size::Large);
 
 /// Hill Giant Boulder — STR-based 3d10 bludgeoning thrown rock with
 /// reach 24 (60 ft). Ranged STR throw is unusual but matches the 5e
@@ -8520,18 +8714,28 @@ pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
     3,
 );
 
-/// Stone Giant Boulder — STR-based 4d10+STR bludgeoning ranged, reach 24.
-/// The boulder is the giant's signature ranged threat — paired with the
-/// greatclub for melee, the AI picks whichever the action picker validates.
-pub static STONE_GIANT_BOULDER: SimpleWeapon = SimpleWeapon::ranged(
+/// Stone Giant **Boulder** — 4d10+STR bludgeoning at reach 24, and
+/// RAW's knockdown: *"If the target is a Large or smaller creature, it
+/// has the Prone condition."*
+///
+/// The first entry on the rider chassis's new ranged constructor, and
+/// the clause is what makes the stone giant's ranged lane a threat
+/// rather than a fallback: a boulder that lands puts somebody sixty feet
+/// away on the floor, which costs them half their movement on a turn
+/// they were going to spend closing.
+pub static STONE_GIANT_BOULDER: WeaponWithCondition = WeaponWithCondition::ranged(
     "stone boulder",
     &["s-boulder", "sboulder"],
     AbilityScoreType::Strength,
     Dice::new(4, 10),
     DamageType::Bludgeoning,
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "boulder impact",
     24,
     16,
-);
+)
+.against_at_most(Size::Large);
 
 /// Stone Giant Multiattack — 2 greatclub swings per Action. Mirrors the
 /// frost giant / hill giant pattern: physical thresher boss melee, no
@@ -9439,67 +9643,43 @@ impl Action for BalorLongsword {
 
 pub static BALOR_LONGSWORD: LazyLock<BalorLongsword> = LazyLock::new(|| BalorLongsword {});
 
-/// Balor Lightning Whip — STR-based 2d6 + STR slashing reach attack,
-/// reach 12 (30ft). On hit, deals an extra 3d6 lightning damage. The
-/// reach is the balor's stand-off lane: pull targets in or jab past
-/// the line. Mirrors the BalorLongsword's slashing + lightning split
-/// but with smaller dice and longer reach.
-pub struct BalorWhip {}
-
-impl Action for BalorWhip {
-    fn name(&self) -> &str {
-        "balor whip"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["bwhip", "lwhip"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Slashing, DamageType::Lightning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "balor whip",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 6),
-            DamageType::Slashing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        add_flat_damage_rider(
-            encounter,
-            target_id,
-            Dice::new(3, 6),
-            DamageType::Lightning,
-            "balor whip lightning",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static BALOR_WHIP: LazyLock<BalorWhip> = LazyLock::new(|| BalorWhip {});
+/// Balor **Whip** — 2d6+STR slashing plus a flat 3d6 lightning at reach
+/// 12 (30 ft), and the haul that comes with it: the target is dragged
+/// twenty-five feet toward the balor and put on the floor.
+///
+/// The reach is the whole tactic. A balor does not close; it stands
+/// thirty feet back, hooks somebody, drags them into the middle of its
+/// own melee and knocks them flat there — and the party's ranged line
+/// loses whoever was hooked. Without the drag this was a long-reach
+/// swing that did rather a lot of damage, which is a different and much
+/// duller creature.
+///
+/// The drag and the knockdown are printed on both the 2014 and the SRD
+/// 5.2 balor and both gate them on size; 5.2's Flame Whip gates at
+/// **Huge or smaller** and makes both automatic, which is what this
+/// carries. The dice and damage types are the ones this stat block
+/// already shipped with — 5.2 rewrites them as Force plus Fire, which is
+/// a change to the balor's whole damage identity and belongs with a
+/// pass over its resistance table rather than with this clause.
+///
+/// This was a fifty-line hand-rolled `impl Action` whose body was one
+/// `simple_weapon_attack` and one `add_flat_damage_rider`, for the
+/// reason the behir's Constrict was: no chassis could say "damage, plus
+/// damage, plus a rider". One now can.
+pub static BALOR_WHIP: WeaponWithCondition = WeaponWithCondition::reach_melee(
+    "balor whip",
+    &["bwhip", "lwhip"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "whip haul",
+    12,
+)
+.against_at_most(Size::Huge)
+.plus_damage(Dice::new(3, 6), DamageType::Lightning, "balor whip lightning")
+.pulls(tiles_from_feet(25));
 
 /// Balor Multiattack — 1 longsword + 1 whip per Action via
 /// `CompoundAttack`. The full apex-demon opening salvo: a longsword
@@ -9507,7 +9687,7 @@ pub static BALOR_WHIP: LazyLock<BalorWhip> = LazyLock::new(|| BalorWhip {});
 /// can ladder up to ~50-60 damage on a single target in one round.
 pub static BALOR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "balor multiattack",
-    parts: vec![(&*BALOR_LONGSWORD, 1), (&*BALOR_WHIP, 1)],
+    parts: vec![(&*BALOR_LONGSWORD, 1), (&BALOR_WHIP, 1)],
 });
 
 /// Balor Fire Aura — bonus-action burst that ignites every actor whose
@@ -10670,21 +10850,23 @@ pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Giant Toad bite — STR 1d10+2 piercing + 1d10 poison splash on hit
-/// (the engine bypasses RAW's "on a successful CON save it takes half
-/// the poison" wrinkle and just lands the rider; the toad is a CR-1
-/// monster and the rider is the iconic flavor). RAW also grapples
-/// Medium-or-smaller targets on hit — that grapple half isn't modeled.
-/// Giant Toad bite — STR-based 1d10+STR piercing + flat 1d10 poison
-/// rider on hit via the shared `WeaponWithRider` chassis. Same rider
-/// chassis as Yuan-Ti Bite / Death Knight Longsword / Wereboar Tusks /
-/// Magmin Touch / Djinni Scimitar / Efreeti Scimitar — replaces the
-/// previous bespoke `GiantToadBite` Action impl whose `side_effects`
-/// was just `weapon_swing_with_flat_rider` plumbing the chassis
-/// already centralizes. RAW's grapple-on-hit (Medium-or-smaller) and
-/// half-poison-on-CON-pass clauses are deliberately skipped — neither
-/// is modeled cleanly here, and the pure piercing-plus-flat-poison
-/// envelope captures the load-bearing flavor.
+/// Giant Toad **Bite** — 1d10+STR piercing, a flat 1d10 poison, and
+/// RAW's hold: *"If the target is a Medium or smaller creature, it has
+/// the Grappled condition (escape DC 12)."*
+///
+/// All three at once, which took a chassis that could say so. This
+/// carried two stacked docstrings for a while, one apologising for the
+/// grapple and one for the poison, because the weapon-rider family was
+/// split down the middle: `WeaponWithRider` did "damage plus damage" and
+/// `WeaponWithCondition` did "damage plus a hold", and the toad is both.
+/// `plus_damage` closed that seam.
+///
+/// The hold is also what the toad's Swallow is waiting on — RAW eats "a
+/// Medium or smaller target it is grappling" — so a bite that only dealt
+/// damage left the creature's signature clause with nothing to fire at.
+///
+/// Still skipped: RAW's "on a successful CON save it takes half the
+/// poison" wrinkle. The toad is CR 1 and the rider is the flavour.
 pub static GIANT_TOAD_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     "bite",
     &["b", "chomp"],
@@ -12388,21 +12570,33 @@ pub static MERROW_CLAWS: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Merrow Harpoon — STR-based 2d6 piercing melee with reach 2 (10 ft). The
-/// merrow's signature ranged-melee hybrid: same reach-2 envelope as the
-/// ogre's greatclub, with a slightly heavier die since the polearm is
-/// pulled back to drag prey closer. RAW also has a ranged thrown form
-/// (range 20/60) and a STR-save "pull 20ft" rider on hit; we surface
-/// the melee swing only since the engine's reach-2 covers the load-bearing
-/// "I can hit you from a tile away" envelope.
-pub static MERROW_HARPOON: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Merrow **Harpoon** — 2d6+STR piercing at reach 2 (10 ft), and the
+/// clause the weapon is named for: *"If the target is a Large or
+/// smaller creature, the merrow pulls the target up to 15 feet straight
+/// toward itself."*
+///
+/// The drag is the whole point of a harpoon, and it is what makes the
+/// merrow a merrow rather than an ogre that swims: it fights at the
+/// edge of the water and hauls people into it. The clause used to be a
+/// sentence in this docstring saying the chassis had no displacement
+/// lane — see `WeaponWithCondition::displacement`, which is now that
+/// lane.
+///
+/// RAW's thrown form (range 20/60) is still not surfaced; the reach-2
+/// swing carries the envelope.
+pub static MERROW_HARPOON: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "harpoon",
     &["hrp", "harpoon"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Piercing,
+    &[],
+    ConditionTimer::Permanent,
+    "harpoon line",
     2,
-);
+)
+.against_at_most(Size::Large)
+.pulls(tiles_from_feet(15));
 
 /// Merrow Multiattack — 1 harpoon swing + 1 bite per Action via
 /// `CompoundAttack`. RAW: the merrow makes two attacks — one bite and one
@@ -18679,8 +18873,11 @@ pub static REMORHAZ_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee
 /// turn, which is a lane the engine spells as a timer rather than as an
 /// opposed check. Two rounds is that timer.
 ///
-/// The pull and the drowning are dropped: the first is a forced move on
-/// a chassis that has none, and the second needs a breath clock.
+/// The pull is RAW's five feet, on the chassis's displacement lane —
+/// which is what makes the water weird a *puller* rather than a
+/// long-armed grappler: it drags whoever it catches off the bank and
+/// into the water it lives in. The drowning is still dropped; that one
+/// needs a breath clock.
 pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "water weird constrict",
     &["ww-constrict", "water-constrict"],
@@ -18692,7 +18889,8 @@ pub static WATER_WEIRD_CONSTRICT: WeaponWithCondition = WeaponWithCondition::rea
     "coiling water",
     2,
 )
-.against_at_most(Size::Medium);
+.against_at_most(Size::Medium)
+.pulls(tiles_from_feet(5));
 
 // ─── Rug of Smothering ──────────────────────────────────────────────
 
