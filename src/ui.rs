@@ -957,11 +957,23 @@ pub fn render_sideinfo(
                         c.name(),
                     );
                 }
+                // The wards whose whole content is *which* damage type
+                // they were chosen against — Resistance, Protection
+                // from Energy, Absorb Elements. "braced(9)" says
+                // nothing a player can act on; "braced vs Fire(9)" is
+                // the entire spell. Anything carrying no choice answers
+                // `None` and reads exactly as it did. Folded in before
+                // the timer suffix rather than after, so the duration
+                // stays where the eye expects it.
+                let stem = match curr_actor.damage_type_of(*c) {
+                    Some(dt) => format!("{} vs {:?}", c.name(), dt),
+                    None => c.name().to_string(),
+                };
                 let label = match timer {
-                    crate::conditions::ConditionTimer::Permanent => c.name().to_string(),
-                    crate::conditions::ConditionTimer::Rounds(n) => format!("{}({})", c.name(), n),
+                    crate::conditions::ConditionTimer::Permanent => stem,
+                    crate::conditions::ConditionTimer::Rounds(n) => format!("{}({})", stem, n),
                     crate::conditions::ConditionTimer::UntilStartOfNextTurn => {
-                        format!("{}*", c.name())
+                        format!("{}*", stem)
                     }
                 };
                 (label, c.name())
@@ -1291,6 +1303,51 @@ mod tests {
     /// it is read straight off the same `fall_damage_dice` the fall
     /// itself rolls so the panel can never promise a softer landing than
     /// the engine delivers.
+    /// A ward against one damage type says which one.
+    ///
+    /// The three conditions that carry a chosen element — Resistance's
+    /// `Braced`, Protection from Energy's `EnergyWarded`, Absorb
+    /// Elements' — are the only conditions in the game whose entire
+    /// content is a word that is not their name. "braced(10)" tells a
+    /// player nothing they can act on; "braced vs Fire(10)" is the
+    /// spell. Everything else on the line reads exactly as it did.
+    #[test]
+    fn a_ward_against_one_element_names_it_on_the_panel() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        for eff in crate::engine::side_effects::install_condition_with_damage_type(
+            Condition::Braced,
+            id,
+            DamageType::Fire,
+            ConditionTimer::Rounds(10),
+        ) {
+            eff.apply(&mut e);
+        }
+        // A second condition with no choice, to pin that the ordinary
+        // shape is untouched.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+
+        let panel = rendered_panel_tall(&e, 90);
+        assert!(
+            panel.contains("braced vs Fire(10)"),
+            "the ward should name the element it is against:\n{}",
+            panel
+        );
+        assert!(
+            panel.contains("blessed(10)"),
+            "a condition carrying no choice reads exactly as before:\n{}",
+            panel
+        );
+    }
+
     #[test]
     fn the_panel_counts_the_dice_waiting_under_a_flier() {
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
