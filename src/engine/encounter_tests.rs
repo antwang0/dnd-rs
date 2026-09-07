@@ -86855,3 +86855,75 @@ fn the_lake_puts_out_a_fire_the_creature_standing_in_it_did_not_have_to_pay_for(
         "and paid for the round"
     );
 }
+
+/// SRD 5.2's Grappled condition has three clauses and the engine
+/// carried one.
+///
+/// > *Speed 0.* Your Speed is 0 and can't increase.
+/// > *Attacks Affected.* You have Disadvantage on attack rolls against
+/// > any target other than the grappler.
+/// > *Movable.* The grappler can drag or carry you when it moves…
+///
+/// Only the first shipped, so a creature held in a purple worm's mouth
+/// swung at the rogue beside it exactly as well as it swung at the
+/// worm. The second is a row on `FOCUS_LINK_DISADVANTAGES` now, read
+/// off the back-link that grapples have carried since escaping one
+/// became a contest.
+#[test]
+fn a_grappled_creature_swings_freely_only_at_whoever_is_holding_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let captive = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let grappler = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 5), 1, 1)
+        .unwrap();
+
+    // Before the hold, both swings are ordinary.
+    assert!(matches!(
+        e.compute_attack_mode(captive, grappler, true),
+        RollMode::Normal
+    ));
+    assert!(matches!(
+        e.compute_attack_mode(captive, bystander, true),
+        RollMode::Normal
+    ));
+
+    for eff in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        captive,
+        grappler,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+
+    assert!(
+        matches!(e.compute_attack_mode(captive, grappler, true), RollMode::Normal),
+        "swinging at whoever is holding you is the exception RAW carves out"
+    );
+    assert!(
+        matches!(
+            e.compute_attack_mode(captive, bystander, true),
+            RollMode::Disadvantage
+        ),
+        "and every other swing pays for the hold"
+    );
+
+    // The hold ends, and so does the penalty — the link dies with the
+    // condition, which is what `linked_by` is guarded on.
+    e.actors
+        .get_mut(&captive)
+        .unwrap()
+        .remove_condition(Condition::Grappled);
+    assert!(matches!(
+        e.compute_attack_mode(captive, bystander, true),
+        RollMode::Normal
+    ));
+}

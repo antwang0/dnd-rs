@@ -61,9 +61,23 @@ pub enum Condition {
     /// attacker); you have advantage on DEX saves. Cleared by the
     /// `UntilStartOfNextTurn` timer on your next turn.
     Dodging,
-    /// Speed = 0; you can't gain a speed bonus. Ends when grappler is
-    /// incapacitated or target is moved out of range. We track only the
-    /// movement block here; ending is up to the grappler logic.
+    /// SRD 5.2 **Grappled**, whose three clauses the engine now carries
+    /// two of:
+    ///
+    ///   - *"Your Speed is 0 and can't increase."* — `zeros_movement`.
+    ///   - *"You have Disadvantage on attack rolls against any target
+    ///     other than the grappler."* — one row on
+    ///     `FOCUS_LINK_DISADVANTAGES`, read off the same back-link
+    ///     `GrappleEscape` uses to find whose Athletics the captive is
+    ///     straining against.
+    ///   - *"The grappler can drag or carry you when it moves, but
+    ///     every foot of movement costs it 1 extra foot"* — not
+    ///     modeled. A grappler walks away and the hold ends on the
+    ///     range check instead, which is a coarser rule and a much
+    ///     smaller one than the two above.
+    ///
+    /// Ends when the grappler is incapacitated or the target is moved
+    /// out of range; both live in the grappler logic rather than here.
     Grappled,
     /// +1d4 to attack rolls and saving throws (Bless spell). Tracked as a
     /// condition so it ticks down with the spell timer and clears cleanly
@@ -3288,10 +3302,12 @@ impl Condition {
                 | Condition::Blinded
                 | Condition::Mocked
                 | Condition::HeatMetaled
-                // Exhausted is deliberately absent: the flag now means
-                // "at least tier 1", and RAW's attack-roll penalty does
-                // not arrive until tier 3. The gate lives in
-                // `compute_attack_mode`, which can read the tier.
+                // Exhausted is deliberately absent, and under SRD 5.2
+                // it is absent from every roll-mode cohort: exhaustion
+                // is a flat penalty on the total ("the roll is reduced
+                // by 2 times your Exhaustion level"), not a mode. The
+                // number rides `caster_attack_buffs` with the rest of
+                // the attack roll's flat terms.
                 | Condition::Confused
                 | Condition::Dominated
                 | Condition::Feebled

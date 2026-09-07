@@ -887,9 +887,14 @@ const BLANKET_CHECK_DISADVANTAGE_CONDITIONS: &[Condition] = &[
     // 5e Poisoned: "disadvantage on attack rolls and ability checks."
     Condition::Poisoned,
     // 5e Frightened: "disadvantage on ability checks and attack rolls
-    // while the source of its fear is within line of sight." We don't
-    // track LOS-to-the-fear-source, so the clause is unconditional —
-    // the same simplification the attack lane already makes.
+    // while the source of its fear is within line of sight." The
+    // condition carries no back-link to whatever frightened it — some
+    // ninety stat blocks and twenty spells install it, and none of them
+    // records a source — so the clause is unconditional here, the same
+    // simplification the attack lane makes. Wiring the link would make
+    // both lanes exact and would also sharpen the movement half in
+    // `Move::custom_validate_input`, which today refuses a step toward
+    // *any* enemy.
     Condition::Frightened,
     // 5e Flesh Golem Aversion to Fire: "Disadvantage on attack rolls
     // and ability checks until the end of its next turn." The other
@@ -2417,6 +2422,26 @@ const FOCUS_LINK_DISADVANTAGES: &[Condition] = &[
     Condition::Dueled,
     Condition::Goaded,
     Condition::AncestrallyHaunted,
+    // SRD 5.2 **Grappled**, second clause: *"You have Disadvantage on
+    // attack rolls against any target other than the grappler."*
+    //
+    // The fourth arrival at this shape and the only one that is not a
+    // subclass feature — it is a line in the condition itself, printed
+    // on the roughly fifty stat blocks whose bite or tentacle holds
+    // somebody. The engine modelled the first clause (Speed 0) and not
+    // this one, so a creature in a purple worm's mouth swung at the
+    // rogue beside it exactly as well as it swung at the worm.
+    //
+    // The link it needs has been there since grapples became a
+    // contest: `install_condition_with_link` sets it at every grapple
+    // site, because `GrappleEscape` needs to know whose Athletics the
+    // captive is straining against. This clause simply reads it.
+    //
+    // A hold with no link — nothing installs one today — falls through
+    // to no penalty at all, which is `focus_link_mode`'s standing
+    // behaviour and the right direction to fail in: a grapple that
+    // cannot name a grappler cannot say which swing is the exception.
+    Condition::Grappled,
 ];
 
 fn focus_link_mode(
