@@ -400,12 +400,43 @@ pub enum Condition {
     /// which is the clause's whole point; RAW would also cost them the
     /// walk back to cover afterwards.
     Lethargic,
-    /// Slowed (5e Slow spell). Halved walking speed, -2 AC, -2 DEX
-    /// saves. The 5e spell also halves the holder's action economy
-    /// (no reactions, can only cast a 1-action spell *or* attack);
-    /// we model the static half — AC + DEX hit + movement — and skip
-    /// the action-economy clause to avoid surprising the AI. Tracked
-    /// as a condition so it clears cleanly on concentration drop.
+    /// Slowed — SRD 5.2 **Slow**, and the mirror of `Hasted` on every
+    /// axis the two share.
+    ///
+    /// > *"An affected target's Speed is halved, it takes a −2 penalty
+    /// > to AC and Dexterity saving throws, and it can't take
+    /// > Reactions. On its turns, it can take either an action or a
+    /// > Bonus Action, not both, and it can make only one attack if it
+    /// > takes the Attack action."*
+    ///
+    /// Every clause of that sentence ships. The first three are static
+    /// numbers and always did; the last three are the action economy,
+    /// and this docstring used to say they were skipped "to avoid
+    /// surprising the AI" — which left a third-level concentration
+    /// spell buying a −2 to two rolls.
+    ///
+    ///   - **No Reactions** — one row on `blocks_reactions`.
+    ///   - **An action or a Bonus Action, not both** — enforced at the
+    ///     spend, in `ActorInstance::consume_resource`: taking either
+    ///     zeroes the other for the rest of the turn. The choice stays
+    ///     the holder's, which is what RAW's "either… not both" means
+    ///     and what a flat "you lose your bonus action" would take
+    ///     away.
+    ///   - **Only one attack on the Attack action** — a validate gate
+    ///     against `Action::chains_multiple_attacks`, which is the
+    ///     engine's name for exactly the routines RAW is cutting down.
+    ///     A slowed marid throws one trident.
+    ///
+    /// RAW's fourth clause — a 25 percent chance a somatic spell fails
+    /// — is not modeled: the engine tracks no spell components, so
+    /// there is nothing to roll against.
+    ///
+    /// The spell's own escape hatch ships as well: *"An affected target
+    /// repeats the save at the end of each of its turns"*, as a row on
+    /// `ROUND_END_SAVES`. Like every row there it is anchored to the
+    /// caster's concentration, so the Stone Golem's Slow and the Scroll
+    /// of Slow — neither of which concentrates — run out their timers
+    /// instead, which is what those printings say.
     Slowed,
     /// Warded by Death Ward — the next time the holder would drop to
     /// 0 HP, they instead drop to 1 HP and the condition burns off.
@@ -3648,6 +3679,10 @@ impl Condition {
                 // 5e Surprised: "and you can't take a reaction until
                 // that turn ends".
                 | Condition::Surprised
+                // 5e Slow: "it can't take Reactions". One of the three
+                // action-economy clauses the condition carries — see
+                // `Condition::Slowed`.
+                | Condition::Slowed
         )
     }
 

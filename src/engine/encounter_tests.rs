@@ -14354,6 +14354,113 @@ fn warded_target_taxes_an_aberration_the_proxy_missed() {
     );
 }
 
+/// 5e **Slow**: *"it can't take Reactions."*
+#[test]
+fn a_slowed_creature_has_no_reaction() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let actor = e.actors.get_mut(&fighter).unwrap();
+    actor.reset_for_new_round();
+    assert!(actor.can_consume_resource(Resource::Reaction));
+    actor.add_condition(Condition::Slowed, ConditionTimer::Rounds(10));
+    assert!(!actor.can_consume_resource(Resource::Reaction));
+}
+
+/// 5e **Slow**: *"On its turns, it can take either an action or a Bonus
+/// Action, not both."*
+///
+/// Both orderings, because the clause is a choice and the enforcement
+/// has to work whichever half the holder picks first.
+#[test]
+fn a_slowed_creature_takes_an_action_or_a_bonus_action() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    for (spend, other) in [
+        (Resource::Action, Resource::BonusAction),
+        (Resource::BonusAction, Resource::Action),
+    ] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&fighter).unwrap();
+        actor.add_condition(Condition::Slowed, ConditionTimer::Rounds(10));
+        actor.reset_for_new_round();
+        assert!(actor.can_consume_resource(other), "both are open to start");
+        assert!(actor.consume_resource(spend));
+        assert!(
+            !actor.can_consume_resource(other),
+            "spending {:?} should close {:?}",
+            spend,
+            other
+        );
+    }
+}
+
+/// The same clause seen from the other side: an *unslowed* creature
+/// keeps both halves, which is the control that stops the test above
+/// passing because the engine simply ran out of slots.
+#[test]
+fn an_unslowed_creature_keeps_both_halves_of_its_turn() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let actor = e.actors.get_mut(&fighter).unwrap();
+    actor.reset_for_new_round();
+    assert!(actor.consume_resource(Resource::Action));
+    assert!(actor.can_consume_resource(Resource::BonusAction));
+}
+
+/// 5e **Slow**: *"it can make only one attack if it takes the Attack
+/// action."* The multiattack wrapper is refused; the single swing
+/// underneath it is not.
+#[test]
+fn a_slowed_creature_is_refused_its_multiattack() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    // Any routine on the sheet that chains swings, plus a single one.
+    let (chained, single) = {
+        let a = &e.actors[&ogre];
+        (
+            a.actions.iter().find(|x| x.chains_multiple_attacks()).copied(),
+            a.actions
+                .iter()
+                .find(|x| x.is_weapon_attack() && !x.chains_multiple_attacks())
+                .copied()
+                .expect("the ogre swings a greatclub"),
+        )
+    };
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .add_condition(Condition::Slowed, ConditionTimer::Rounds(10));
+    if let Some(chained) = chained {
+        assert!(
+            !ActionExecutionInfo::new(chained, ogre, Some(vec![goblin]), None, None)
+                .validate(&e),
+            "a slowed creature makes one attack, not a routine"
+        );
+    }
+    assert!(
+        ActionExecutionInfo::new(single, ogre, Some(vec![goblin]), None, None).validate(&e),
+        "and the one attack is still available"
+    );
+}
+
 /// 5e **Haste**: *"it gains an additional action on each of its
 /// turns."* Granted at the holder's own turn start, because RAW says
 /// each of its turns and the cast happens on somebody else's.

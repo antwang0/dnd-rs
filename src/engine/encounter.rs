@@ -390,6 +390,22 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Dexterity,
         log_verb: "tears at the draining tendril:",
     },
+    // 5e Slow — WIS at the end of each of the victim's turns: "An
+    // affected target repeats the save at the end of each of its turns,
+    // ending the spell on itself on a success." The spell's own escape
+    // hatch, and it matters more here than on most rows because Slow's
+    // envelope is now the whole of RAW's: no reactions, an action *or*
+    // a bonus action, and one attack instead of a routine.
+    //
+    // Concentration-anchored like every row on this table, which is the
+    // right filter rather than an accident: the Stone Golem's Slow and
+    // the Scroll of Slow hold no concentration and offer no repeat save
+    // in their own printings either, so both run out their timers.
+    RoundEndSave {
+        condition: Condition::Slowed,
+        save_ability: crate::engine::types::AbilityScoreType::Wisdom,
+        log_verb: "strains against the thickening air:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine

@@ -8626,8 +8626,12 @@ impl ActorInstance {
                 self.action_slots -= 1;
                 self.restricted_action_slots =
                     self.restricted_action_slots.min(self.action_slots);
+                self.close_slow_action_economy(true);
             }
-            Resource::BonusAction => self.bonus_action_slots -= 1,
+            Resource::BonusAction => {
+                self.bonus_action_slots -= 1;
+                self.close_slow_action_economy(false);
+            }
             Resource::Reaction => self.reaction_slots -= 1,
             Resource::LegendaryAction => self.legendary_action_slots -= 1,
         }
@@ -9994,7 +9998,34 @@ impl ActorInstance {
             self.restricted_action_slots =
                 self.restricted_action_slots.min(self.action_slots);
         }
+        self.close_slow_action_economy(true);
         true
+    }
+
+    /// 5e **Slow**: *"On its turns, it can take either an action or a
+    /// Bonus Action, not both."*
+    ///
+    /// Called after either half is spent, with `took_action` saying
+    /// which; it closes the other one for the rest of the turn. A no-op
+    /// for everybody who is not Slowed, which is nearly everybody.
+    ///
+    /// Enforced at the spend rather than at the turn start because the
+    /// clause is a *choice* and RAW leaves it with the holder: zeroing
+    /// the bonus action up front would decide for them, and zeroing the
+    /// action would decide differently and worse. This way a slowed
+    /// rogue can still pick Cunning Action over its attack, which is
+    /// often the right call and is exactly the decision the spell is
+    /// meant to force.
+    fn close_slow_action_economy(&mut self, took_action: bool) {
+        if !self.conditions.contains_key(&Condition::Slowed) {
+            return;
+        }
+        if took_action {
+            self.bonus_action_slots = 0;
+        } else {
+            self.action_slots = 0;
+            self.restricted_action_slots = 0;
+        }
     }
 
     pub fn action_slots(&self) -> u32 {
