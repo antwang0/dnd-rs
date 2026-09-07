@@ -977,6 +977,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3i'. Haste — level-3 single-target ally buff, and the only
+        //      spell in the ladder that buys an ally a whole extra
+        //      Action every round. Below Foresight because Foresight's
+        //      slot is the precious one and its clause is unconditional;
+        //      above the self-buff cohort for the reason the cohort's
+        //      own docstring gives about arming early — an extra swing a
+        //      round compounds, and a round spent casting it after the
+        //      shooting starts is a round of it lost.
+        if let Some(aei) = try_haste(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3j. The concentration self-buff cohort, upper half — Holy
         //     Aura, Spirit Shroud, Bigby's Hand, Tenser's
         //     Transformation. One rung per table row used to live here,
@@ -4579,6 +4591,77 @@ fn try_foresight(
         let hp = a.hitpoints();
         if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
             best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Haste — level-3 single-target ally buff, laid on whoever will get the
+/// most out of an extra Action.
+///
+/// The sibling of `try_foresight` directly above, and the target
+/// heuristic is where the two part company. Foresight wants the ally
+/// most likely to be hit, so it picks the biggest hit-point pool. Haste
+/// buys an extra Action that RAW restricts to an attack, a Dash, a
+/// Disengage or a Hide — see `Action::hasted_action_eligible` — so what
+/// it wants is the ally whose *attack* is worth the most, and an ally
+/// with no eligible attack at all is worth nothing to it. A wizard
+/// hasting another wizard buys a Dash.
+///
+/// Gates, in order:
+///
+///   1. **Not already concentrating.** Haste holds the slot for its
+///      whole duration, and a caster who traded a landed Web for it has
+///      made the fight worse — the same argument `try_area_control` and
+///      the summon rung make.
+///   2. **A fight is on** (24 tiles ≈ 60 ft, the same window the summon
+///      rung uses). The extra Action is worth nothing to an ally with
+///      nothing to swing at, and the concentration is spent either way.
+///   3. **The ally isn't already Hasted**, which is also what stops two
+///      casters stacking it on one body.
+///   4. **The action's own validator**, which owns range and targeting.
+///
+/// Ties break on the lowest id, so two identical frontliners produce
+/// the same choice on every replay of a seed.
+fn try_haste(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() || !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    let action = actor.find_action("haste")?;
+    let team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for id in encounter.sorted_actor_ids() {
+        let Some(a) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if a.team() != team || !a.is_combat_active() || a.has_condition(Condition::Hasted) {
+            continue;
+        }
+        // What the extra Action can actually be spent on, scored by the
+        // best of them. `expected_damage` is already the number every
+        // other picker in the ladder ranks attacks by.
+        let worth = a
+            .actions
+            .iter()
+            .filter(|x| x.hasted_action_eligible())
+            .filter_map(|x| x.expected_damage(encounter, id))
+            .fold(0.0f32, f32::max);
+        if worth <= 0.0 {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        // Scaled to an integer so the comparison is total and the
+        // choice is stable across a replay; `f32` has no `Ord`.
+        let score = (worth * 100.0) as u32;
+        if best.as_ref().is_none_or(|(best_score, _)| score > *best_score) {
+            best = Some((score, aei));
         }
     }
     best.map(|(_, aei)| aei)
@@ -8293,6 +8376,21 @@ const AREA_CONTROL_SPELLS: &[&str] = &[
     // is also the answer to whether the damage rider disqualifies it:
     // Black Tentacles has one and is a row.
     "crown of thorns",
+    // Slow, which did not belong here until recently and now belongs
+    // squarely. The membership test on this rung is "does it take
+    // hostiles out of the fight", and for most of the engine's life
+    // Slow's answer was no: the condition carried −2 AC, −2 on
+    // Dexterity saves and half speed, which is a tax on a creature that
+    // keeps acting. It now carries the whole of RAW's envelope — no
+    // reactions, an action *or* a bonus action but not both, and one
+    // attack instead of a routine — which is most of a creature's turn.
+    //
+    // Six targets in a 40-foot cube, each of them halved, is a better
+    // level-3 slot than Fireball against anything that survives the
+    // Fireball, and the AoE picker below could never say so: it scores
+    // on bodies covered and Slow covers no more of them than the
+    // damage spell it loses to.
+    "slow",
 ];
 
 /// Which half of the summon lane a rung is asking for.
@@ -17799,6 +17897,7 @@ mod tests {
             ("stinking cloud", true),
             ("wall of sand", true),
             ("crown of thorns", true),
+            ("slow", true),
         ];
 
         let mut checked: HashSet<&str> = HashSet::new();
@@ -18288,6 +18387,51 @@ mod tests {
             2,
             "a hasted one has two and should take both"
         );
+    }
+
+    /// The AI reaches for Haste, and lays it on the ally whose attack
+    /// the extra Action is worth the most to.
+    ///
+    /// Before the spell's fourth clause shipped there was no rung for
+    /// it at all — and rightly, since what it bought was +2 AC on
+    /// somebody else for a level-3 slot and the caster's whole
+    /// concentration. What it buys now is an extra swing a round, which
+    /// is worth the slot; this is the test that says the ladder can
+    /// find it.
+    #[test]
+    fn an_ai_caster_hastes_the_ally_who_swings_hardest() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let barbarian = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(5, 4), 0, 0)
+            .unwrap();
+        // A second, feebler ally, so the pick is a choice rather than
+        // the only option on the board.
+        let commoner = e
+            .instantiate_creature(
+                &crate::actors::creatures::commoners::COMMONER_TEMPLATE,
+                Coordinate::new(4, 5),
+                0,
+                1,
+            )
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+
+        let picked = super::try_haste(&e, wizard).expect("the wizard should reach for Haste");
+        assert_eq!(picked.action().name(), "haste");
+        assert_eq!(
+            picked.target_ids().map(|v| v.to_vec()),
+            Some(vec![barbarian]),
+            "the greataxe, not the commoner's club"
+        );
+        assert_ne!(picked.target_ids().map(|v| v.to_vec()), Some(vec![commoner]));
     }
 
 }
