@@ -247,7 +247,6 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
     actions.push(&*crate::actions::spells::WEIRD);
     actions.push(&*crate::actions::spells::THUNDER_STEP);
-    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
@@ -559,6 +558,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // a tag because its trigger is a fall rather than a turn.
             // See `EncounterInstance::try_feather_fall`.
             crate::actions::class_features::FEATHER_FALL_TAG,
+            // 5e **Absorb Elements** — a tag rather than an action
+            // because its RAW window opens on incoming elemental
+            // damage, which no turn-ordered list can offer. See
+            // `EncounterInstance::try_absorb_elements`.
+            crate::actions::class_features::ABSORB_ELEMENTS_TAG,
             crate::actions::class_features::TIDES_OF_CHAOS_TAG,
             crate::actions::class_features::SORCEROUS_RESTORATION_TAG,
             // 5e Wild Magic Sorcerer **Wild Magic Surge** — passive: every

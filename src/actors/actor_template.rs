@@ -205,7 +205,16 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
 /// second field is the thing that is not known at compile time.
 /// `ActorInstance::damage_type_of` supplies it per actor, and folds in
 /// the still-held check, so a row here needs nothing but the condition.
-const CHOSEN_TYPE_RESISTANCE_CONDITIONS: &[Condition] = &[Condition::EnergyWarded];
+const CHOSEN_TYPE_RESISTANCE_CONDITIONS: &[Condition] = &[
+    Condition::EnergyWarded,
+    // 5e Absorb Elements: "you have Resistance to the triggering
+    // damage type until the start of your next turn." The choice is
+    // not the caster's at all here — it is whatever was thrown, and
+    // `EncounterInstance::try_absorb_elements` writes it down at the
+    // moment the blow lands. Which is the same row as Protection from
+    // Energy's, reached from the other end.
+    Condition::AbsorbedElements,
+];
 
 /// One row in the `TYPED_VULNERABILITY_CONDITIONS` cohort — a single
 /// held condition whose presence makes the holder take *double* damage

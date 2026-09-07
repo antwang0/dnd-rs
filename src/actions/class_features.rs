@@ -17675,6 +17675,43 @@ pub const FLASH_OF_GENIUS_TAG: &str = "artificer.flash_of_genius";
 /// or Druid does not get to catch anybody.
 pub const FEATHER_FALL_TAG: &str = "spell.feather_fall";
 
+/// 5e **Absorb Elements** (level-1 abjuration, reaction) — carried as a
+/// tag rather than as an entry on the holder's action list, for the
+/// reason `FEATHER_FALL_TAG` directly above is.
+///
+/// > *Casting Time:* Reaction, which you take when you take Acid, Cold,
+/// > Fire, Lightning, or Thunder damage. […] you have Resistance to the
+/// > triggering damage type until the start of your next turn. […] the
+/// > first time you hit with a melee attack on your next turn, the
+/// > target takes an extra 1d6 damage of the triggering type.
+///
+/// It shipped here as a castable `Action` costing a reaction, which is
+/// the wrong shape twice over. RAW's trigger is *damage that has
+/// already been rolled*, and a turn-ordered action list cannot offer
+/// that window — so the AI never once reached for it, in five class
+/// loadouts, across every fight in the suite. And "the triggering
+/// damage type" cannot be known by a spell cast before anything has
+/// triggered, which is why the resistance collapsed to the blanket
+/// `DamageResistant` flag and the melee rider dealt Force: the element
+/// the spell is *about* had not happened yet.
+///
+/// Both halves come from the hook.
+/// `EncounterInstance::try_absorb_elements` runs at the top of
+/// `DealDamage::apply` — before every halving, so the resistance
+/// applies to the blow that triggered it, which is RAW and is the whole
+/// point of the spell — and writes the triggering type onto
+/// `Condition::AbsorbedElements` through the chosen-damage-type table.
+/// The resistance is that type and no other, and the rider deals it
+/// too.
+///
+/// Not a charged feature, for `FEATHER_FALL_TAG`'s reason: RAW prices
+/// it in a reaction and a 1st-level slot, both of which the engine
+/// already tracks and the hook already spends.
+///
+/// Held by the five chassis that have it on their spell list here:
+/// Wizard, Sorcerer, Druid, Ranger and Artificer.
+pub const ABSORB_ELEMENTS_TAG: &str = "spell.absorb_elements";
+
 /// 5e Battle Smith Artificer level-9 feature **Arcane Jolt**, damage
 /// half. "When either you or your steel defender hits a target with an
 /// attack roll, you can channel magical energy through the strike to

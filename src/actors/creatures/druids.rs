@@ -206,7 +206,6 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // ally in the aura at cast time so a clustered party benefits as a
     // group.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
-    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     actions.push(&*crate::actions::spells::PRODUCE_FLAME);
     actions.push(&*crate::actions::spells::CREATE_BONFIRE);
     actions.push(&*crate::actions::spells::ENTANGLE);
@@ -458,6 +457,11 @@ pub static LAND_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             crate::actions::class_features::NATURAL_RECOVERY_TAG,
             crate::actions::class_features::LANDS_STRIDE_TAG,
+            // 5e **Absorb Elements** — a tag rather than an action
+            // because its RAW window opens on incoming elemental
+            // damage, which no turn-ordered list can offer. See
+            // `EncounterInstance::try_absorb_elements`.
+            crate::actions::class_features::ABSORB_ELEMENTS_TAG,
         ]),
         ..DRUID_TEMPLATE.clone()
     }

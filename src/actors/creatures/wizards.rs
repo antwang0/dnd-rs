@@ -394,7 +394,6 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::CHARM_MONSTER);
     actions.push(&*crate::actions::spells::MIND_BLANK);
     actions.push(&*crate::actions::spells::THUNDER_STEP);
-    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
     actions.push(&*crate::actions::spells::RAY_OF_ENFEEBLEMENT);
     actions.push(&*crate::actions::spells::INFESTATION);
@@ -767,6 +766,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // and `EncounterInstance::try_feather_fall`; the cost is a
             // reaction and a 1st-level slot, both spent at the hook.
             crate::actions::class_features::FEATHER_FALL_TAG,
+            // 5e **Absorb Elements** — a tag rather than an action
+            // because its RAW window opens on incoming elemental
+            // damage, which no turn-ordered list can offer. See
+            // `EncounterInstance::try_absorb_elements`.
+            crate::actions::class_features::ABSORB_ELEMENTS_TAG,
         ]),
         ..CreatureTemplate::defaults()
     }

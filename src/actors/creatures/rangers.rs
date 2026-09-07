@@ -109,7 +109,6 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // — the ranger's signature stealth utility, slotted in the lv2 lane
     // alongside Spike Growth / Hunter's Mark.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
-    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     // lv1 **Longstrider**: ranger half-caster pickup. Touch +10 ft speed
     // for 1 hour, no concentration. Pairs cleanly with the ranger's
     // Hunter's Mark + longbow kite — the ranger pre-buffs themselves /
@@ -261,7 +260,17 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Ships on the CR-1 baseline above its strict RAW lv8 gate for
         // the same reason Roving (lv6) / Feral Senses (lv18) / Foe
         // Slayer (lv20) already ride here.
-        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG, LANDS_STRIDE_TAG]),
+        features: HashSet::from([
+            FOE_SLAYER_TAG,
+            VANISH_TAG,
+            ROVING_TAG,
+            LANDS_STRIDE_TAG,
+            // 5e **Absorb Elements** — a tag rather than an action
+            // because its RAW window opens on incoming elemental
+            // damage, which no turn-ordered list can offer. See
+            // `EncounterInstance::try_absorb_elements`.
+            crate::actions::class_features::ABSORB_ELEMENTS_TAG,
+        ]),
         skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Stealth]),
         // 5e (2024 / SRD 5.2) **Weapon Mastery** — the level-1 class
         // feature of all five martial classes, and the switch that

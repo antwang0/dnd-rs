@@ -10,7 +10,7 @@ use crate::actions::monster_attacks::{
     ARCANE_INFUSED_WEAPON, LIGHTNING_LAUNCHER, SHORTSWORD, THUNDER_GAUNTLETS,
 };
 use crate::actions::spells::{
-    ABSORB_ELEMENTS, ACID_SPLASH, AID, BLINK, BLUR, CATAPULT, CREATE_BONFIRE, CURE_WOUNDS,
+    ACID_SPLASH, AID, BLINK, BLUR, CATAPULT, CREATE_BONFIRE, CURE_WOUNDS,
     DISPEL_MAGIC, ELEMENTAL_WEAPON, ENHANCE_ABILITY, ENLARGE_REDUCE, EXPEDITIOUS_RETREAT,
     FAERIE_FIRE, FALSE_LIFE, FIRE_BOLT, FLAME_ARROWS, FLY, FREEDOM_OF_MOVEMENT, GREASE, GUIDANCE,
     HASTE, HEAT_METAL, INVISIBILITY, LESSER_RESTORATION, LEVITATE, LONGSTRIDER, MAGIC_STONE,
@@ -110,7 +110,6 @@ pub static ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SANCTUARY);
     actions.push(&*LONGSTRIDER);
     actions.push(&*EXPEDITIOUS_RETREAT);
-    actions.push(&*ABSORB_ELEMENTS);
     actions.push(&*CATAPULT);
     actions.push(&*TASHAS_CAUSTIC_BREW);
     // Level 2
@@ -187,6 +186,11 @@ pub static ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // somebody else's misfortune. See
             // `EncounterInstance::try_feather_fall`.
             crate::actions::class_features::FEATHER_FALL_TAG,
+            // 5e **Absorb Elements** — a tag rather than an action
+            // because its RAW window opens on incoming elemental
+            // damage, which no turn-ordered list can offer. See
+            // `EncounterInstance::try_absorb_elements`.
+            crate::actions::class_features::ABSORB_ELEMENTS_TAG,
         ]),
         skills: HashSet::from([Skill::Arcana, Skill::Perception]),
         ..CreatureTemplate::defaults()

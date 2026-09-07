@@ -40201,8 +40201,23 @@ fn danger_sense_gives_dex_save_advantage() {
     );
 }
 
+/// Absorb Elements fires off the blow that triggers it, and the
+/// resistance it installs covers that same blow.
+///
+/// The spell used to be a castable Action with a `NoArgs` schema, which
+/// meant two things at once: the AI never reached for it in any of the
+/// five loadouts that carried it, and the resistance it granted was the
+/// blanket `DamageResistant` flag rather than the triggering element,
+/// because when a spell is cast before anything triggers it there is no
+/// triggering element to name.
+///
+/// Both halves are pinned here. 20 fire lands as 10, which is the
+/// halving reaching the blow that opened the window; cold is untouched,
+/// which is the resistance being one element rather than all of them.
 #[test]
-fn absorb_elements_installs_resistance_and_rider() {
+fn absorb_elements_catches_the_blow_that_triggered_it() {
+    use crate::engine::side_effects::DealDamage;
+
     let mut e = ei_with_terrain(20, 20, &[]);
     let wiz = e
         .instantiate_creature(
@@ -40212,20 +40227,125 @@ fn absorb_elements_installs_resistance_and_rider() {
             0,
         )
         .unwrap();
-    let action = e.actors[&wiz].find_action("absorb elements");
-    assert!(action.is_some(), "wizard should have Absorb Elements");
-    let a = action.unwrap();
-    let effects = a.side_effects(&mut e, wiz, None, None, None);
-    for eff in effects {
-        eff.apply(&mut e);
-    }
     assert!(
-        e.actors[&wiz].has_condition(Condition::DamageResistant),
-        "should install damage resistance"
+        e.actors[&wiz].find_action("absorb elements").is_none(),
+        "the spell is a reaction hook now, not an entry on the action list"
+    );
+    let slots_before = e.actors[&wiz].spell_slot_manager.spell_slots(1).spell_slots;
+
+    // Small numbers on purpose: the wizard chassis has 7 hit points,
+    // and a blow that drops it would be clamped by the floor at 0
+    // rather than by the resistance under test.
+    let before = e.actors[&wiz].hitpoints();
+    DealDamage {
+        actor_id: wiz,
+        amount: 4,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        before - e.actors[&wiz].hitpoints(),
+        2,
+        "the reaction's resistance halves the blow that opened the window"
+    );
+    assert_eq!(
+        e.actors[&wiz].damage_type_of(Condition::AbsorbedElements),
+        Some(DamageType::Fire),
+        "the element that triggered it is what got absorbed"
+    );
+    assert_eq!(
+        e.actors[&wiz].spell_slot_manager.spell_slots(1).spell_slots,
+        slots_before - 1,
+        "RAW prices it in a reaction and a 1st-level slot"
     );
     assert!(
-        e.actors[&wiz].has_condition(Condition::AbsorbedElements),
-        "should install absorbed elements rider"
+        !e.actors[&wiz].has_reaction(),
+        "and the reaction is spent"
+    );
+
+    // A different element gets nothing: the ward is one type, not a
+    // blanket halving, and the reaction is gone besides.
+    let mid = e.actors[&wiz].hitpoints();
+    DealDamage {
+        actor_id: wiz,
+        amount: 3,
+        damage_type: DamageType::Cold,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        mid - e.actors[&wiz].hitpoints(),
+        3,
+        "absorbing fire is not absorbing cold"
+    );
+}
+
+/// The hook declines what it cannot help with, and keeps the slot.
+///
+/// Three refusals: a damage type outside RAW's five, a creature that
+/// already resists the type (5e counts multiple instances of resistance
+/// as one, so the slot would buy nothing), and a creature that does not
+/// know the spell at all.
+#[test]
+fn absorb_elements_keeps_its_slot_when_it_would_buy_nothing() {
+    use crate::engine::side_effects::DealDamage;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let slots = |e: &EncounterInstance| e.actors[&wiz].spell_slot_manager.spell_slots(1).spell_slots;
+    let before = slots(&e);
+
+    // Necrotic is not on RAW's list.
+    DealDamage {
+        actor_id: wiz,
+        amount: 2,
+        damage_type: DamageType::Necrotic,
+    }
+    .apply(&mut e);
+    assert_eq!(slots(&e), before, "necrotic is not one of the five");
+    assert!(!e.actors[&wiz].has_condition(Condition::AbsorbedElements));
+
+    // Already resistant to fire: a second halving is not a halving.
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .add_condition(Condition::InvestedInFlame, ConditionTimer::Rounds(10));
+    DealDamage {
+        actor_id: wiz,
+        amount: 2,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        slots(&e),
+        before,
+        "a creature that already resists fire buys nothing with the slot"
+    );
+
+    // A creature without the tag never sees the window.
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(5, 3),
+            0,
+            1,
+        )
+        .unwrap();
+    DealDamage {
+        actor_id: fighter,
+        amount: 6,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::AbsorbedElements),
+        "a fighter does not know the spell"
     );
 }
 
@@ -86384,5 +86504,71 @@ fn the_resistance_cantrip_declines_a_board_it_cannot_help_with() {
     assert!(
         !action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None),
         "a caster already concentrating has nothing to spend on this"
+    );
+}
+
+/// The stored energy comes back out as the element that went in.
+///
+/// RAW: "the first time you hit with a melee attack on your next turn,
+/// the target takes an extra 1d6 damage of the triggering type." The
+/// rider table could only ever name one type at compile time, so it
+/// named Force and said so in its own comment. It reads the prime's
+/// recorded element now, and the fallback in the row is unreachable in
+/// play — every install of this prime goes through the hook, and the
+/// hook always writes the element down.
+#[test]
+fn the_absorb_elements_rider_returns_the_element_that_was_thrown() {
+    use crate::engine::side_effects::DealDamage;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(4, 3),
+            1,
+            0,
+        )
+        .unwrap();
+    // Open the window with cold, so the rider has an element that is
+    // neither the row's fallback nor the commonest one.
+    DealDamage {
+        actor_id: wiz,
+        amount: 2,
+        damage_type: DamageType::Cold,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&wiz].damage_type_of(Condition::AbsorbedElements),
+        Some(DamageType::Cold)
+    );
+
+    let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> = Vec::new();
+    let added = crate::engine::attack::push_on_hit_riders(
+        &mut e,
+        &mut effects,
+        wiz,
+        target,
+        crate::engine::attack::RiderSwing {
+            is_melee: true,
+            is_spell: false,
+            is_crit: false,
+            damage_so_far: 0,
+        },
+    );
+    assert!(added > 0, "the prime should have fired on a melee hit");
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("absorb elements") && m.contains("Cold")),
+        "the rider should deal the element that was absorbed, not the row's fallback: {:?}",
+        e.messages()
     );
 }

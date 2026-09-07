@@ -2684,16 +2684,32 @@ pub fn push_on_hit_riders(
         {
             caster.mark_once_per_turn_used(tag);
         }
+        // A rider whose prime carries a chosen damage type deals *that*
+        // type; every other rider deals the one written in its row.
+        //
+        // Structural rather than a special case: `damage_type_of`
+        // answers `None` for any condition that carries no choice, so
+        // the fallback is the row and there is nothing to gate. Absorb
+        // Elements is the one prime that needs it today — RAW's rider
+        // is "an extra 1d6 damage of the triggering type", and the
+        // triggering type is not knowable when the table is written,
+        // which is why the row said Force for as long as the choice had
+        // nowhere to live. See `ActorInstance::condition_damage_types`.
+        let rider_damage_type = encounter
+            .actors
+            .get(&caster_id)
+            .and_then(|a| a.damage_type_of(rider.condition))
+            .unwrap_or(rider.damage_type);
         let rider_total = if rider.dice.count > 0 {
             let total = roll_rider(encounter, rider.dice, swing.is_crit);
             encounter.log(format!(
                 "  {}: +{} {:?}",
-                rider.label, total, rider.damage_type
+                rider.label, total, rider_damage_type
             ));
             effects.push(Box::new(DealDamage {
                 actor_id: target_id,
                 amount: total,
-                damage_type: rider.damage_type,
+                damage_type: rider_damage_type,
             }));
             added = added.saturating_add(total);
             total
@@ -4936,13 +4952,20 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
         },
-        // 5e Absorb Elements — 1st-level abjuration, reaction. The caster
-        // stores captured elemental energy and releases it on their next
-        // melee attack: +1d6 of the absorbed element's damage type. We
-        // model the rider as generic Force since the per-element type
-        // isn't tracked. One-shot — consumed the moment a melee swing
-        // lands. The resistance half is handled by the spell's
-        // DamageResistant condition install.
+        // 5e Absorb Elements — 1st-level abjuration, reaction. The
+        // caster stores the energy that was thrown at it and releases
+        // it on their next melee attack: "the target takes an extra 1d6
+        // damage of the triggering type". One-shot — consumed the
+        // moment a melee swing lands.
+        //
+        // The row's `damage_type` is a fallback that is unreachable in
+        // play: every install of this prime goes through
+        // `EncounterInstance::try_absorb_elements`, which records the
+        // element that triggered it, and the resolver above prefers the
+        // recorded one. Force is kept as the value because the field is
+        // not optional and because a typeless magical discharge is the
+        // honest answer to "what does this deal if nothing triggered
+        // it".
         OnHitRider {
             condition: Condition::AbsorbedElements,
             dice: Dice::new(1, 6),

@@ -9252,6 +9252,92 @@ impl EncounterInstance {
         None
     }
 
+    /// The five damage types 5e's **Absorb Elements** answers. RAW:
+    /// *"which you take when you take Acid, Cold, Fire, Lightning, or
+    /// Thunder damage"*.
+    pub const ABSORBABLE_ELEMENTS: &'static [crate::engine::types::DamageType] = &[
+        crate::engine::types::DamageType::Acid,
+        crate::engine::types::DamageType::Cold,
+        crate::engine::types::DamageType::Fire,
+        crate::engine::types::DamageType::Lightning,
+        crate::engine::types::DamageType::Thunder,
+    ];
+
+    /// Offer `actor_id` its **Absorb Elements** reaction against an
+    /// incoming instance of `damage_type`, and return true if it took
+    /// it.
+    ///
+    /// A self-only reaction, so unlike `try_feather_fall` there is no
+    /// roster to scan — the creature about to be hit is the only
+    /// candidate there is. Called from the top of `DealDamage::apply`,
+    /// which is the earliest point at which the triggering type is
+    /// known and the latest at which the resistance can still reach the
+    /// blow that triggered it. RAW is explicit that it does ("you have
+    /// Resistance to the triggering damage type"), and a hook one line
+    /// later would have been a spell that protects against everything
+    /// except the thing it was cast at.
+    ///
+    /// Five gates:
+    ///   - The type is one of the five (`ABSORBABLE_ELEMENTS`).
+    ///   - The creature knows the spell, is still in the fight, and can
+    ///     pay the reaction and the 1st-level slot RAW charges.
+    ///   - It is not already absorbing. RAW would let a second casting
+    ///     replace the first, but the first is still up and covering
+    ///     this same turn, so the second buys a rider it already has
+    ///     with a slot it will want later.
+    ///   - **It does not already shrug the type off.** A creature with
+    ///     fire resistance gains nothing from a second one — 5e's
+    ///     "multiple instances of resistance count as only one" — and
+    ///     one that is immune gains less than that. The slot stays in
+    ///     the pocket.
+    ///
+    /// The last gate is the reason this is a `try_` and not a hook that
+    /// always fires: a reaction spell offered on every point of
+    /// elemental damage anybody takes would empty a wizard's 1st-level
+    /// slots on the first round of a fire fight.
+    pub fn try_absorb_elements(
+        &mut self,
+        actor_id: usize,
+        damage_type: crate::engine::types::DamageType,
+    ) -> bool {
+        if !Self::ABSORBABLE_ELEMENTS.contains(&damage_type) {
+            return false;
+        }
+        let eligible = self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_passive_feature(crate::actions::class_features::ABSORB_ELEMENTS_TAG)
+                && a.is_combat_active()
+                && a.can_consume_resource(crate::engine::side_effects::Resource::Reaction)
+                && a.can_consume_resource(crate::engine::side_effects::Resource::SpellSlot(1))
+                && !a.has_condition(Condition::AbsorbedElements)
+                && !a.is_immune_to_damage_type(damage_type)
+                && !a.has_condition_resistance(damage_type)
+                && a.damage_modifier(damage_type).is_none()
+        });
+        if !eligible {
+            return false;
+        }
+        let Some(caster) = self.actors.get_mut(&actor_id) else {
+            return false;
+        };
+        caster.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        caster.consume_resource(crate::engine::side_effects::Resource::SpellSlot(1));
+        // RAW's window is "until the start of your next turn" for the
+        // resistance and "on your next turn" for the rider, so both
+        // halves ride one condition on the two-round timer that spans
+        // them — the same timer the castable printing used.
+        caster.add_condition(
+            Condition::AbsorbedElements,
+            crate::conditions::ConditionTimer::Rounds(2),
+        );
+        caster.set_condition_damage_type(Condition::AbsorbedElements, Some(damage_type));
+        let name = caster.name().to_string();
+        self.log(format!(
+            "[reaction] absorb elements: {} draws in the {:?}.",
+            name, damage_type
+        ));
+        true
+    }
+
     /// Which entry of `menu` the creatures currently trying to kill
     /// `actor_id` are most likely to deal, or `None` when none of them
     /// threatens any of it.

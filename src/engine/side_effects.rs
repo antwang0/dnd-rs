@@ -781,6 +781,19 @@ impl ApplicableSideEffect for DealDamage {
             return;
         }
 
+        // 5e **Absorb Elements**, whose reaction window is this exact
+        // moment: "which you take when you take Acid, Cold, Fire,
+        // Lightning, or Thunder damage". Offered before anything reads
+        // the target's sheet, because RAW's resistance covers the
+        // triggering blow — see `try_absorb_elements`. It installs a
+        // resistance rather than reducing anything itself, so the
+        // halving lands with every other one below and 5e's "multiple
+        // instances count as only one" still holds; that is also why it
+        // has to run *above* the `has_own_reduction` snapshot, which
+        // gates the positional halvings on the target having no
+        // resistance of its own.
+        ei.try_absorb_elements(self.actor_id, self.damage_type);
+
         // Snapshot the actor's name and self-reduction state before any
         // encounter-wide lookups — the aura check below re-borrows `ei`
         // immutably and can't coexist with a live `&mut actor`.
