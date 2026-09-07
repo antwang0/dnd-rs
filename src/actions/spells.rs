@@ -24719,21 +24719,21 @@ impl Action for ThunderStep {
 
 pub static THUNDER_STEP: LazyLock<ThunderStep> = LazyLock::new(|| ThunderStep {});
 
-/// **Absorb Elements** is not here, and the absence is the design.
-///
-/// It used to be: a castable `Action` costing a reaction, with a
-/// `NoArgs` schema and no trigger at all. RAW's casting time is *"a
-/// Reaction, which you take when you take Acid, Cold, Fire, Lightning,
-/// or Thunder damage"*, and an action list offered on your own turn
-/// cannot express a window that opens on somebody else's attack roll —
-/// which is why, in five class loadouts, the AI never once cast it.
-///
-/// It is a tag and a hook now, the shape Feather Fall already uses for
-/// the other level-1 reaction whose trigger belongs to somebody else:
-/// `crate::actions::class_features::ABSORB_ELEMENTS_TAG` says the
-/// caster knows it, and `EncounterInstance::try_absorb_elements` — at
-/// the top of the damage pipeline, where the triggering element is
-/// finally a known thing — spends the reaction and the slot.
+// **Absorb Elements** is not here, and the absence is the design.
+//
+// It used to be: a castable `Action` costing a reaction, with a
+// `NoArgs` schema and no trigger at all. RAW's casting time is *"a
+// Reaction, which you take when you take Acid, Cold, Fire, Lightning,
+// or Thunder damage"*, and an action list offered on your own turn
+// cannot express a window that opens on somebody else's attack roll —
+// which is why, in five class loadouts, the AI never once cast it.
+//
+// It is a tag and a hook now, the shape Feather Fall already uses for
+// the other level-1 reaction whose trigger belongs to somebody else:
+// `crate::actions::class_features::ABSORB_ELEMENTS_TAG` says the
+// caster knows it, and `EncounterInstance::try_absorb_elements` — at
+// the top of the damage pipeline, where the triggering element is
+// finally a known thing — spends the reaction and the slot.
 
 /// Warding Wind — level-2 evocation, concentration. Creates a 10ft
 /// radius of strong wind around the caster: ranged attacks into and
