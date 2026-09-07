@@ -2703,6 +2703,20 @@ struct SelfBuffPick {
     /// row that got this wrong would fire in a formation the aura
     /// doesn't actually cover.
     allies_within: Option<isize>,
+    /// `Some(pred)` for a buff whose whole effect is scoped to a class
+    /// of enemy: require at least one combat-active hostile inside
+    /// `engage_gap` whose creature type the predicate accepts. `None`
+    /// for the buffs that are worth having against anybody, which is
+    /// every other row.
+    ///
+    /// One occupant so far, and it earns the field outright: Dispel
+    /// Evil and Good does nothing whatsoever to a room full of goblins.
+    /// Without the gate the row would spend a level-5 slot and the
+    /// caster's concentration on a ward that cannot fire, and — because
+    /// `try_self_buff_concentration` short-circuits on concentration —
+    /// would then block every other row in the table for the rest of
+    /// the fight.
+    enemy_type: Option<fn(crate::engine::types::CreatureType) -> bool>,
 }
 
 /// The self-buffs that outrank the Trickery Cleric's Invoke Duplicity,
@@ -2726,6 +2740,30 @@ const SELF_BUFFS_ABOVE_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::HolyAuraed,
         engage_gap: 60,
         allies_within: Some(12),
+        enemy_type: None,
+    },
+    // Level-5 cleric / paladin, and the one row on either table with a
+    // type gate. Everything about the spell is scoped to Celestials,
+    // Elementals, Fey, Fiends and Undead: against a room of goblins it
+    // is a wasted slot *and* a wasted concentration, which is worse
+    // than wasted — the short-circuit in
+    // `try_self_buff_concentration` would then keep every row below
+    // this one from ever firing.
+    //
+    // Above Spirit Shroud because when the gate does open it does more:
+    // the dismissal can take an adjacent fiend off the board outright,
+    // where the shroud is a die of extra damage on a swing.
+    //
+    // `engage_gap` 1 is the emanation the dismissal actually reaches,
+    // not the ward's range. The ward is worth having at any distance,
+    // but a level-5 slot spent on the ward alone is Protection from
+    // Evil and Good's job four slots cheaper.
+    SelfBuffPick {
+        name: "dispel evil and good",
+        condition: Condition::Warded,
+        engage_gap: 1,
+        allies_within: None,
+        enemy_type: Some(crate::engine::types::CreatureType::affected_by_protection),
     },
     // Level-3 concentration; the cold rider only lands on a melee
     // swing, so it wants somebody in contact.
@@ -2734,6 +2772,7 @@ const SELF_BUFFS_ABOVE_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::SpiritShrouded,
         engage_gap: 1,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-5 wizard; +1d10 force on every attack the caster makes.
     // 8 tiles is melee plus close-ranged reach.
@@ -2742,6 +2781,7 @@ const SELF_BUFFS_ABOVE_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::BigbysHanded,
         engage_gap: 8,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-6 wizard; 50 temp HP and self-attack advantage. The 30 ft
     // gate is Holy Aura's — the temp HP buffer wants a fight, not a
@@ -2751,6 +2791,7 @@ const SELF_BUFFS_ABOVE_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::Transformed,
         engage_gap: 12,
         allies_within: None,
+        enemy_type: None,
     },
 ];
 
@@ -2768,6 +2809,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::InvestedInFlame,
         engage_gap: 6,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-6: cold resistance + 1d10 cold melee retaliation.
     SelfBuffPick {
@@ -2775,6 +2817,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::InvestedInIce,
         engage_gap: 6,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-6: the physical resistance trio + 1d10 force retaliation —
     // a broader envelope than the elemental pair above, and force is
@@ -2784,6 +2827,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::InvestedInStone,
         engage_gap: 6,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-6: ranged-attack disadvantage + 60 ft of flight. The odd
     // gate in the family — the deflection clause is the load-bearing
@@ -2794,6 +2838,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::InvestedInWind,
         engage_gap: 20,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-3: the cheap version of Investiture of Wind's deflection
     // clause, which is why it sits under all four of them.
@@ -2802,6 +2847,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::WindWalled,
         engage_gap: 20,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-2 warlock / wizard: advantage on attacks plus a psychic
     // rider, so it wants contact.
@@ -2810,6 +2856,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::SpiritShrouded,
         engage_gap: 1,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-5 cleric: pushes adjacent enemies off and installs Warded.
     SelfBuffPick {
@@ -2817,6 +2864,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::Warded,
         engage_gap: 2,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-4 paladin: intercepts a killing blow on anyone in the 15 ft
     // aura. Ahead of Aura of Purity because the lethality button gets
@@ -2826,6 +2874,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::DeathWarded,
         engage_gap: 60,
         allies_within: Some(6),
+        enemy_type: None,
     },
     // Level-4 paladin, same envelope: Charmed / Frightened / Poisoned
     // immunity and poison resistance instead of the interception.
@@ -2834,6 +2883,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::Purified,
         engage_gap: 60,
         allies_within: Some(6),
+        enemy_type: None,
     },
     // Level-5 paladin: +2d8 radiant on every weapon hit. Same 20 ft
     // engagement envelope as Bigby's Hand, and for the same reason —
@@ -2843,6 +2893,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::HolyWeaponed,
         engage_gap: 8,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-5 paladin: advantage on saves against spells for everyone
     // in the 30 ft circle, and no damage at all on one that is made.
@@ -2856,6 +2907,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::PowerCircled,
         engage_gap: 60,
         allies_within: Some(12),
+        enemy_type: None,
     },
     // Level-2 druid / ranger: disadvantage on attacks against anyone in
     // the 30 ft sphere. No ally gate despite being an aura — the caster
@@ -2866,6 +2918,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::Untracked,
         engage_gap: 60,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-2 bard / druid / sorcerer / wizard: a ring of roaring wind
     // that makes ranged attacks into and out of it roll at
@@ -2881,6 +2934,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::Untracked,
         engage_gap: 20,
         allies_within: None,
+        enemy_type: None,
     },
     // Level-3 artificer / bard / sorcerer / warlock / wizard: psychic
     // resistance and advantage on every mental save. Last on the
@@ -2898,6 +2952,7 @@ const SELF_BUFFS_BELOW_DUPLICITY: &[SelfBuffPick] = &[
         condition: Condition::IntellectFortified,
         engage_gap: 20,
         allies_within: None,
+        enemy_type: None,
     },
 ];
 
@@ -2914,6 +2969,16 @@ fn try_self_buff_pick(
         // at all", and this answers "is anybody standing in it".
         if let Some(gap) = pick.allies_within
             && n_actors_within(encounter, actor_id, gap, true, 1) < 1
+        {
+            return None;
+        }
+        // The type gate, for the rows whose effect only exists against
+        // part of the bestiary. Measured over the same `engage_gap` the
+        // row already uses, so "is anything in range" and "is the right
+        // thing in range" are one question asked twice rather than two
+        // different distances.
+        if let Some(accepts) = pick.enemy_type
+            && !enemy_of_type_within(encounter, actor_id, pick.engage_gap, accepts)
         {
             return None;
         }
@@ -4577,6 +4642,39 @@ fn n_actors_within(
         }
     }
     hits
+}
+
+/// `any_enemy_within`, narrowed to a class of creature type.
+///
+/// The gate for a buff that only exists against part of the bestiary —
+/// see `SelfBuffPick::enemy_type`. Kept separate from `n_actors_within`
+/// rather than added to it as a fifth parameter, because every other
+/// caller of that function counts and this one only ever asks whether
+/// there is at least one.
+fn enemy_of_type_within(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    max_gap: isize,
+    accepts: fn(crate::engine::types::CreatureType) -> bool,
+) -> bool {
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id
+            && a.is_combat_active()
+            && a.team() != my_team
+            && accepts(a.creature_type())
+            && footprint_chebyshev(
+                my_loc,
+                my_size,
+                a.location(),
+                get_tiles_from_size(a.size()),
+            ) <= max_gap
+    })
 }
 
 /// Wrap "find action by name → ActionExecutionInfo if validates".

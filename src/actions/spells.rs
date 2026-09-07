@@ -5177,6 +5177,221 @@ impl Action for ProtectionFromEvilAndGood {
 pub static PROTECTION_FROM_EVIL_AND_GOOD: LazyLock<ProtectionFromEvilAndGood> =
     LazyLock::new(|| ProtectionFromEvilAndGood {});
 
+/// Dispel Evil and Good — SRD 5.2 level-5 abjuration (cleric, paladin),
+/// Range: Self, concentration up to 1 minute.
+///
+/// RAW is one duration clause plus two "special functions", each of
+/// which is a Magic action taken on a later turn and each of which ends
+/// the spell:
+///
+/// > For the duration, Celestials, Elementals, Fey, Fiends, and Undead
+/// > have Disadvantage on attack rolls against you.
+/// >
+/// > **Break Enchantment.** As a Magic action, you touch a creature
+/// > that is possessed by or has the Charmed or Frightened condition
+/// > from one or more creatures of the types above. The target is no
+/// > longer possessed, Charmed, or Frightened by such creatures.
+/// >
+/// > **Dismissal.** As a Magic action, you target one creature you can
+/// > see within 5 feet of you that has one of the creature types above.
+/// > The target must succeed on a Charisma saving throw or be sent back
+/// > to its home plane.
+///
+/// **All three resolve on the cast.** The engine has no channel for "a
+/// spell you are concentrating on grants you a different action next
+/// turn" — every action on a sheet is on the sheet before the fight
+/// starts — and building one for a single spell would be a lane with
+/// one occupant. Guardian of Faith made the same collapse for the same
+/// reason. What it costs is the *choice*: RAW lets a paladin hold the
+/// ward for three rounds and then spend it on the balor that finally
+/// closed, and here the ward and the shove land together.
+///
+/// What that buys, in exchange, is a spell that reads at a glance:
+/// stand in the middle of the fiends, and every one of them touching
+/// you rolls to stay on this plane while every one of them shooting at
+/// you rolls at disadvantage.
+///
+/// **The duration clause is `Condition::Warded`** — the same condition
+/// Protection from Evil and Good installs four slots lower, which is
+/// correct: it is the same sentence. The level-5 slot buys the two
+/// functions, not a better ward. RAW's list here omits Aberrations
+/// where the level-1 spell includes them; the engine keeps one list
+/// (`CreatureType::affected_by_protection`) rather than splitting a
+/// six-type predicate into two for the sake of one type on one spell.
+///
+/// **Dismissal banishes rather than removes.** RAW sends the creature
+/// home for good; `SideEffect::RemoveFromEncounter` exists and would
+/// say exactly that, and this deliberately does not use it. A creature
+/// that never returns is a claim on the encounter that never resolves —
+/// `living_teams` counts a banished creature as a live claim precisely
+/// because it is coming back — so a permanent dismissal of the last
+/// fiend on a team would hang the fight rather than win it. Ten rounds
+/// under the caster's concentration is what every other banishment in
+/// the engine does, and it makes the spell's concentration mean
+/// something: lose it and the balor is standing next to you again.
+pub struct DispelEvilAndGood {}
+
+impl DispelEvilAndGood {
+    /// RAW's 5-foot emanation, in the radius the engine's self-centered
+    /// bursts measure it in — the same 1 Thunderclap uses for the same
+    /// sentence.
+    const REACH: isize = 1;
+}
+
+impl Action for DispelEvilAndGood {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "dispel evil and good"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["deag", "dispel evil", "dismissal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Range: Self. The dismissal picks its own targets off the
+        // emanation rather than asking for one, which is what keeps the
+        // spell castable when there is nothing adjacent worth
+        // dismissing — the ward is worth having on its own.
+        TargetingSchema::NoArgs
+    }
+    /// The ward and the cleanse are the point; the dismissal is a rider
+    /// that fires when there is something to fire at. Declaring this
+    /// harmful would put the spell in front of every hostile-action
+    /// gate in the engine — Sanctuary, charm, the AI's target walks —
+    /// for a clause that may hit nobody.
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Every condition this cast will have to take back down when the
+        // concentration drops. The ward on the caster is always here;
+        // each dismissal that lands adds a row.
+        let mut anchored = vec![(caster_id, Condition::Warded)];
+
+        // --- Break Enchantment -------------------------------------
+        //
+        // RAW touches one creature. The engine hands it the emanation
+        // the dismissal already uses, which is the same distance a
+        // touch is and saves the spell a second targeting decision it
+        // has no way to ask the caster for. Allies only: a charm on the
+        // enemy line is not something this spell is for.
+        //
+        // The gate is the link, not the condition. A creature charmed
+        // by the drow standing next to it keeps that charm — RAW's
+        // clause is "no longer possessed, Charmed, or Frightened *by
+        // such creatures*", and the back-link is what lets the engine
+        // tell one charm from another. A charm that recorded no source
+        // is left alone, which is the conservative direction: this
+        // spell is not Greater Restoration.
+        for ally in encounter.ally_burst_targets(caster_id, center, Self::REACH) {
+            for condition in [Condition::Charmed, Condition::Frightened] {
+                let Some(source) = encounter
+                    .actors
+                    .get(&ally)
+                    .and_then(|a| a.linked_by(condition))
+                else {
+                    continue;
+                };
+                if !encounter
+                    .actors
+                    .get(&source)
+                    .is_some_and(|s| s.creature_type().affected_by_protection())
+                {
+                    continue;
+                }
+                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                    actor_id: ally,
+                    condition,
+                }));
+            }
+        }
+
+        // --- Dismissal ---------------------------------------------
+        for target_id in encounter.enemy_burst_targets(caster_id, center, Self::REACH) {
+            let listed = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.creature_type().affected_by_protection());
+            if !listed {
+                continue;
+            }
+            let name = encounter.actor_name(target_id);
+            encounter.log(format!(
+                "  dispel evil and good: {} is ordered back to its own plane (DC {})",
+                name, dc
+            ));
+            let save = encounter.roll_save_against_caster(
+                target_id,
+                AbilityScoreType::Charisma,
+                dc,
+                caster_id,
+            );
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Banished,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            anchored.push((target_id, Condition::Banished));
+        }
+
+        // --- The duration clause ------------------------------------
+        effects.push(Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Warded,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Dispel Evil and Good", anchored),
+        }));
+        effects
+    }
+}
+
+pub static DISPEL_EVIL_AND_GOOD: LazyLock<DispelEvilAndGood> =
+    LazyLock::new(|| DispelEvilAndGood {});
+
 /// Color Spray — level-1 illusion. Roll a 6d10 HP pool; sweep enemies in
 /// a 15ft cone (we approximate with a 2-tile burst centered on the target
 /// point) in ascending current-HP order, blinding each one until the end

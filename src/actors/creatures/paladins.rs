@@ -95,6 +95,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Aura of Purity for the concentration slot along a third axis —
     // those two blunt what lands, this one stops it landing.
     actions.push(&*crate::actions::spells::CIRCLE_OF_POWER);
+    // Dispel Evil and Good — lv5 abjuration, concentration, and the
+    // paladin's only spell that is *about* what it is fighting. Against
+    // anything else on the board it is unspendable and the AI knows it
+    // (see `SelfBuffPick::enemy_type`); against the fiends and undead a
+    // paladin exists to meet, it puts a ward up and orders whatever is
+    // already in reach back to the plane it came from.
+    actions.push(&*crate::actions::spells::DISPEL_EVIL_AND_GOOD);
     // Warding Bond — lv2 abjuration. Touch-range damage-share bond.
     // The paladin already takes the hits up front (high HP, AC 18) —
     // bonding a frailer ally (e.g. cleric / wizard) halves their

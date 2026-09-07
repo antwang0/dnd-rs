@@ -166,6 +166,14 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // mid-cost AoE options between Flame Strike (lv5) and Sunburst (lv8).
     actions.push(&*crate::actions::spells::GUARDIAN_OF_FAITH);
     actions.push(&*crate::actions::spells::BLADE_BARRIER);
+    // Dispel Evil and Good — lv5 abjuration, concentration. The one
+    // cleric spell whose value is a property of the enemy rather than
+    // of the board: a ward the Celestial / Elemental / Fey / Fiend /
+    // Undead cohort attacks through at disadvantage and cannot charm or
+    // frighten past, plus a Charisma save that sends whatever is
+    // already in reach home. Worthless against a warband of orcs, which
+    // is exactly what its AI gate says.
+    actions.push(&*crate::actions::spells::DISPEL_EVIL_AND_GOOD);
     // Guidance — cleric / druid divination cantrip. Touch range; applies
     // the Inspired flat-buff (+3 to next attack / save / check) on the
     // target. Fills the "pre-fight ally prime" cantrip lane that was

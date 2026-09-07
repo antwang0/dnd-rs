@@ -14354,6 +14354,147 @@ fn warded_target_taxes_an_aberration_the_proxy_missed() {
     );
 }
 
+/// Dispel Evil and Good's duration clause is the ward, and it lands
+/// whether or not there is anything adjacent to dismiss — RAW's range is
+/// Self, and a spell that refused to go up in an empty corridor would be
+/// a spell nobody could pre-cast.
+#[test]
+fn dispel_evil_and_good_wards_the_caster() {
+    use crate::actions::spells::DISPEL_EVIL_AND_GOOD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    let aei = ActionExecutionInfo::new(&*DISPEL_EVIL_AND_GOOD, cleric, None, None, None);
+    assert!(aei.validate(&e), "range: self, so it always has a target");
+    e.push_action(aei);
+    e.process_stack();
+    assert!(e.actors[&cleric].has_condition(Condition::Warded));
+    assert!(
+        e.actors[&cleric].is_concentrating(),
+        "the ward is a concentration duration"
+    );
+}
+
+/// Dismissal: an adjacent Undead rolls Charisma or goes off the board.
+///
+/// Seed-swept, because the whole clause hangs on one saving throw. What
+/// is asserted is that the outcome is *reachable* — a spell whose
+/// headline function can never fire is the failure this catches.
+#[test]
+fn dispel_evil_and_good_sends_an_adjacent_undead_home() {
+    use crate::actions::spells::DISPEL_EVIL_AND_GOOD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    let banished = (0..40u64).any(|seed| {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(
+            &*DISPEL_EVIL_AND_GOOD,
+            cleric,
+            None,
+            None,
+            None,
+        ));
+        e.process_stack();
+        e.actors[&zombie].has_condition(Condition::Banished)
+    });
+    assert!(banished, "the dismissal never landed across 40 seeds");
+}
+
+/// The dismissal is type-scoped in both directions. A goblin standing
+/// in exactly the tile the zombie stood in is a Humanoid, is not on
+/// RAW's list, and is never asked to save at all — across every seed.
+#[test]
+fn dispel_evil_and_good_leaves_a_humanoid_where_it_stands() {
+    use crate::actions::spells::DISPEL_EVIL_AND_GOOD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(
+            &*DISPEL_EVIL_AND_GOOD,
+            cleric,
+            None,
+            None,
+            None,
+        ));
+        e.process_stack();
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Banished),
+            "seed {seed}: a Humanoid is not on the spell's list"
+        );
+    }
+}
+
+/// Break Enchantment: the cast strips a charm whose back-link points at
+/// one of RAW's types, and leaves alone one that does not.
+///
+/// Both halves in one test on purpose — the gate is the link, and a
+/// version that stripped everything would pass the first assertion and
+/// fail the second.
+#[test]
+fn dispel_evil_and_good_breaks_only_the_charms_it_names() {
+    use crate::actions::spells::DISPEL_EVIL_AND_GOOD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fiend_charmed = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+        .unwrap();
+    let goblin_charmed = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 3), 0, 1)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+        .unwrap();
+    for (victim, source) in [(fiend_charmed, zombie), (goblin_charmed, goblin)] {
+        for effect in
+            install_condition_with_link(Condition::Charmed, victim, source, ConditionTimer::Rounds(10))
+        {
+            effect.apply(&mut e);
+        }
+        assert!(e.actors[&victim].has_condition(Condition::Charmed));
+    }
+    e.pop_prompt();
+    e.push_action(ActionExecutionInfo::new(
+        &*DISPEL_EVIL_AND_GOOD,
+        cleric,
+        None,
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        !e.actors[&fiend_charmed].has_condition(Condition::Charmed),
+        "a charm laid by the Undead is what the spell is for"
+    );
+    assert!(
+        e.actors[&goblin_charmed].has_condition(Condition::Charmed),
+        "a goblin's charm is not on the spell's list"
+    );
+}
+
 /// The ward's second clause, which is the half that decides fights:
 /// *"The target also can't be possessed by or gain the Charmed or
 /// Frightened conditions from them."*

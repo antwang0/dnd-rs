@@ -432,7 +432,12 @@ impl fmt::Display for CreatureType {
 impl CreatureType {
     /// True if Protection from Evil and Good affects this creature type.
     /// 5e: aberrations, celestials, elementals, fey, fiends, undead.
-    pub fn affected_by_protection(&self) -> bool {
+    ///
+    /// Takes `self` rather than `&self` so it can be named as a plain
+    /// `fn(CreatureType) -> bool` — which is what `SelfBuffPick`'s type
+    /// gate stores. `CreatureType` is `Copy`, so every existing
+    /// `ty.affected_by_protection()` call reads identically.
+    pub fn affected_by_protection(self) -> bool {
         matches!(
             self,
             CreatureType::Aberration
