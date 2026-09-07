@@ -798,6 +798,34 @@ impl ApplicableSideEffect for DealDamage {
             )
         };
 
+        // 5e **Resistance** (the cantrip): "the creature reduces the
+        // total damage taken by 1d4".
+        //
+        // First in the pipeline, and the position is the rule rather
+        // than a convenience. SRD 5.2 resolves damage by adding
+        // everything up and applying Resistance and Vulnerability
+        // *last*, so a flat subtraction is taken off the full number
+        // and the halvings below then halve what is left. Run in the
+        // other order, a warded creature standing in a Circle of Power
+        // would have the die subtracted from an already-halved total
+        // and the cantrip would be worth half of what the book says.
+        //
+        // `once_per_turn` is RAW's "a creature can benefit from this
+        // spell only once per turn" — see `Condition::Braced` for which
+        // turn the engine reads that as.
+        let braced_reduction =
+            ei.claim_resistance_ward(self.actor_id, self.amount, self.damage_type);
+        let incoming = if braced_reduction > 0 {
+            let reduced = self.amount.saturating_sub(braced_reduction);
+            ei.log(format!(
+                "  {} is braced (resistance: {} \u{2192} {} {:?}, -{})",
+                name, self.amount, reduced, self.damage_type, braced_reduction
+            ));
+            reduced
+        } else {
+            self.amount
+        };
+
         // Halvings the *board* grants rather than the sheet — see
         // `POSITIONAL_DAMAGE_HALVINGS`. At most one fires, and only when
         // the target has no resistance of their own to the type, so 5e's
@@ -818,14 +846,14 @@ impl ApplicableSideEffect for DealDamage {
             .flatten();
         let raw_amount = match positional {
             Some(row) => {
-                let halved = self.amount / 2;
+                let halved = incoming / 2;
                 ei.log(format!(
                     "  {} {} ({}: {} \u{2192} {} {:?})",
-                    name, row.verb, row.label, self.amount, halved, self.damage_type
+                    name, row.verb, row.label, incoming, halved, self.damage_type
                 ));
                 halved
             }
-            None => self.amount,
+            None => incoming,
         };
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
@@ -2253,6 +2281,81 @@ pub fn install_condition_with_link(
     })];
     if let Some(link) = condition_link_side_effect(condition, target_id, caster_id) {
         out.push(link);
+    }
+    out
+}
+
+/// Conditions that carry a **chosen damage type** rather than a chosen
+/// actor — the payload sibling of `LINKED_CONDITIONS`, and the
+/// install-side counterpart to
+/// `ActorInstance::condition_damage_types`.
+///
+/// Two rows, and they are the two 5e effects whose text is *"choose a
+/// damage type"*: **Protection from Energy** (`EnergyWarded`, whose
+/// choice becomes a resistance) and the **Resistance** cantrip
+/// (`Braced`, whose choice becomes a flat 1d4 off the top). A third
+/// chooser lands here as one row, and gets its teardown for free from
+/// `remove_condition`.
+pub const TYPED_CHOICE_CONDITIONS: &[crate::conditions::Condition] = &[
+    crate::conditions::Condition::EnergyWarded,
+    crate::conditions::Condition::Braced,
+];
+
+/// Record the damage type a condition was chosen against. Paired with
+/// the `ApplyCondition` that installs the flag itself — the flag says
+/// *that* the holder is warded, this says *against what*, and consumers
+/// read the pair back through `ActorInstance::damage_type_of`.
+///
+/// Pass `chosen = None` to clear the choice explicitly; the engine also
+/// clears it when the condition is removed via `remove_condition`, so
+/// the explicit clear is only needed if a choice ever has to drop while
+/// the condition stays (nothing does that today).
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetConditionDamageType {
+    pub target_id: usize,
+    pub condition: crate::conditions::Condition,
+    pub chosen: Option<crate::engine::types::DamageType>,
+}
+
+impl ApplicableSideEffect for SetConditionDamageType {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_condition_damage_type(self.condition, self.chosen);
+        }
+    }
+}
+
+/// Install a condition together with the damage type it was chosen
+/// against: an `ApplyCondition` on the target, plus the
+/// `SetConditionDamageType` when the condition is on
+/// `TYPED_CHOICE_CONDITIONS`.
+///
+/// The mirror of `install_condition_with_link`, and it exists for the
+/// same reason: the flag and its payload have to stay in lockstep, and
+/// a site that writes them separately is a site a future edit can drop
+/// half of. A ward installed without its type resists nothing at all —
+/// `damage_type_of` answers `None` and every row that reads it fails
+/// closed — which is a silently useless spell rather than a crash.
+///
+/// A condition that carries no choice comes back as a one-element vec,
+/// so callers never need to know which is which.
+pub fn install_condition_with_damage_type(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    chosen: crate::engine::types::DamageType,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut out: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition,
+        timer,
+    })];
+    if TYPED_CHOICE_CONDITIONS.contains(&condition) {
+        out.push(Box::new(SetConditionDamageType {
+            target_id,
+            condition,
+            chosen: Some(chosen),
+        }));
     }
     out
 }

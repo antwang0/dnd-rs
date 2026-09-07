@@ -188,6 +188,25 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
     },
 ];
 
+/// Conditions whose resisted damage type is **chosen when the condition
+/// is installed** rather than written down beside the condition.
+///
+/// The cohort `TYPED_RESISTANCE_CONDITIONS` could not express, and the
+/// reason it could not is the difference between a spell that says
+/// *"resistance to fire"* and one that says *"resistance to one damage
+/// type of your choice"*. Investiture of Flame is the first: its type is
+/// a property of the spell and belongs in a static row. Protection from
+/// Energy is the second: its type is a property of *this casting*, and a
+/// static row would have to be either a lie (one arbitrary element) or a
+/// blanket (every element, which is Stoneskin at a third of the cost —
+/// and is what this spell used to be here).
+///
+/// A bare list rather than a `{ source, types }` struct, because the
+/// second field is the thing that is not known at compile time.
+/// `ActorInstance::damage_type_of` supplies it per actor, and folds in
+/// the still-held check, so a row here needs nothing but the condition.
+const CHOSEN_TYPE_RESISTANCE_CONDITIONS: &[Condition] = &[Condition::EnergyWarded];
+
 /// One row in the `TYPED_VULNERABILITY_CONDITIONS` cohort — a single
 /// held condition whose presence makes the holder take *double* damage
 /// of every type in `types`.
@@ -4484,6 +4503,19 @@ impl SpellSlotManager {
         (1..=cap).rev().find(|&lvl| self.restore_spell_slot(lvl, 1))
     }
 
+    /// True while any leveled slot at any level is still unspent.
+    ///
+    /// The question a caster asks before deciding that its
+    /// concentration is *permanently* free: a cleric holding a level-1
+    /// slot still has a Bless in it and should not be spending the turn
+    /// on a cantrip ward, and one holding none will not be casting a
+    /// concentration spell again this fight. A creature that never had
+    /// slots (every monster on the roster) answers `false`, which is
+    /// the right answer for the same reason.
+    pub fn has_any_slot(&self) -> bool {
+        self.ssi_by_lvl.iter().any(|ssi| ssi.spell_slots > 0)
+    }
+
     pub fn increase_max_spell_slot(&mut self, lvl: u32, qty: u32) {
         let Some(i_usize) = Self::idx(lvl) else {
             return;
@@ -4936,6 +4968,39 @@ pub struct ActorInstance {
     /// counterpart: the list of conditions whose install emits a
     /// `SetConditionLink` alongside the `ApplyCondition`.
     condition_links: HashMap<Condition, usize>,
+    /// The damage type chosen when a condition was installed, keyed by
+    /// the condition — the sibling of `condition_links` one field up,
+    /// carrying a `DamageType` where that one carries an actor id.
+    ///
+    /// 5e keeps writing the same sentence and the engine had nowhere to
+    /// put the answer to it: *"choose a damage type"*. Three effects say
+    /// it outright, and all three shipped here with the choice thrown
+    /// away —
+    ///
+    ///   - **Resistance** (abjuration cantrip) *"you touch a willing
+    ///     creature and choose a damage type… the creature reduces the
+    ///     total damage taken by 1d4"*. Could not be written at all;
+    ///     the whole spell is the choice.
+    ///   - **Protection from Energy** *"the target has Resistance to
+    ///     one damage type of your choice"*. Shipped as a blanket
+    ///     halving of everything, which is a level-3 slot buying
+    ///     Stoneskin.
+    ///   - **Absorb Elements** *"you have Resistance to the triggering
+    ///     damage type"*. Also blanket, and its melee rider deals Force
+    ///     because the element it captured was not written down.
+    ///
+    /// Keyed by condition for exactly the reason `condition_links` is:
+    /// it makes the teardown structural. `remove_condition` drops
+    /// `condition_damage_types[&c]` on the same line that drops the
+    /// link, so a choice cannot outlive the condition it qualifies, and
+    /// a future fourth chooser has nothing to remember. The read
+    /// accessor (`damage_type_of`) closes the other direction by
+    /// answering `None` unless the condition is actually held.
+    ///
+    /// `TYPED_CHOICE_CONDITIONS` in `engine::side_effects` is the
+    /// install-side counterpart, the way `LINKED_CONDITIONS` is for the
+    /// table above.
+    condition_damage_types: HashMap<Condition, DamageType>,
     /// The lair's repertoire, copied off the template. Empty for
     /// everything that isn't the resident of somewhere.
     lair_actions: &'static [crate::engine::lair_actions::LairAction],
@@ -5336,6 +5401,7 @@ impl ActorInstance {
             regen_suppressed: false,
             mirror_images: 0,
             condition_links: HashMap::new(),
+            condition_damage_types: HashMap::new(),
             lair_actions: ct.lair_actions,
             legendary_actions: ct.legendary_actions,
             last_lair_action: None,
@@ -5510,6 +5576,40 @@ impl ActorInstance {
             }
             None => {
                 self.condition_links.remove(&c);
+            }
+        }
+    }
+
+    /// The damage type chosen when `c` was installed, or `None` if `c`
+    /// isn't currently held or carries no choice.
+    ///
+    /// The `has_condition` guard is `linked_by`'s, for `linked_by`'s
+    /// reason: every consumer wants "is this creature warded *against
+    /// fire*", and a bare table read would answer `Some(Fire)` off a
+    /// stale row whose condition had already lapsed. Folding the flag
+    /// check in makes `damage_type_of(EnergyWarded) == Some(dt)` the
+    /// whole question rather than half of it.
+    pub fn damage_type_of(&self, c: Condition) -> Option<DamageType> {
+        if !self.has_condition(c) {
+            return None;
+        }
+        self.condition_damage_types.get(&c).copied()
+    }
+
+    /// Record the damage type `c` was chosen against (or clear it with
+    /// `None`).
+    ///
+    /// Callers normally reach this through the
+    /// `SetConditionDamageType` side effect rather than directly, so
+    /// the choice travels with the `ApplyCondition` that installs the
+    /// flag — see `engine::side_effects::typed_choice_side_effect`.
+    pub fn set_condition_damage_type(&mut self, c: Condition, chosen: Option<DamageType>) {
+        match chosen {
+            Some(dt) => {
+                self.condition_damage_types.insert(c, dt);
+            }
+            None => {
+                self.condition_damage_types.remove(&c);
             }
         }
     }
@@ -7181,6 +7281,10 @@ impl ActorInstance {
     /// - `TYPED_RESISTANCE_CONDITIONS`: conditions whose resistance only
     ///   applies to a curated subset of damage types (Investiture of
     ///   Flame → Fire, Raging → physical trio, Purified → Poison).
+    /// - `CHOSEN_TYPE_RESISTANCE_CONDITIONS`: conditions whose one
+    ///   resisted type was picked at install time rather than written
+    ///   into the cohort (Protection from Energy). Read off
+    ///   `damage_type_of` — see `condition_damage_types`.
     ///
     /// Centralizes the per-condition resistance lookup so a new Investiture
     /// spell only needs a one-line entry in the typed cohort, and the
@@ -7214,9 +7318,19 @@ impl ActorInstance {
         {
             return true;
         }
-        TYPED_RESISTANCE_CONDITIONS.iter().any(|row| {
-            self.has_condition(row.source) && row.types.contains(&dt)
-        })
+        if TYPED_RESISTANCE_CONDITIONS
+            .iter()
+            .any(|row| self.has_condition(row.source) && row.types.contains(&dt))
+        {
+            return true;
+        }
+        // The fourth cohort, and the only one whose membership can't be
+        // read off this file: the type was chosen when the ward went up.
+        // `damage_type_of` folds the still-held check in, so a lapsed
+        // ward answers `None` and the row simply doesn't match.
+        CHOSEN_TYPE_RESISTANCE_CONDITIONS
+            .iter()
+            .any(|c| self.damage_type_of(*c) == Some(dt))
     }
 
     pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
@@ -7799,6 +7913,11 @@ impl ActorInstance {
             // decoy count is the one piece of auxiliary state that
             // isn't an actor id, so it keeps its own arm.
             self.condition_links.remove(&c);
+            // The chosen-damage-type table is keyed the same way and
+            // dies the same way, for the same reason: a ward that has
+            // lapsed must not leave "…against fire" behind for the next
+            // install of the same condition to inherit silently.
+            self.condition_damage_types.remove(&c);
             if c == Condition::MirroredImages {
                 self.mirror_images = 0;
             }

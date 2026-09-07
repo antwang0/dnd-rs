@@ -9252,6 +9252,126 @@ impl EncounterInstance {
         None
     }
 
+    /// Which entry of `menu` the creatures currently trying to kill
+    /// `actor_id` are most likely to deal, or `None` when none of them
+    /// threatens any of it.
+    ///
+    /// The **defensive** mirror of `pick_damage_type_against_target`,
+    /// and the question every "choose a damage type" ward has to answer
+    /// before it can be cast by anything but a person. That function
+    /// asks *what hurts them most*, and reads the answer off one
+    /// creature's sheet. This one asks *what is coming at me*, and the
+    /// answer is not on any sheet at all — it is on the far side of the
+    /// board, in what the enemy can do.
+    ///
+    /// So the tally walks the hostile roster's own action lists and
+    /// counts the declared `damage_types()` that fall inside `menu`. A
+    /// bundle counts once per type it lands (a flaming sword really is
+    /// two threats), and a menu action — Chromatic Orb's six — counts
+    /// once per branch too, because the caster will pick whichever of
+    /// them the ward is not up against.
+    ///
+    /// Two refinements keep the answer from being merely popular:
+    ///
+    ///   - **A type the ward would waste itself on scores nothing.** A
+    ///     creature already immune to fire gains exactly nothing from a
+    ///     fire ward, and one already resistant gains half a halving —
+    ///     which 5e does not stack anyway. Both are skipped, so a
+    ///     red dragon's own party wards against the rogue's daggers
+    ///     rather than against the breath it drinks.
+    ///   - **Ties break on `menu` order**, so a seeded run reproduces
+    ///     and the menu's own preference (usually the book's listing)
+    ///     decides.
+    ///
+    /// `None` rather than a default pick when nothing scores: the
+    /// caller is choosing whether to spend a slot at all, and "nobody
+    /// here deals any of these" is a reason not to.
+    pub fn likeliest_incoming_damage_type(
+        &self,
+        actor_id: usize,
+        menu: &[crate::engine::types::DamageType],
+    ) -> Option<crate::engine::types::DamageType> {
+        let subject = self.actors.get(&actor_id)?;
+        let team = subject.team();
+        let mut tally = vec![0usize; menu.len()];
+        for (id, enemy) in self.actors.iter() {
+            if *id == actor_id || enemy.team() == team || !enemy.is_combat_active() {
+                continue;
+            }
+            for action in enemy.available_actions() {
+                for dt in action.damage_types() {
+                    if let Some(slot) = menu.iter().position(|m| *m == dt) {
+                        tally[slot] += 1;
+                    }
+                }
+            }
+        }
+        menu.iter()
+            .enumerate()
+            .filter(|(slot, dt)| {
+                tally[*slot] > 0
+                    && !subject.is_immune_to_damage_type(**dt)
+                    && !subject.has_condition_resistance(**dt)
+            })
+            // `max_by_key` keeps the *last* maximum; the reversed walk
+            // turns that back into the first, which is what "ties break
+            // on menu order" means.
+            .rev()
+            .max_by_key(|(slot, _)| tally[*slot])
+            .map(|(_, dt)| *dt)
+    }
+
+    /// The once-per-turn tag the **Resistance** cantrip's reduction is
+    /// spent under. See `Condition::Braced` for which turn RAW's "only
+    /// once per turn" is read as here.
+    pub const RESISTANCE_WARD_TAG: &'static str = "spell.resistance";
+
+    /// Faces on the **Resistance** cantrip's reduction die. SRD 5.2:
+    /// "the creature reduces the total damage taken by 1d4".
+    pub const RESISTANCE_WARD_DIE_FACES: u32 = 4;
+
+    /// Spend `actor_id`'s **Resistance** ward against an incoming
+    /// `amount` of `damage_type` and hand back the number of points it
+    /// takes off, or `0` when the ward does not apply.
+    ///
+    /// Four gates, and the first three are the spell's own sentence:
+    /// the creature is holding the ward, the ward was chosen against
+    /// *this* damage type (`damage_type_of` folds the still-held check
+    /// in), and it has not already paid out this turn. The fourth is
+    /// the engine's: a zero-damage instance buys nothing, so it does
+    /// not burn the turn's one use — the mark is what a second real hit
+    /// this round runs into, and spending it on a hit that was already
+    /// nothing would hand the cantrip's whole value to any attacker who
+    /// leads with an element the target is immune to.
+    ///
+    /// Returns points rather than `bool` because the die is rolled
+    /// here: this is the site that holds the encounter's RNG, and a
+    /// caller that got back "yes" would have to roll its own — a second
+    /// draw off the seeded stream for the same event, which is the
+    /// thing that makes a seeded run stop reproducing.
+    pub fn claim_resistance_ward(
+        &mut self,
+        actor_id: usize,
+        amount: u32,
+        damage_type: crate::engine::types::DamageType,
+    ) -> u32 {
+        if amount == 0 {
+            return 0;
+        }
+        let applies = self.actors.get(&actor_id).is_some_and(|a| {
+            a.damage_type_of(Condition::Braced) == Some(damage_type)
+                && !a.once_per_turn_used(Self::RESISTANCE_WARD_TAG)
+        });
+        if !applies {
+            return 0;
+        }
+        let rolled = self.roll(&Dice::new(1, Self::RESISTANCE_WARD_DIE_FACES));
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            a.mark_once_per_turn_used(Self::RESISTANCE_WARD_TAG);
+        }
+        rolled
+    }
+
     /// Run `body` with the damage-redirect guard raised, so a blow being
     /// carried for someone can't be handed on a second time. Paired
     /// enter/exit rather than a bare flag for the reason

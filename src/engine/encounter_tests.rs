@@ -40372,8 +40372,19 @@ fn silvery_barbs_applies_mocked_and_inspired() {
     );
 }
 
+/// Protection from Energy wards against **one** element, and against
+/// the one the board is actually throwing.
+///
+/// The spell used to install `DamageResistant` — the blanket halving
+/// Stoneskin and a Globe of Invulnerability use — which made a level-3
+/// slot resist everything in the game and made the caster's RAW choice
+/// ("one damage type of your choice") a sentence with nothing behind
+/// it. It now picks off the enemy roster and records the answer beside
+/// the condition; the assertions below are the two halves of that:
+/// fire is warded because the magmin deals fire, and slashing is not,
+/// because a ward is not armour.
 #[test]
-fn protection_from_energy_installs_resistance_with_concentration() {
+fn protection_from_energy_wards_the_element_the_enemy_actually_throws() {
     let mut e = ei_with_terrain(20, 20, &[]);
     let cleric = e
         .instantiate_creature(
@@ -40391,26 +40402,80 @@ fn protection_from_energy_installs_resistance_with_concentration() {
             1,
         )
         .unwrap();
+    // The reason there is anything to choose: a creature on the far
+    // side whose whole repertoire is fire.
+    e.instantiate_creature(
+        &crate::actors::creatures::magmins::MAGMIN_TEMPLATE,
+        Coordinate::new(10, 10),
+        1,
+        0,
+    )
+    .unwrap();
     let action = e.actors[&cleric]
         .find_action("protection from energy")
         .expect("cleric should have protection from energy");
-    let effects = action.side_effects(
-        &mut e,
-        cleric,
-        Some(&vec![ally]),
-        None,
-        None,
+    assert!(
+        action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None),
+        "with a fire-throwing enemy on the board the ward is worth casting"
     );
+    let effects = action.side_effects(&mut e, cleric, Some(&vec![ally]), None, None);
     for eff in effects {
         eff.apply(&mut e);
     }
+    assert_eq!(
+        e.actors[&ally].damage_type_of(Condition::EnergyWarded),
+        Some(DamageType::Fire),
+        "the ward should be against the element the magmin deals"
+    );
     assert!(
-        e.actors[&ally].has_condition(Condition::DamageResistant),
-        "ally should have damage resistance"
+        e.actors[&ally].has_condition_resistance(DamageType::Fire),
+        "the chosen element should reach the resistance lane"
+    );
+    assert!(
+        !e.actors[&ally].has_condition_resistance(DamageType::Slashing),
+        "a ward against fire is not a ward against everything"
     );
     assert!(
         e.actors[&cleric].is_concentrating(),
         "cleric should be concentrating"
+    );
+}
+
+/// The other half of the choice: dropping the ward drops the choice
+/// with it, on the same line, so a second casting cannot inherit the
+/// first one's element.
+#[test]
+fn a_lapsed_energy_ward_leaves_no_element_behind() {
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let target = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(1, 1),
+            0,
+            0,
+        )
+        .unwrap();
+    for eff in crate::engine::side_effects::install_condition_with_damage_type(
+        Condition::EnergyWarded,
+        target,
+        DamageType::Cold,
+        ConditionTimer::Rounds(3),
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&target].has_condition_resistance(DamageType::Cold));
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .remove_condition(Condition::EnergyWarded);
+    assert_eq!(
+        e.actors[&target].damage_type_of(Condition::EnergyWarded),
+        None,
+        "the chosen element dies with the condition that qualified it"
+    );
+    assert!(
+        !e.actors[&target].has_condition_resistance(DamageType::Cold),
+        "and the resistance goes with it"
     );
 }
 
@@ -86161,4 +86226,163 @@ fn every_swallower_carries_the_action_that_opens_it() {
         }
     }
     assert_eq!(found, 7, "SRD 5.2 prints seven Swallow clauses");
+}
+
+/// The **Resistance** cantrip, end to end: it wards against the element
+/// the board is throwing, it takes 1d4 off a hit of that element, it
+/// takes nothing off any other element, and it only pays out once in a
+/// round.
+///
+/// The last clause is the one worth pinning. RAW says "a creature can
+/// benefit from this spell only once per turn", and without the
+/// once-per-turn mark a cantrip would shave every instance of damage
+/// in a multiattack — three dice a turn off a spell that costs
+/// nothing but the concentration.
+#[test]
+fn a_braced_creature_sheds_one_hit_of_its_chosen_element_a_round() {
+    use crate::engine::side_effects::DealDamage;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let ally = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(4, 3),
+            0,
+            1,
+        )
+        .unwrap();
+    e.instantiate_creature(
+        &crate::actors::creatures::magmins::MAGMIN_TEMPLATE,
+        Coordinate::new(12, 12),
+        1,
+        0,
+    )
+    .unwrap();
+
+    let action = e.actors[&cleric]
+        .find_action("resistance")
+        .expect("cleric should have the resistance cantrip");
+    assert!(action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None));
+    let effects = action.side_effects(&mut e, cleric, Some(&vec![ally]), None, None);
+    for eff in effects {
+        eff.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&ally].damage_type_of(Condition::Braced),
+        Some(DamageType::Fire),
+        "the ward picks the element the magmin deals"
+    );
+    assert!(
+        e.actors[&cleric].is_concentrating(),
+        "RAW gives this cantrip concentration — that is its whole cost"
+    );
+
+    // Every hit below is small on purpose: HP loss is what is
+    // measured, and a blow that would drop the fighter is clamped by
+    // the floor at 0 rather than by the ward.
+    let landed = |e: &mut EncounterInstance, amount: u32, dt: DamageType| -> u32 {
+        let before = e.actors[&ally].hitpoints();
+        DealDamage {
+            actor_id: ally,
+            amount,
+            damage_type: dt,
+        }
+        .apply(e);
+        before - e.actors[&ally].hitpoints()
+    };
+
+    // A fire hit is shaved by 1..=4. Measured as a band rather than a
+    // number because the die is real.
+    let first = landed(&mut e, 5, DamageType::Fire);
+    assert!(
+        (1..=4).contains(&first),
+        "5 fire against a 1d4 ward should land 1..=4, landed {}",
+        first
+    );
+
+    // The second fire hit in the same round is unshaved: the turn's one
+    // use is spent.
+    assert_eq!(
+        landed(&mut e, 2, DamageType::Fire),
+        2,
+        "only once per turn — the second hit is paid in full"
+    );
+
+    // A new turn refills it, and an element the ward was not chosen
+    // against is never shaved at all.
+    e.actors.get_mut(&ally).unwrap().reset_for_new_round();
+    assert_eq!(
+        landed(&mut e, 2, DamageType::Cold),
+        2,
+        "a fire ward does nothing about cold — and does not spend itself trying"
+    );
+    let second_round = landed(&mut e, 5, DamageType::Fire);
+    assert!(
+        (1..=4).contains(&second_round),
+        "the ward is available again on the holder's next turn, landed {}",
+        second_round
+    );
+}
+
+/// The cantrip declines a board it cannot help with.
+///
+/// Two refusals in one: a caster already holding a concentration spell
+/// has nothing to give, and a roster that deals none of RAW's eleven
+/// gives the ward nothing to be against. Both matter because the AI
+/// walks the cantrip lane every turn of every fight — a ward that
+/// installed itself against Acid by default would be a free Action
+/// spent to write a word on a sheet.
+#[test]
+fn the_resistance_cantrip_declines_a_board_it_cannot_help_with() {
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    let ally = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(4, 3),
+            0,
+            1,
+        )
+        .unwrap();
+    let action = e.actors[&cleric]
+        .find_action("resistance")
+        .expect("cleric should have the resistance cantrip");
+    assert!(
+        !action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None),
+        "an empty far side threatens nothing to ward against"
+    );
+
+    // Now give it something to ward against, and take the caster's
+    // concentration away instead.
+    e.instantiate_creature(
+        &crate::actors::creatures::magmins::MAGMIN_TEMPLATE,
+        Coordinate::new(12, 12),
+        1,
+        0,
+    )
+    .unwrap();
+    assert!(action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None));
+    e.actors
+        .get_mut(&cleric)
+        .unwrap()
+        .start_concentration(crate::actors::actor_template::ConcentrationData::new("Bless"));
+    assert!(
+        !action.custom_validate_input(&e, cleric, Some(&vec![ally]), None, None),
+        "a caster already concentrating has nothing to spend on this"
+    );
 }

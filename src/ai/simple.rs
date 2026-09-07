@@ -1578,6 +1578,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5f-bis. Brace an adjacent ally with the Resistance cantrip.
+        //     Gated on the caster having no leveled slot left at all,
+        //     so it can never take the concentration that Bless or
+        //     Spirit Guardians (rungs 4 and 4b) would have spent it on
+        //     — see `try_resistance_ward` for why that gate is the
+        //     whole placement.
+        if let Some(aei) = try_resistance_ward(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5g. Pull a latched creature off — see `try_pry_attachment`.
         //     Sits immediately above focus-fire because it is a
         //     deliberate refusal to focus-fire: the two latches it
@@ -6233,6 +6243,75 @@ fn try_bless(
         return None;
     }
     try_self_action(encounter, actor_id, "bless")
+}
+
+/// The **Resistance** cantrip — brace the ally beside you against the
+/// element the far side of the board actually throws.
+///
+/// **Why it sits under an out-of-slots gate.** Concentration is the
+/// spell's whole cost, and a cleric holding a level-1 slot has a Bless
+/// to put it on — a party-wide +1d4 to every attack and every save,
+/// which beats one ally's 1d4 off one hit a round by a distance that is
+/// not close. The rung above (`try_bless`) is that spell, and it takes
+/// the concentration first. This one asks the question that rung cannot:
+/// *what does a caster do with a free concentration slot it will never
+/// be able to spend?* — and answers it with the cantrip, which is the
+/// only thing left that uses one.
+///
+/// Without the gate, the ladder would have a cantrip standing above
+/// focus-fire on turn one and the cleric would open every fight by
+/// touching the fighter instead of casting anything.
+///
+/// **Who gets warded.** Whoever in reach has the fewest hit points
+/// left, because four points is worth the most to the creature closest
+/// to dying. The caster is in the running — RAW's target is "a willing
+/// creature you touch" and you are one — and on a fresh board it
+/// usually wins, which is the right read for a d8 chassis standing next
+/// to a fighter. Ties break on `sorted_actor_ids` so a seeded run
+/// reproduces. Reach is the spell's own, and RAW's is touch, so this is
+/// a rung for a caster standing in the line — which is where a cleric
+/// out of slots usually is.
+///
+/// Everything else is the action's own `custom_validate_input`: it
+/// refuses a second ward on an already-braced ally, refuses a caster
+/// that is concentrating, and refuses a board on which none of RAW's
+/// eleven damage types is coming at anybody.
+fn try_resistance_ward(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.spell_slot_manager.has_any_slot() {
+        return None;
+    }
+    let action = actor.find_action("resistance")?;
+    let reach = action.reach_tiles()?;
+    let team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for id in encounter.sorted_actor_ids() {
+        let Some(a) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if a.team() != team || !a.is_combat_active() {
+            continue;
+        }
+        if id != actor_id
+            && encounter
+                .footprint_distance(actor_id, id)
+                .is_none_or(|d| d > reach)
+        {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = a.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp < *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Take the Dodge action when we're below half HP and an enemy still
@@ -15742,6 +15821,89 @@ mod tests {
         assert!(
             super::try_water_walk(&e, druid).is_some(),
             "the lake is now between the druid and the fight"
+        );
+    }
+
+    /// The Resistance rung waits until the concentration is genuinely
+    /// free — which is to say until the slots are gone.
+    ///
+    /// The gate is the whole placement. A cleric on turn one is holding
+    /// a Bless it has not cast, and a cantrip ward standing above
+    /// focus-fire would take the concentration Bless needs and hand the
+    /// party one ally's 1d4 instead of everybody's. The rung answers
+    /// `None` for as long as any leveled slot is left, and picks the
+    /// most hurt adjacent ally once none is.
+    #[test]
+    fn the_resistance_rung_waits_until_the_slots_are_gone() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Something worth warding against, or the action's own
+        // validator declines before the rung is even interesting.
+        e.instantiate_creature(&MAGMIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+
+        assert!(
+            super::try_resistance_ward(&e, cleric).is_none(),
+            "a cleric with slots left has a Bless to put its concentration on"
+        );
+
+        // Spend the cleric out.
+        {
+            let c = e.actors.get_mut(&cleric).unwrap();
+            for lvl in 1..=9 {
+                while c.spell_slot_manager.consume_spell_slot(lvl) {}
+            }
+        }
+        // With everybody fresh the cleric is the frailest thing in
+        // reach and wards itself, which is both RAW ("a willing
+        // creature you touch", and you are one) and the right read:
+        // the d8 chassis is the one a breath weapon kills.
+        let pick = super::try_resistance_ward(&e, cleric)
+            .expect("out of slots, the cantrip is what the concentration is for");
+        assert_eq!(pick.target_ids(), Some(&[cleric][..]));
+
+        // Hurt the fighter past the cleric and the ward moves: the pick
+        // is the ally closest to dying, because four points is worth
+        // the most to whoever has the fewest left.
+        {
+            let f = e.actors.get_mut(&fighter).unwrap();
+            let bleed = f.hitpoints().saturating_sub(1);
+            f.take_damage(bleed);
+        }
+        let pick = super::try_resistance_ward(&e, cleric)
+            .expect("the rung still fires with a hurt ally beside it");
+        assert_eq!(
+            pick.target_ids(),
+            Some(&[fighter][..]),
+            "the ward goes to whoever is closest to dying"
+        );
+
+        // Ward the fighter and the rung falls silent: the action refuses
+        // a second one, and the caster is now concentrating besides.
+        // Ward everybody in reach and the rung falls silent: the
+        // action refuses a second ward on an already-braced ally.
+        for id in [cleric, fighter] {
+            for eff in crate::engine::side_effects::install_condition_with_damage_type(
+                Condition::Braced,
+                id,
+                crate::engine::types::DamageType::Fire,
+                crate::conditions::ConditionTimer::Rounds(10),
+            ) {
+                eff.apply(&mut e);
+            }
+        }
+        assert!(
+            super::try_resistance_ward(&e, cleric).is_none(),
+            "nobody in reach still needs one"
         );
     }
 

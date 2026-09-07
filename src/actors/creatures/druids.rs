@@ -137,6 +137,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // inspired ally. Slots cleanly into the druid's bonus-cantrip lane
     // next to Shillelagh.
     actions.push(&*crate::actions::spells::GUIDANCE);
+    // Resistance — the abjuration cantrip that is Guidance's defensive
+    // twin: touch an ally, pick the element the enemy roster actually
+    // throws, and take 1d4 off the first hit of that type each round.
+    // Concentration is what keeps it from simply always being up, and
+    // the picker declines the cast outright when nobody on the board
+    // deals any of the eleven.
+    actions.push(&*crate::actions::spells::RESISTANCE);
     // Light — the evocation cantrip every one of these classes has on
     // its list, and the party's answer to an unlit board: touch an ally
     // (or yourself) and they carry 20 ft of bright light and 20 ft of

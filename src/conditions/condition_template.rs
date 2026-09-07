@@ -2557,6 +2557,53 @@ pub enum Condition {
     /// flight source, and a spell that grounds its holder must never be
     /// mistaken for one that lifts them.
     Earthbound,
+    /// 5e **Protection from Energy** — *"For the duration, the target
+    /// has Resistance to one damage type of your choice: Acid, Cold,
+    /// Fire, Lightning, or Thunder."*
+    ///
+    /// The first condition in this file whose **effect is not written
+    /// down beside it**. Which of the five it resists is not a property
+    /// of the condition; it is a property of the casting, and it lives
+    /// on `ActorInstance::condition_damage_types` under this key. The
+    /// membership row is `CHOSEN_TYPE_RESISTANCE_CONDITIONS`, which
+    /// carries no type slice at all for exactly that reason.
+    ///
+    /// It replaces a `DamageResistant` install. That flag is the
+    /// *blanket* halving — Stoneskin, Globe of Invulnerability, a
+    /// Warding Bond — and putting a level-3 elemental ward on it made
+    /// Protection from Energy strictly better than the level-4 spell
+    /// whose whole text is "resistance to bludgeoning, piercing and
+    /// slashing", and better than the level-6 one that stops damage
+    /// outright. A ward against fire is not armour.
+    EnergyWarded,
+    /// 5e **Resistance** (abjuration cantrip) — *"You touch a willing
+    /// creature and choose a damage type… When the creature takes
+    /// damage of the chosen type before the spell ends, the creature
+    /// reduces the total damage taken by 1d4. A creature can benefit
+    /// from this spell only once per turn."*
+    ///
+    /// Named for what the holder is doing rather than for the spell,
+    /// because `DamageResistant` already owns the obvious spelling and
+    /// means something this deliberately is not: resistance halves, and
+    /// this subtracts. Against a 4-damage cantrip the flat die is worth
+    /// more than halving; against a dragon's breath it is worth almost
+    /// nothing, which is the whole shape of a cantrip that scales with
+    /// nothing.
+    ///
+    /// The chosen type rides `condition_damage_types` under this key,
+    /// the same table `EnergyWarded` above uses. This condition is
+    /// deliberately **not** on `CHOSEN_TYPE_RESISTANCE_CONDITIONS`: the
+    /// reduction is a subtraction, not a halving, and it is paid at its
+    /// own site in `DealDamage` rather than by the resistance lane.
+    ///
+    /// RAW's "only once per turn" is enforced with a `once_per_turn`
+    /// mark on the holder, which the engine clears at the top of the
+    /// holder's own turn. That reads the clause as *once per round*
+    /// rather than once during each creature's turn, and the difference
+    /// is a cantrip that shaves one hit a round instead of one hit per
+    /// enemy per round — the smaller of the two, and the one that keeps
+    /// a cantrip a cantrip.
+    Braced,
 }
 
 impl Condition {
@@ -2785,6 +2832,8 @@ impl Condition {
             Condition::Surprised => "surprised",
             Condition::Banished => "banished",
             Condition::Earthbound => "earthbound",
+            Condition::EnergyWarded => "warded against energy",
+            Condition::Braced => "braced",
         }
     }
 
@@ -2964,6 +3013,14 @@ impl Condition {
                 | Condition::TrueSighted
                 | Condition::SeeingInvisible
                 | Condition::GuidedStriking
+                // The two chosen-damage-type wards. Both are
+                // duration-bearing magical buffs on a willing holder,
+                // which is the whole membership test — and stripping
+                // either takes the choice with it, because
+                // `remove_condition` drops the payload row on the same
+                // line it drops the flag.
+                | Condition::EnergyWarded
+                | Condition::Braced
         )
     }
 

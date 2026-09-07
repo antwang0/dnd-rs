@@ -20066,6 +20066,172 @@ impl Action for Guidance {
 
 pub static GUIDANCE: LazyLock<Guidance> = LazyLock::new(|| Guidance {});
 
+/// **Resistance** — SRD 5.2 abjuration cantrip (Cleric, Druid), action,
+/// touch, concentration up to 1 minute.
+///
+/// > You touch a willing creature and choose a damage type: Acid,
+/// > Bludgeoning, Cold, Fire, Lightning, Necrotic, Piercing, Poison,
+/// > Radiant, Slashing, or Thunder. When the creature takes damage of
+/// > the chosen type before the spell ends, the creature reduces the
+/// > total damage taken by 1d4. A creature can benefit from this spell
+/// > only once per turn.
+///
+/// Guidance's defensive twin, and the last of the pair the engine could
+/// not write. Both are touch-range cantrips the cleric and the druid
+/// share, both pay out 1d4, and the reason only one of them shipped is
+/// that Guidance's die lands on a roll — where the engine has had a
+/// flat-buff lane since the beginning — and this one lands on **a
+/// damage type**, which nothing on an actor could hold. See
+/// `ActorInstance::condition_damage_types` for the table that can, and
+/// `Condition::Braced` for why the reduction is not routed through the
+/// resistance lane beside it.
+///
+/// **A subtraction, not a halving**, and the difference is the whole
+/// character of the spell. Against the 1d10 a Fire Bolt deals, a
+/// 2.5-point average is worth about as much as resistance; against a
+/// dragon's 12d6 it is worth nothing at all. That is a cantrip's
+/// correct shape — it holds up in the fights a level-1 party is in and
+/// quietly stops mattering — and it is why the engine's *other*
+/// mitigation lanes were all wrong homes for it.
+///
+/// **Concentration is the cost that makes it a decision.** RAW gives
+/// this spell concentration and gives Guidance none, so a cleric can
+/// hold one ward or one Bless and not both — which is the entire reason
+/// a free cantrip that shaves damage every round is not simply always
+/// up. The AI's concentration pricing sees `holds_concentration` and
+/// refuses to trade a landed Spirit Guardians for it.
+///
+/// **Who chooses the type.** The same picker Protection from Energy
+/// uses — `EncounterInstance::likeliest_incoming_damage_type` — over
+/// RAW's eleven rather than that spell's five. Force and Psychic are
+/// the two the book leaves out, and they are left out here too.
+pub struct Resistance {}
+
+impl Resistance {
+    /// RAW's menu: every damage type except Force and Psychic, in the
+    /// book's own order — which is also the picker's tie-break order.
+    const MENU: &'static [DamageType] = &[
+        DamageType::Acid,
+        DamageType::Bludgeoning,
+        DamageType::Cold,
+        DamageType::Fire,
+        DamageType::Lightning,
+        DamageType::Necrotic,
+        DamageType::Piercing,
+        DamageType::Poison,
+        DamageType::Radiant,
+        DamageType::Slashing,
+        DamageType::Thunder,
+    ];
+    /// RAW's minute, in the engine's rounds. Concentration is what
+    /// actually ends it in nearly every fight.
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for Resistance {
+    /// Queues a `StartConcentration`. Declared so the AI's summon and
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "resistance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["res", "brace"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        // Three refusals. The caster must have concentration to give;
+        // the ward must be worth something (nobody out there deals any
+        // of the eleven the target isn't already shrugging off); and a
+        // willing ally who is already braced doesn't need a second one
+        // — a re-cast would drop the first spell to install the same
+        // thing, which is a wasted Action either way.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if caster.is_concentrating() {
+            return false;
+        }
+        let caster_team = caster.team();
+        encounter.actors.get(&target_id).is_some_and(|t| {
+            t.team() == caster_team
+                && t.is_combat_active()
+                && !t.has_condition(Condition::Braced)
+        }) && encounter
+            .likeliest_incoming_damage_type(target_id, Self::MENU)
+            .is_some()
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // As with Protection from Energy, the fallback is for the
+        // direct-execute paths that skip the validator: by here the
+        // Action is spent, so take the book's first entry rather than
+        // installing a ward against nothing.
+        let chosen = encounter
+            .likeliest_incoming_damage_type(target_id, Self::MENU)
+            .unwrap_or(Self::MENU[0]);
+        encounter.log(format!(
+            "  resistance: {} braces against {:?}.",
+            encounter.actor_name(target_id),
+            chosen
+        ));
+        let mut effects = crate::engine::side_effects::install_condition_with_damage_type(
+            Condition::Braced,
+            target_id,
+            chosen,
+            ConditionTimer::Rounds(Self::ROUNDS),
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Resistance",
+                vec![(target_id, Condition::Braced)],
+            ),
+        }));
+        effects
+    }
+}
+
+pub static RESISTANCE: LazyLock<Resistance> = LazyLock::new(|| Resistance {});
+
 /// Light — evocation cantrip (bard / cleric / sorcerer / wizard /
 /// artificer), action, touch. "You touch one object… Until the spell
 /// ends, the object sheds bright light in a 20-foot radius and dim
@@ -25838,13 +26004,49 @@ impl Action for SilveryBarbs {
 
 pub static SILVERY_BARBS: LazyLock<SilveryBarbs> = LazyLock::new(|| SilveryBarbs {});
 
-/// Protection from Energy — level-3 abjuration, concentration, touch range.
-/// Grant one creature resistance to one damage type (acid, cold, fire,
-/// lightning, or thunder) for the spell's duration. We model as a
-/// DamageResistant condition install with concentration. The generic
-/// DamageResistant flag halves all incoming damage — close enough for
-/// the load-bearing defensive half.
+/// **Protection from Energy** — SRD 5.2 level-3 abjuration (Cleric,
+/// Druid, Ranger, Sorcerer, Wizard), action, touch, concentration up to
+/// 1 hour.
+///
+/// > For the duration, the target has Resistance to one damage type of
+/// > your choice: Acid, Cold, Fire, Lightning, or Thunder.
+///
+/// The spell used to install `DamageResistant` — the *blanket* halving
+/// — which made a level-3 slot strictly better than Stoneskin's level 4
+/// and did not need the caster to choose anything. It resists exactly
+/// one element now, and which one is a property of the casting rather
+/// than of the spell: the choice rides
+/// `ActorInstance::condition_damage_types` under `EnergyWarded`, and
+/// the resistance lane finds it there through
+/// `CHOSEN_TYPE_RESISTANCE_CONDITIONS`.
+///
+/// **Who chooses.** RAW the caster does, and the engine has no channel
+/// for "cast this, and also say fire" — the targeting schema names
+/// creatures and points and nothing else. So the choice is made by
+/// `EncounterInstance::likeliest_incoming_damage_type`, which reads the
+/// enemy roster's own action lists and picks the element most of it
+/// actually deals, skipping anything the target already shrugs off.
+/// That is a better answer than a fixed element and a worse one than a
+/// person; it is also the same answer a person would give with the
+/// same information.
+///
+/// **It refuses to be cast when nothing on the board deals any of the
+/// five.** The picker returns `None` there and `custom_validate_input`
+/// declines, which keeps a druid from spending a level-3 slot and its
+/// concentration warding a party against lightning nobody can throw.
 pub struct ProtectionFromEnergy {}
+
+impl ProtectionFromEnergy {
+    /// RAW's menu, in the book's own order — which is also the tie-break
+    /// order the picker falls back on.
+    const MENU: &'static [DamageType] = &[
+        DamageType::Acid,
+        DamageType::Cold,
+        DamageType::Fire,
+        DamageType::Lightning,
+        DamageType::Thunder,
+    ];
+}
 
 impl Action for ProtectionFromEnergy {
     /// Queues a `StartConcentration`. Declared so the AI's
@@ -25907,12 +26109,18 @@ impl Action for ProtectionFromEnergy {
         encounter.actors.get(&tid).is_some_and(|t| {
             t.team() == caster_team
                 && t.is_combat_active()
-                && !t.has_condition(Condition::DamageResistant)
+                && !t.has_condition(Condition::EnergyWarded)
         })
+            // Nothing on the far side of the board deals any of the
+            // five — see the docstring. A `None` here is the picker
+            // saying the slot would buy nothing.
+            && encounter
+                .likeliest_incoming_damage_type(tid, Self::MENU)
+                .is_some()
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
@@ -25921,20 +26129,32 @@ impl Action for ProtectionFromEnergy {
         let Some(tid) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::DamageResistant,
-                timer: ConditionTimer::Rounds(100),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Protection from Energy",
-                    vec![(tid, Condition::DamageResistant)],
-                ),
-            }),
-        ]
+        // The validator has already established that the picker finds
+        // something; the fallback is for the direct-execute paths that
+        // do not run it, and it takes the book's first entry rather
+        // than declining, because by this point the slot is spent.
+        let chosen = encounter
+            .likeliest_incoming_damage_type(tid, Self::MENU)
+            .unwrap_or(Self::MENU[0]);
+        encounter.log(format!(
+            "  protection from energy: {} is warded against {:?}.",
+            encounter.actor_name(tid),
+            chosen
+        ));
+        let mut effects = crate::engine::side_effects::install_condition_with_damage_type(
+            Condition::EnergyWarded,
+            tid,
+            chosen,
+            ConditionTimer::Rounds(100),
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Protection from Energy",
+                vec![(tid, Condition::EnergyWarded)],
+            ),
+        }));
+        effects
     }
 }
 
