@@ -26405,14 +26405,18 @@ fn tarrasque_template_immunities_and_regen() {
     assert!(actor.is_immune_to_condition(Condition::Paralyzed));
 }
 
-/// Exhaustion's roll penalty arrives on the third rung and not
-/// before. The two earlier tiers are a check penalty and a speed
-/// cut, neither of which an attack roll or a saving throw can see —
-/// and pinning that is the point, because the previous single-flag
-/// model handed both of these out on the *first* application.
+/// SRD 5.2 exhaustion is a flat penalty on **every** D20 Test, from the
+/// first level — not disadvantage on some of them from the third.
+///
+/// The engine shipped the 2014 ladder, and the direction it was wrong
+/// in mattered: a creature at exhaustion 1 or 2 swung and saved at full
+/// strength, because those rungs only touched ability checks and speed.
+/// Two points a level, on all three lanes, is what 5.2 prints; the roll
+/// *mode* is left alone entirely, which is the other half of the change
+/// and the half a `RollMode` assertion is the only way to see.
 #[test]
-fn the_roll_penalty_waits_for_the_third_rung_of_exhaustion() {
-    use crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER;
+fn exhaustion_taxes_every_d20_test_from_the_first_level() {
+    use crate::actors::actor_template::EXHAUSTION_D20_PENALTY_PER_LEVEL;
     use crate::actors::creatures::guards::GUARD_TEMPLATE;
     use crate::conditions::ConditionTimer;
     let mut e = ei_with_terrain(15, 15, &[]);
@@ -26426,57 +26430,55 @@ fn the_roll_penalty_waits_for_the_third_rung_of_exhaustion() {
         .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
     let wis = crate::engine::types::AbilityScoreType::Wisdom;
-    for tier in 1..EXHAUSTION_ROLL_PENALTY_TIER {
+    let base_save = e.actors[&attacker].save_modifier(wis);
+    let (base_attack, _) = e.caster_attack_buffs(attacker);
+
+    for level in 1..=3 {
         e.actors
             .get_mut(&attacker)
             .unwrap()
             .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
-        assert_eq!(e.actors[&attacker].exhaustion_level(), tier);
-        assert!(
-            e.actors[&attacker].has_condition(Condition::Exhausted),
-            "the flag is up from the first rung"
+        assert_eq!(e.actors[&attacker].exhaustion_level(), level);
+        let owed = -(level as i32) * EXHAUSTION_D20_PENALTY_PER_LEVEL;
+        assert_eq!(
+            e.actors[&attacker].exhaustion_d20_penalty(),
+            owed,
+            "two points a level, cumulative"
         );
-        assert!(
-            matches!(e.compute_attack_mode(attacker, target, true), RollMode::Normal),
-            "tier {} should not touch the attack roll",
-            tier
+        assert_eq!(
+            e.actors[&attacker].save_modifier(wis),
+            base_save + owed,
+            "the save total carries it"
         );
-        assert!(
-            matches!(e.compute_save_mode(attacker, wis), RollMode::Normal),
-            "tier {} should not touch the saving throw",
-            tier
+        assert_eq!(
+            e.caster_attack_buffs(attacker).0,
+            base_attack + owed,
+            "and so does the attack roll"
         );
-        assert!(
-            matches!(e.compute_check_mode(attacker, wis), RollMode::Disadvantage),
-            "every tier from the first touches the ability check"
-        );
+        // The mode is untouched at every level: 5.2 replaced the
+        // disadvantage the older printing handed out with the number.
+        assert!(matches!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        ));
+        assert!(matches!(e.compute_save_mode(attacker, wis), RollMode::Normal));
+        assert!(matches!(e.compute_check_mode(attacker, wis), RollMode::Normal));
     }
-    e.actors
-        .get_mut(&attacker)
-        .unwrap()
-        .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
-    assert_eq!(
-        e.actors[&attacker].exhaustion_level(),
-        EXHAUSTION_ROLL_PENALTY_TIER
-    );
-    assert!(matches!(
-        e.compute_attack_mode(attacker, target, true),
-        RollMode::Disadvantage
-    ));
-    assert!(matches!(
-        e.compute_save_mode(attacker, wis),
-        RollMode::Disadvantage
-    ));
 }
 
-/// The rungs that are not roll modes: half speed at tier 2, half hit
-/// point maximum at tier 4 (with current HP clipped down to it as the
-/// tier lands), no movement at all at tier 5, and death at tier 6.
+/// The other half of SRD 5.2's ladder: five feet of speed per level,
+/// floored at zero, and death at six.
+///
+/// The 2014 rungs this replaces were half speed at 2, a halved hit
+/// point maximum at 4 and speed 0 at 5. None of the three is in 5.2, and
+/// the hit point one is pinned here as an absence because it is the
+/// clause a creature would notice most: it used to clip current HP down
+/// as the level landed, which is a thing an exhausted creature no
+/// longer suffers.
 #[test]
-fn the_exhaustion_ladder_bites_speed_then_hit_points_then_the_creature() {
+fn exhaustion_walks_the_speed_line_down_five_feet_at_a_time() {
     use crate::actors::actor_template::{
-        EXHAUSTION_DEATH_TIER, EXHAUSTION_HALF_HP_TIER, EXHAUSTION_HALF_SPEED_TIER,
-        EXHAUSTION_ZERO_SPEED_TIER,
+        EXHAUSTION_DEATH_TIER, EXHAUSTION_SPEED_PENALTY_FT_PER_LEVEL,
     };
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut e = ei_with_terrain(15, 15, &[]);
@@ -26488,33 +26490,31 @@ fn the_exhaustion_ladder_bites_speed_then_hit_points_then_the_creature() {
     assert!(base_speed > 0.0 && base_max_hp > 1);
 
     let a = e.actors.get_mut(&id).unwrap();
-    a.gain_exhaustion(EXHAUSTION_HALF_SPEED_TIER);
-    assert!(
-        (a.speed() - base_speed * 0.5).abs() < 0.01,
-        "tier {} halves speed",
-        EXHAUSTION_HALF_SPEED_TIER
-    );
-    assert_eq!(a.max_hitpoints(), base_max_hp, "and nothing else yet");
+    for level in 1..EXHAUSTION_DEATH_TIER {
+        a.gain_exhaustion(1);
+        let owed = level as f32 * EXHAUSTION_SPEED_PENALTY_FT_PER_LEVEL;
+        assert!(
+            (a.speed() - (base_speed - owed).max(0.0)).abs() < 0.01,
+            "level {} should cost {} ft, speed is {}",
+            level,
+            owed,
+            a.speed()
+        );
+        assert_eq!(
+            a.max_hitpoints(),
+            base_max_hp,
+            "5.2 has no halved hit point maximum at any level"
+        );
+    }
+    // A fighter's 30 ft is gone by level 6, and the floor holds rather
+    // than the number going negative — which is what makes 5.2 need no
+    // "speed 0" rung of its own.
+    assert!(a.speed() >= 0.0);
 
-    a.gain_exhaustion(EXHAUSTION_HALF_HP_TIER - EXHAUSTION_HALF_SPEED_TIER);
-    assert_eq!(a.max_hitpoints(), (base_max_hp / 2).max(1));
-    assert!(
-        a.hitpoints() <= a.max_hitpoints(),
-        "current HP is clipped down to the new ceiling"
-    );
-
-    a.gain_exhaustion(EXHAUSTION_ZERO_SPEED_TIER - EXHAUSTION_HALF_HP_TIER);
-    assert_eq!(
-        a.remaining_movement(),
-        0.0,
-        "tier {} is speed 0, not merely slow",
-        EXHAUSTION_ZERO_SPEED_TIER
-    );
-
-    a.gain_exhaustion(EXHAUSTION_DEATH_TIER - EXHAUSTION_ZERO_SPEED_TIER);
-    assert!(!a.is_combat_active(), "tier {} is death", EXHAUSTION_DEATH_TIER);
+    a.gain_exhaustion(1);
+    assert!(!a.is_combat_active(), "level 6 is death");
     assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
-    // The ladder has a top: nothing stacks past the rung that kills.
+    // The ladder has a top: nothing stacks past the level that kills.
     a.gain_exhaustion(3);
     assert_eq!(a.exhaustion_level(), EXHAUSTION_DEATH_TIER);
 }
@@ -75733,25 +75733,28 @@ fn a_crawl_costs_double_per_tile_and_not_double_again_on_the_budget() {
     );
 }
 
-/// The last rung of exhaustion before death is "speed reduced to 0",
-/// and that has to reach the actions priced in feet as well as the
-/// pathfinder.
+/// Exhaustion that has eaten the whole speed line reaches the actions
+/// priced in feet, not just the pathfinder.
 ///
 /// Standing up, mounting and dismounting all cost movement and nothing
 /// else, and all of them ask `can_consume_resource` rather than asking
 /// the pathfinder for a route. That gate used to read the raw budget
-/// field, which the exhaustion ladder never touches — so a creature too
+/// field, which the exhaustion ladder never touched — so a creature too
 /// exhausted to take a single step could still climb onto a horse.
+///
+/// SRD 5.2 has no "speed 0" rung; it has 5 ft a level and a floor at
+/// zero, so a 30-ft guard reaches the same place at level 6 — which is
+/// also the level that kills, and the reason the test walks a creature
+/// whose speed the penalty can empty before the death clause does.
 #[test]
-fn the_fifth_rung_of_exhaustion_stops_the_things_priced_in_feet() {
-    use crate::actors::actor_template::EXHAUSTION_ZERO_SPEED_TIER;
+fn exhaustion_that_empties_the_speed_line_stops_the_things_priced_in_feet() {
     use crate::actors::creatures::guards::GUARD_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     use crate::engine::side_effects::Resource;
 
     let mut e = ei_with_terrain(15, 15, &[]);
     // A guard rather than a zombie, for the reason
-    // `the_roll_penalty_waits_for_the_third_rung_of_exhaustion` gives:
+    // `exhaustion_taxes_every_d20_test_from_the_first_level` gives:
     // every SRD Undead is immune to the thing under test.
     let id = e
         .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -75760,20 +75763,25 @@ fn the_fifth_rung_of_exhaustion_stops_the_things_priced_in_feet() {
         e.actors[&id].can_consume_resource(Resource::Movement(2.5)),
         "an unexhausted creature can spend a tile's worth"
     );
-    for _ in 0..EXHAUSTION_ZERO_SPEED_TIER {
+    // Five levels is 25 ft off a 30-ft guard, which still leaves a
+    // step; the sixth takes the rest, and is also the one that kills,
+    // so the budget is read at the level before it and then emptied by
+    // hand to isolate the movement gate from the death clause.
+    for _ in 0..5 {
         e.actors
             .get_mut(&id)
             .unwrap()
             .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
     }
-    assert_eq!(
-        e.actors[&id].exhaustion_level(),
-        EXHAUSTION_ZERO_SPEED_TIER
+    e.start_turn_for(id);
+    assert!(
+        e.actors[&id].remaining_movement() > 0.0,
+        "five levels leaves a 30-ft creature five feet"
     );
-    assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    e.actors.get_mut(&id).unwrap().zero_movement();
     assert!(
         !e.actors[&id].can_consume_resource(Resource::Movement(2.5)),
-        "and one this far gone cannot"
+        "and a creature with nothing left cannot mount, stand or step"
     );
 }
 
@@ -84587,7 +84595,7 @@ fn a_creature_underwater_runs_out_of_breath_and_then_starts_drowning() {
 /// the others.
 ///
 /// The distinction is the whole reason `ActorInstance` carries a second
-/// number beside its exhaustion tier. A creature that arrived at the
+/// number beside its exhaustion level. A creature that arrived at the
 /// fight already tired and then nearly drowned must come up owing what
 /// it walked in with — otherwise drowning would be a way to shed a rung
 /// of exhaustion, which is a strange thing for a rule to make true.

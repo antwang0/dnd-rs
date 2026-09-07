@@ -482,23 +482,24 @@ pub enum Condition {
     /// the bard their Action every round they want it, and a buff that
     /// outlived the performance would make that price a one-time one.
     Countercharmed,
-    /// Exhausted — the flag half of 5e's six-rung exhaustion ladder.
-    /// Present exactly when `ActorInstance::exhaustion_level()` is
-    /// non-zero; the tier itself is the number, and the two are held in
-    /// step by `add_condition` / `remove_condition`.
+    /// Exhausted — the flag half of 5e's exhaustion ladder. Present
+    /// exactly when `ActorInstance::exhaustion_level()` is non-zero; the
+    /// level itself is the number, and the two are held in step by
+    /// `add_condition` / `remove_condition`.
     ///
     /// Which is why this variant carries almost no mechanics of its own.
-    /// It sits on none of the roll-mode cohorts, because every penalty
-    /// RAW attaches to exhaustion is attached to a *rung*, and the flag
-    /// is up from the first one: tier 1 is disadvantage on ability
-    /// checks, tier 2 halves speed, tier 3 reaches attack rolls and
-    /// saving throws, tier 4 halves the hit point maximum, tier 5 is
-    /// speed 0, tier 6 is death. Each gate reads the number.
+    /// It sits on none of the roll-mode cohorts, and under SRD 5.2 that
+    /// is not a simplification but the rule: exhaustion is *"the roll is
+    /// reduced by 2 times your Exhaustion level"* and *"your Speed is
+    /// reduced by 5 times your Exhaustion level"*, two flat terms scaled
+    /// by a number, plus death at 6. Neither is a mode and neither is a
+    /// threshold, so both read `exhaustion_level()` directly — see
+    /// `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
     ///
     /// The flag still earns its place: it is what makes exhaustion
     /// visible to everything that speaks in conditions — immunity
     /// (celestials, constructs, undead), the cleanse pickers, the status
-    /// panel — without any of them having to learn about tiers. Adding a
+    /// panel — without any of them having to learn about levels. Adding a
     /// level to a creature immune to the condition is impossible for the
     /// ordinary reason: `add_condition` bounces on immunity before it
     /// reaches the ladder.

@@ -946,10 +946,11 @@ pub fn render_sideinfo(
             .iter()
             .map(|(c, timer)| {
                 // Exhaustion is the one condition whose severity isn't
-                // carried by its timer — it has six rungs and a
+                // carried by its timer — it has six levels and a
                 // permanent timer on every one of them, so a bare
-                // "exhausted" would read the same at tier 1 as at the
-                // tier that halves your hit points. Show the rung.
+                // "exhausted" would read the same at level 1, which
+                // costs two points and five feet, as at level 5, which
+                // costs ten and twenty-five. Show the level.
                 if matches!(c, crate::conditions::Condition::Exhausted) {
                     return (
                         format!("{} {}", c.name(), curr_actor.exhaustion_level()),

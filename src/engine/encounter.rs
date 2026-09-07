@@ -3809,16 +3809,11 @@ impl EncounterInstance {
         // `grants_self_attack_advantage`) so adding a new condition is a
         // one-line change to the helper rather than a re-edit here.
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            // 5e exhaustion tier 3: "disadvantage on attack rolls and
-            // saving throws". Off the condition cohort for the same
-            // reason it is off the save one — that table is keyed by
-            // condition, and the flag is up two rungs before the
-            // penalty is earned.
-            if attacker.exhaustion_level()
-                >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
-            {
-                tally.add(RollMode::Disadvantage);
-            }
+            // No exhaustion clause here. SRD 5.2 charges exhaustion as
+            // a flat penalty on every D20 Test rather than as
+            // disadvantage on some of them, and the flat term rides
+            // `caster_attack_buffs` with every other modifier on the
+            // roll. See `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
             for c in attacker.conditions().keys() {
                 if c.imposes_attacker_disadvantage() {
                     tally.add(RollMode::Disadvantage);
@@ -4816,15 +4811,10 @@ impl EncounterInstance {
                 tally.add(RollMode::Advantage);
             }
         }
-        // 5e exhaustion tier 3: "disadvantage on attack rolls and saving
-        // throws". Off the blanket cohort because that table is keyed by
-        // condition and this is keyed by tier — the flag is up from tier
-        // 1, three rungs before this penalty is earned.
-        if actor.exhaustion_level()
-            >= crate::actors::actor_template::EXHAUSTION_ROLL_PENALTY_TIER
-        {
-            tally.add(RollMode::Disadvantage);
-        }
+        // No exhaustion clause here either: SRD 5.2's penalty is a flat
+        // number on the total, and `ActorInstance::save_modifier`
+        // carries it alongside the ability modifier and the proficiency
+        // bonus. See `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
         // 5e Sunlight Weakness / Hypersensitivity: "disadvantage on
         // attack rolls, ability checks, and saving throws" while in
         // sunlight. Off the blanket condition cohort for the same
@@ -6212,14 +6202,10 @@ impl EncounterInstance {
                 tally.add(RollMode::Advantage);
             }
         }
-        // 5e exhaustion tier 1: "disadvantage on ability checks", and
-        // nothing else until tier 3. This is the rung the ladder starts
-        // on, and until the check lane existed it had nothing to bite.
-        if actor.exhaustion_level()
-            >= crate::actors::actor_template::EXHAUSTION_CHECK_DISADVANTAGE_TIER
-        {
-            tally.add(RollMode::Disadvantage);
-        }
+        // The third of the three: SRD 5.2 taxes an ability check the
+        // same flat way it taxes an attack and a save, and
+        // `roll_ability_check` folds the number into the modifier it
+        // prints. See `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
         if matches!(ability, AbilityScoreType::Strength) {
             for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
@@ -6291,7 +6277,11 @@ impl EncounterInstance {
             .copied()
             .filter(|&c| actor.has_condition(c))
             .collect();
-        let modifier = actor.ability_modifier(ability) + prof + rider_bonus;
+        // SRD 5.2 exhaustion's D20 Test tax, the third and last of the
+        // three sites that sum a d20's flat terms — see
+        // `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
+        let modifier =
+            actor.ability_modifier(ability) + prof + rider_bonus + actor.exhaustion_d20_penalty();
         let total = raw + modifier;
         let label = match &skill {
             Some(s) => format!(" ({:?})", s),
@@ -12469,12 +12459,22 @@ impl EncounterInstance {
     /// `attack_bonus` (`+1 Weapon`, Bracers of Archery, Ioun Stone of
     /// Mastery, …) so a single chokepoint handles every flat to-hit
     /// source. Mirrors `item_save_bonus`'s seat in `roll_save`.
+    ///
+    /// And the one flat source that is a penalty rather than a bonus:
+    /// SRD 5.2 exhaustion's "the roll is reduced by 2 times your
+    /// Exhaustion level", which is a D20 Test tax and so belongs
+    /// wherever the D20 Test's flat terms are summed. It rides the
+    /// install lane rather than the condition lane because the
+    /// condition lane is keyed by condition and this is keyed by a
+    /// number.
     pub fn caster_attack_buffs(&self, caster_id: usize) -> (i32, i32) {
         self.actors
             .get(&caster_id)
             .map(|a| {
                 (
-                    a.attack_bonus_buff() + a.item_attack_bonus(),
+                    a.attack_bonus_buff()
+                        + a.item_attack_bonus()
+                        + a.exhaustion_d20_penalty(),
                     a.condition_attack_bonus(),
                 )
             })

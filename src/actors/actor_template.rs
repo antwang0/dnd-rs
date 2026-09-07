@@ -2050,37 +2050,46 @@ const MOVER_OA_SUPPRESSORS: &[ActorFlagRow] = &[
     },
 ];
 
-/// The 5e exhaustion ladder, one constant per rung, named for what the
-/// rung does rather than for its number.
+/// The exhaustion ladder, as SRD 5.2 prints it — **two numbers and a
+/// cap**, where the older printing had six named rungs.
 ///
-/// Each tier's effect is cumulative with every tier below it, so the
-/// gates are all `>=`. They are constants rather than literals for the
-/// usual reason — six sites in four modules read them, and a bare `3`
-/// at a save site says nothing about why — but also because the ladder
-/// is the one part of exhaustion a table is likely to house-rule, and a
-/// house rule that moves a rung should be one edit.
+/// > *Exhaustion Levels.* This condition is cumulative. Each time you
+/// > receive it, you gain 1 Exhaustion level. You die if your Exhaustion
+/// > level is 6.
+/// > *D20 Tests Affected.* When you make a D20 Test, the roll is reduced
+/// > by 2 times your Exhaustion level.
+/// > *Speed Reduced.* Your Speed is reduced by a number of feet equal to
+/// > 5 times your Exhaustion level.
 ///
-/// Tier 1 — disadvantage on ability checks. Read by
-/// `EncounterInstance::compute_check_mode`.
-pub const EXHAUSTION_CHECK_DISADVANTAGE_TIER: u32 = 1;
-/// Tier 2 — speed halved. Rides `CONDITION_SPEED_MULTIPLIERS` as a
-/// ×0.5 factor, so it composes with Haste and Slow the way every other
-/// speed multiplier does.
-pub const EXHAUSTION_HALF_SPEED_TIER: u32 = 2;
-/// Tier 3 — disadvantage on attack rolls *and* saving throws. The rung
-/// the old single-flag model collapsed the whole ladder onto: before
-/// the tiers existed, one application of exhaustion handed out this
-/// penalty plus tier 1's immediately.
-pub const EXHAUSTION_ROLL_PENALTY_TIER: u32 = 3;
-/// Tier 4 — hit point maximum halved. Read by `max_hitpoints`; current
-/// HP is clipped to the new ceiling as the tier lands.
-pub const EXHAUSTION_HALF_HP_TIER: u32 = 4;
-/// Tier 5 — speed 0. Read by `remaining_movement` alongside the
-/// `zeros_movement` condition cohort, rather than as another speed
-/// multiplier, because RAW's "speed 0" is not a number a Dash can add
-/// to.
-pub const EXHAUSTION_ZERO_SPEED_TIER: u32 = 5;
-/// Tier 6 — death. Also the cap: a creature cannot hold more
+/// The engine shipped the 2014 ladder: disadvantage on checks at 1,
+/// half speed at 2, disadvantage on attacks and saves at 3, half hit
+/// point maximum at 4, speed 0 at 5. Five separate mechanics on five
+/// separate rungs, four of which SRD 5.2 does not have — and, in the
+/// direction that mattered at the table, an exhaustion that did
+/// *nothing at all* to an attack roll until the third rung. A
+/// suffocating fighter at tier 2 swung at full strength.
+///
+/// The two numbers below scale from the first level, which is why the
+/// replacement is harsher where it counts and gentler everywhere else:
+/// one rung is −2 to hit and −5 ft rather than nothing, and four rungs
+/// is −8 rather than a halved hit point maximum. Nothing reads a
+/// threshold any more, so there is no `>=` anywhere in the ladder and
+/// no rung for a future edit to get wrong.
+///
+/// Points off every D20 Test, per level of exhaustion. Folded in at the
+/// three chokepoints every d20 total in the engine passes through:
+/// `EncounterInstance::caster_attack_buffs` (attack rolls, weapon and
+/// spell alike), `ActorInstance::save_modifier`, and
+/// `EncounterInstance::roll_ability_check`.
+pub const EXHAUSTION_D20_PENALTY_PER_LEVEL: i32 = 2;
+/// Feet off the holder's walking speed, per level of exhaustion. Rides
+/// `CONDITION_SPEED_BONUSES` as a negative bump, so it composes with
+/// Longstrider and the rest the way every other flat speed term does —
+/// and `speed()` floors the result at zero, which is what makes RAW's
+/// sixth level unreachable on this axis before the death clause takes
+/// it.
+pub const EXHAUSTION_SPEED_PENALTY_FT_PER_LEVEL: f32 = 5.0;
+/// Level 6 — death. Also the cap: a creature cannot hold more
 /// exhaustion than the amount that kills it.
 pub const EXHAUSTION_DEATH_TIER: u32 = 6;
 
@@ -2137,15 +2146,6 @@ const CONDITION_SPEED_MULTIPLIERS: &[ConditionSpeedMultiplier] = &[
     },
     ConditionSpeedMultiplier {
         flag: |a| a.has_condition(Condition::PowerWordPained),
-        factor: 0.5,
-    },
-    // 5e exhaustion tier 2: "speed halved". The first row on this
-    // cohort gated on something other than a bare condition flag, which
-    // is what the `flag` closure was for — the ladder's tiers are a
-    // number, not six conditions. Tier 5's "speed 0" deliberately does
-    // *not* ride here: see `remaining_movement`.
-    ConditionSpeedMultiplier {
-        flag: |a| a.exhaustion_level() >= EXHAUSTION_HALF_SPEED_TIER,
         factor: 0.5,
     },
 ];
@@ -5023,26 +5023,25 @@ pub struct ActorInstance {
     /// same lair action two rounds in a row." `None` before the first
     /// one fires.
     last_lair_action: Option<usize>,
-    /// 5e Exhaustion, as its six cumulative tiers rather than a flag.
+    /// 5e Exhaustion, as a level rather than a flag.
     ///
     /// The number and `Condition::Exhausted` are two views of one
     /// state, held in step by `add_condition` / `remove_condition`: the
     /// flag is present exactly when this is non-zero. That pairing is
-    /// what let the tiers arrive without touching a single caller —
+    /// what let the levels arrive without touching a single caller —
     /// every existing source already says `add_condition(Exhausted)`,
-    /// which is now "gain a level" (RAW's own phrasing), and every
-    /// existing cleanse already says `remove_condition(Exhausted)`,
-    /// which is now "reduce by one level" (also RAW's own phrasing,
-    /// and the thing Greater Restoration and a long rest both actually
-    /// do). Immunity is unchanged: `add_condition` bounces first, so a
-    /// creature immune to exhaustion never picks up a tier.
+    /// which is "gain a level" (RAW's own phrasing), and every existing
+    /// cleanse already says `remove_condition(Exhausted)`, which is
+    /// "reduce by one level" (also RAW's own phrasing, and the thing
+    /// Greater Restoration and a long rest both actually do). Immunity
+    /// is unchanged: `add_condition` bounces first, so a creature immune
+    /// to exhaustion never picks up a level.
     ///
-    /// Read through `exhaustion_level`. The tiers land at:
-    /// `EXHAUSTION_CHECK_DISADVANTAGE_TIER` (checks),
-    /// `EXHAUSTION_HALF_SPEED_TIER` (speed), `EXHAUSTION_ROLL_PENALTY_TIER`
-    /// (attacks and saves), `EXHAUSTION_HALF_HP_TIER` (hit point
-    /// maximum), `EXHAUSTION_ZERO_SPEED_TIER` (speed again), and
-    /// `EXHAUSTION_DEATH_TIER`.
+    /// Read through `exhaustion_level`, and turned into consequences by
+    /// exactly two derivations — `exhaustion_d20_penalty` and
+    /// `exhaustion_speed_penalty` — plus the death clause at
+    /// `EXHAUSTION_DEATH_TIER`. See `EXHAUSTION_D20_PENALTY_PER_LEVEL`
+    /// for what happened to the six named rungs that used to be here.
     exhaustion: u32,
     /// Rounds of held breath left before 5e's **Suffocation** hazard
     /// starts charging exhaustion — see `engine::breath`.
@@ -7777,7 +7776,7 @@ impl ActorInstance {
         is_new
     }
 
-    /// Current exhaustion tier, 0 (none) through
+    /// Current exhaustion level, 0 (none) through
     /// `EXHAUSTION_DEATH_TIER`. `has_condition(Exhausted)` is exactly
     /// `exhaustion_level() > 0`; the two are held in step by
     /// `gain_exhaustion` / `reduce_exhaustion`, which are the only
@@ -7787,9 +7786,9 @@ impl ActorInstance {
     }
 
     /// Climb `levels` rungs of the exhaustion ladder, returning the new
-    /// tier. Saturates at `EXHAUSTION_DEATH_TIER`, and reaching that
-    /// rung kills outright — RAW's tier 6 is "death", with no save and
-    /// no dying state to roll out of.
+    /// level. Saturates at `EXHAUSTION_DEATH_TIER`, and reaching that
+    /// rung kills outright — SRD 5.2: "you die if your Exhaustion level
+    /// is 6", with no save and no dying state to roll out of.
     ///
     /// Reached by every caller through `add_condition(Exhausted, _)`;
     /// public for the sources that hand out more than one level at a
@@ -7810,16 +7809,10 @@ impl ActorInstance {
             self.hp_state = HpState::Dead;
             return self.exhaustion;
         }
-        // Tier 4 halves the hit point maximum, and a creature sitting
-        // above the new ceiling has to come down to it. Clipped here
-        // rather than inside `max_hitpoints` because that accessor is
-        // read on every damage and heal and has no business mutating.
-        let cap = self.max_hitpoints();
-        self.hitpoints = self.hitpoints.min(cap);
         self.exhaustion
     }
 
-    /// Walk `levels` rungs back down, returning true if any tier was
+    /// Walk `levels` rungs back down, returning true if any level was
     /// actually shed. Dropping to 0 clears `Condition::Exhausted`; any
     /// other landing keeps it, because the creature is still exhausted,
     /// just less so.
@@ -8682,17 +8675,11 @@ impl ActorInstance {
 
     pub fn max_hitpoints(&self) -> u32 {
         let bonus = self.total_item_bonuses().max_hp;
-        let raw = (self.base_hitpoints as i32 + bonus).max(1) as u32;
-        // 5e exhaustion tier 4: "hit point maximum halved". Applied
-        // after the item bonuses fold in, so a Ring of Regeneration's
-        // +HP is halved along with everything else — RAW halves the
-        // maximum, whatever built it. Floors at 1 so a halved maximum
-        // can never itself be the thing that kills; tier 6 is the rung
-        // that does that.
-        if self.exhaustion >= EXHAUSTION_HALF_HP_TIER {
-            return (raw / 2).max(1);
-        }
-        raw
+        // No exhaustion clause: SRD 5.2's ladder is a D20-Test penalty
+        // and a speed reduction, and the 2014 printing's "hit point
+        // maximum halved" at tier 4 is not in it. See
+        // `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
+        (self.base_hitpoints as i32 + bonus).max(1) as u32
     }
 
     /// True if the actor has taken any damage relative to their full HP
@@ -8823,7 +8810,37 @@ impl ActorInstance {
         // Panther Totem, Fast Movement, Unarmored Movement, Roving)
         // fold through the sibling `PASSIVE_FEATURE_SPEED_BONUSES`
         // table for the same reason.
-        self.condition_speed_bonus_from_table() + self.passive_feature_speed_bonus()
+        // SRD 5.2 exhaustion: "your Speed is reduced by a number of
+        // feet equal to 5 times your Exhaustion level." A term rather
+        // than a cohort row, because both cohorts above are tables of
+        // *fixed* magnitudes and this one scales with a number on the
+        // sheet. It is negative, and `speed_from_base` floors the sum
+        // at zero — which is what stops a level-5 creature from having
+        // a speed the Dash action could add to.
+        self.condition_speed_bonus_from_table()
+            + self.passive_feature_speed_bonus()
+            + self.exhaustion_speed_penalty()
+    }
+
+    /// Feet off this creature's walking speed for the exhaustion it is
+    /// carrying — negative, or zero for a creature carrying none. SRD
+    /// 5.2: "5 times your Exhaustion level".
+    pub fn exhaustion_speed_penalty(&self) -> f32 {
+        -(self.exhaustion_level() as f32) * EXHAUSTION_SPEED_PENALTY_FT_PER_LEVEL
+    }
+
+    /// Points off every D20 Test this creature makes, for the
+    /// exhaustion it is carrying — negative, or zero for a creature
+    /// carrying none. SRD 5.2: "when you make a D20 Test, the roll is
+    /// reduced by 2 times your Exhaustion level."
+    ///
+    /// Read at the three chokepoints every d20 total in the engine
+    /// passes through — `EncounterInstance::caster_attack_buffs`,
+    /// `save_modifier`, and `EncounterInstance::roll_ability_check` —
+    /// so a fourth kind of d20 roll would have to invent its own
+    /// modifier sum before it could miss this.
+    pub fn exhaustion_d20_penalty(&self) -> i32 {
+        -(self.exhaustion_level() as i32) * EXHAUSTION_D20_PENALTY_PER_LEVEL
     }
 
     /// Sum of flat speed bonuses granted by held conditions. Walks the
@@ -8949,11 +8966,9 @@ impl ActorInstance {
     ///
     /// Recomputed on demand rather than snapshotted at spawn, because
     /// the Constitution it is measured in moves: an Amulet of Health
-    /// sets the score outright, a Belt of Giant Strength does not, and
-    /// exhaustion tier 4 has already halved this creature's hit points
-    /// by the time anybody asks. The refill in `refill_breath` reads
-    /// this each round, so the clock is always sized to the sheet as it
-    /// stands.
+    /// sets the score outright, and a Belt of Giant Strength does not.
+    /// The refill in `refill_breath` reads this each round, so the
+    /// clock is always sized to the sheet as it stands.
     pub fn hold_breath_capacity(&self) -> u32 {
         crate::engine::breath::hold_breath_rounds(
             self.ability_modifier(AbilityScoreType::Constitution),
@@ -9022,7 +9037,7 @@ impl ActorInstance {
     /// a creature that is choking *and* under water pays once, not
     /// twice, and comes up with the clock the water left it.
     ///
-    /// Returns the new exhaustion tier when a level actually landed,
+    /// Returns the new exhaustion level when one actually landed,
     /// and `None` while the creature is still holding its breath or is
     /// immune to exhaustion. The immunity is not checked here: the
     /// level is installed through `add_condition`, which bounces an
@@ -9248,15 +9263,12 @@ impl ActorInstance {
         if self.swallowed_by.is_some() {
             return 0.0;
         }
-        // 5e exhaustion tier 5: "speed reduced to 0". Read here rather
-        // than as another `CONDITION_SPEED_MULTIPLIERS` row with a
-        // factor of 0, because those factors scale the *speed* that
-        // fills the budget at turn start, and a Dash pours a second
-        // helping straight back in. A creature this exhausted does not
-        // get to sprint; it does not get to move.
-        if self.exhaustion >= EXHAUSTION_ZERO_SPEED_TIER {
-            return 0.0;
-        }
+        // No exhaustion clause here any more. SRD 5.2 has no "speed 0"
+        // rung — it takes 5 ft per level off the speed line, which
+        // `condition_speed_bonus` charges and `speed_from_base` floors
+        // at zero. A Dash on a floored speed doubles nothing, so the
+        // rule holds without a second site to enforce it. See
+        // `EXHAUSTION_SPEED_PENALTY_FT_PER_LEVEL`.
         // Prone is deliberately *not* here, and it used to be. 5e's
         // crawl is "every foot of movement costs 1 extra foot", which
         // the pathfinder charges per tile through its `prone_factor` —
@@ -9966,6 +9978,10 @@ impl ActorInstance {
             + self.item_save_bonus()
             + self.save_bonus_buff()
             + self.condition_save_bonus()
+            // SRD 5.2 exhaustion: "when you make a D20 Test, the roll
+            // is reduced by 2 times your Exhaustion level." Zero for
+            // everything not carrying any, which is nearly everything.
+            + self.exhaustion_d20_penalty()
     }
 
     /// Standard d20 attack-roll modifier — proficiency bonus + the
