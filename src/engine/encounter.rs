@@ -9456,6 +9456,15 @@ impl EncounterInstance {
     /// A fourth rule lands here as one line rather than as four edits in
     /// four modules, which is the point.
     ///
+    /// A fourth rule is not pair-scoped at all and belongs here anyway:
+    /// 5e's flat *"the target can't attack"*, which Gaseous Form prints
+    /// beside "or cast spells". `Action::validate` asks it separately —
+    /// it has to, because it must also refuse a no-target AoE — but the
+    /// three reaction dispatchers had no gate for it whatsoever, so a
+    /// creature that had turned into a cloud could still take an
+    /// opportunity attack, riposte a miss, or spend a readied swing. It
+    /// simply could not declare one on its own turn.
+    ///
     /// Deliberately *not* the whole targeting gate. Total Cover also
     /// stops a Cure Wounds, and this predicate is about hostility, so
     /// `Action::validate` asks `swallow_blocks_targeting` separately and
@@ -9463,7 +9472,10 @@ impl EncounterInstance {
     /// this list stays complete for the three callers that have no other
     /// gate to lean on.
     pub fn hostility_blocked(&self, actor_id: usize, target_id: usize) -> bool {
-        self.charm_blocks_hostility(actor_id, target_id)
+        self.actors
+            .get(&actor_id)
+            .is_some_and(|a| a.blocked_from_attacking())
+            || self.charm_blocks_hostility(actor_id, target_id)
             || self.attachment_blocks_hostility(actor_id, target_id)
             || self.swallow_blocks_targeting(actor_id, target_id)
     }

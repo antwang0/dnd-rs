@@ -26646,6 +26646,22 @@ fn every_reaction_lane_reads_the_same_hostility_list() {
     assert!(!e.hostility_blocked(eaten, worm));
     assert!(e.hostility_blocked(eaten, passer_by));
     assert!(e.hostility_blocked(passer_by, eaten));
+
+    // And the one rule on the list that is about the actor rather than
+    // the pair: 5e's flat "the target can't attack", which Gaseous Form
+    // prints. It has to be here rather than only in `validate` because
+    // the three reaction lanes have no other gate for it — a creature
+    // that had turned into a cloud could not declare an attack on its
+    // own turn and could still riposte one.
+    let cloud = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(24, 4), 0, 0)
+        .unwrap();
+    assert!(!e.hostility_blocked(cloud, passer_by));
+    e.actors
+        .get_mut(&cloud)
+        .unwrap()
+        .add_condition(Condition::Gaseous, ConditionTimer::Rounds(10));
+    assert!(e.hostility_blocked(cloud, passer_by));
 }
 
 
@@ -85530,15 +85546,15 @@ fn every_swallower_fights_to_a_finish_without_leaking_the_board() {
     use crate::ai::simple::SimpleAi;
     use crate::ai::{Controller, ControllerDecision};
 
-    let swallowers: &[&'static CreatureTemplate] = &[
-        &crate::actors::creatures::behirs::BEHIR_TEMPLATE,
-        &crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE,
-        &crate::actors::creatures::giant_toads::GIANT_TOAD_TEMPLATE,
-        &crate::actors::creatures::krakens::KRAKEN_TEMPLATE,
-        &crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE,
-        &crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE,
-        &crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE,
-    ];
+    // Derived from the bestiary rather than written out, so an eighth
+    // swallower is covered the day it lands. A hand-written roster in a
+    // test is a roster somebody has to remember to update, and the ones
+    // in this file that were written that way had all gone stale.
+    let swallowers: Vec<&'static CreatureTemplate> = EncounterInstance::template_pool()
+        .into_iter()
+        .filter(|t| t.swallow.is_some())
+        .collect();
+    assert!(!swallowers.is_empty(), "the bestiary has swallowers to sweep");
     let ai = SimpleAi;
     let mut ever_swallowed = 0;
     for template in swallowers {

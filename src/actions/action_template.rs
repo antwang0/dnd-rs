@@ -1475,6 +1475,10 @@ pub trait Action {
         // sense RAW means. It leaves Dash, Dodge, Disengage and Hide
         // alone, which is what separates the clause from
         // `Incapacitated`.
+        // Asked here as well as inside `hostility_blocked` below,
+        // because this one has to reach an action with no targets at all
+        // — a cloud may not drop a Fireball either, and the gate down
+        // there is per-named-target.
         if self.is_harmful()
             && encounter
                 .actors
