@@ -85438,7 +85438,181 @@ fn an_oversized_target_takes_both_damage_types_and_neither_rider() {
     );
 }
 
+/// The board checker notices each of the three ways the grid can drift
+/// from the actor table.
+///
+/// A checker nothing can fail is a checker that proves nothing, and this
+/// one runs inside a soak test where a silent no-op would look exactly
+/// like a clean board for sixty seeds running. So each of its three
+/// questions is asked against a board broken on purpose.
+#[test]
+fn the_board_checker_catches_every_shape_of_drift() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(
+        e.board_inconsistencies().is_empty(),
+        "a freshly placed creature owns its own tiles: {:?}",
+        e.board_inconsistencies()
+    );
+
+    // 1. An on-grid body whose stamp was erased — a creature you can
+    //    walk through.
+    let loc = e.actors[&goblin].location();
+    let size = e.actors[&goblin].size();
+    e.clear_footprint_of(goblin, loc, size);
+    assert!(
+        e.board_inconsistencies()
+            .iter()
+            .any(|p| p.contains("does not own its own tile")),
+        "{:?}",
+        e.board_inconsistencies()
+    );
+    e.stamp_footprint_of(goblin, loc, size);
+    assert!(e.board_inconsistencies().is_empty());
+
+    // 2. An off-grid body still holding its tiles — the leak every
+    //    `sever_` repair exists to avoid.
+    let worm = e
+        .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&goblin).unwrap().set_swallowed_by(Some(worm));
+    assert!(
+        e.board_inconsistencies()
+            .iter()
+            .any(|p| p.contains("off the grid but still stamped")),
+        "{:?}",
+        e.board_inconsistencies()
+    );
+    e.actors.get_mut(&goblin).unwrap().set_swallowed_by(None);
+    assert!(e.board_inconsistencies().is_empty());
+
+    // 3. A stamp naming a body that is gone — a tile nothing can ever
+    //    stand on again.
+    e.actors.remove(&goblin);
+    assert!(
+        e.board_inconsistencies()
+            .iter()
+            .any(|p| p.contains("is not on the board")),
+        "{:?}",
+        e.board_inconsistencies()
+    );
+}
+
 // ─── Swallow ─────────────────────────────────────────────────────────
+
+/// Every swallower fights a party to a finish with the board intact.
+///
+/// The soak test in `ai::simple` draws its monsters from the generator,
+/// which means the seven creatures that can eat somebody turn up in it
+/// rarely and by luck. This one puts each of them on a board on purpose
+/// and lets the AI drive both sides until the fight settles, checking
+/// after every step that the occupancy grid still agrees with the actor
+/// table.
+///
+/// That is the assertion worth making about a containment link. A
+/// swallow takes a body off the grid, a regurgitation puts it back, a
+/// death puts several back at once, and each of those paths has to leave
+/// the *other* two mechanisms' footprints alone — the swallower may also
+/// be carrying a rider or wearing a stirge. A leak in any of them is a
+/// tile nothing can stand on for the rest of the fight, and nothing in a
+/// combat log would ever say so.
+#[test]
+fn every_swallower_fights_to_a_finish_without_leaking_the_board() {
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let swallowers: &[&'static CreatureTemplate] = &[
+        &crate::actors::creatures::behirs::BEHIR_TEMPLATE,
+        &crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE,
+        &crate::actors::creatures::giant_toads::GIANT_TOAD_TEMPLATE,
+        &crate::actors::creatures::krakens::KRAKEN_TEMPLATE,
+        &crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE,
+        &crate::actors::creatures::remorhazes::REMORHAZ_TEMPLATE,
+        &crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE,
+    ];
+    let ai = SimpleAi;
+    let mut ever_swallowed = 0;
+    for template in swallowers {
+        for seed in 0..3u64 {
+            let mut e = ei_with_terrain_seeded(34, 26, &[], seed);
+            e.instantiate_creature(template, Coordinate::new(20, 12), 1, 0)
+                .unwrap();
+            // Four gladiators: Medium, so every ceiling in the module
+            // reaches them, and tough enough that the fight lasts long
+            // enough for somebody to be eaten and brought back up.
+            for i in 0..4 {
+                e.instantiate_creature(
+                    &crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE,
+                    Coordinate::new(3 + i * 3, 6),
+                    0,
+                    0,
+                )
+                .unwrap();
+            }
+            // `ei_with_terrain_seeded` hands back an already-initialised
+            // encounter, so every `instantiate_creature` above has
+            // already rolled its own initiative and joined the queue.
+            let mut steps = 0usize;
+            while steps < 60_000 {
+                steps += 1;
+                e.process_stack();
+                let problems = e.board_inconsistencies();
+                assert!(
+                    problems.is_empty(),
+                    "{} seed {} step {}: {:?}",
+                    template.name,
+                    seed,
+                    steps,
+                    problems
+                );
+                if e.actors.values().any(|a| a.swallowed_by().is_some()) {
+                    ever_swallowed += 1;
+                }
+                if e.is_complete() {
+                    break;
+                }
+                let Some(prompt) = e.peek_prompt() else {
+                    break;
+                };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => {
+                        panic!("{}: the AI asked for player input", template.name)
+                    }
+                    ControllerDecision::Act(aei) => {
+                        assert!(
+                            aei.validate(&e),
+                            "{}: the AI queued '{}', which fails its own validate",
+                            template.name,
+                            aei.action().name()
+                        );
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            assert!(
+                steps < 60_000,
+                "{} seed {}: the fight never settled",
+                template.name,
+                seed
+            );
+        }
+    }
+    // The point of the sweep. A run in which nobody was ever eaten
+    // exercises the containment link exactly as much as a run with no
+    // swallowers in it, and would go on passing after a change that
+    // stopped the AI reaching for the action at all.
+    assert!(
+        ever_swallowed > 0,
+        "twenty-one fights against creatures that eat people and nobody was eaten"
+    );
+}
 
 /// A worm with a guard already in its jaws, one tile apart, on a clear
 /// board.

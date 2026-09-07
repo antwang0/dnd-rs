@@ -10094,6 +10094,30 @@ mod tests {
                 }
                 steps += 1;
                 e.process_stack();
+                // The grid and the actor table have to keep agreeing all
+                // the way through, not just at the end. Four mechanisms
+                // take a body off the occupancy grid — banishment, a
+                // saddle, an attach, a swallow — and each owns a repair
+                // that has to leave the other three's footprints alone;
+                // a leak in any of them is a tile nothing can stand on
+                // for the rest of the fight, or a creature the party can
+                // walk through, and neither shows up in a log. See
+                // `EncounterInstance::board_inconsistencies`.
+                //
+                // Every hundredth step rather than every one: the check
+                // walks the actor table and the whole grid, and the leaks
+                // it looks for are sticky — a stamp left on a dead body's
+                // tile is still there a hundred steps later.
+                if steps.is_multiple_of(100) {
+                    let problems = e.board_inconsistencies();
+                    assert!(
+                        problems.is_empty(),
+                        "seed {seed} ({}), step {steps}: the board and the actor \
+                         table disagree: {:?}",
+                        pc.name,
+                        problems
+                    );
+                }
                 if e.is_complete() {
                     break true;
                 }

@@ -6584,6 +6584,95 @@ impl EncounterInstance {
         self.write_footprint(None, origin, size);
     }
 
+    /// **Does the occupancy grid still agree with the actor table?** —
+    /// every way it can disagree, as a list of sentences, empty when it
+    /// does.
+    ///
+    /// The grid is one id per tile and the actor table is the truth
+    /// about who exists, and four separate mechanisms take a body *off*
+    /// the grid while leaving it in the table: banishment, a saddle, an
+    /// attach, and now a swallow. Each of the last three owns a `sever_`
+    /// repair that runs on the way out, and each of those repairs has to
+    /// agree with the other two about who owns which tiles — a rider on
+    /// a mount with a stirge on it is three bodies and one footprint.
+    ///
+    /// That is a lot of invariant to hold by inspection, and none of it
+    /// is visible in a log: a stamp left behind by a body that died is a
+    /// tile nothing can ever stand on again, and a body that lost its
+    /// stamp is a creature you can walk through. Both are silent, both
+    /// survive a whole fight, and neither shows up in any assertion
+    /// about hit points.
+    ///
+    /// Three questions, which between them cover every shape the leak
+    /// takes:
+    ///
+    ///   1. an on-grid actor's whole footprint is stamped with its own
+    ///      id — nothing has half-erased it;
+    ///   2. an off-grid actor's anchor is **not** stamped with its own
+    ///      id — it gave the tiles up, or the body carrying it owns them;
+    ///   3. every stamp on the grid names an actor that still exists.
+    ///
+    /// Returned as a list rather than asserted, so the soak test can
+    /// name the seed and the step alongside it.
+    pub fn board_inconsistencies(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (id, actor) in self.actors.iter() {
+            let loc = actor.location();
+            // Every way a body is legitimately off the grid. Read from
+            // the actor rather than from the grid, because "the grid
+            // does not have it" is the thing being checked.
+            let off_grid = actor.is_off_board()
+                || actor.mounted_on().is_some()
+                || actor.attached_to().is_some()
+                || actor.swallowed_by().is_some();
+            if off_grid {
+                if self.actor_id_at(loc) == Some(*id) {
+                    problems.push(format!(
+                        "{} (#{}) is off the grid but still stamped at {:?}",
+                        actor.name(),
+                        id,
+                        loc
+                    ));
+                }
+                continue;
+            }
+            let width = get_tiles_from_size(actor.size()) as isize;
+            for x_off in 0..width {
+                for y_off in 0..width {
+                    let tile = loc + Coordinate::new(x_off, y_off);
+                    // Off-board tiles are the map's edge rather than a
+                    // leak: a footprint anchored legally can still run
+                    // past the boundary, and `set_actor_id_at` drops
+                    // those writes.
+                    if self.idx(tile).is_err() {
+                        continue;
+                    }
+                    if self.actor_id_at(tile) != Some(*id) {
+                        problems.push(format!(
+                            "{} (#{}) at {:?} does not own its own tile {:?} (that is {:?})",
+                            actor.name(),
+                            id,
+                            loc,
+                            tile,
+                            self.actor_id_at(tile)
+                        ));
+                    }
+                }
+            }
+        }
+        for (idx, slot) in self.actor_map.iter().enumerate() {
+            if let Some(id) = slot
+                && !self.actors.contains_key(id)
+            {
+                problems.push(format!(
+                    "tile index {} is stamped with #{}, who is not on the board",
+                    idx, id
+                ));
+            }
+        }
+        problems
+    }
+
     pub fn terrain_at(&self, coord: Coordinate) -> Option<&TerrainInfo> {
         let idx = self.idx(coord).ok()?;
         self.terrain.get(idx)
