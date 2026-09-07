@@ -547,6 +547,25 @@ impl SingleTargetSaveDamage {
         }
     }
 
+    /// Builder tail for the printings whose success clause is silent —
+    /// RAW says what happens on a failure and nothing at all about a
+    /// save, so a target that makes it takes nothing.
+    ///
+    /// `new` defaults the other way because "Success: Half damage only"
+    /// is the shape the bestiary prints far more often, and the doc on
+    /// `half_on_save` has always said both shapes exist. This is the
+    /// second one finally arriving as a builder rather than as a struct
+    /// literal: Faithful Hound's bite is the first caller, and spelling
+    /// eleven fields out by hand to flip one boolean is how the next
+    /// caller would quietly have picked up a different default for
+    /// something else.
+    pub const fn save_negates(self) -> Self {
+        Self {
+            half_on_save: false,
+            ..self
+        }
+    }
+
     pub const fn as_bonus_action(self) -> Self {
         Self {
             bonus_action: true,

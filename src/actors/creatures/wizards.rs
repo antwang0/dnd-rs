@@ -647,6 +647,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // family's spirits are a body that fights, and this is four bodies
     // that occupy tiles. Concentration, like all of them.
     actions.push(&crate::actions::spells::CONJURE_MINOR_ELEMENTALS);
+    // lv4 **Faithful Hound** — the wizard's only summon that does not
+    // want the concentration, and therefore the only one castable
+    // behind a Web or a Greater Invisibility that is already up. It
+    // buys a rooted body with a 4d8 bite instead of a mobile one; see
+    // `spells::FAITHFUL_HOUND` for why that trade is the spell.
+    actions.push(&crate::actions::spells::FAITHFUL_HOUND);
     // lv3 **Phantom Steed** (illusion) — the arcane mount, and the
     // reason `engine::mounts` is reachable by a class other than the
     // paladin. No concentration, so the wizard rides it *and* casts

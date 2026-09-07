@@ -16703,6 +16703,47 @@ pub static CONJURE_CELESTIAL: SummonSpell = SummonSpell {
     concentration: Some("Conjure Celestial"),
 };
 
+/// Faithful Hound — SRD 5.2 level-4 conjuration (wizard), action, **no
+/// concentration**, 8 hours.
+///
+/// The odd one on the whole summon lane, and worth reading next to the
+/// two spells it sits between. Summon Aberration costs the same slot
+/// and buys a mobile Large body that shoots across the room — and the
+/// caster's concentration for as long as it stands. This buys a body
+/// that cannot take a step, and asks for nothing afterwards.
+///
+/// That is the trade the spell is: **placement instead of
+/// concentration**. A wizard holding Black Tentacles or Greater
+/// Invisibility cannot cast any other summon in the engine at level 4;
+/// they can cast this one, and then keep holding what they were
+/// holding. What they pay for it is that the hound is only ever worth
+/// what the tile it stands on is worth. See
+/// `actors::creatures::faithful_hounds` for the stat block and for the
+/// three RAW clauses the engine renders differently.
+///
+/// The third `None` on `SummonSpell::concentration` outside the steeds,
+/// and RAW agrees with all four: nothing about a phantom watchdog, a
+/// raised skeleton or a summoned horse depends on its summoner still
+/// thinking about it.
+///
+/// `search_radius` 3 is the Medium footprint's usual ring, well inside
+/// RAW's 30 ft range; the hound is placed beside the caster like every
+/// other summon rather than at a chosen tile, which costs the spell its
+/// best use (a hound in a doorway across the room) and keeps it on the
+/// one spawn path the whole lane shares.
+pub static FAITHFUL_HOUND: SummonSpell = SummonSpell {
+    display_name: "faithful hound",
+    aliases: &["hound", "watchdog"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::faithful_hounds::PHANTOM_WATCHDOG_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 140,
+    concentration: None,
+};
+
 /// Every spell in the Tasha's summon family, in ascending slot order.
 /// The list the sweeps read, and the one place a ninth has to be added
 /// for every invariant that holds across the family to cover it.
@@ -16769,6 +16810,7 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
         &CONJURE_MINOR_ELEMENTALS,
         &CONJURE_FEY,
         &CONJURE_CELESTIAL,
+        &FAITHFUL_HOUND,
     ]);
     all
 }

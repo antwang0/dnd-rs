@@ -17666,6 +17666,13 @@ mod tests {
             ("conjure minor elementals", true),
             ("conjure fey", true),
             ("conjure celestial", true),
+            // The fourth `None` on the chassis, and the only one that
+            // is not a mount or a corpse: RAW's phantom watchdog keeps
+            // itself up for eight hours, so the wizard's concentration
+            // stays free for whatever it was already holding. That is
+            // the entire reason to cast it over Summon Aberration at
+            // the same slot — see `spells::FAITHFUL_HOUND`.
+            ("faithful hound", false),
             ("summon beast", true),
             ("summon fey", true),
             ("summon undead", true),
