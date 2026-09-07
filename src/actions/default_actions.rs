@@ -116,9 +116,18 @@ impl Action for Move {
         if encounter.path_cost_to(caster_id, coord).is_none() {
             return false;
         }
-        // Frightened: can't willingly move closer to any enemy. We don't
-        // track per-source fear yet, so any enemy is a "source." A move
-        // that strictly decreases the gap to any enemy is forbidden.
+        // 5e Frightened: "you can't willingly move closer to the source
+        // of your fear." A move that strictly decreases the gap to the
+        // source is forbidden.
+        //
+        // *The* source, when the condition records one — the back-link
+        // it carries is what turns RAW's sentence into a question the
+        // board can answer. A fear installed by something that did not
+        // record who caused it falls back to the older reading, in
+        // which every enemy is a source, which is the safe direction:
+        // it forbids a superset of the steps RAW forbids rather than
+        // quietly letting a frightened creature walk at whatever
+        // frightened it.
         use crate::conditions::Condition;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
         let Some(actor) = encounter.actors.get(&caster_id) else {
@@ -127,6 +136,7 @@ impl Action for Move {
         if !actor.has_condition(Condition::Frightened) {
             return true;
         }
+        let fear_source = actor.linked_by(Condition::Frightened);
         // The gaps are measured from the body that is doing the
         // travelling, which for a mounted rider is the horse — the same
         // redirect `path_cost_to` above already made. A Medium knight on
@@ -144,6 +154,13 @@ impl Action for Move {
                 || other.team() == my_team
                 || !other.is_combat_active()
             {
+                continue;
+            }
+            // With a named source, every other enemy on the board is
+            // just an enemy: RAW's clause is about one creature, and a
+            // frightened fighter is free to charge the goblin beside
+            // the dragon it is running from.
+            if fear_source.is_some_and(|src| src != *other_id) {
                 continue;
             }
             let o_loc = other.location();

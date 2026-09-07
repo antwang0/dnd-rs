@@ -370,26 +370,37 @@ pub fn resolve_burst_save_condition(
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
-    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
+    install_condition_on_failed_saves(
+        encounter, caster_id, &target_ids, save_ability, dc, condition, timer,
+    )
 }
 
 /// The save-or-condition half of every condition burst: roll `save_ability`
-/// vs `dc` for each id in `target_ids`, in the order given, and queue an
-/// `ApplyCondition` for each one that fails.
+/// vs `dc` for each id in `target_ids`, in the order given, and install
+/// `condition` on each one that fails.
 ///
 /// Sibling to `resolve_burst_targets` on the damage lane, and split out
-/// for the same reason: the two condition bursts above differ only in
-/// how they pick their targets, and a loop written twice is a rule that
-/// can be fixed in one place and stay broken in the other.
+/// for the same reason: the three condition bursts that call it differ
+/// only in how they pick their targets, and a loop written three times
+/// is a rule that can be fixed in one place and stay broken in the
+/// other two.
+///
+/// Routed through `install_condition_with_link` rather than raising a
+/// bare `ApplyCondition`, which is why it takes `caster_id` at all: a
+/// condition that carries a back-link needs to record who applied it,
+/// and every caller of this helper already had the answer and was
+/// dropping it at this line. A condition with no link is unaffected —
+/// the installer hands back a one-element vec — so the parameter costs
+/// the non-linked callers nothing but the argument.
 fn install_condition_on_failed_saves(
     encounter: &mut EncounterInstance,
+    caster_id: usize,
     target_ids: &[usize],
     save_ability: AbilityScoreType,
     dc: i32,
     condition: crate::conditions::Condition,
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    use crate::engine::side_effects::ApplyCondition;
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     for &tid in target_ids {
         if encounter
@@ -398,11 +409,9 @@ fn install_condition_on_failed_saves(
         {
             continue;
         }
-        effects.push(Box::new(ApplyCondition {
-            actor_id: tid,
-            condition,
-            timer,
-        }));
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            condition, tid, caster_id, timer,
+        ));
     }
     effects
 }
@@ -450,7 +459,9 @@ pub fn resolve_los_glare_condition(
             !immune && encounter.actor_has_line_of_sight(caster_id, tid)
         })
         .collect();
-    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
+    install_condition_on_failed_saves(
+        encounter, caster_id, &target_ids, save_ability, dc, condition, timer,
+    )
 }
 
 /// The hearing-gated sibling of `resolve_los_glare_condition`, for the
@@ -498,7 +509,9 @@ pub fn resolve_audible_burst_condition(
             })
         })
         .collect();
-    install_condition_on_failed_saves(encounter, &target_ids, save_ability, dc, condition, timer)
+    install_condition_on_failed_saves(
+        encounter, caster_id, &target_ids, save_ability, dc, condition, timer,
+    )
 }
 
 /// Sweep targets in a `radius` burst centered on `point` and return their

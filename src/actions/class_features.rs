@@ -6246,8 +6246,9 @@ fn resolve_turn_burst(
         }
         // `install_condition_with_link` covers the back-link half for
         // conditions that carry one — Charmed's back-link anchors the
-        // "can't attack your charmer" gate, and Frightened has no link,
-        // so the same call serves every variant.
+        // "can't attack your charmer" gate and Frightened's anchors
+        // both of RAW's "source of fear" clauses, so the same call
+        // serves every variant this burst can install.
         effects.extend(crate::engine::side_effects::install_condition_with_link(
             installed,
             id,

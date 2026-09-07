@@ -14,9 +14,35 @@ pub enum Condition {
     Stunned,
     /// Disadvantage on attack rolls and ability checks.
     Poisoned,
-    /// Disadvantage on attack rolls and ability checks while you can see
-    /// the source of fear. We don't track LOS-to-fear-source today; the
-    /// effect is unconditional disadvantage on attacks.
+    /// SRD 5.2 **Frightened**, both of whose clauses are about the
+    /// thing that frightened you:
+    ///
+    ///   - *"You have Disadvantage on ability checks and attack rolls
+    ///     while the source of fear is within line of sight."*
+    ///   - *"You can't willingly move closer to the source of fear."*
+    ///
+    /// Neither sentence can be written without knowing who that is, and
+    /// for most of this engine's history nothing did: the penalty was
+    /// unconditional (a row on two blanket cohorts) and the movement
+    /// clause refused a step toward *any* enemy. Both were flagged as
+    /// approximations in their own comments.
+    ///
+    /// The condition carries a back-link now — one row on
+    /// `LINKED_CONDITIONS`, reached by every install through the five
+    /// shared chassis they funnel into — and both clauses read it.
+    /// `EncounterInstance::fear_penalty_applies` is the sight gate, and
+    /// `Move::custom_validate_input` is the movement one.
+    ///
+    /// Between them they make running away *work*, which is what the
+    /// condition is for: put a corner between yourself and the dragon
+    /// and you swing at full strength again, and the goblin standing
+    /// next to the dragon is still something you may charge.
+    ///
+    /// A fear that recorded no source keeps the older, unconditional
+    /// reading on both lanes. That is the safe direction — a missing
+    /// link leaves the condition no weaker than it was, where the
+    /// opposite default would switch fear off wherever a source had
+    /// been forgotten.
     Frightened,
     /// Speed = 0; disadvantage on attacks; attacks against you have
     /// advantage; disadvantage on DEX saves.
@@ -3342,7 +3368,13 @@ impl Condition {
             self,
             Condition::Prone
                 | Condition::Poisoned
-                | Condition::Frightened
+                // Frightened is deliberately absent, and it is the one
+                // absence on this list that is not a simplification.
+                // RAW scopes the penalty to "while the source of your
+                // fear is within line of sight", and a cohort keyed by
+                // condition cannot ask about a source. The gate lives
+                // in `compute_attack_mode`, which can — see
+                // `EncounterInstance::fear_penalty_applies`.
                 | Condition::Restrained
                 | Condition::Blinded
                 | Condition::Mocked

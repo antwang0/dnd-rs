@@ -935,6 +935,7 @@ fn neutral_burst_save_only(
 /// below.
 fn push_condition_on_failed_save(
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    caster_id: usize,
     saves: &[(usize, bool)],
     condition: Condition,
     timer: ConditionTimer,
@@ -944,7 +945,7 @@ fn push_condition_on_failed_save(
     // adding (e.g.) a per-target log line or a new install side-effect
     // lands in one place.
     let _ = push_condition_on_failed_save_for_concentration(
-        effects, saves, condition, timer,
+        effects, caster_id, saves, condition, timer,
     );
 }
 
@@ -962,6 +963,7 @@ fn push_condition_on_failed_save(
 /// concentration pair — which the helper folds into one pass.
 fn push_condition_on_failed_save_for_concentration(
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    caster_id: usize,
     saves: &[(usize, bool)],
     condition: Condition,
     timer: ConditionTimer,
@@ -969,11 +971,14 @@ fn push_condition_on_failed_save_for_concentration(
     let mut conditions: Vec<(usize, Condition)> = Vec::new();
     for &(tid, passed) in saves {
         if !passed {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition,
-                timer,
-            }));
+            // Through the linked installer, so a condition that carries
+            // a back-link records who applied it — see
+            // `install_condition_with_link`. A condition with no link
+            // comes back as the same lone `ApplyCondition` this used to
+            // push by hand.
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                condition, tid, caster_id, timer,
+            ));
             conditions.push((tid, condition));
         }
     }
@@ -1033,6 +1038,7 @@ fn concentration_burst_with_rider(
     );
     let conditions = push_condition_on_failed_save_for_concentration(
         &mut effects,
+        caster_id,
         &saves,
         rider,
         rider_timer,
@@ -2466,20 +2472,20 @@ impl Action for CauseFear {
         if save.passed() {
             return Vec::new();
         }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(3),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Cause Fear",
-                    vec![(target_id, Condition::Frightened)],
-                ),
-            }),
-        ]
+        let mut effects = crate::engine::side_effects::install_condition_with_link(
+            Condition::Frightened,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(3),
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Cause Fear",
+                vec![(target_id, Condition::Frightened)],
+            ),
+        }));
+        effects
     }
 }
 
@@ -7964,25 +7970,27 @@ impl Action for PhantasmalKiller {
             "  phantasmal killer: 4d10({}) = {} psychic",
             dmg, dmg
         ));
-        vec![
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![
             Box::new(DealDamage {
                 actor_id: target_id,
                 amount: dmg,
                 damage_type: DamageType::Psychic,
             }),
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Phantasmal Killer",
-                    vec![(target_id, Condition::Frightened)],
-                ),
-            }),
-        ]
+        ];
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Frightened,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        ));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Phantasmal Killer",
+                vec![(target_id, Condition::Frightened)],
+            ),
+        }));
+        effects
     }
 }
 
@@ -12432,11 +12440,12 @@ impl Action for Fear {
             if save.passed() {
                 continue;
             }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                Condition::Frightened,
+                tid,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
             applied.push((tid, Condition::Frightened));
         }
         if !applied.is_empty() {
@@ -18010,6 +18019,7 @@ impl Action for TidalWave {
         // Failed-save targets are knocked Prone by the breaker wave.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Prone,
             ConditionTimer::Permanent,
@@ -19518,6 +19528,7 @@ impl Action for VitriolicSphere {
         // damage at round-end, then the Rounds(1) timer expires the flag.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::VitriolicAcidCoated,
             ConditionTimer::Rounds(1),
@@ -21434,6 +21445,7 @@ impl Action for EarthTremor {
         // Wave's prone follow-up.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Prone,
             ConditionTimer::Permanent,
@@ -22137,6 +22149,7 @@ impl Action for ArmsOfHadar {
         // (queued by the helper).
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::NoReaction,
             ConditionTimer::UntilStartOfNextTurn,
@@ -22599,6 +22612,7 @@ impl Action for WallOfIce {
         // they slip on the ice). Passed-save targets dodge clear.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Prone,
             ConditionTimer::Permanent,
@@ -23806,11 +23820,12 @@ impl Action for Weird {
                 amount: raw,
                 damage_type: DamageType::Psychic,
             }));
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                Condition::Frightened,
+                tid,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
         }
         effects
     }
@@ -24331,6 +24346,7 @@ impl Action for Tsunami {
         // burst footprint.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Prone,
             ConditionTimer::Permanent,
@@ -28438,6 +28454,7 @@ impl Action for PsychicScream {
         // a time).
         let conditions = push_condition_on_failed_save_for_concentration(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Stunned,
             ConditionTimer::Rounds(10),
@@ -28554,6 +28571,7 @@ impl Action for BonesOfTheEarth {
         // rider table (same shape Tidal Wave uses).
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Prone,
             // Prone is removed by spending half movement to stand up;
@@ -29940,6 +29958,7 @@ impl Action for Pyrotechnics {
         // Prone follow-up shape.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Blinded,
             ConditionTimer::Rounds(2),
@@ -30949,6 +30968,7 @@ impl Action for MagnifyGravity {
         // one place instead of per-spell.
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Slowed,
             ConditionTimer::Rounds(1),
@@ -32523,6 +32543,7 @@ impl Action for RimesBindingIce {
         );
         push_condition_on_failed_save(
             &mut effects,
+            caster_id,
             &saves,
             Condition::Restrained,
             ConditionTimer::Rounds(Self::HOLD_ROUNDS),

@@ -886,16 +886,11 @@ const PHYSICAL_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] =
 const BLANKET_CHECK_DISADVANTAGE_CONDITIONS: &[Condition] = &[
     // 5e Poisoned: "disadvantage on attack rolls and ability checks."
     Condition::Poisoned,
-    // 5e Frightened: "disadvantage on ability checks and attack rolls
-    // while the source of its fear is within line of sight." The
-    // condition carries no back-link to whatever frightened it — some
-    // ninety stat blocks and twenty spells install it, and none of them
-    // records a source — so the clause is unconditional here, the same
-    // simplification the attack lane makes. Wiring the link would make
-    // both lanes exact and would also sharpen the movement half in
-    // `Move::custom_validate_input`, which today refuses a step toward
-    // *any* enemy.
-    Condition::Frightened,
+    // Frightened is not here, for the reason it is not on the attack
+    // lane's cohort either: RAW scopes the penalty to "while the source
+    // of your fear is within line of sight", and this table is keyed by
+    // condition and cannot ask about a source. The gate lives in
+    // `compute_check_mode` — see `EncounterInstance::fear_penalty_applies`.
     // 5e Flesh Golem Aversion to Fire: "Disadvantage on attack rolls
     // and ability checks until the end of its next turn." The other
     // clause rides `imposes_attacker_disadvantage`.
@@ -3834,6 +3829,15 @@ impl EncounterInstance {
         // `grants_self_attack_advantage`) so adding a new condition is a
         // one-line change to the helper rather than a re-edit here.
         if let Some(attacker) = self.actors.get(&attacker_id) {
+            // 5e Frightened: "disadvantage on attack rolls while the
+            // source of fear is within line of sight." Off the
+            // condition cohort because that table is keyed by
+            // condition and this clause is about a *counterparty* —
+            // see `fear_penalty_applies`, which reads the back-link
+            // the condition carries.
+            if self.fear_penalty_applies(attacker_id) {
+                tally.add(RollMode::Disadvantage);
+            }
             // No exhaustion clause here. SRD 5.2 charges exhaustion as
             // a flat penalty on every D20 Test rather than as
             // disadvantage on some of them, and the flat term rides
@@ -6227,6 +6231,13 @@ impl EncounterInstance {
                 tally.add(RollMode::Advantage);
             }
         }
+        // 5e Frightened's other half: "disadvantage on ability checks
+        // … while the source of fear is within line of sight." The
+        // mirror of the attack lane's clause, reading the same
+        // predicate — see `fear_penalty_applies`.
+        if self.fear_penalty_applies(actor_id) {
+            tally.add(RollMode::Disadvantage);
+        }
         // The third of the three: SRD 5.2 taxes an ability check the
         // same flat way it taxes an attack and a save, and
         // `roll_ability_check` folds the number into the modifier it
@@ -7833,6 +7844,48 @@ impl EncounterInstance {
             .get(&self.movement_body(actor_id))
             .map(|a| a.supported_altitude_ft())
             .unwrap_or(0)
+    }
+
+    /// Whether `actor_id`'s **Frightened** condition is currently
+    /// costing it anything.
+    ///
+    /// SRD 5.2: *"You have Disadvantage on ability checks and attack
+    /// rolls **while the source of fear is within line of sight**."*
+    /// The second half of that sentence is the whole of this function,
+    /// and it is the half the engine could not previously ask — the
+    /// condition is keyed by name in two blanket cohorts, and a cohort
+    /// keyed by condition has nowhere to put "…of whom".
+    ///
+    /// It reads the back-link the condition now carries, through
+    /// `viewer_can_see`, which is the same predicate every other
+    /// sight-gated rule in the engine reads: it folds darkness, fog,
+    /// walls and invisibility into one answer. So a frightened creature
+    /// that puts a corner between itself and the thing chasing it
+    /// attacks at full strength, which is RAW and is the entire reason
+    /// the "can't approach" clause is worth anything — running away has
+    /// to be *good for you*, or the condition is just a penalty.
+    ///
+    /// **A fear with no source still costs.** `linked_by` answers
+    /// `None` for a Frightened installed by something that did not
+    /// record who caused it, and the penalty then applies
+    /// unconditionally, which is what the engine did for every fear
+    /// before the link existed. That is the safe direction: a missing
+    /// link makes the condition no weaker than it was, where the
+    /// opposite default would quietly switch fear off wherever a source
+    /// had been forgotten.
+    ///
+    /// **A source that has left the board is still a source you cannot
+    /// see**, so the penalty lifts — `viewer_can_see` answers false for
+    /// an actor that is gone. RAW agrees by the same route: a dead
+    /// dragon is not within line of sight.
+    pub fn fear_penalty_applies(&self, actor_id: usize) -> bool {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        match actor.linked_by(Condition::Frightened) {
+            Some(source) => self.viewer_can_see(actor_id, source),
+            None => actor.has_condition(Condition::Frightened),
+        }
     }
 
     /// SRD 5.2 **Incapacitated**: *"No Concentration. Your

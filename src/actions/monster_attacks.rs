@@ -4247,7 +4247,6 @@ impl Action for FrightfulHowl {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
@@ -4288,11 +4287,12 @@ impl Action for FrightfulHowl {
             }
             let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
             if !save.passed() {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Frightened,
-                    timer: ConditionTimer::Rounds(3),
-                }));
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    Condition::Frightened,
+                    tid,
+                    caster_id,
+                    ConditionTimer::Rounds(3),
+                ));
             }
         }
         effects
@@ -5082,7 +5082,6 @@ impl Action for FrightfulPresence {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
 
         const RADIUS: isize = 6;
         const DC: i32 = 11;
@@ -5118,11 +5117,12 @@ impl Action for FrightfulPresence {
         for tid in victims {
             let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
             if !save.passed() {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Frightened,
-                    timer: ConditionTimer::Rounds(3),
-                }));
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    Condition::Frightened,
+                    tid,
+                    caster_id,
+                    ConditionTimer::Rounds(3),
+                ));
             }
         }
         effects
@@ -6307,7 +6307,6 @@ impl Action for BansheeWail {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
 
         const RADIUS: isize = 12;
         const DC: i32 = 13;
@@ -6353,11 +6352,12 @@ impl Action for BansheeWail {
                 }));
             }
             if !save.passed() {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Frightened,
-                    timer: ConditionTimer::Rounds(3),
-                }));
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    Condition::Frightened,
+                    tid,
+                    caster_id,
+                    ConditionTimer::Rounds(3),
+                ));
             }
         }
         effects
@@ -7831,7 +7831,6 @@ impl Action for PitFiendFearAura {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
@@ -7848,11 +7847,12 @@ impl Action for PitFiendFearAura {
             if save.passed() {
                 continue;
             }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: id,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                Condition::Frightened,
+                id,
+                caster_id,
+                ConditionTimer::Rounds(10),
+            ));
         }
         effects
     }
@@ -12194,12 +12194,11 @@ impl Action for QuasitScare {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -12216,11 +12215,12 @@ impl Action for QuasitScare {
             return Vec::new();
         }
         encounter.log("  scare: target recoils in fear");
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Frightened,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        crate::engine::side_effects::install_condition_with_link(
+            Condition::Frightened,
+            target_id,
+            caster_id,
+            ConditionTimer::UntilStartOfNextTurn,
+        )
     }
 }
 

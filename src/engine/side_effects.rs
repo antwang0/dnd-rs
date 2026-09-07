@@ -2196,6 +2196,22 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // than to the creature RAW gives it to. Same positive polarity as
     // Sworn and Analyzed above.
     crate::conditions::Condition::Vexed,
+    // 5e **Frightened**, whose every clause is about the thing that
+    // frightened you: "disadvantage on ability checks and attack rolls
+    // *while the source of your fear is within line of sight*", and
+    // "you can't willingly move closer to *the source of your fear*".
+    // Neither sentence can be written without knowing who that is, and
+    // both shipped as approximations that said so in their own
+    // docstrings — unconditional disadvantage, and a refusal to step
+    // toward *any* enemy.
+    //
+    // The widest condition on this list by a distance: some thirty
+    // sites install it, against one or two for every other row. They
+    // reach it through five shared chassis rather than individually —
+    // the burst-save helper, the spell failed-save helper, the Turn
+    // burst, the item save chassis and the smite follow-up — which is
+    // what made one row here enough.
+    crate::conditions::Condition::Frightened,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

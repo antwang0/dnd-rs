@@ -87060,3 +87060,274 @@ fn the_hold_lands_and_the_web_is_down_before_the_next_effect() {
         "the paralysis took the spell on the same pass that installed it"
     );
 }
+
+/// SRD 5.2's Frightened is two sentences and both of them name the
+/// thing that frightened you.
+///
+/// > *Ability Checks and Attacks Affected.* You have Disadvantage on
+/// > ability checks and attack rolls while the source of fear is within
+/// > line of sight.
+/// > *Can't Approach.* You can't willingly move closer to the source of
+/// > fear.
+///
+/// The engine could write neither: the penalty was a row on two blanket
+/// cohorts, so it applied wherever the frightened creature stood, and
+/// the movement clause refused a step toward *any* enemy. The condition
+/// carries a back-link now and both clauses read it — which is what
+/// makes running away worth doing, rather than a penalty you carry to
+/// the far end of the room.
+#[test]
+fn a_frightened_creature_recovers_its_nerve_out_of_the_dragons_sight() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let source = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+        .unwrap();
+    let other = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 20), 1, 1)
+        .unwrap();
+
+    for eff in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        victim,
+        source,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+
+    // In the open, with the source in view, both lanes bite.
+    assert!(matches!(
+        e.compute_attack_mode(victim, other, false),
+        RollMode::Disadvantage
+    ));
+    assert!(matches!(
+        e.compute_check_mode(victim, crate::engine::types::AbilityScoreType::Wisdom),
+        RollMode::Disadvantage
+    ));
+
+    // A wall across the line of sight, and the nerve comes back. This
+    // is the clause that makes the condition a reason to move rather
+    // than a tax on the rest of the fight.
+    for y in 0..30 {
+        e.set_terrain_at(Coordinate::new(12, y), TerrainType::Wall);
+    }
+    assert!(
+        matches!(e.compute_attack_mode(victim, other, false), RollMode::Normal),
+        "out of the source's sight the penalty lifts"
+    );
+    assert!(matches!(
+        e.compute_check_mode(victim, crate::engine::types::AbilityScoreType::Wisdom),
+        RollMode::Normal
+    ));
+}
+
+/// The movement half, and the difference a named source makes to it.
+///
+/// RAW forbids a step toward *the source of your fear* and says nothing
+/// about anybody else, so a frightened fighter may charge the goblin
+/// beside the dragon it is running from. Without the link the engine
+/// refused both steps, which pinned a frightened creature in place on
+/// any board with two enemies on it.
+#[test]
+fn a_frightened_creature_may_still_charge_everything_that_is_not_the_source() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::default_actions::MOVE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let source = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 10), 1, 0)
+        .unwrap();
+    let other = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 10), 1, 1)
+        .unwrap();
+    let _ = (source, other);
+    e.start_turn_for(victim);
+
+    let step = |e: &EncounterInstance, to: Coordinate| {
+        ActionExecutionInfo::new(&*MOVE, victim, None, Some(vec![to]), None).validate(e)
+    };
+    let toward_source = Coordinate::new(12, 10);
+    let toward_other = Coordinate::new(8, 10);
+    assert!(step(&e, toward_source), "both directions are open unafraid");
+    assert!(step(&e, toward_other));
+
+    for eff in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        victim,
+        source,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        !step(&e, toward_source),
+        "RAW forbids a willing step toward the source"
+    );
+    assert!(
+        step(&e, toward_other),
+        "and says nothing at all about the other goblin"
+    );
+}
+
+/// A fear cast by a spell records who cast it.
+///
+/// The two RAW clauses read a back-link, and a source that forgets to
+/// set one falls back to the older unconditional reading — safe, and
+/// silently wrong. This is the spell chassis end to end; the sweep
+/// below (`no_source_of_fear_installs_it_without_a_link`) is what keeps
+/// the other four honest.
+#[test]
+fn a_fear_cast_by_a_spell_records_who_cast_it() {
+    use crate::actions::action_template::ActionExecutionInfo;
+
+    // A caster with the whole fear list, and a wall of goblins to
+    // point it at.
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let caster = e
+        .instantiate_creature(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(5, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    let victim = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(7, 5),
+            1,
+            0,
+        )
+        .unwrap();
+
+    // The spell chassis: Fear is a burst that installs on failed
+    // saves, through `push_condition_on_failed_save`'s siblings.
+    let fear = e.actors[&caster]
+        .find_action("fear")
+        .expect("a cleric carries Fear");
+    // Pin the goblin's save low enough that it fails: exhaustion is
+    // the cheapest lever the engine has on a d20 total.
+    e.actors.get_mut(&victim).unwrap().gain_exhaustion(5);
+    let mut landed = false;
+    for _ in 0..24 {
+        for se in ActionExecutionInfo::new(
+            fear,
+            caster,
+            None,
+            Some(vec![Coordinate::new(7, 5)]),
+            None,
+        )
+        .execute(&mut e)
+        {
+            se.apply(&mut e);
+        }
+        if e.actors[&victim].has_condition(Condition::Frightened) {
+            landed = true;
+            break;
+        }
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .spell_slot_manager
+            .restore_spell_slots();
+        e.actors.get_mut(&caster).unwrap().end_concentration();
+    }
+    assert!(landed, "the spell should land on an exhausted goblin in 24 tries");
+    assert_eq!(
+        e.actors[&victim].linked_by(Condition::Frightened),
+        Some(caster),
+        "Fear should record the caster as the source"
+    );
+}
+
+/// Nothing installs Frightened without saying who caused it.
+///
+/// A source scan rather than a behavioural sweep, and for the reason
+/// the template-reachability scan in `creatures/mod.rs` is one: the
+/// thirty-odd sites that install this condition reach it through five
+/// different chassis, and exercising each of them in turn tests the
+/// five that exist rather than the sixth somebody adds. What the rule
+/// actually says is *"never raise a bare `ApplyCondition` for
+/// Frightened"* — which is a statement about the source text, and is
+/// checkable as one.
+///
+/// The failure it guards against is silent. A fear with no link keeps
+/// the pre-link reading on both lanes: unconditional disadvantage, and
+/// a refusal to step toward any enemy. Nothing errors, nothing logs,
+/// and the creature simply cannot run away from the thing it is
+/// running from.
+#[test]
+fn no_source_of_fear_installs_it_without_a_link() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders: Vec<String> = Vec::new();
+    let mut scanned = 0usize;
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("a readable source directory") {
+            let path = entry.expect("a readable dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // The test file itself builds fears by hand on purpose.
+            if path.file_name().is_some_and(|f| f == "encounter_tests.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable source file");
+            scanned += 1;
+            // Scoped to `ApplyCondition` literals specifically. The
+            // condition's name appears in half a dozen other shapes —
+            // a `RemoveCondition`, an aura-suppressor row, a
+            // `FollowUpEffect::Condition` (which installs through the
+            // linked path already) — and none of them is the thing
+            // under test. The linked installer passes its condition
+            // positionally rather than as a `condition:` field, which
+            // is what makes the two shapes distinguishable by text at
+            // all.
+            let lines: Vec<&str> = text.lines().collect();
+            for (n, line) in lines.iter().enumerate() {
+                if !line.contains("ApplyCondition {") {
+                    continue;
+                }
+                // The literal's fields, up to its closing brace.
+                let body = lines[n..]
+                    .iter()
+                    .take(8)
+                    .take_while(|l| !l.trim_start().starts_with('}'));
+                if body
+                    .clone()
+                    .any(|l| l.trim() == "condition: Condition::Frightened,")
+                {
+                    offenders.push(format!(
+                        "{}:{}",
+                        path.strip_prefix(&root).unwrap_or(&path).display(),
+                        n + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(scanned > 100, "only {} files scanned — the walk broke", scanned);
+    assert!(
+        offenders.is_empty(),
+        "these install Frightened without recording its source — route them through \
+         `install_condition_with_link` so RAW's two \"source of fear\" clauses have \
+         something to read:\n  {}",
+        offenders.join("\n  ")
+    );
+}

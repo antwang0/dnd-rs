@@ -1862,11 +1862,16 @@ impl Action for BurstSaveConditionItem {
             let save =
                 encounter.roll_save_against_caster(tid, self.save, self.dc, caster_id);
             if !save.passed() {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: self.condition,
-                    timer: self.timer,
-                }));
+                // Through the linked installer, so a condition that
+                // carries a back-link records the wielder — an item's
+                // Frightened has a source in the room exactly as a
+                // spell's does.
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    self.condition,
+                    tid,
+                    caster_id,
+                    self.timer,
+                ));
             }
         }
         effects
@@ -1971,11 +1976,12 @@ impl Action for SingleSaveConditionItem {
         if save.passed() {
             return Vec::new();
         }
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: self.condition,
-            timer: self.timer,
-        })]
+        crate::engine::side_effects::install_condition_with_link(
+            self.condition,
+            target_id,
+            caster_id,
+            self.timer,
+        )
     }
 }
 
