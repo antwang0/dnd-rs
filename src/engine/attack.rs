@@ -1290,11 +1290,13 @@ pub fn try_fire_directed_attack(
             let dist = encounter.footprint_distance(actor_id, *id)?;
             (dist <= reach).then_some((dist, *id))
         })
-        .filter(|(_, id)| !encounter.charm_blocks_hostility(actor_id, *id))
-        // 5e's attach clause, same lane and same reason: a creature
-        // wrapped around somebody's head "can attack only the target",
-        // and an opportunity swing at a third party is an attack.
-        .filter(|(_, id)| !encounter.attachment_blocks_hostility(actor_id, *id))
+        // Every pair-scoped rule that forbids the swing, asked through
+        // the one predicate that owns them — see
+        // `EncounterInstance::hostility_blocked`. This dispatcher never
+        // calls `Action::validate`, so without it the charm clause, the
+        // attach clause and a swallow's Total Cover would each have to
+        // be remembered here.
+        .filter(|(_, id)| !encounter.hostility_blocked(actor_id, *id))
         .collect();
     candidates.sort_unstable();
     let Some((_, target_id)) = candidates.first().copied() else {
@@ -1362,19 +1364,13 @@ pub fn try_fire_riposte(
     ) {
         return;
     }
-    // 5e Charmed: a charmed creature can't attack its charmer. Riposte
-    // is where this lane parts company with the three self-clamp
-    // reducers that share the eligibility gate above — Uncanny Dodge,
-    // Deflect Missiles and Parry only reduce incoming damage, which a
-    // charmed creature may do freely, but Riposte swings back.
-    if encounter.charm_blocks_hostility(target_id, attacker_id) {
-        return;
-    }
-    // 5e's attach clause parts company with the same three self-clamps
-    // for the same reason: a latched creature may shrug off a blow from
-    // anyone, but it may only swing back at the thing it is holding
-    // onto.
-    if encounter.attachment_blocks_hostility(target_id, attacker_id) {
+    // Riposte is where this lane parts company with the three
+    // self-clamp reducers that share the eligibility gate above —
+    // Uncanny Dodge, Deflect Missiles and Parry only reduce incoming
+    // damage, which a charmed or latched or swallowed creature may do
+    // freely against anybody, but Riposte swings *back*. So it asks the
+    // full hostility list; see `EncounterInstance::hostility_blocked`.
+    if encounter.hostility_blocked(target_id, attacker_id) {
         return;
     }
     // Find the target's first melee weapon action via the shared

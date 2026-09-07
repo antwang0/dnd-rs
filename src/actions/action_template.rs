@@ -1556,45 +1556,34 @@ pub trait Action {
             if self.requires_los() && !encounter.actor_has_line_of_sight(caster_id, target_id) {
                 return false;
             }
-            // 5e Charmed: "a charmed creature can't attack the charmer
-            // or target the charmer with harmful abilities or magic
-            // effects." Checked across *every* declared target, not just
-            // the first: the reach / LOS clauses above are deliberately
-            // first-target-only (a multi-target action measures its
-            // envelope off its primary), but "don't target the charmer"
-            // binds on each name in the list independently, so a
-            // multi-target harmful action naming the charmer second
-            // would otherwise slip through. Shared gate with the
-            // opportunity-attack and Riposte dispatchers, which reach
-            // hostility without passing through validation at all.
+            // Every pair-scoped rule that forbids acting hostilely
+            // toward a named target: 5e Charmed's "can't attack the
+            // charmer", the attach clause's "can attack only the
+            // target", a swallow's Total Cover. Checked across *every*
+            // declared target, not just the first: the reach / LOS
+            // clauses above are deliberately first-target-only (a
+            // multi-target action measures its envelope off its
+            // primary), but these bind on each name in the list
+            // independently, so a multi-target harmful action naming
+            // the charmer second would otherwise slip through. Shared
+            // with the three reaction dispatchers, which reach
+            // hostility without passing through validation at all — see
+            // `EncounterInstance::hostility_blocked`.
             if self.is_harmful()
                 && targets
                     .iter()
-                    .any(|&tid| encounter.charm_blocks_hostility(caster_id, tid))
-            {
-                return false;
-            }
-            // 5e's attach clause: "while attached to a target, the
-            // darkmantle can attack only the target", and the narrower
-            // "can't make Attach attacks against other targets" the
-            // cloaker and the stirge word it as. Checked across every
-            // declared target for the same reason the charm gate above
-            // it is — the restriction binds on each name in the list
-            // independently.
-            if self.is_harmful()
-                && targets
-                    .iter()
-                    .any(|&tid| encounter.attachment_blocks_hostility(caster_id, tid))
+                    .any(|&tid| encounter.hostility_blocked(caster_id, tid))
             {
                 return false;
             }
             // 5e's Swallow clause: a creature inside another one "has
             // Total Cover against attacks and other effects outside"
-            // it, in both directions. Beside the two gates above
-            // because it binds the same way — on each name in the list
-            // independently — and *not* gated on `is_harmful`, because
+            // it, in both directions. Asked separately from the
+            // hostility list above — which already contains it — because
+            // it is the one rule there that is *not* about hostility:
             // Total Cover stops a Cure Wounds from reaching somebody
-            // inside a kraken exactly as firmly as it stops an arrow.
+            // inside a kraken exactly as firmly as it stops an arrow, so
+            // this arm runs whether the action is harmful or not.
             if targets
                 .iter()
                 .any(|&tid| encounter.swallow_blocks_targeting(caster_id, tid))

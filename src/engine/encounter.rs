@@ -8394,11 +8394,19 @@ impl EncounterInstance {
                 {
                     return None;
                 }
-                // A charmed readier can't spend their held swing on the
-                // creature that charmed them — the same gate the
-                // opportunity-attack dispatcher applies, for the same
-                // reason: neither path goes through `Action::validate`.
-                if a.linked_by(Condition::Charmed) == Some(mover_id) {
+                // A readier can't spend their held swing on somebody a
+                // pair-scoped rule forbids them — the charmer who
+                // charmed them, a third party while they are wrapped
+                // around a fourth, anybody at all while they are inside
+                // something. Same gate the opportunity-attack
+                // dispatcher applies and for the same reason: neither
+                // path goes through `Action::validate`.
+                //
+                // This used to open-code the charm arm against the
+                // `Charmed` back-link and know nothing about the other
+                // two, which is exactly the drift
+                // `hostility_blocked` exists to stop.
+                if self.hostility_blocked(*id, mover_id) {
                     return None;
                 }
                 let attack = self.best_readyable_attack(*id)?;
@@ -9333,6 +9341,42 @@ impl EncounterInstance {
         self.actors.get(&actor_id).is_some_and(|a| {
             a.linked_by(Condition::Charmed) == Some(target_id)
         })
+    }
+
+    /// **May `actor_id` swing at `target_id` at all?** — the complete
+    /// list of rules that say no, in one place.
+    ///
+    /// Three rules qualify today and they arrive from three different
+    /// modules: the charm's *"can't attack the charmer"*, the attach
+    /// clause's *"can attack only the target"*, and a swallow's Total
+    /// Cover. What they have in common is not their source but their
+    /// shape — each is a fact about a *pair* of creatures that no die
+    /// roll can change, and each has to hold on four lanes that reach
+    /// hostility by four different routes.
+    ///
+    /// Only one of those four goes through `Action::validate`. The other
+    /// three — the opportunity-attack dispatcher, Riposte, and the
+    /// readied-attack dispatcher — run an attack's `side_effects`
+    /// directly, so each was carrying its own copy of the list. They had
+    /// already drifted: the readied dispatcher open-coded the charm
+    /// check against the `Charmed` back-link and knew nothing about the
+    /// other two, so a darkmantle wrapped around somebody's head could
+    /// hold a readied swing for a passer-by, and a swallowed creature
+    /// could take opportunity attacks through the stomach wall.
+    ///
+    /// A fourth rule lands here as one line rather than as four edits in
+    /// four modules, which is the point.
+    ///
+    /// Deliberately *not* the whole targeting gate. Total Cover also
+    /// stops a Cure Wounds, and this predicate is about hostility, so
+    /// `Action::validate` asks `swallow_blocks_targeting` separately and
+    /// unconditionally before it gets here. The overlap is intentional:
+    /// this list stays complete for the three callers that have no other
+    /// gate to lean on.
+    pub fn hostility_blocked(&self, actor_id: usize, target_id: usize) -> bool {
+        self.charm_blocks_hostility(actor_id, target_id)
+            || self.attachment_blocks_hostility(actor_id, target_id)
+            || self.swallow_blocks_targeting(actor_id, target_id)
     }
 
     /// Walk every ally-team actor that's `is_combat_active` OR `is_dying`

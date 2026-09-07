@@ -26566,6 +26566,83 @@ fn a_readied_attack_fires_on_the_step_that_closes_the_distance() {
     assert!(!e.actors[&readier].can_consume_resource(Resource::Reaction));
 }
 
+/// The three reaction dispatchers read the same list of "may this
+/// creature swing at that one" rules as declared actions do.
+///
+/// None of the three goes through `Action::validate`, so each used to
+/// carry its own copy of the list — and the copies had drifted. The
+/// readied-attack dispatcher open-coded the charm arm and knew nothing
+/// about the other two, which is what this pins: a readier wrapped
+/// around somebody's head held its swing for a passer-by, and a swallowed
+/// readier held one through the stomach wall.
+///
+/// Written against the predicate rather than against three staged
+/// dispatches, because what is under test is that there is *one* list.
+/// A fourth rule added to `hostility_blocked` should need no edit here
+/// and no edit in any of the three dispatchers.
+#[test]
+fn every_reaction_lane_reads_the_same_hostility_list() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let passer_by = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+
+    // Charm: the charmed creature may not swing at its charmer, and may
+    // swing at anybody else.
+    let charmed = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let charmer = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Charmed,
+        charmed,
+        charmer,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.hostility_blocked(charmed, charmer));
+    assert!(!e.hostility_blocked(charmed, passer_by));
+
+    // Attach: the latched creature may swing only at what it is holding.
+    let stirge = e
+        .instantiate_creature(&STIRGE_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    let host = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(9, 4), 0, 0)
+        .unwrap();
+    assert!(e.attach(stirge, host).is_ok());
+    assert!(!e.hostility_blocked(stirge, host));
+    assert!(e.hostility_blocked(stirge, passer_by));
+
+    // Swallow: Total Cover, both ways, except against the stomach.
+    let worm = e
+        .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    let eaten = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(18, 10), 0, 0)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        eaten,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.swallow(worm, eaten).is_ok());
+    assert!(!e.hostility_blocked(eaten, worm));
+    assert!(e.hostility_blocked(eaten, passer_by));
+    assert!(e.hostility_blocked(passer_by, eaten));
+}
 
 
 /// Aid does not stack with itself. PHB: "the effects of the same
