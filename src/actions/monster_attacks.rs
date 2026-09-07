@@ -8084,17 +8084,28 @@ pub static TARRASQUE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
     ],
 });
 
-/// Aboleth Tentacle — STR-based 2d6 bludgeoning melee, reach 2 tiles
-/// (10ft). Iconic MM aboleth attack — paired with the tentacle multi
-/// below to deal a brutal melee burst out at near-reach distance.
-pub static ABOLETH_TENTACLE: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Aboleth **Tentacle** — 2d6+STR bludgeoning at reach 2 (10 ft), and
+/// RAW's hold: *"If the target is a Large or smaller creature, it has
+/// the Grappled condition (escape DC 14) from one of four tentacles."*
+///
+/// Four tentacles is the number that matters. The aboleth's Consume
+/// Memories only targets a creature that is *"Charmed or Grappled by
+/// the aboleth"*, so the tentacles are not a damage lane at all — they
+/// are the setup for the action that actually kills you, and without
+/// the grapple the creature's whole turn structure came apart into two
+/// unrelated attacks.
+pub static ABOLETH_TENTACLE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "tentacle",
     &["tent"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
+    &[Condition::Grappled],
+    ConditionTimer::Permanent,
+    "one of four tentacles",
     2,
-);
+)
+.against_at_most(Size::Large);
 
 /// Aboleth Multiattack — 3 tentacle swings per Action. Single same-sub
 /// pattern through the `Multiattack` wrapper.
@@ -11173,17 +11184,28 @@ pub static ROC_BEAK: SimpleWeapon = SimpleWeapon::reach_melee(
     2,
 );
 
-/// Roc Talons — STR-based 4d6+STR slashing, reach 2 (10ft). The second
-/// half of the multi; the talons rake after the beak strike. Mirrors
-/// the Giant Eagle beak + talons shape at much higher dice.
-pub static ROC_TALONS: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Roc **Talons** — 4d6+STR slashing at reach 2 (10 ft), and RAW's
+/// grip: *"If the target is a Huge or smaller creature, it has the
+/// Grappled condition (escape DC 19) from both of the roc's talons, and
+/// it has the Restrained condition until the grapple ends."*
+///
+/// The widest ceiling in the bestiary, and it is the creature's whole
+/// silhouette: a roc is the thing that picks up an ogre. Everything
+/// short of Gargantuan is inside the clause, which is a very different
+/// statement from the Large-or-smaller most of the book prints and the
+/// reason `max_target_size` is per-row rather than a constant.
+pub static ROC_TALONS: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "roc talons",
     &["rtalons"],
     AbilityScoreType::Strength,
     Dice::new(4, 6),
     DamageType::Slashing,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "both talons",
     2,
-);
+)
+.against_at_most(Size::Huge);
 
 /// Roc multiattack — 1 beak + 1 talons per Action. CR-11 dice tier:
 /// the Roc bursts an unguarded target down hard in a single round.
@@ -11318,19 +11340,33 @@ pub static TRICERATOPS_STOMP: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Tyrannosaurus Rex Bite — STR-based 4d12+STR piercing, reach 2 (10 ft).
-/// The apex predator's marquee swing. RAW also has a Bite-and-Grapple
-/// rider (grappled + restrained vs Large or smaller); we collapse to
-/// the vanilla high-die hit since grapple-from-monster is a niche the
-/// engine doesn't currently use on huge predators.
-pub static T_REX_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Tyrannosaurus Rex **Bite** — 4d12+STR piercing at reach 2 (10 ft),
+/// and RAW's jaws: *"If the target is a Large or smaller creature, it
+/// has the Grappled condition (escape DC 17). While Grappled, the target
+/// has the Restrained condition and can't be targeted by the
+/// tyrannosaurus's Tail."*
+///
+/// The hold is what makes the two limbs a *choice*. RAW's tail is the
+/// sweep for everything the jaws are not holding, and the bite is the
+/// lane that takes one creature out of the fight and keeps it — which is
+/// the whole shape of fighting a tyrannosaurus, and was previously a
+/// docstring saying grapple-from-monster was "a niche the engine doesn't
+/// currently use on huge predators".
+///
+/// The "can't be targeted by the Tail" clause is still not modeled; the
+/// engine has no per-action target lock.
+pub static T_REX_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "rex bite",
     &["rb", "trex-bite"],
     AbilityScoreType::Strength,
     Dice::new(4, 12),
     DamageType::Piercing,
+    &[Condition::Grappled, Condition::Restrained],
+    ConditionTimer::Permanent,
+    "rex jaws",
     2,
-);
+)
+.against_at_most(Size::Large);
 
 /// Tyrannosaurus Rex Tail — STR-based 3d8+STR bludgeoning, reach 2.
 /// The second multi-lane attack. Lower dice than the bite (no grapple
@@ -12707,17 +12743,26 @@ pub static HEZROU_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtt
 
 // ─── Gibbering Mouther ───────────────────────────────────────────────
 
-/// Gibbering Mouther Bites — STR-based 5d6 piercing melee. The mouther
-/// has dozens of constantly-shifting mouths gnashing at anything in reach;
-/// RAW collapses to a single attack roll dealing massive dice damage. No
-/// rider — the load-bearing threat is the 5d6 burst on a single hit.
-pub static GIBBERING_MOUTHER_BITES: SimpleWeapon = SimpleWeapon::melee(
+/// Gibbering Mouther **Bites** — 5d6+STR piercing, and RAW's knockdown:
+/// *"If the target is a Medium or smaller creature, it has the Prone
+/// condition."*
+///
+/// Dozens of constantly-shifting mouths gnashing at anything in reach,
+/// collapsed by RAW into a single attack roll — and the thing they do
+/// besides bite is drag you down among them, which is what the mouther
+/// is *for*. A creature on the floor in a mouther's space is one that
+/// spends its next turn standing up inside the swing.
+pub static GIBBERING_MOUTHER_BITES: WeaponWithCondition = WeaponWithCondition::melee(
     "gibbering bites",
     &["gmb", "mouther-bites"],
     AbilityScoreType::Strength,
     Dice::new(5, 6),
     DamageType::Piercing,
-);
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "gnashing mouths",
+)
+.against_at_most(Size::Medium);
 
 /// Gibbering Mouther Blinding Spittle — bonus-action ranged action,
 /// recharge 5-6. The mouther coughs up a glob of caustic ichor at a tile
@@ -17008,7 +17053,8 @@ pub static GIANT_OCTOPUS_TENTACLES: WeaponWithSaveCondition =
         ConditionTimer::Rounds(10),
         "tentacles",
         3,
-    );
+    )
+    .against_at_most(Size::Medium);
 
 // ─── Plesiosaurus ────────────────────────────────────────────────────
 
@@ -18789,16 +18835,27 @@ pub static PANTHER_BITE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Panther Claw — STR-based 1d4+STR slashing melee. RAW: "Claw. Melee
-/// Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 4 (1d4 + 2)
-/// slashing damage."
-pub static PANTHER_CLAW: SimpleWeapon = SimpleWeapon::melee(
+/// Panther **Claw** — 1d4+STR slashing, and SRD 5.2's knockdown: *"If
+/// the target is a Large or smaller creature, it has the Prone
+/// condition."*
+///
+/// Small dice and a big consequence, which is the cat exactly: the claw
+/// is not how a panther kills you, it is how it puts you where its bite
+/// can. The pounce this creature also carries (`PANTHER_POUNCE`) is the
+/// same idea paid for with a run-up; RAW gives it both, and they stack
+/// the way a reader would expect — the run-up version is what the AI
+/// spends movement to earn.
+pub static PANTHER_CLAW: WeaponWithCondition = WeaponWithCondition::melee(
     "panther claw",
     &["pn-claw", "panther-claw"],
     AbilityScoreType::Strength,
     Dice::new(1, 4),
     DamageType::Slashing,
-);
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "raking claw",
+)
+.against_at_most(Size::Large);
 
 /// Panther **Pounce** (RAW): "If the panther moves at least 20 feet
 /// straight toward a creature and then hits it with a claw attack on

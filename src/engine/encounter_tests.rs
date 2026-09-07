@@ -25878,33 +25878,26 @@ fn a_grapple_ends_when_the_two_are_pulled_apart() {
 }
 
 /// A monster whose attack grapples names itself as the grappler,
-/// same as the Grapple action does. Swept across the whole roster
-/// rather than spot-checked on one creature, because the anchoring
-/// arrives through three different chassis and a fourth that lands
-/// tomorrow would look correct while quietly producing holds that
-/// nothing can end.
+/// same as the Grapple action does.
 ///
 /// Anchoring is what makes two rules real for these attacks: the
 /// escape is a contest against the creature holding on, and the
 /// hold ends when that creature is incapacitated. Before it, a
 /// roper's tendril grappled nobody in particular.
+///
+/// Swept over the **whole bestiary** rather than over a hand-written
+/// list of grapplers, and the difference is not academic: this test
+/// shipped with five names on it, chosen one per chassis the anchoring
+/// travels through, and by the time six more stat blocks had grown their
+/// RAW grapples the list still said five. A roster that has to be
+/// remembered is a roster that goes stale silently — and a hold that
+/// names nobody is invisible until somebody tries to escape it.
 #[test]
 fn a_monsters_grapple_names_the_monster() {
     use crate::actions::action_template::Action;
     use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
     use crate::conditions::Condition;
-    // The creatures whose attacks grapple, one per chassis the
-    // anchoring travels through: the auto-install-on-hit chassis
-    // (chuul, giant frog), the save-or-condition chassis
-    // (constrictor snake), and the two hand-rolled sites (crocodile,
-    // shambling mound).
-    let grapplers: &[&'static crate::actors::actor_template::CreatureTemplate] = &[
-        &crate::actors::creatures::chuuls::CHUUL_TEMPLATE,
-        &crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE,
-        &crate::actors::creatures::constrictor_snakes::CONSTRICTOR_SNAKE_TEMPLATE,
-        &crate::actors::creatures::crocodiles::CROCODILE_TEMPLATE,
-        &crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE,
-    ];
+    let grapplers = EncounterInstance::template_pool();
     let mut checked = 0;
     for template in grapplers {
         for seed in 0..6u64 {
@@ -25945,9 +25938,20 @@ fn a_monsters_grapple_names_the_monster() {
             }
         }
     }
+    // A floor rather than `> 0`, for the reason the roster is a sweep:
+    // a filter that quietly narrowed to one creature would still pass a
+    // `> 0`, and the whole point of walking the bestiary is that nobody
+    // has to remember which creatures grapple.
+    // A floor rather than `> 0`, for the reason the roster became a
+    // sweep: a filter that quietly narrowed to one creature would still
+    // pass a `> 0`, and the whole point of walking the bestiary is that
+    // nobody has to remember which creatures grapple. The sweep lands
+    // several hundred holds across six seeds; a hundred is comfortably
+    // under that and comfortably over any one creature's share.
     assert!(
-        checked > 0,
-        "no grappling monster in the sweep managed to land its grapple"
+        checked >= 100,
+        "the sweep only landed {} grapples — something narrowed it",
+        checked
     );
 }
 
