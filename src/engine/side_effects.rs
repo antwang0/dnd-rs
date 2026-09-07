@@ -1167,6 +1167,84 @@ impl ApplicableSideEffect for DealDamage {
     }
 }
 
+/// A [`DealDamage`] that came off a **critical hit**.
+///
+/// One damage instance in the engine knows something the others do not,
+/// and exactly one rule asks: SRD 5.2 Undead Fortitude, *"it makes a
+/// Constitution saving throw (DC 5 plus the damage taken) **unless the
+/// damage is Radiant or from a Critical Hit**"*. The radiant half of
+/// that exemption has always shipped; the crit half had not, and the
+/// docstring on `try_undead_fortitude` explained at some length why:
+/// `DealDamage` carries an amount and a type, some three hundred sites
+/// build one out of something that is not an attack at all, and
+/// threading a fourth field through every one of them to reach one stat
+/// block's clause would cost more than the clause is worth.
+///
+/// It still would. So the bit rides the resolution rather than the
+/// payload. This is a newtype whose whole body is "put the encounter's
+/// critical-hit guard up, run the inner effect, take it down" — and
+/// because `DealDamage::apply` is where the fortitude save actually
+/// fires, that scope is exactly the lifetime the rule describes. Two
+/// call sites wrap their swing payload in it (the weapon resolver and
+/// the spell-attack resolver) and nothing else in the engine changes.
+///
+/// **Every other trait method forwards.** A crit is still a damage
+/// payload for the nonmagical-resistance scaler, still an elemental
+/// remap target for Transmuted Spell, still everything it was. A
+/// wrapper that silently opted its swing out of those would be a much
+/// worse bug than the one it fixed.
+pub struct CriticalDamage(pub DealDamage);
+
+impl ApplicableSideEffect for CriticalDamage {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.within_critical_hit(|e| self.0.apply(e));
+    }
+
+    fn extend_duration(&mut self) -> bool {
+        self.0.extend_duration()
+    }
+
+    fn remap_damage_type(&mut self, new_type: DamageType) -> bool {
+        self.0.remap_damage_type(new_type)
+    }
+
+    fn elemental_damage_target(&self) -> Option<(usize, DamageType)> {
+        self.0.elemental_damage_target()
+    }
+
+    fn damage_payload(&self) -> Option<(usize, DamageType, u32)> {
+        self.0.damage_payload()
+    }
+
+    fn set_damage_amount(&mut self, amount: u32) -> bool {
+        self.0.set_damage_amount(amount)
+    }
+
+    fn concentration_payload(&self) -> Option<ConcentrationPayload<'_>> {
+        self.0.concentration_payload()
+    }
+
+    fn absorb_concentration_payload(&mut self, extra: &ConcentrationPayload<'_>) -> bool {
+        self.0.absorb_concentration_payload(extra)
+    }
+}
+
+/// Wrap a swing's damage payload in [`CriticalDamage`] when the swing
+/// crit, and leave it alone when it did not.
+///
+/// The one-line form both attack resolvers use, so neither has to
+/// spell out the conditional box.
+pub fn damage_from_swing(
+    payload: DealDamage,
+    is_crit: bool,
+) -> Box<dyn ApplicableSideEffect> {
+    if is_crit {
+        Box::new(CriticalDamage(payload))
+    } else {
+        Box::new(payload)
+    }
+}
+
 /// 5e Tasha's Transmuted Spell metamagic — the six damage types eligible
 /// for both the "source" side (must already be one of these for the prime
 /// to engage) and the "target" side (the remap can pick any of these as

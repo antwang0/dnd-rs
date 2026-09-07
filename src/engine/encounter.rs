@@ -1860,6 +1860,25 @@ pub struct EncounterInstance {
     /// Crown Paladins standing beside each other from passing a blow
     /// back and forth.
     redirect_depth: u32,
+    /// Non-zero while the damage instance currently resolving is the
+    /// payload of a **critical hit** — see `within_critical_hit` and
+    /// `side_effects::CriticalDamage`.
+    ///
+    /// The damage pipeline is deliberately decoupled from the attack
+    /// roll: a `DealDamage` carries an amount and a type, hundreds of
+    /// sites build one out of something that is not an attack at all,
+    /// and none of them has a crit to report. One rule in 5e needs the
+    /// bit anyway — Undead Fortitude's *"unless the damage is Radiant
+    /// or from a Critical Hit"* — and this is how it gets it without a
+    /// fourth field on every construction in the engine.
+    ///
+    /// A depth rather than a flag for the reason `redirect_depth` is
+    /// one: `DealDamage::apply` re-issues itself at a new target when a
+    /// paladin, a rider or a cloaker takes the blow, and the guard has
+    /// to come back down on every path out. Those re-issues inherit the
+    /// crit, which is right — it is the same swing landing on somebody
+    /// else.
+    critical_depth: u32,
     /// The seed both RNGs were built from — the one passed in, or the
     /// one `empty` drew when none was. Read-only after construction and
     /// surfaced by `seed()`; see `empty` for why an unseeded encounter
@@ -5985,16 +6004,30 @@ impl EncounterInstance {
     /// against DC 19 and does not. That is the trait teaching a party
     /// to commit.
     ///
-    /// **The Critical Hit exemption is not modeled.** `DealDamage`
-    /// carries the amount and the type and does not carry whether the
-    /// swing that produced it crit — the damage pipeline is
-    /// deliberately decoupled from the attack roll, and hundreds of
-    /// sites construct a `DealDamage` from things that are not attacks
-    /// at all. Threading a crit flag through all of them to reach one
-    /// stat block's clause would cost more than the clause is worth.
-    /// The radiant half of the exemption ships, which is the half a
-    /// party can play toward: a cleric's Sacred Flame puts a zombie
-    /// down and stays down.
+    /// **Both halves of RAW's exemption ship.** Radiant always did —
+    /// it is the half a party can play toward, and a cleric's Sacred
+    /// Flame puts a zombie down and keeps it down. The Critical Hit
+    /// half did not, and this docstring used to explain why at some
+    /// length: `DealDamage` carries an amount and a type and not
+    /// whether the swing that produced it crit, the damage pipeline is
+    /// deliberately decoupled from the attack roll, and some three
+    /// hundred sites build a `DealDamage` out of something that is not
+    /// an attack at all.
+    ///
+    /// All of that is still true, which is why the bit does not live on
+    /// the payload. It lives on the resolution:
+    /// `side_effects::CriticalDamage` is a one-field newtype that
+    /// raises the encounter's critical-hit guard for the duration of
+    /// one `DealDamage::apply`, and this save fires from inside that
+    /// call. Two attack resolvers wrap their swing payload in it and
+    /// nothing else in the engine changed.
+    ///
+    /// The clause is worth having because it is the one the trait is
+    /// *about*. A DC priced off the blow already teaches a party to
+    /// commit; the crit exemption is what makes committing pay — the
+    /// rogue who lands a sneak-attack crit on a zombie has finished it,
+    /// and does not watch it stand back up on a save against a DC its
+    /// own damage inflated.
     pub fn try_undead_fortitude(
         &mut self,
         actor_id: usize,
@@ -6004,10 +6037,16 @@ impl EncounterInstance {
         use crate::actions::class_features::UNDEAD_FORTITUDE_TAG;
         use crate::engine::types::{AbilityScoreType, DamageType};
 
-        // Radiant is RAW's own exemption and the reason a party carries
-        // a cleric. Checked before the tag so the common case — a
-        // creature that is not a zombie — still costs one hash lookup.
-        if damage_type == DamageType::Radiant {
+        // RAW's two exemptions, both cheap scalar checks, both ahead of
+        // the tag lookup so the common case — a creature that is not a
+        // zombie — still costs one hash lookup and no more.
+        //
+        // Radiant is the reason a party carries a cleric; the critical
+        // hit is the reason a party commits. See `in_critical_hit` and
+        // the type doc on `side_effects::CriticalDamage` for how the
+        // second bit reaches a pipeline that deliberately does not
+        // carry it.
+        if damage_type == DamageType::Radiant || self.in_critical_hit() {
             return false;
         }
         if !self
@@ -9629,6 +9668,28 @@ impl EncounterInstance {
         out
     }
 
+    /// Whether the damage instance currently resolving came off a
+    /// critical hit. The read side of `within_critical_hit`; see
+    /// `critical_depth` for why the bit lives on the encounter rather
+    /// than on `DealDamage`.
+    pub(crate) fn in_critical_hit(&self) -> bool {
+        self.critical_depth > 0
+    }
+
+    /// Run `body` with the critical-hit guard up.
+    ///
+    /// The scope is exactly one `DealDamage::apply`, which is where
+    /// every consumer of the bit lives — the fortitude save fires from
+    /// inside that call, not from the attack resolver that queued the
+    /// effect, so a guard set at the attack site would have come down
+    /// long before it mattered.
+    pub fn within_critical_hit<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.critical_depth += 1;
+        let out = body(self);
+        self.critical_depth -= 1;
+        out
+    }
+
     /// Shared eligibility scan for the "nearby ally with a reaction and a
     /// per-feature flag" cohort — Fighting Style Protection, Fighting
     /// Style Interception, and Psi Warrior Protective Field all need the
@@ -10409,6 +10470,7 @@ impl EncounterInstance {
         EncounterInstance {
             seed,
             redirect_depth: 0,
+            critical_depth: 0,
             initialized: false,
             surprise_resolved: false,
             width: terrain_params.width,

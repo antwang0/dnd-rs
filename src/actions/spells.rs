@@ -482,11 +482,19 @@ fn spell_attack_outcome_exploding(
         true,
         damage_type,
     );
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
-        actor_id: target_id,
-        amount: total_dmg,
-        damage_type,
-    })];
+    // Tagged on a crit, exactly as the weapon resolver tags its own
+    // swing payload — a spell attack crits by the same rule and a
+    // zombie put down by a critical Inflict Wounds stays down. See
+    // `side_effects::CriticalDamage`.
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> =
+        vec![crate::engine::side_effects::damage_from_swing(
+            DealDamage {
+                actor_id: target_id,
+                amount: total_dmg,
+                damage_type,
+            },
+            is_crit,
+        )];
     // Caster-side on-hit riders whose RAW trigger is "hit a creature
     // with an attack" rather than "with a weapon attack". The shared
     // table is walked here with `is_spell: true`, so only

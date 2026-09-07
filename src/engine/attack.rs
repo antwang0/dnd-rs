@@ -2282,11 +2282,22 @@ pub fn resolve_attack_outcome_with_rider(
         false,
         p.damage_type,
     );
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
-        actor_id: p.target_id,
-        amount: damage,
-        damage_type: p.damage_type,
-    })];
+    // The swing's own payload, tagged when the swing crit so Undead
+    // Fortitude's *"unless the damage is … from a Critical Hit"* can
+    // see it. Only this one instance carries the tag: the riders below
+    // are separate damage that could equally have come off a normal
+    // hit, and by the time one of them lands the payload that actually
+    // dropped the creature has already been resolved. See
+    // `side_effects::CriticalDamage`.
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> =
+        vec![crate::engine::side_effects::damage_from_swing(
+            DealDamage {
+                actor_id: p.target_id,
+                amount: damage,
+                damage_type: p.damage_type,
+            },
+            is_crit,
+        )];
     if encounter.is_hex_target(p.caster_id, p.target_id) {
         push_die_rider(
             encounter,

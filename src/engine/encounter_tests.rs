@@ -85399,11 +85399,9 @@ fn a_zombie_that_should_be_dead_rolls_to_get_back_up() {
 /// RAW's own exemption: *"unless the damage is Radiant."* A cleric's
 /// light puts a zombie down and it stays down.
 ///
-/// The half of the trait a party can play toward, and the reason it
-/// ships while the Critical Hit half does not — see
-/// `EncounterInstance::try_undead_fortitude`. Swept over the same forty
-/// seeds as the test above, so "never" means never rather than "not on
-/// seed 0".
+/// The half of the trait a party can play toward. Swept over the same
+/// forty seeds as the test above, so "never" means never rather than
+/// "not on seed 0". Its sibling below covers RAW's other exemption.
 #[test]
 fn radiant_damage_puts_a_zombie_down_for_good() {
     use crate::engine::side_effects::DealDamage;
@@ -85429,6 +85427,104 @@ fn radiant_damage_puts_a_zombie_down_for_good() {
             seed
         );
     }
+}
+
+/// RAW's other exemption: *"unless the damage is … from a Critical
+/// Hit."* A blow that crit finishes a zombie, and there is no save.
+///
+/// Same forty seeds as its radiant sibling above, and the same
+/// "never" — the bit reaches the save through `CriticalDamage`, whose
+/// whole job is to hold the encounter's guard up for the length of one
+/// `DealDamage::apply`.
+#[test]
+fn a_critical_hit_puts_a_zombie_down_for_good() {
+    use crate::engine::side_effects::{CriticalDamage, DealDamage};
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hp = e.actors[&zombie].hitpoints();
+        CriticalDamage(DealDamage {
+            actor_id: zombie,
+            amount: hp,
+            damage_type: DamageType::Slashing,
+        })
+        .apply(&mut e);
+        assert!(
+            e.actors.get(&zombie).is_none_or(|a| !a.is_combat_active()),
+            "seed {}: a critical hit is RAW's exemption and the zombie got up anyway",
+            seed
+        );
+    }
+}
+
+/// The guard comes back down. A crit resolved on one creature must not
+/// leave the next, ordinary blow exempt — which is the failure a bare
+/// flag rather than a depth counter would eventually produce.
+#[test]
+fn the_critical_guard_does_not_outlive_the_blow_that_raised_it() {
+    use crate::engine::side_effects::{ApplicableSideEffect, CriticalDamage, DealDamage};
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let first = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hp = e.actors[&first].hitpoints();
+    CriticalDamage(DealDamage {
+        actor_id: first,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    })
+    .apply(&mut e);
+    assert!(!e.in_critical_hit());
+    // And an ordinary blow after it still gets asked for the save.
+    let second = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+        .unwrap();
+    let hp = e.actors[&second].hitpoints();
+    let before = e.messages().len();
+    DealDamage {
+        actor_id: second,
+        amount: hp,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("undead fortitude")),
+        "the ordinary blow should still roll the save"
+    );
+}
+
+/// `CriticalDamage` is a wrapper, not a replacement: everything the
+/// pipeline reads off a damage payload still reads off a crit.
+///
+/// The nonmagical-resistance scaler and the Transmuted Spell metamagic
+/// both work by asking a side effect what it is carrying and writing
+/// back — a wrapper that answered `None` would silently opt every
+/// critical hit in the engine out of both.
+#[test]
+fn a_critical_payload_still_answers_the_pipeline() {
+    use crate::engine::side_effects::{ApplicableSideEffect, CriticalDamage, DealDamage};
+    let mut wrapped = CriticalDamage(DealDamage {
+        actor_id: 7,
+        amount: 12,
+        damage_type: DamageType::Fire,
+    });
+    assert_eq!(
+        wrapped.damage_payload(),
+        Some((7, DamageType::Fire, 12)),
+        "the scaler has to be able to read it"
+    );
+    assert_eq!(
+        wrapped.elemental_damage_target(),
+        Some((7, DamageType::Fire))
+    );
+    assert!(wrapped.set_damage_amount(6));
+    assert_eq!(wrapped.damage_payload(), Some((7, DamageType::Fire, 6)));
+    assert!(wrapped.remap_damage_type(DamageType::Cold));
+    assert_eq!(wrapped.damage_payload(), Some((7, DamageType::Cold, 6)));
 }
 
 /// The DC is priced off the blow, which is what separates Undead
