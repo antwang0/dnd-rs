@@ -9281,6 +9281,14 @@ impl EncounterInstance {
     ///     one that is immune gains less than that. The slot stays in
     ///     the pocket.
     ///
+    ///     A creature *vulnerable* to the type is the case this gate is
+    ///     careful to let through, which is why it reads
+    ///     `resists_damage_type` rather than the neighbouring
+    ///     `has_own_typed_reduction`: resistance and vulnerability
+    ///     cancel to full damage, so the reaction halves the doubling —
+    ///     the largest thing this spell ever does, and the moment it
+    ///     most wants to be cast.
+    ///
     /// The last gate is the reason this is a `try_` and not a hook that
     /// always fires: a reaction spell offered on every point of
     /// elemental damage anybody takes would empty a wizard's 1st-level
@@ -9300,8 +9308,7 @@ impl EncounterInstance {
                 && a.can_consume_resource(crate::engine::side_effects::Resource::SpellSlot(1))
                 && !a.has_condition(Condition::AbsorbedElements)
                 && !a.is_immune_to_damage_type(damage_type)
-                && !a.has_condition_resistance(damage_type)
-                && a.damage_modifier(damage_type).is_none()
+                && !a.resists_damage_type(damage_type)
         });
         if !eligible {
             return false;

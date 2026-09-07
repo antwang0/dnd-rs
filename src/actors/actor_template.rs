@@ -7159,13 +7159,11 @@ impl ActorInstance {
         if self.is_immune_to_damage_type(dt) {
             return 0;
         }
-        let template_modifier = self.damage_modifiers.get(&dt).copied();
-        let vulnerable = matches!(template_modifier, Some(DamageModifier::Vulnerability))
-            || self.has_condition_vulnerability(dt);
-        let resistant = matches!(template_modifier, Some(DamageModifier::Resistance))
-            || self.has_passive_typed_resistance(dt)
-            || self.has_condition_resistance(dt)
-            || self.item_resistance_to(dt);
+        let vulnerable = matches!(
+            self.damage_modifiers.get(&dt),
+            Some(DamageModifier::Vulnerability)
+        ) || self.has_condition_vulnerability(dt);
+        let resistant = self.resists_damage_type(dt);
         match (vulnerable, resistant) {
             (true, true) => raw,
             (true, false) => raw.saturating_mul(2),
@@ -7363,6 +7361,35 @@ impl ActorInstance {
             return None;
         }
         self.nonmagical_damage_modifiers.get(&dt).copied()
+    }
+
+    /// True iff this actor halves damage of type `dt` from any of the
+    /// four lanes that can grant resistance: its own template row, a
+    /// held condition, a carried item, or a passive feature.
+    ///
+    /// The four-lane OR used to be written out inline in
+    /// `effective_damage`, which was fine while that was the only place
+    /// that asked. It is not: a reaction that *buys* a resistance has
+    /// to know whether the creature already has one, because 5e counts
+    /// multiple instances of resistance as only one and the slot would
+    /// buy nothing. `EncounterInstance::try_absorb_elements` is that
+    /// caller.
+    ///
+    /// Deliberately **not** `has_own_typed_reduction`, which is a
+    /// different question with a different answer. That predicate
+    /// counts vulnerability as a typed handler, because its callers are
+    /// riders that halve *on top of* the sheet and a halving laid over a
+    /// doubling washes out to nothing. A resistance laid over a
+    /// vulnerability does not wash out — `effective_damage` above
+    /// cancels the pair to full damage, which is a real benefit and one
+    /// a creature about to be hit should be allowed to buy.
+    pub fn resists_damage_type(&self, dt: DamageType) -> bool {
+        matches!(
+            self.damage_modifiers.get(&dt),
+            Some(DamageModifier::Resistance)
+        ) || self.has_passive_typed_resistance(dt)
+            || self.has_condition_resistance(dt)
+            || self.item_resistance_to(dt)
     }
 
     /// True iff this actor already has some form of typed damage

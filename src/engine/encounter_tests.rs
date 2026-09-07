@@ -86683,3 +86683,55 @@ fn a_continual_flame_is_not_lit_where_it_would_add_nothing() {
         "a tile already in a torch's bright core has nothing for a level-2 slot to do"
     );
 }
+
+/// The one case the "would this buy anything" gate must let through: a
+/// creature **vulnerable** to the element in front of it.
+///
+/// 5e's stacking rule cancels resistance against vulnerability rather
+/// than compounding them, so the reaction takes a doubled blow back to
+/// full — the largest thing Absorb Elements ever does, and the moment
+/// it most wants to be cast. The gate reads `resists_damage_type`
+/// rather than the neighbouring `has_own_typed_reduction` for exactly
+/// this reason: that predicate counts a vulnerability as a typed
+/// handler, which is right for a rider that halves on top of the sheet
+/// and wrong for a spell that buys the halving itself.
+#[test]
+fn absorb_elements_fires_hardest_against_an_element_the_caster_is_vulnerable_to() {
+    use crate::engine::side_effects::DealDamage;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            0,
+        )
+        .unwrap();
+    // Path to the Grave — the engine's one condition-driven
+    // vulnerability, and vulnerable to every type, so it is the fire
+    // vulnerability this test needs.
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .add_condition(Condition::MarkedForGrave, ConditionTimer::Rounds(10));
+    let slots_before = e.actors[&wiz].spell_slot_manager.spell_slots(1).spell_slots;
+
+    let before = e.actors[&wiz].hitpoints();
+    DealDamage {
+        actor_id: wiz,
+        amount: 4,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&wiz].spell_slot_manager.spell_slots(1).spell_slots,
+        slots_before - 1,
+        "a vulnerable creature is exactly who should spend the slot"
+    );
+    assert_eq!(
+        before - e.actors[&wiz].hitpoints(),
+        4,
+        "resistance cancels the vulnerability: 4 lands as 4, not as 8"
+    );
+}
