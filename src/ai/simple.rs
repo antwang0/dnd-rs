@@ -1588,12 +1588,12 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 5f-bis. Brace an adjacent ally with the Resistance cantrip.
-        //     Gated on the caster having no leveled slot left at all,
-        //     so it can never take the concentration that Bless or
-        //     Spirit Guardians (rungs 4 and 4b) would have spent it on
-        //     — see `try_resistance_ward` for why that gate is the
-        //     whole placement.
+        // 5f'. Brace an adjacent ally with the Resistance cantrip.
+        //      Gated on the caster having no leveled slot left at all,
+        //      so it can never take the concentration that Bless or
+        //      Spirit Guardians (rungs 4 and 4b) would have spent it on
+        //      — see `try_resistance_ward` for why that gate is the
+        //      whole placement.
         if let Some(aei) = try_resistance_ward(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
