@@ -279,6 +279,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //   - Agonizing Blast: +CHA mod to each Eldritch Blast beam.
         //   - Repelling Blast: 10ft (4-tile) push on hit, Large-or-
         //     smaller targets only.
+        //   - Lance of Lethargy: once on each of the warlock's turns, a
+        //     landed beam takes 10 ft off the target's speed. Picked as
+        //     the fifth invocation because of what it does *to* the
+        //     fourth: Repelling Blast opens ten feet of gap and the
+        //     lance takes away the ten feet that would have closed it
+        //     again, which is the whole of the kiting warlock and the
+        //     reason this pair is the one every table reaches for.
         //   - Eldritch Mind: advantage on Constitution saves to maintain
         //     concentration (read at the damage chokepoint).
         //   - Devil's Sight: sees normally in magical darkness, which
@@ -288,7 +295,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     until the warlock actually casts it, so it costs the kit
         //     nothing on a lit board.
         // RAW a level-5 warlock picks 3 invocations; the kit pre-picks
-        // these four since EB is the signature cantrip, Darkness is on
+        // these five since EB is the signature cantrip, Darkness is on
         // the list, and concentration-bound spells (Hex / Hunger of
         // Hadar) form the back half of the warlock's lockdown plan. Permanent passive
         // features — never consumed; the relevant cast / save sites
@@ -296,6 +303,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             crate::actions::class_features::AGONIZING_BLAST_TAG,
             crate::actions::class_features::REPELLING_BLAST_TAG,
+            crate::actions::class_features::LANCE_OF_LETHARGY_TAG,
             crate::actions::class_features::ELDRITCH_MIND_TAG,
             crate::actions::class_features::DEVILS_SIGHT_TAG,
         ]),
@@ -1282,6 +1290,21 @@ pub static FATHOMLESS_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     let mut features = WARLOCK_TEMPLATE.features.clone();
     features.insert(TENTACLE_OF_THE_DEEP_TAG);
     features.insert(GUARDIAN_COIL_TAG);
+    // The one invocation swap on the roster, and the only warlock whose
+    // blast pulls rather than pushes. **Grasp of Hadar** replaces
+    // **Repelling Blast** — see `GRASP_OF_HADAR_TAG` for why holding
+    // both is meaningless rather than merely redundant.
+    //
+    // It is the subclass's own instruction, not flavour. Guardian Coil
+    // pays this warlock for standing somewhere the tentacle is not, and
+    // the tentacle is ten hit points that cannot walk: everything it is
+    // worth depends on enemies being *next to it*. A blast that shoves
+    // them ten feet further away is the subclass working against itself.
+    // A blast that drags them four tiles toward the warlock — who is
+    // stationed across the coil from the tentacle — is the summon's
+    // whole plan carried out by the cantrip.
+    features.remove(crate::actions::class_features::REPELLING_BLAST_TAG);
+    features.insert(crate::actions::class_features::GRASP_OF_HADAR_TAG);
     CreatureTemplate {
         name: "Fathomless Warlock",
         glyph: 'T',

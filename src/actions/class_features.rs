@@ -3097,6 +3097,15 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // the ledger cared where the tag came from, which is the argument
     // for it being keyed by plain tag; see `crate::actions::feats`.
     crate::actions::feats::SAVAGE_ATTACKER_TAG,
+    // The two Eldritch Blast invocations whose RAW text carries the
+    // clause this ledger exists for — "once on each of your turns when
+    // you hit a creature with your Eldritch Blast". Every other row here
+    // is gated on a weapon hit; these two are gated on a *beam*, and a
+    // high-level warlock fires four of them in one action, which is
+    // precisely the case the window is written to cap. See
+    // `GRASP_OF_HADAR_TAG` / `LANCE_OF_LETHARGY_TAG`.
+    GRASP_OF_HADAR_TAG,
+    LANCE_OF_LETHARGY_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -9929,6 +9938,55 @@ pub const AGONIZING_BLAST_TAG: &str = "warlock.agonizing_blast";
 /// Read at the EldritchBlast cast site via `feature_available`. Add this
 /// tag to a warlock template's `features` set to install it.
 pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
+
+/// Warlock Eldritch Invocation — **Grasp of Hadar** (XGtE). *"Once on
+/// each of your turns when you hit a creature with your Eldritch Blast,
+/// you can move that creature up to 10 feet closer to you."* Four tiles
+/// of pull on this engine's 2.5-ft grid, toward the warlock's own
+/// square, resolved through `PullActor` — the same forced-movement loop
+/// Thorn Whip and Lightning Lure use, so a target dragged into a web or
+/// a wall of fire enters the area exactly as it would if something else
+/// had dragged it.
+///
+/// **The once-per-turn clause is the invocation.** Repelling Blast's
+/// push has no such limit and fires on every beam that lands, because
+/// RAW's push is per-hit; the grasp is explicitly "once on each of your
+/// turns", so a level-17 warlock landing four beams pulls once and not
+/// sixteen tiles. That gate rides `ONCE_PER_TURN_RIDER_TAGS` — the
+/// ledger cleared at `reset_for_new_round` — rather than a charge,
+/// because the invocation is permanent and free and it is the *window*
+/// that is scarce.
+///
+/// **It is mutually exclusive with Repelling Blast**, and not by RAW: a
+/// warlock may take both and choose per beam which to apply. The engine
+/// has no channel to ask, and applying both to one beam is a push and a
+/// pull of the same magnitude — the target ends where it started, and
+/// the two invocations cancel into nothing. So the templates carry one
+/// or the other, and `no_warlock_takes_both_blast_movement_invocations`
+/// keeps it that way; the cast site itself lets Repelling Blast win, so
+/// a hand-built fixture holding both still gets the unconditional
+/// clause rather than an alternating jitter.
+pub const GRASP_OF_HADAR_TAG: &str = "warlock.grasp_of_hadar";
+
+/// Warlock Eldritch Invocation — **Lance of Lethargy** (XGtE). *"Once on
+/// each of your turns when you hit a creature with your Eldritch Blast,
+/// you can reduce that creature's speed by 10 feet until the end of your
+/// next turn."*
+///
+/// The whole effect is `Condition::Hobbled`, which already exists and is
+/// already exactly this sentence — it is the Slow weapon mastery's
+/// −10 ft, and RAW's *"the reduction doesn't exceed 10 feet"* falls out
+/// of a condition being a set membership rather than a stacking counter.
+/// Sharing the flag is right rather than convenient: two rules that say
+/// the same thing about the same target should not be two flags that can
+/// disagree.
+///
+/// Same once-per-turn ledger as Grasp of Hadar above, for the same RAW
+/// clause. Unlike the grasp it composes with Repelling Blast rather than
+/// contradicting it, and the pair is the reason the baseline warlock
+/// carries both: the push opens ten feet and the lance takes away the
+/// ten feet that would have closed it again.
+pub const LANCE_OF_LETHARGY_TAG: &str = "warlock.lance_of_lethargy";
 
 /// Warlock Eldritch Invocation — **Eldritch Mind**. Passive feature: the
 /// holder rolls with advantage on Constitution saving throws to maintain

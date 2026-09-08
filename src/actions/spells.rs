@@ -5014,8 +5014,10 @@ impl Action for EldritchBlast {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::class_features::{AGONIZING_BLAST_TAG, REPELLING_BLAST_TAG};
-        use crate::engine::side_effects::PushActor;
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, GRASP_OF_HADAR_TAG, LANCE_OF_LETHARGY_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::engine::side_effects::{PullActor, PushActor};
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -5031,6 +5033,26 @@ impl Action for EldritchBlast {
         // targets per RAW's "Large or smaller" clause).
         let agonizing = caster.feature_available(AGONIZING_BLAST_TAG);
         let repelling = caster.feature_available(REPELLING_BLAST_TAG);
+        // 5e XGtE Grasp of Hadar / Lance of Lethargy — the two
+        // invocations whose RAW clause is "once on each of your turns
+        // when you hit a creature with your Eldritch Blast". Both read
+        // the shared once-per-turn ledger rather than a charge: the
+        // invocation is permanent and free, and what RAW rations is the
+        // window, not the resource. `once_per_turn_used` is snapshotted
+        // here and re-checked inside the beam loop, because the loop
+        // marks the ledger the moment a beam cashes it.
+        //
+        // Grasp of Hadar yields to Repelling Blast when a fixture holds
+        // both. See `GRASP_OF_HADAR_TAG` for why the two are exclusive
+        // on the templates and why *this* is the tiebreak: the push is
+        // the unconditional per-beam clause, so letting it win keeps a
+        // both-invocation warlock's blast readable as one rule rather
+        // than as a four-tile shove that a later beam undoes.
+        let grasping = !repelling
+            && caster.feature_available(GRASP_OF_HADAR_TAG)
+            && !caster.once_per_turn_used(GRASP_OF_HADAR_TAG);
+        let lancing = caster.feature_available(LANCE_OF_LETHARGY_TAG)
+            && !caster.once_per_turn_used(LANCE_OF_LETHARGY_TAG);
         let damage_bonus = if agonizing {
             // RAW: add CHA mod, floor at 0 — a negative CHA modifier
             // doesn't reduce beam damage (the invocation only buffs).
@@ -5052,6 +5074,13 @@ impl Action for EldritchBlast {
         // This matches 5e RAW: each beam can hit or miss individually and
         // triggers on-hit riders (Hex, Hunter's Mark, etc.) per beam.
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // The two once-per-turn invocations' windows, spent by the first
+        // beam that lands. Tracked locally rather than by re-reading the
+        // ledger each iteration because the ledger is written by the
+        // *side effect*, which applies after this builder returns — the
+        // beams are queued here, not resolved here.
+        let mut grasp_left = grasping;
+        let mut lance_left = lancing;
         for i in 0..beam_count {
             let label = if beam_count > 1 {
                 format!("eldritch blast (beam {})", i + 1)
@@ -5081,6 +5110,45 @@ impl Action for EldritchBlast {
                     actor_id: target_id,
                     from: caster_loc,
                     max_tiles: 4,
+                }));
+            }
+            // Grasp of Hadar: the first beam that lands drags the target
+            // four tiles toward the warlock, and closes the window. The
+            // mark goes on the caster here rather than in a side effect
+            // because the *window* is spent by the decision, not by the
+            // movement — a pull that a wall or a body stops short still
+            // used the once-per-turn clause.
+            if grasp_left && damage > 0 {
+                grasp_left = false;
+                if let Some(c) = encounter.actors.get_mut(&caster_id) {
+                    c.mark_once_per_turn_used(GRASP_OF_HADAR_TAG);
+                }
+                encounter.log("  grasp of hadar: the beam reels the target in.".to_string());
+                effects.push(Box::new(PullActor {
+                    actor_id: target_id,
+                    toward: caster_loc,
+                    max_tiles: 4,
+                }));
+            }
+            // Lance of Lethargy: same window, same first-landing beam,
+            // and the shared −10 ft flag.
+            if lance_left && damage > 0 {
+                lance_left = false;
+                if let Some(c) = encounter.actors.get_mut(&caster_id) {
+                    c.mark_once_per_turn_used(LANCE_OF_LETHARGY_TAG);
+                }
+                encounter.log(
+                    "  lance of lethargy: the target's legs go heavy, 10 ft off its speed."
+                        .to_string(),
+                );
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Hobbled,
+                    // RAW is "until the end of your next turn" — one
+                    // round longer than the Slow weapon mastery's "until
+                    // the start of your next turn", which is why this is
+                    // 2 rounds where `mastery::slow` is 1.
+                    timer: ConditionTimer::Rounds(2),
                 }));
             }
         }

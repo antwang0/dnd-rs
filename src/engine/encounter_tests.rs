@@ -14202,6 +14202,197 @@ fn agonizing_blast_adds_cha_to_each_beam() {
     );
 }
 
+/// 5e XGtE **Lance of Lethargy** — "once on each of your turns when you
+/// hit a creature with your Eldritch Blast, you can reduce that
+/// creature's speed by 10 feet". The baseline warlock carries it; a beam
+/// that lands leaves the target Hobbled, and one that misses does not.
+#[test]
+fn lance_of_lethargy_hobbles_a_target_a_beam_landed_on() {
+    use crate::actions::class_features::LANCE_OF_LETHARGY_TAG;
+    use crate::actions::spells::ELDRITCH_BLAST;
+    use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+    let mut saw_hit = false;
+    let mut saw_miss = false;
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&warlock].feature_available(LANCE_OF_LETHARGY_TAG),
+            "lance of lethargy invocation installed on the baseline warlock"
+        );
+        let start_hp = e.actors[&target].hitpoints();
+        let effects = ELDRITCH_BLAST.execute(&mut e, warlock, Some(&vec![target]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let Some(end) = e.actors.get(&target) else {
+            continue;
+        };
+        let landed = start_hp > end.hitpoints();
+        let hobbled = end.has_condition(Condition::Hobbled);
+        assert_eq!(
+            landed, hobbled,
+            "seed {}: Hobbled should track exactly whether a beam landed",
+            seed
+        );
+        saw_hit |= landed;
+        saw_miss |= !landed;
+        if saw_hit && saw_miss {
+            break;
+        }
+    }
+    assert!(saw_hit, "expected some seed to land a beam");
+    assert!(saw_miss, "expected some seed to miss with every beam");
+}
+
+/// The clause that makes Lance of Lethargy an invocation rather than a
+/// rider: *once on each of your turns*. A level-17 warlock fires four
+/// beams from one Action, and RAW spends the window on the first of them
+/// that lands rather than on each — so the ledger mark is what the
+/// second beam has to find, not the condition.
+#[test]
+fn lance_of_lethargy_spends_one_window_however_many_beams_land() {
+    use crate::actions::class_features::LANCE_OF_LETHARGY_TAG;
+    use crate::actions::spells::ELDRITCH_BLAST;
+    use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let start_hp = e.actors[&target].hitpoints();
+        let effects = ELDRITCH_BLAST.execute(&mut e, warlock, Some(&vec![target]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let Some(end) = e.actors.get(&target) else {
+            continue;
+        };
+        if start_hp <= end.hitpoints() {
+            continue;
+        }
+        assert!(
+            e.actors[&warlock].once_per_turn_used(LANCE_OF_LETHARGY_TAG),
+            "a landed beam closes the once-per-turn window"
+        );
+        // Lift the condition and blast again on the same turn. The
+        // window is spent, so nothing re-hobbles — which is the half a
+        // condition-only check cannot see, since Hobbled is a set
+        // membership and re-applying it is invisible.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .remove_condition(Condition::Hobbled);
+        let again = ELDRITCH_BLAST.execute(&mut e, warlock, Some(&vec![target]), None, None);
+        for ef in again {
+            ef.apply(&mut e);
+        }
+        if let Some(t) = e.actors.get(&target) {
+            assert!(
+                !t.has_condition(Condition::Hobbled),
+                "seed {}: the second cast on the same turn has no window left",
+                seed
+            );
+        }
+        return;
+    }
+    panic!("expected some seed in 80 trials to land a beam");
+}
+
+/// 5e XGtE **Grasp of Hadar** — the Fathomless warlock's invocation
+/// swap. Its blast reels the target four tiles *toward* the warlock
+/// where every other warlock's shoves four tiles away, and it does so
+/// once a turn rather than per beam.
+#[test]
+fn grasp_of_hadar_reels_the_target_toward_the_fathomless_warlock() {
+    use crate::actions::class_features::{GRASP_OF_HADAR_TAG, REPELLING_BLAST_TAG};
+    use crate::actions::spells::ELDRITCH_BLAST;
+    use crate::actors::creatures::warlocks::FATHOMLESS_WARLOCK_TEMPLATE;
+
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let warlock = e
+            .instantiate_creature(&FATHOMLESS_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&warlock].feature_available(GRASP_OF_HADAR_TAG),
+            "the Fathomless chassis carries the grasp"
+        );
+        assert!(
+            !e.actors[&warlock].feature_available(REPELLING_BLAST_TAG),
+            "and gave up the push to take it"
+        );
+        let start_loc = e.actors[&target].location();
+        let start_hp = e.actors[&target].hitpoints();
+        let effects = ELDRITCH_BLAST.execute(&mut e, warlock, Some(&vec![target]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let Some(end) = e.actors.get(&target) else {
+            continue;
+        };
+        if start_hp <= end.hitpoints() {
+            continue;
+        }
+        let end_loc = end.location();
+        assert!(
+            end_loc.x < start_loc.x,
+            "seed {}: the grasp pulls toward the warlock, not away ({} -> {})",
+            seed,
+            start_loc,
+            end_loc
+        );
+        // Four tiles of pull and no more, however many beams landed.
+        assert_eq!(
+            start_loc.x - end_loc.x,
+            4,
+            "seed {}: one window, four tiles",
+            seed
+        );
+        return;
+    }
+    panic!("expected some seed in 80 trials to land a beam");
+}
+
+/// Grasp of Hadar and Repelling Blast move the same target the same
+/// distance in opposite directions, so a warlock holding both would
+/// spend two invocations on a net displacement of zero. RAW allows the
+/// pair — it lets the caster pick per beam, which this engine has no
+/// channel to ask — so the exclusion lives on the templates, and this
+/// sweep is what keeps it there.
+#[test]
+fn no_warlock_takes_both_blast_movement_invocations() {
+    use crate::actions::class_features::{GRASP_OF_HADAR_TAG, REPELLING_BLAST_TAG};
+
+    for (family, templates) in crate::actors::creatures::pc_template_families() {
+        for t in templates {
+            assert!(
+                !(t.features.contains(GRASP_OF_HADAR_TAG)
+                    && t.features.contains(REPELLING_BLAST_TAG)),
+                "{} template `{}` holds both blast-movement invocations; they cancel",
+                family,
+                t.name
+            );
+        }
+    }
+}
+
 /// 5e Warlock Eldritch Invocation: Eldritch Mind — advantage on
 /// Constitution saves to maintain concentration. End-to-end: a sweep
 /// of damage-while-concentrating events drops concentration less
@@ -78920,6 +79111,14 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
     /// feat rerolls the swing's existing dice rather than adding any of
     /// its own, so there is no die pool for either cohort to describe.
     ///
+    /// The last two are open-coded for a reason neither cohort can fix:
+    /// both cohorts are keyed to a *weapon attack's* resolution, and
+    /// Grasp of Hadar and Lance of Lethargy are keyed to an Eldritch
+    /// Blast **beam**. One cantrip fires four of them from a single
+    /// Action, which is exactly the case their shared once-per-turn
+    /// window exists to cap, and the only place that can see a beam is
+    /// the cantrip's own loop.
+    ///
     /// Listed rather than allowed by default, so the day one of them
     /// moves onto a cohort this test says so instead of shrugging.
     const OPEN_CODED: &[&str] = &[
@@ -78929,6 +79128,8 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         FEROCIOUS_CHARGER_TAG,
         ANCESTRAL_PROTECTORS_TAG,
         crate::actions::feats::SAVAGE_ATTACKER_TAG,
+        crate::actions::class_features::GRASP_OF_HADAR_TAG,
+        crate::actions::class_features::LANCE_OF_LETHARGY_TAG,
     ];
 
     let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();
