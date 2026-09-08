@@ -2747,20 +2747,29 @@ pub static SCROLL_OF_PROTECTION_FROM_POISON: Item = Item {
 };
 
 // ---------------------------------------------------------------------
-// The magic armoury — SRD 5.2's named magic weapons.
+// The magic armoury — SRD 5.2's named magic weapons, and one suit of
+// armour that keeps their company.
 //
 // Everything above this line is a trinket: it bumps a number, grants a
-// resistance, or is drunk once and gone. These eight are the other half
+// resistance, or is drunk once and gone. These nine are the other half
 // of 5e's loot table, the half whose text is a clause rather than a
-// bonus, and they all reach the engine the same way: an item whose
+// bonus. `MAGIC_ARMOURY` below is the set, and the invariants read it
+// rather than restating it.
+//
+// The eight weapons all reach the engine the same way: an item whose
 // `passive_conditions` install a marker while it is carried, and one row
 // on `engine::attack::ON_HIT_RIDERS` keyed to that marker. See
 // `Condition::DragonSlaying` for why the family is shaped that way and
-// what it deliberately does not model.
+// what it deliberately does not model. Two of the eight arrive switched
+// off and are lit with a bonus action (`item_actions::KindleWeapon`);
+// the other six work the moment they are picked up.
 //
-// Two of the eight arrive switched off and are lit with a bonus action
-// (`item_actions::KindleWeapon`); the other six work the moment they are
-// picked up.
+// The ninth, the Adamantine Armor, is here because it is the same *kind*
+// of item and not because it is a weapon: its entire value is a printed
+// rule rather than a number. It rides its own lane — see
+// `crate::engine::criticals` — and the invariant sweep below uses it as
+// the row that proves the "only weapons sharpen a swing" check still
+// bites.
 // ---------------------------------------------------------------------
 
 /// **Dragon Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus
