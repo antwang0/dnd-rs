@@ -3543,7 +3543,8 @@ fn try_heightened_spell(
 /// sorcery point to let up to CHA-mod allies auto-pass + take 0 damage
 /// on the next AoE. Fire when:
 /// - The sorcerer has SP available and the prime isn't already up.
-/// - The sorcerer has a Burst-targeting harmful action in their kit (a
+/// - The sorcerer has a harmful *area* action in their kit — a burst, a
+///   cone or a line (a
 ///   prime that never feeds a blast is wasted SP).
 /// - At least one ally (the sorcerer themselves counts) sits within
 ///   ~5 tiles of a combat-active enemy — close enough that a typical
@@ -3561,7 +3562,7 @@ fn try_careful_spell(
     if actor.has_condition(Condition::CarefulSpelling) {
         return None;
     }
-    // Only fire when the caster owns at least one burst-targeting AoE
+    // Only fire when the caster owns at least one area action
     // — otherwise the prime never engages and the SP is wasted.
     let has_aoe = actor
         .actions
@@ -6252,7 +6253,7 @@ fn try_breath_weapon(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Every harmful Burst action gated on a recharge pool the actor
+    // Every harmful *area* action gated on a recharge pool the actor
     // currently has up. Two facts, both declared by the action itself:
     // the shape (`Burst`) and the gate (`recharge_key`).
     let breath_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
@@ -8075,12 +8076,13 @@ fn try_support_heal(
     best.map(|(_, aei)| aei)
 }
 
-/// Try to fire a Burst-schema action centered on a tile that hits as many
+/// Try to fire an area action — a burst centred on a tile, or a cone or
+/// line aimed through one — that catches as many
 /// enemies as possible without catching any allies. Candidate tiles are
 /// every combat-active enemy's location (we don't sweep the full map —
 /// the optimum is always near an enemy footprint). Picks the tile with
 /// the highest enemy-hit count, ties broken by lower target-id of the
-/// "anchor" enemy for determinism. Returns None if no Burst action exists,
+/// "anchor" enemy for determinism. Returns None if no area action exists,
 /// or no point hits 2+ enemies cleanly.
 fn try_attack_aoe(
     encounter: &EncounterInstance,
@@ -8350,10 +8352,10 @@ fn try_control_water(
 }
 
 /// Shared "where do I drop this burst?" search, used by both burst
-/// pickers: `try_attack_aoe` (any harmful Burst action the actor owns)
+/// pickers: `try_attack_aoe` (any harmful area action the actor owns)
 /// and `try_area_control` (only the battlefield-control spells).
 ///
-/// `accept` filters which of the actor's Burst actions are eligible,
+/// `accept` filters which of the actor's area actions are eligible,
 /// and is the only thing that differs between the two callers — the
 /// candidate-point enumeration, the friendly-fire gate, the two-enemy
 /// minimum and the deterministic tie-break are identical, and were
@@ -8374,7 +8376,7 @@ fn best_burst_placement(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Find Burst actions we own. Most actors have none — bail early.
+    // Find area actions we own. Most actors have none — bail early.
     let burst_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
         .actions
         .iter()
@@ -8518,11 +8520,11 @@ fn best_burst_placement(
     best.map(|(_, _, aei)| aei)
 }
 
-/// Battlefield-control area spells — Burst-schema concentration spells
+/// Battlefield-control area spells — area-schema concentration spells
 /// whose value is the condition they install, not the damage they do.
 ///
 /// These exist on the wizard and druid chassis and the AI never cast
-/// them. `try_attack_aoe` scores every Burst action the actor owns by
+/// them. `try_attack_aoe` scores every area action the actor owns by
 /// one number, how many hostiles the blast catches, so a control spell
 /// only wins when it strictly out-covers every damage spell in the
 /// loadout — and it almost never does, because Fireball's radius is as
@@ -11618,7 +11620,7 @@ mod tests {
     }
 
     /// `try_careful_spell` fires when the sorcerer has SP, hasn't primed
-    /// it, owns a Burst-targeting AoE, and has at least one ally close
+    /// it, owns a harmful area action, and has at least one ally close
     /// to an enemy. Skipped when no ally-near-enemy pair exists.
     #[test]
     fn careful_spell_ai_gates_on_ally_proximity_to_enemy() {
@@ -14429,7 +14431,7 @@ mod tests {
     /// Self-centered NoArgs burst (Thunderwave) fires when 2+ enemies sit
     /// within the AI's heuristic cluster window. Verifies the new
     /// try_self_centered_burst slot picks up NoArgs-harmful actions that
-    /// neither try_attack_aoe (Burst-only) nor try_attack_focus_fire
+    /// neither try_attack_aoe (areas only) nor try_attack_focus_fire
     /// (SingleActor-only) would consider.
     #[test]
     fn ai_fires_self_centered_burst_when_clustered() {

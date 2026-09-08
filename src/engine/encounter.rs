@@ -16966,22 +16966,28 @@ impl EncounterInstance {
         if !self.actor_has_line_of_sight(attacker_id, target_id) {
             return false;
         }
-        // Either a SingleActor ranged attack OR a Burst-schema attack
-        // (Fireball, Cone of Cold, Erupting Earth, dragon breath, etc.)
-        // whose reach covers the target — both count as a viable
-        // engagement option. Without the Burst clause, AoE-only
+        // Either a SingleActor ranged attack OR an *area* one — a
+        // burst (Fireball, Erupting Earth), a cone (Cone of Cold,
+        // dragon breath) or a line (Lightning Bolt, a behir's) — whose
+        // reach covers the target. All of them count as a viable
+        // engagement option. Without the area clause, AoE-only
         // attackers behind a path-blocked wall were falsely marked as
         // stalemate-locked even when they could lob a Fireball at the
         // unreachable enemy.
+        //
+        // Asked through `area_shape` rather than by naming `Burst`,
+        // which is the shape this test used to name and the one it
+        // stopped being sufficient the day dragon breath became a cone:
+        // a red dragon's only ranged option is its breath, and a
+        // hard-coded `Burst` arm would have called a dragon on the
+        // wrong side of a wall deadlocked.
         attacker.actions.iter().any(|a| {
             let in_range = a.reach_tiles().is_some_and(|r| r > MELEE_REACH && dist <= r);
             if !in_range {
                 return false;
             }
-            matches!(
-                a.targeting_schema(),
-                TargetingSchema::SingleActor | TargetingSchema::Burst { .. }
-            )
+            let schema = a.targeting_schema();
+            matches!(schema, TargetingSchema::SingleActor) || schema.area_shape().is_some()
         })
     }
 
