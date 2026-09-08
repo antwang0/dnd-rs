@@ -77,6 +77,20 @@ pub struct ConjuredTerrain {
     pub rounds_remaining: u32,
     /// True if the owner's concentration holds it up.
     pub concentration: bool,
+    /// What the install log says this patch did to the tiles it took.
+    ///
+    /// Every patch until Control Water put something *there* — a wall,
+    /// a pane of force, a sheet of ice — and "rises across N tiles" is
+    /// the right sentence for all of them. Parting a lake takes tiles
+    /// the same way and does the opposite thing with them, and a log
+    /// line reading "control water rises across 12 tiles" describes a
+    /// flood the spell did not cause.
+    ///
+    /// A field rather than something derived from `terrain_type`,
+    /// because the same type means different things depending on what
+    /// it replaced: `Floor` written over `Water` is a trench and
+    /// `Floor` written over `Wall` would be a doorway.
+    pub verb: &'static str,
 }
 
 impl ConjuredTerrain {
@@ -98,7 +112,14 @@ impl ConjuredTerrain {
             restore: Vec::new(),
             rounds_remaining,
             concentration,
+            verb: "rises across",
         }
+    }
+
+    /// Replace the install log's verb. See `verb`.
+    pub fn with_verb(mut self, verb: &'static str) -> Self {
+        self.verb = verb;
+        self
     }
 
     /// True if this patch is holding `coord`.

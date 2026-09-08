@@ -7029,9 +7029,9 @@ impl EncounterInstance {
             self.set_terrain_at(coord, patch.terrain_type);
             patch.restore.push((coord, was));
         }
-        let (name, taken) = (patch.name, patch.restore.len());
+        let (name, verb, taken) = (patch.name, patch.verb, patch.restore.len());
         self.conjured_terrain.push(patch);
-        self.log(format!("  {} rises across {} tiles.", name, taken));
+        self.log(format!("  {} {} {} tiles.", name, verb, taken));
         id
     }
 

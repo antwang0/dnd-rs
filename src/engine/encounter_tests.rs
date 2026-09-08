@@ -88959,3 +88959,111 @@ fn no_source_of_fear_installs_it_without_a_link() {
         offenders.join("\n  ")
     );
 }
+
+/// **Control Water**, Part Water: the trench is a patch of conjured
+/// terrain like any other, except that it takes an obstacle away
+/// instead of raising one — and hands it back when the caster stops
+/// concentrating.
+///
+/// The assertions are the whole of what the spell is worth: a creature
+/// standing in the parted water is no longer immersed, so nothing in
+/// `engine::underwater` or `engine::breath` charges it any more.
+#[test]
+fn control_water_parts_a_lake_and_gives_it_back_when_concentration_drops() {
+    use crate::actions::spells::CONTROL_WATER;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // Wider than the trench, so the assertion below has a corner of
+    // lake to check that the spell left alone.
+    for x in 5..=17isize {
+        for y in 5..=17isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wader = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+        .unwrap();
+    assert!(
+        e.is_immersed(wader),
+        "the goblin starts in the lake, which is the case the spell is for"
+    );
+
+    let point = vec![Coordinate::new(10, 10)];
+    assert!(
+        CONTROL_WATER.validate_input(&e, druid, None, Some(&point), None),
+        "a wet board within reach is a legal cast"
+    );
+    for ef in CONTROL_WATER.execute(&mut e, druid, None, Some(&point), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.terrain_at(Coordinate::new(10, 10)).map(|t| t.terrain_type),
+        Some(TerrainType::Floor),
+        "the water parts"
+    );
+    assert!(
+        !e.is_immersed(wader),
+        "and the creature standing in it is out of the water"
+    );
+    // The lake outside the trench is untouched — the burst has a radius
+    // and the spell is not a drain.
+    assert_eq!(
+        e.terrain_at(Coordinate::new(17, 17)).map(|t| t.terrain_type),
+        Some(TerrainType::Water),
+        "the far corner of the pool is outside the trench"
+    );
+
+    e.drop_concentration(druid);
+    assert_eq!(
+        e.terrain_at(Coordinate::new(10, 10)).map(|t| t.terrain_type),
+        Some(TerrainType::Water),
+        "the water comes back when the druid stops holding it apart"
+    );
+    assert!(e.is_immersed(wader));
+}
+
+/// The spell refuses a dry board rather than spending a 4th-level slot
+/// on nothing, and refuses a wet board aimed at a dry corner of it.
+#[test]
+fn control_water_declines_a_burst_with_no_water_in_it() {
+    use crate::actions::spells::CONTROL_WATER;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+
+    let mut dry = ei_with_terrain(20, 20, &[]);
+    let druid = dry
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(!dry.has_water());
+    assert!(
+        !CONTROL_WATER.validate_input(&dry, druid, None, Some(&vec![Coordinate::new(10, 10)]), None),
+        "no lake, no spell"
+    );
+
+    // A pool in one corner and the cast aimed at the other: the board
+    // gate passes and the burst still finds nothing to part.
+    let mut wet = ei_with_terrain(20, 20, &[]);
+    for x in 1..=3isize {
+        for y in 1..=3isize {
+            wet.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let druid = wet
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(wet.has_water());
+    assert!(
+        !CONTROL_WATER.validate_input(
+            &wet,
+            druid,
+            None,
+            Some(&vec![Coordinate::new(15, 15)]),
+            None
+        ),
+        "a burst on dry ground parts nothing, however wet the far corner is"
+    );
+}

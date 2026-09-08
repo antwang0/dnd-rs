@@ -74,6 +74,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // surcharge. Declines to cast on a dry board, and skips anyone
     // whose stat block already says they breathe down there.
     actions.push(&*crate::actions::spells::WATER_BREATHING);
+    // Control Water (lv4) — the third row on that lane, and the one the
+    // other two are described against. Water Walk and Water Breathing
+    // each buy the party an exemption from one clause of the water;
+    // this takes the water away, and with it every clause at once.
+    actions.push(&*crate::actions::spells::CONTROL_WATER);
     actions.push(&*DISPEL_MAGIC);
     actions.push(&*PLANT_GROWTH);
     actions.push(&*FLY);

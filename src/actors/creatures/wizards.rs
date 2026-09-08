@@ -416,6 +416,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // surcharge. Declines to cast on a dry board, and skips anyone
     // whose stat block already says they breathe down there.
     actions.push(&*crate::actions::spells::WATER_BREATHING);
+    // Control Water (lv4) — the arcane list carries it too, and on this
+    // chassis it is the transmuter's answer to a fight the enemy chose
+    // the ground for. Costs nothing to carry on a dry board: the
+    // validator refuses the cast rather than the AI declining it.
+    actions.push(&*crate::actions::spells::CONTROL_WATER);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
     // Arcane Recovery — Wizard signature once-per-rest spell-slot
     // recovery. Slot-restoration on short rest gives the wizard a clean

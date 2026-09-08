@@ -34184,3 +34184,196 @@ impl Action for PartyBuffSpell {
             .collect()
     }
 }
+
+/// **Control Water** — SRD 5.2 level-4 transmutation (Cleric, Druid,
+/// Wizard), 300 ft, concentration up to 10 minutes.
+///
+/// > Until the spell ends, you control any freestanding water inside an
+/// > area you choose... You can choose from any of the following
+/// > effects when you cast this spell.
+///
+/// RAW offers four, and this ships one: **Part Water**.
+///
+/// > *Part Water.* You cause water in the area to move apart and create
+/// > a trench. The trench extends across the spell's area, and the
+/// > separated water forms a wall to either side.
+///
+/// The engine's terrain layer has exactly one wet tile type and one dry
+/// one, so a trench is a patch of `Water` retyped to `Floor` and handed
+/// back when the caster's grip fails or the clock runs out — the first
+/// `ConjuredTerrain` on the roster that *removes* an obstacle rather
+/// than raising one, and the reason `ConjuredTerrain::verb` exists.
+///
+/// **What the trench is worth** is everything `engine::underwater` and
+/// `engine::breath` charge for standing in water, and it is a long list
+/// for one 4th-level slot: the doubled movement cost, disadvantage on
+/// every melee swing by anything without a swimming speed, disadvantage
+/// on every ranged attack whatever is holding the bow, resistance to
+/// fire for anyone still in the water, and the suffocation clock. All of
+/// it reads the terrain, so all of it stops the moment the tile is dry
+/// and starts again when the spell ends.
+///
+/// That makes it a *normaliser* rather than a weapon, and the right
+/// spell against exactly one kind of enemy: the sahuagin, the merrow and
+/// the kraken who were fighting in their own element and are now
+/// fighting in yours. Against a warband on dry land it is unspendable,
+/// which is the AI gate below.
+///
+/// **The three modes not shipped**, each for its own reason rather than
+/// as a batch:
+///
+///   - **Flood** — "you cause the water level of all standing water in
+///     the area to rise by as much as 20 feet". The engine's `Water`
+///     tile is not a depth, it is a state: a creature standing on one is
+///     *in* the water, which starts the breath clock in
+///     `engine::breath`. RAW's flood makes creatures swim and does not
+///     drown them, so shipping Flood as "retype the shoreline to water"
+///     would hand a 4th-level slot a drowning effect the spell does not
+///     have. It needs a depth axis the terrain layer does not carry.
+///   - **Whirlpool** — a vortex with a save, a pull and 2d8 bludgeoning,
+///     which the zone layer could express; it needs Flood first, because
+///     RAW requires "at least 50 feet square and 25 feet deep" of water
+///     to form in.
+///   - **Redirect Flow** — a current, on a board with no current.
+pub struct ControlWater {}
+
+impl ControlWater {
+    /// Half-width of the trench, in tiles. RAW's area is a cube up to
+    /// 100 ft on a side, which is twice the width of this engine's
+    /// largest generated map; a 9x9 block is a little over 20 ft of
+    /// board and about as much of a pool as the generator ever lays in
+    /// one place.
+    const RADIUS: isize = 4;
+
+    /// Every water tile inside the trench's footprint. The spell's whole
+    /// question, asked identically by the validator and the resolver —
+    /// "would this part anything" and "what does this part" are the same
+    /// sentence, and a copy at each site is a copy that can drift.
+    fn water_tiles(encounter: &EncounterInstance, point: Coordinate) -> Vec<Coordinate> {
+        let mut tiles = Vec::new();
+        for dy in -Self::RADIUS..=Self::RADIUS {
+            for dx in -Self::RADIUS..=Self::RADIUS {
+                let c = point + Coordinate::new(dx, dy);
+                if encounter
+                    .terrain_at(c)
+                    .is_some_and(|t| t.terrain_type.is_water())
+                {
+                    tiles.push(c);
+                }
+            }
+        }
+        tiles
+    }
+}
+
+impl Action for ControlWater {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "control water"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw", "part-water", "control-water"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft RAW, which is six times the widest board. Held at 48
+        // tiles — the same 120 ft every other long-range spell in this
+        // file uses — so the number on the sheet is one somebody can
+        // check rather than one that means "anywhere".
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Nothing lands on anybody. The trench takes a penalty away from
+        // whoever is standing in it and takes an advantage away from
+        // whoever was swimming, and which of those matters is a fact
+        // about the fight rather than about the spell.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !encounter.caster_can_concentrate(caster_id) {
+            return false;
+        }
+        // No lake, no spell. Cheap enough to ask first that the burst
+        // walk below never runs on the maps where it would find nothing.
+        if !encounter.has_water() {
+            return false;
+        }
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        !Self::water_tiles(encounter, point).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let tiles = Self::water_tiles(encounter, point);
+        if tiles.is_empty() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ConjureTerrain {
+                patch: ConjuredTerrain::new(
+                    "control water",
+                    caster_id,
+                    TerrainType::Floor,
+                    tiles,
+                    // 10 minutes RAW; the ten rounds every other
+                    // concentration area in this file runs for.
+                    10,
+                    true,
+                )
+                .with_verb("parts"),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Control Water"),
+            }),
+        ]
+    }
+}
+
+pub static CONTROL_WATER: LazyLock<ControlWater> = LazyLock::new(|| ControlWater {});

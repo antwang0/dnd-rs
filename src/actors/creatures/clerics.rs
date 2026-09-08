@@ -50,6 +50,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // give it to them, and the divine list's answer to a dark room is
     // Daylight rather than better eyes.
     actions.push(&*crate::actions::spells::WATER_WALK);
+    // Control Water (lv4) — also on the cleric's RAW list, and the
+    // heavier of the two answers to a lake: Water Walk exempts the
+    // party from the water, this parts it. Declines to be cast on a dry
+    // board, so it costs a cleric nothing to carry.
+    actions.push(&*crate::actions::spells::CONTROL_WATER);
     actions.push(&*FAERIE_FIRE);
     actions.push(&*BANE);
     actions.push(&*SPIRITUAL_WEAPON);

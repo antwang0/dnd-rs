@@ -970,6 +970,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3h'''. Control Water — part the lake out from under a fight
+        //        being had in it. Below the control registry above for
+        //        the reason that registry's own membership test gives:
+        //        those spells take hostiles out of the fight, and this
+        //        one only changes the terms of it. Above every buff
+        //        below because it is the same *kind* of decision as the
+        //        rung above — one concentration spent on the whole
+        //        board rather than on one creature — and because the
+        //        board state it needs is rare enough that letting a
+        //        turn-one Foresight lock it out would mean it never
+        //        fires at all.
+        if let Some(aei) = try_control_water(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3i. Foresight — level-9 single-target ally apex buff. Lay it
         //     on the toughest ally before they engage. Highest priority
         //     of the support-buff lane because the slot is precious.
@@ -8161,6 +8176,107 @@ fn try_wall_off_approach(
         let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![anchor]), None);
         aei.validate(encounter).then_some(aei)
     })
+}
+
+/// How much a creature standing in water gets back when the water is
+/// taken away — the weight `try_control_water` scores each side by.
+///
+/// Everything in the lake pays *something*: `engine::underwater` gives
+/// every ranged attack disadvantage whatever is holding the bow, and
+/// `engine::breath` runs the suffocation clock on anyone without gills.
+/// A creature with a swimming speed pays that and no more. A creature
+/// without one also pays double for every tile it crosses and swings
+/// every melee attack at disadvantage, which is most of what it does on
+/// a turn.
+///
+/// So the trench is worth roughly three times as much to the creature
+/// that cannot swim, and the spell is worth casting when that creature
+/// is on the caster's side of the fight. Two rungs rather than a real
+/// model, because the question the caller asks is which side gains more
+/// and not by how much.
+const TRENCH_WORTH_TO_SWIMMER: i32 = 1;
+const TRENCH_WORTH_TO_LANDLUBBER: i32 = 3;
+
+/// **Control Water** — part the lake out from under a fight being had
+/// in it.
+///
+/// The spell takes nothing away from anybody and hands something to
+/// everybody standing in the water, so the only question worth asking
+/// is who is standing in it. `try_area_control`'s scorer counts bodies
+/// caught in a blast; this one counts a *difference*, and would be
+/// wrong on that rung: a trench over four immersed enemies and no
+/// allies is the worst cast on the board, not the best one.
+///
+/// Candidate points are creature locations, the same enumeration
+/// `best_burst_placement` uses and for the same reason — a burst that is
+/// not centred on somebody is nearly always worse than one that is —
+/// except that allies are candidates here too. The party wading a ford
+/// under fire is precisely the case the spell is for, and the enemy is
+/// on the bank.
+///
+/// Ties break on the lowest anchor id so a seeded run reproduces.
+fn try_control_water(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let action = actor.find_action("control water")?;
+    let TargetingSchema::Burst { radius } = action.targeting_schema() else {
+        return None;
+    };
+
+    let mut best: Option<(i32, usize, ActionExecutionInfo)> = None;
+    for anchor_id in encounter.sorted_actor_ids() {
+        let Some(anchor) = encounter.actors.get(&anchor_id) else {
+            continue;
+        };
+        if !anchor.is_combat_active() {
+            continue;
+        }
+        let point = anchor.location();
+        let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![point]), None);
+        // Reach, line of sight, the slot, the caster's free
+        // concentration and "is there any water in this burst at all"
+        // are all the action's own gates. Asking them first keeps the
+        // scoring walk off every point the spell could not reach.
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let mut score = 0i32;
+        for other_id in encounter.sorted_actor_ids() {
+            let Some(other) = encounter.actors.get(&other_id) else {
+                continue;
+            };
+            if !other.is_combat_active() || !encounter.is_immersed(other_id) {
+                continue;
+            }
+            let gap = footprint_chebyshev(
+                other.location(),
+                get_tiles_from_size(other.size()),
+                point,
+                1,
+            );
+            if gap > radius {
+                continue;
+            }
+            let worth = if other.swims_freely() {
+                TRENCH_WORTH_TO_SWIMMER
+            } else {
+                TRENCH_WORTH_TO_LANDLUBBER
+            };
+            score += if other.team() == my_team { worth } else { -worth };
+        }
+        if score <= 0 {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(s, _, _)| score > *s) {
+            best = Some((score, anchor_id, aei));
+        }
+    }
+    best.map(|(_, _, aei)| aei)
 }
 
 /// Shared "where do I drop this burst?" search, used by both burst
@@ -18476,4 +18592,75 @@ mod tests {
         assert_ne!(picked.target_ids().map(|v| v.to_vec()), Some(vec![commoner]));
     }
 
+    /// **Control Water** — the AI parts the lake when its own side is
+    /// the one wading and declines when the enemy is. The trench hands
+    /// something to everybody standing in the water, so what decides the
+    /// cast is who that is; every other area rung in the ladder counts
+    /// bodies caught in a blast, and on this spell that scorer would
+    /// pick exactly the wrong point.
+    #[test]
+    fn the_ai_parts_the_water_for_its_own_side_and_not_for_the_enemys() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        // One board shape, two castings of the same fight: the three
+        // waders swap sides between them and nothing else moves.
+        let fight = |waders_are_allies: bool| -> bool {
+            let tp = TerrainGenParams {
+                width: 24,
+                height: 24,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+            // Flatten the generated map so the only terrain under test
+            // is the pool laid below it.
+            for y in 0..24isize {
+                for x in 0..24isize {
+                    e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+                }
+            }
+            for x in 6..=14isize {
+                for y in 6..=14isize {
+                    e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+                }
+            }
+            let druid = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let wader_team = if waders_are_allies { 0 } else { 1 };
+            for (i, x) in [8isize, 10, 12].into_iter().enumerate() {
+                e.instantiate_creature(
+                    &GOBLIN_TEMPLATE,
+                    Coordinate::new(x, 10),
+                    wader_team,
+                    i + 1,
+                )
+                .unwrap();
+            }
+            // Somebody hostile has to exist for the druid to have a
+            // fight at all.
+            if waders_are_allies {
+                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 19), 1, 9)
+                    .unwrap();
+            }
+            super::try_control_water(&e, druid).is_some()
+        };
+
+        assert!(
+            fight(true),
+            "three allies in the lake is what the spell is for"
+        );
+        assert!(
+            !fight(false),
+            "three enemies in the lake is the cast that helps them"
+        );
+    }
 }
