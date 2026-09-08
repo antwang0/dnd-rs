@@ -10009,15 +10009,24 @@ impl Action for PrayerOfHealing {
 
 pub static PRAYER_OF_HEALING: LazyLock<PrayerOfHealing> = LazyLock::new(|| PrayerOfHealing {});
 
-/// Sunbeam — level-6 evocation, concentration. RAW is a 60-ft line that
-/// blinds + damages each creature inside on a failed CON save (6d8
-/// radiant on fail, half on save). Modelled as a single-target ranged
-/// spell attack for engine simplicity (line targeting isn't yet a schema)
-/// — 6d8 radiant on hit, and the target is Blinded for one round.
-/// Concentration lets the caster sustain the spell to fire it on
-/// subsequent turns (we don't yet model the action-per-turn repeat
-/// rider, but the conc slot prevents stacking with other conc spells
-/// and clears on damage like every other concentration effect).
+/// Sunbeam — level-6 evocation, concentration. RAW: *"You launch a
+/// sunbeam in a 5-foot-wide, 60-foot-long Line. Each creature in the
+/// Line makes a Constitution saving throw. On a failed save, a creature
+/// takes 6d8 Radiant damage and has the Blinded condition until the
+/// start of your next turn. On a successful save, it takes half as much
+/// damage."*
+///
+/// It was a single-target *spell attack* — 6d8 on a hit, one victim —
+/// with a docstring saying why: "line targeting isn't yet a schema". It
+/// is now, so the spell is the spell. That changes it from a
+/// sixth-level slot spent on one creature into a sixth-level slot spent
+/// on a corridor, which is what makes it worth the concentration it
+/// costs.
+///
+/// RAW's per-turn repeat — the caster may fire the beam again on each
+/// subsequent turn with an action — is still not modelled; what the
+/// concentration buys here is the ordinary "one at a time" gate every
+/// other concentration spell rides.
 pub struct Sunbeam {}
 
 impl Action for Sunbeam {
@@ -10038,11 +10047,12 @@ impl Action for Sunbeam {
         vec!["sun", "beam"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 60-ft line ≈ 24 tiles.
-        Some(24)
+        // RAW's "5-foot-wide, 60-foot-long Line" — twenty-four tiles on
+        // the 2.5 ft grid, one tile of half-width.
+        TargetingSchema::Line {
+            length: 24,
+            half_width: 1,
+        }
     }
     fn requires_los(&self) -> bool {
         true
@@ -10064,41 +10074,40 @@ impl Action for Sunbeam {
         &self,
         encounter: &mut EncounterInstance,
         caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
+        let Some(aim) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(shape) = self.targeting_schema().area_shape() else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // The modifier follows the caster across all three casting
-        // abilities — see `spellcasting_attack_modifier`. Previously an
-        // open-coded max of INT and WIS only.
-        let attack_bonus = caster.spellcasting_attack_modifier();
-        let (effs, dealt) = spell_attack_outcome(
+        let dc = caster.spellcasting_save_dc();
+        let (mut effects, saves) = enemy_area_save_for_half(
             encounter,
             caster_id,
-            target_id,
-            "sunbeam",
-            attack_bonus,
+            shape,
+            aim,
+            AbilityScoreType::Constitution,
+            dc,
             Dice::new(6, 8),
-            0,
             DamageType::Radiant,
-            false,
+            "sunbeam",
         );
-        let mut effects = effs;
-        // On hit, target is also Blinded for one round (until start of
-        // their next turn) — the sun-flare clause from RAW.
-        if dealt > 0 {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Blinded,
-                timer: ConditionTimer::UntilStartOfNextTurn,
-            }));
-        }
+        // RAW's sun-flare clause, on the same save the damage rode: a
+        // creature that made it is dazzled and nothing more.
+        push_condition_on_failed_save(
+            &mut effects,
+            caster_id,
+            &saves,
+            Condition::Blinded,
+            ConditionTimer::UntilStartOfNextTurn,
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::new("Sunbeam"),

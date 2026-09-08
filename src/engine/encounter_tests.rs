@@ -19845,70 +19845,72 @@ fn prayer_of_healing_skips_distant_allies() {
     assert_eq!(e.actors[&far_ally].hitpoints(), before);
 }
 
-/// Sunbeam: single-target spell attack vs AC, on hit deals 6d8 radiant
-/// and Blinds the target until the start of their next turn.
-/// Use a low-AC goblin so the hit lands most seeds; we sweep a small
-/// seed window for stability.
+/// Sunbeam is RAW's 5-foot-wide, 60-foot-long Line: everybody standing
+/// in the beam makes a Constitution save, takes 6d8 radiant off one
+/// shared roll, and is blinded on a failure.
+///
+/// Two goblins in a row down the beam and one standing beside it, which
+/// is the assertion the single-target spell *attack* this replaced
+/// could not have made in either direction: it hit one creature, and
+/// which creature was the caster's whole decision.
 #[test]
-fn sunbeam_damages_and_blinds_on_hit() {
+fn sunbeam_burns_a_line_and_blinds_what_it_catches() {
     use crate::actions::spells::SUNBEAM;
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    use crate::conditions::Condition;
 
-    for seed in 0..20u64 {
-        let tp = crate::engine::terrain_gen::TerrainGenParams {
-            width: 20,
-            height: 20,
-            branch_depth: 0,
-            branch_prob: 0.0,
-        };
-        let ap = crate::engine::actor_gen::ActorGenParams {
-            cr_target: 0.0,
-            n_teams: 0,
-            pc_template: None,
-            start_team: 0,
-        };
-        let mut e =
-            EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
-        e.terrain = vec![
-            crate::engine::terrain::TerrainInfo {
-                terrain_type: crate::engine::terrain::TerrainType::Floor,
-            };
-            20 * 20
-        ];
+    let mut blinded_somewhere = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(40, 20, &[], seed);
         let cleric = e
-            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 8), 0, 0)
             .unwrap();
-        let target = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        let near = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 0)
             .unwrap();
-        // Bump goblin HP so a single Sunbeam isn't guaranteed to kill,
-        // letting us observe the Blinded condition on a hit.
-        e.actors
-            .get_mut(&target)
-            .unwrap()
-            .bump_max_hp(100);
-        let _ = e.actors.get_mut(&target).unwrap().heal(100);
-        let effects = SUNBEAM.side_effects(
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 8), 1, 1)
+            .unwrap();
+        let aside = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 16), 1, 2)
+            .unwrap();
+        // Enough hit points that 6d8 does not simply remove the
+        // evidence.
+        for id in [near, far, aside] {
+            e.actors.get_mut(&id).unwrap().bump_max_hp(100);
+            let _ = e.actors.get_mut(&id).unwrap().heal(100);
+        }
+        let aside_hp = e.actors[&aside].hitpoints();
+        for ef in SUNBEAM.side_effects(
             &mut e,
             cleric,
-            Some(&vec![target]),
             None,
+            Some(&vec![Coordinate::new(30, 8)]),
             None,
-        );
-        for ef in effects {
+        ) {
             ef.apply(&mut e);
         }
-        // If the attack hit, Blinded should be applied; verify across
-        // any seed that lands a hit.
-        if e.actors.contains_key(&target)
-            && e.actors[&target].has_condition(Condition::Blinded)
+        assert!(
+            e.actors[&near].hitpoints() < 100 + 7,
+            "the goblin in the beam is burned (seed {seed})"
+        );
+        assert!(
+            e.actors[&far].hitpoints() < 100 + 7,
+            "and so is the one further down it (seed {seed})"
+        );
+        assert_eq!(
+            e.actors[&aside].hitpoints(),
+            aside_hp,
+            "and the one standing beside it is not (seed {seed})"
+        );
+        if e.actors[&near].has_condition(Condition::Blinded)
+            || e.actors[&far].has_condition(Condition::Blinded)
         {
-            return;
+            blinded_somewhere = true;
+            break;
         }
     }
-    panic!("expected at least one Sunbeam hit to blind across seeds");
+    assert!(blinded_somewhere, "a failed CON save blinds");
 }
 
 /// Sunbeam installs concentration on the caster so the spell lights
@@ -19926,13 +19928,8 @@ fn sunbeam_starts_concentration() {
     let target = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
         .unwrap();
-    let effects = SUNBEAM.side_effects(
-        &mut e,
-        cleric,
-        Some(&vec![target]),
-        None,
-        None,
-    );
+    let aim = e.actors[&target].location();
+    let effects = SUNBEAM.side_effects(&mut e, cleric, None, Some(&vec![aim]), None);
     for ef in effects {
         ef.apply(&mut e);
     }
@@ -89820,7 +89817,7 @@ fn the_cone_and_line_spells_declare_their_printed_shape() {
     use crate::actions::action_template::TargetingSchema as TS;
     use crate::actions::spells::{
         AGANAZZARS_SCORCHER, BURNING_HANDS, COLOR_SPRAY, CONE_OF_COLD, CONJURE_BARRAGE, FEAR,
-        GUST_OF_WIND, LIGHTNING_BOLT, PRISMATIC_SPRAY, RIMES_BINDING_ICE,
+        GUST_OF_WIND, LIGHTNING_BOLT, PRISMATIC_SPRAY, RIMES_BINDING_ICE, SUNBEAM,
     };
 
     let cones: [(&'static (dyn Action + Send + Sync), isize); 7] = [
@@ -89842,9 +89839,10 @@ fn the_cone_and_line_spells_declare_their_printed_shape() {
         );
     }
 
-    let lines: [(&'static (dyn Action + Send + Sync), isize, isize); 3] = [
+    let lines: [(&'static (dyn Action + Send + Sync), isize, isize); 4] = [
         (&*AGANAZZARS_SCORCHER, 12, 1), // 30 ft × 5 ft
         (&*GUST_OF_WIND, 24, 2),        // 60 ft × 10 ft
+        (&*SUNBEAM, 24, 1),             // 60 ft × 5 ft
         (&*LIGHTNING_BOLT, 40, 1),      // 100 ft × 5 ft
     ];
     for (spell, length, half_width) in lines {
