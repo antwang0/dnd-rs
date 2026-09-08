@@ -153,11 +153,28 @@ pub fn blink_on() -> bool {
     (millis / 500).is_multiple_of(2)
 }
 
+/// The background a tile gets when it is inside the area the player is
+/// currently aiming — see `render_map`'s `preview` argument.
+///
+/// A background rather than a glyph, so the preview composes with
+/// everything already on the tile instead of replacing it: the player
+/// needs to see *which creatures* are in the cone, and a shaded tile
+/// with a goblin still on it says that where a shaded tile that erased
+/// the goblin would not.
+///
+/// It does overwrite the one thing the tile background carries on its
+/// own — team 0's light-cyan silhouette — which is an acceptable trade
+/// because the team is still on the glyph's foreground colour, and
+/// because a player aiming a cone is asking a question the shading
+/// answers and the silhouette does not.
+const AREA_PREVIEW_BG: Color = Color::DarkGray;
+
 pub fn render_map(
     encounter: &EncounterInstance,
     frame: &mut Frame,
     area: Rect,
     highlighted_target: Option<usize>,
+    preview: &std::collections::HashSet<Coordinate>,
 ) {
     let mut text: Vec<Line> = Vec::new();
 
@@ -316,6 +333,20 @@ pub fn render_map(
                     Some(c) => Span::styled(glyph.to_string(), Style::default().fg(c)),
                     None => Span::from(glyph.to_string()),
                 });
+            }
+            // The aiming preview, applied to whatever was drawn above
+            // for the same reason the lighting pass below is: a new
+            // kind of tile should not be able to fall out of it.
+            //
+            // Before the lighting pass rather than after, so a tile the
+            // viewer cannot see stays blank. A cone drawn through the
+            // dark would otherwise tell the player exactly where the
+            // walls are.
+            if !preview.is_empty()
+                && preview.contains(&coord)
+                && let Some(span) = row.last_mut()
+            {
+                span.style = span.style.bg(AREA_PREVIEW_BG);
             }
             // The lighting pass, applied to whatever was drawn above —
             // terrain, zone, loot or creature alike — rather than to
@@ -1256,7 +1287,7 @@ mod tests {
         terminal
             .draw(|f| {
                 let area = f.area();
-                render_map(encounter, f, area, None);
+                render_map(encounter, f, area, None, &std::collections::HashSet::new());
             })
             .expect("draw");
         let buffer = terminal.backend().buffer().clone();
@@ -1268,6 +1299,40 @@ mod tests {
             })
             .collect::<Vec<String>>()
             .join("\n")
+    }
+
+    /// Which *board* tiles the map drew with the aiming shade on them.
+    ///
+    /// Returned in board coordinates rather than screen ones, so a test
+    /// can compare them against what `AreaShape::tiles` says without
+    /// re-deriving the renderer's y-flip and one-cell border offset.
+    fn shaded_tiles(
+        encounter: &EncounterInstance,
+        preview: &std::collections::HashSet<Coordinate>,
+    ) -> std::collections::HashSet<Coordinate> {
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("test backend");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_map(encounter, f, area, None, preview);
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let mut out = std::collections::HashSet::new();
+        for row in 0..buffer.area.height {
+            for col in 0..buffer.area.width {
+                if buffer[(col, row)].style().bg != Some(AREA_PREVIEW_BG) {
+                    continue;
+                }
+                // The map draws inside a one-cell border, top row first
+                // and highest y first — undo both to get back to the
+                // board's own coordinates.
+                let x = col as isize - 1;
+                let y = encounter.height as isize - (row as isize - 1) - 1;
+                out.insert(Coordinate::new(x, y));
+            }
+        }
+        out
     }
 
     fn encounter_with(actors: &[(&'static crate::actors::actor_template::CreatureTemplate, usize)])
@@ -2180,4 +2245,73 @@ mod tests {
         );
         assert!(!panel.contains("+turn"), "and no label left:\n{}", panel);
     }
+
+    /// The map shades the tiles an area would cover, which is the only
+    /// way a cone is aimable at all: it is typed as an `X,Y` pair, it
+    /// depends on where the caster is standing as much as on the tile
+    /// named, and at sixty feet its far end is twenty-five tiles wide.
+    /// Nobody counts that in their head.
+    #[test]
+    fn the_map_shades_the_area_the_player_is_aiming() {
+        use crate::engine::areas::AreaShape;
+
+        let mut e = encounter_with(&[]);
+        let caster = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .expect("instantiate");
+        let cone = AreaShape::Cone { length: 6 };
+        let aim = Coordinate::new(12, 5);
+        let loc = e.actors[&caster].location();
+        let size = e.actors[&caster].size();
+        let want: std::collections::HashSet<Coordinate> =
+            cone.tiles(loc, size, aim).into_iter().collect();
+        assert!(!want.is_empty(), "the fixture aims a real cone");
+
+        let shaded = shaded_tiles(&e, &want);
+        // Everything the shape covers *and fits on the drawn map* is
+        // shaded; the map is 20×20 and the terminal is wider, so the
+        // whole cone is on screen here.
+        assert_eq!(shaded, want);
+    }
+
+    /// And it shades nothing when there is nothing being aimed, which is
+    /// every frame of an ordinary turn.
+    #[test]
+    fn the_map_shades_nothing_when_no_area_is_being_aimed() {
+        let mut e = encounter_with(&[]);
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .expect("instantiate");
+        assert!(shaded_tiles(&e, &std::collections::HashSet::new()).is_empty());
+    }
+
+    /// A cone drawn through the dark stays dark. The preview is applied
+    /// before the lighting pass for exactly this reason: shading a tile
+    /// the viewer cannot see would tell the player where the walls are
+    /// by drawing the shape that stops at them.
+    #[test]
+    fn the_aiming_shade_does_not_light_up_tiles_the_viewer_cannot_see() {
+        use crate::engine::areas::AreaShape;
+        use crate::engine::lighting::AmbientLight;
+
+        let mut e = encounter_with(&[]);
+        e.set_ambient_light(AmbientLight::Darkness);
+        let caster = e
+            .instantiate_creature(&crate::actors::creatures::commoners::COMMONER_TEMPLATE,
+                Coordinate::new(4, 4), 0, 0)
+            .expect("instantiate");
+        let cone = AreaShape::Cone { length: 6 };
+        let loc = e.actors[&caster].location();
+        let size = e.actors[&caster].size();
+        let want: std::collections::HashSet<Coordinate> = cone
+            .tiles(loc, size, Coordinate::new(12, 5))
+            .into_iter()
+            .collect();
+        // A commoner has no darkvision, so on an unlit board every tile
+        // of the cone is blanked and none of them carries the shade.
+        assert!(
+            shaded_tiles(&e, &want).is_empty(),
+            "an unlit board should not be mapped by aiming at it"
+        );
+    }
+
 }

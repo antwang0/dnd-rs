@@ -299,7 +299,8 @@ impl App {
             .split(chunks[0]);
 
         let highlighted = self.highlighted_target();
-        crate::ui::render_map(&self.encounter, f, info_area[0], highlighted);
+        let preview = self.previewed_area();
+        crate::ui::render_map(&self.encounter, f, info_area[0], highlighted, &preview);
         crate::ui::render_sideinfo(
             &self.encounter,
             f,
@@ -541,6 +542,53 @@ impl App {
                 self.encounter_number
             )),
         }
+    }
+
+    /// The tiles the action the player has selected would cover, if
+    /// they confirmed the coordinate they are currently typing.
+    ///
+    /// Areas are aimed by typing `X,Y` into a text box, which was
+    /// survivable while every area in the engine was a sphere centred
+    /// on that tile — the player could read the radius off the prompt
+    /// and count squares. It is not survivable for a cone: the shape
+    /// depends on where the *caster* is standing as much as on the tile
+    /// named, its far end is twenty-four tiles wide, and no amount of
+    /// counting tells you whether the fighter in the doorway is inside
+    /// it. So the map draws the answer while the player types it.
+    ///
+    /// Empty whenever there is nothing to preview — no prompt, a
+    /// non-area action, an unparseable coordinate — which is the common
+    /// case and costs the renderer a `HashSet::is_empty`.
+    ///
+    /// The coordinate is read off the *last* whitespace-separated token
+    /// of the input, because the prompt's own parser accepts an action
+    /// name in front of it (`cone of cold 20,14`) and the tile is
+    /// always the tail. Parsed relative to the actor, so the `r3u2`
+    /// forms `parse_coord` supports preview too.
+    fn previewed_area(&self) -> std::collections::HashSet<Coordinate> {
+        let empty = std::collections::HashSet::new();
+        let Some(prompt) = self.encounter.peek_prompt() else {
+            return empty;
+        };
+        let Some(action) = self.selected_action() else {
+            return empty;
+        };
+        let Some(shape) = action.targeting_schema().area_shape() else {
+            return empty;
+        };
+        let Some(actor) = self.encounter.actors.get(&prompt.actor_id()) else {
+            return empty;
+        };
+        let Some(token) = self.input_str.split_whitespace().next_back() else {
+            return empty;
+        };
+        let Some(aim) = crate::engine::util::parse_coord(token, actor.location()) else {
+            return empty;
+        };
+        shape
+            .tiles(actor.location(), actor.size(), aim)
+            .into_iter()
+            .collect()
     }
 
     fn target_line(&self) -> Option<String> {
@@ -974,4 +1022,87 @@ mod tests {
             "and the failure is named: {banner}"
         );
     }
+
+    /// The preview reads the tile off the *tail* of the input, because
+    /// the prompt's own parser accepts an action name in front of it.
+    /// A player who typed `burning hands 12,5` is aiming at (12,5), and
+    /// a preview that parsed the first token would show them nothing.
+    #[test]
+    fn the_area_preview_reads_the_coordinate_off_the_end_of_the_input() {
+        use crate::engine::areas::AreaShape;
+
+        let mut app = app_with_empty_board();
+        let wiz = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the wizard fits");
+        spawn(&mut app, 1, Coordinate::new(12, 5));
+        // Park the selection on Burning Hands, which is the cone this
+        // is about.
+        let idx = app.encounter.actors[&wiz]
+            .actions
+            .iter()
+            .position(|a| a.name() == "burning hands")
+            .expect("a wizard carries burning hands");
+        app.selected_action_idx = idx;
+        app.encounter.process_stack();
+
+        let expected: std::collections::HashSet<Coordinate> = AreaShape::Cone { length: 6 }
+            .tiles(
+                Coordinate::new(4, 4),
+                app.encounter.actors[&wiz].size(),
+                Coordinate::new(12, 5),
+            )
+            .into_iter()
+            .collect();
+        assert!(!expected.is_empty());
+
+        for typed in ["12,5", "burning hands 12,5", "bh 12,5"] {
+            app.input_str.clear();
+            app.input_str.push_str(typed);
+            assert_eq!(
+                app.previewed_area(),
+                expected,
+                "typing {typed:?} should preview the same cone"
+            );
+        }
+
+        // A half-typed coordinate previews nothing rather than
+        // guessing, which is what keeps the map from flickering through
+        // wrong shapes on every keystroke.
+        for typed in ["", "12,", "burning", "nonsense"] {
+            app.input_str.clear();
+            app.input_str.push_str(typed);
+            assert!(
+                app.previewed_area().is_empty(),
+                "typing {typed:?} should preview nothing"
+            );
+        }
+    }
+
+    /// A single-target action previews nothing however valid the tile
+    /// the player has typed is — the shading means "this is the area",
+    /// and an action with no area has none.
+    #[test]
+    fn a_non_area_action_previews_nothing() {
+        let mut app = app_with_empty_board();
+        let pc = spawn(&mut app, 0, Coordinate::new(4, 4));
+        spawn(&mut app, 1, Coordinate::new(6, 4));
+        app.encounter.process_stack();
+        let idx = app.encounter.actors[&pc]
+            .actions
+            .iter()
+            .position(|a| a.targeting_schema().area_shape().is_none())
+            .expect("a goblin has a non-area action");
+        app.selected_action_idx = idx;
+        app.input_str.clear();
+        app.input_str.push_str("6,4");
+        assert!(app.previewed_area().is_empty());
+    }
+
 }
