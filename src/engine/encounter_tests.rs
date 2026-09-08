@@ -90616,3 +90616,84 @@ fn a_ladder_leaves_a_restraint_it_did_not_install() {
     }
     panic!("a DC 13 save fails somewhere in forty seeds");
 }
+
+/// A metallic dragon's at-will control breath does not stall the fight.
+///
+/// The worry the `custom_validate_input` gate exists for, checked
+/// end-to-end rather than in isolation: a cone that costs no recharge
+/// and sits on the AI's area rung could be re-breathed every round
+/// forever on creatures it has already caught, and the dragon would
+/// never swing. Runs a real fight to a conclusion for each of the five
+/// colours and asserts it reaches one.
+#[test]
+fn a_metallic_dragon_fight_settles() {
+    use crate::actors::creatures::dragons::{
+        ADULT_BRASS_DRAGON_TEMPLATE, ADULT_BRONZE_DRAGON_TEMPLATE,
+        ADULT_COPPER_DRAGON_TEMPLATE, ADULT_GOLD_DRAGON_TEMPLATE,
+        ADULT_SILVER_DRAGON_TEMPLATE,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    for (n, template) in [
+        &*ADULT_BRASS_DRAGON_TEMPLATE,
+        &*ADULT_BRONZE_DRAGON_TEMPLATE,
+        &*ADULT_COPPER_DRAGON_TEMPLATE,
+        &*ADULT_GOLD_DRAGON_TEMPLATE,
+        &*ADULT_SILVER_DRAGON_TEMPLATE,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut e = ei_with_terrain_seeded(40, 24, &[], n as u64);
+        e.instantiate_creature(template, Coordinate::new(4, 10), 1, 0)
+            .unwrap();
+        for i in 0..4usize {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(28, 6 + 3 * i as isize),
+                0,
+                i,
+            )
+            .unwrap();
+        }
+        let ai = SimpleAi;
+        let mut steps = 0usize;
+        let settled = loop {
+            if steps >= 200_000 {
+                break false;
+            }
+            steps += 1;
+            e.process_stack();
+            if e.is_complete() {
+                break true;
+            }
+            let Some(prompt) = e.peek_prompt() else {
+                break true;
+            };
+            let actor_id = prompt.actor_id();
+            match ai.decide(&e, actor_id) {
+                ControllerDecision::AwaitInput => {
+                    panic!("{}: the AI asked for player input", template.name)
+                }
+                ControllerDecision::Act(aei) => {
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+            }
+        };
+        assert!(
+            settled,
+            "{} is still fighting after {steps} steps at round {}",
+            template.name,
+            e.round()
+        );
+        assert!(
+            e.board_inconsistencies().is_empty(),
+            "{}: {:?}",
+            template.name,
+            e.board_inconsistencies()
+        );
+    }
+}
