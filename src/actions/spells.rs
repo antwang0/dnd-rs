@@ -7958,12 +7958,19 @@ pub static REVIVIFY: LazyLock<Revivify> = LazyLock::new(|| Revivify {});
 
 /// Stoneskin — level-4 abjuration, concentration. Touch. Until the spell
 /// ends, the target has resistance to bludgeoning, piercing, and slashing
-/// damage. We use the existing `DamageResistant` condition which gives a
-/// generic damage-halving effect — close enough to RAW's physical-only
-/// resistance for our engine, and the buff drops cleanly when the caster
-/// loses concentration. Doesn't stack with creature-template resistance
-/// (halving is multiplicative, but we apply DamageResistant once at the
-/// take-damage path so re-halving doesn't happen).
+/// damage — exactly those three, through `Condition::Stoneskinned` and
+/// its row on `TYPED_RESISTANCE_CONDITIONS`.
+///
+/// It rode the blanket `DamageResistant` lane for a long time, under a
+/// comment calling that "close enough to RAW's physical-only
+/// resistance". It was not close: blanket halving is what a 6th-level
+/// Globe of Invulnerability buys, so a level-4 concentration slot was
+/// halving dragon breath, Fireballs and Disintegrate. The spell answers
+/// swords now, which is the spell.
+///
+/// Doesn't stack with creature-template resistance — the engine applies
+/// one halving per damage instance at the take-damage path, so a
+/// stone-skinned zombie is not resisting bludgeoning twice.
 pub struct Stoneskin {}
 
 impl Action for Stoneskin {
@@ -8020,14 +8027,14 @@ impl Action for Stoneskin {
         vec![
             Box::new(ApplyCondition {
                 actor_id: target_id,
-                condition: Condition::DamageResistant,
+                condition: Condition::Stoneskinned,
                 timer: ConditionTimer::Rounds(10),
             }),
             Box::new(StartConcentration {
                 caster_id,
                 data: ConcentrationData::with_conditions(
                     "Stoneskin",
-                    vec![(target_id, Condition::DamageResistant)],
+                    vec![(target_id, Condition::Stoneskinned)],
                 ),
             }),
         ]

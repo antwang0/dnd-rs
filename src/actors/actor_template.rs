@@ -157,6 +157,21 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
         source: Condition::InvestedInIce,
         types: &[DamageType::Cold],
     },
+    // 5e Stoneskin (level-4 abjuration, concentration): "the target has
+    // Resistance to Bludgeoning, Piercing, and Slashing damage." The
+    // third of the three routes to the physical trio on this cohort,
+    // and the one that arrived last — the spell rode
+    // `BLANKET_RESISTANCE_CONDITIONS` until this row existed, which
+    // made a level-4 slot halve a dragon's breath. See
+    // `Condition::Stoneskinned`.
+    ConditionDrivenTypedResistance {
+        source: Condition::Stoneskinned,
+        types: &[
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ],
+    },
     ConditionDrivenTypedResistance {
         source: Condition::InvestedInStone,
         types: &[

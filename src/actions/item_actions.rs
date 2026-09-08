@@ -326,6 +326,69 @@ pub struct SelfConditionItem {
     /// side-effect. Temp HP doesn't stack — the bigger of the existing
     /// pool and the new grant wins (see `GainTempHp`).
     pub temp_hp: Option<u32>,
+    /// Which damage type this install is *against*, for the conditions
+    /// whose whole content is a chosen type — 5e's Protection from
+    /// Energy lane (`Condition::EnergyWarded`).
+    ///
+    /// `TypedWard::None` for the twenty-odd rows whose condition carries
+    /// no choice, which is every buff on this module that is not a
+    /// resistance potion. See `TypedWard`.
+    pub ward: TypedWard,
+}
+
+/// The types a Potion of Resistance can be found warding against.
+///
+/// RAW's potion comes "in a variety", one per damage type in the game;
+/// this is 5e's Protection from Energy menu instead — the five
+/// elemental types — because that is the menu the `EnergyWarded`
+/// condition is written for and because the physical trio already has
+/// two answers on the loot table (Stoneskin in a bottle, and the
+/// Investiture line) while the elements have none a non-caster can
+/// drink.
+///
+/// Order matters twice: it is the tie-break the picker falls back on
+/// when nothing on the board deals any of them, and it is the order the
+/// book prints.
+const WARDABLE_TYPES: &[DamageType] = &[
+    DamageType::Acid,
+    DamageType::Cold,
+    DamageType::Fire,
+    DamageType::Lightning,
+    DamageType::Thunder,
+];
+
+/// What damage type a `SelfConditionItem` install is aimed at.
+///
+/// The column exists because three potions on the loot table print a
+/// damage type in their own names and, for a long time, ignored it:
+/// the Potions of Fire and Cold Resistance both installed the blanket
+/// `DamageResistant`, which is *every* type, under comments saying the
+/// engine had no per-type condition lane. That was true when they were
+/// written. It stopped being true when `EnergyWarded` and its
+/// chosen-type map arrived, and nothing went back for them — so an
+/// uncommon potion was halving everything a 6th-level Globe of
+/// Invulnerability does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TypedWard {
+    /// The condition carries no type choice. The overwhelming majority.
+    None,
+    /// The type is printed on the item — a Potion of Fire Resistance is
+    /// against fire and nothing else, whatever is actually being thrown
+    /// at the drinker.
+    Fixed(DamageType),
+    /// The type is chosen when the cork comes out, against whatever the
+    /// room is most likely to deal. RAW's Potion of Resistance is sold
+    /// "in a variety" with the type fixed at purchase, and this engine
+    /// has no shop — so the unflavoured bottle picks on the way down,
+    /// through the same `likeliest_incoming_damage_type` sweep
+    /// Protection from Energy uses to decide what to ward its target
+    /// against.
+    ///
+    /// Strictly the more useful of the two arms and deliberately the
+    /// rarer: it is the whole difference between the generic potion and
+    /// the two flavoured ones, and it is why the generic is worth
+    /// finding.
+    Likeliest,
 }
 
 impl Action for SelfConditionItem {
@@ -396,11 +459,53 @@ impl Action for SelfConditionItem {
         }
         let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: self.condition,
-            timer: self.timer,
-        })];
+        // The chosen type, for the resistance potions. Resolved before
+        // the install so the log line can name it — a ward whose type
+        // the drinker cannot read is a ward they cannot plan around.
+        // A condition whose whole content is a chosen type, installed
+        // with no type chosen, is a ward that resists nothing and reads
+        // exactly like a ward that works — no log line differs, no test
+        // that only checks `has_condition` notices, and the drinker
+        // simply takes full damage. Caught here rather than left to a
+        // reviewer because the field it depends on is a `..DEFAULTS`
+        // away from being forgotten on the next row.
+        debug_assert!(
+            self.ward != TypedWard::None
+                || !crate::engine::side_effects::TYPED_CHOICE_CONDITIONS.contains(&self.condition),
+            "{} installs {:?}, which needs a damage type, and declares no ward",
+            self.action_name,
+            self.condition
+        );
+        let chosen = match self.ward {
+            TypedWard::None => None,
+            TypedWard::Fixed(dt) => Some(dt),
+            // A room with no enemies left in it has nothing to ward
+            // against and the sweep answers `None`; the potion still
+            // installs, warding the first type on the menu, because by
+            // this point it has already been drunk. Same fallback
+            // Protection from Energy takes, and for the same reason.
+            TypedWard::Likeliest => Some(
+                encounter
+                    .likeliest_incoming_damage_type(caster_id, WARDABLE_TYPES)
+                    .unwrap_or(WARDABLE_TYPES[0]),
+            ),
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = match chosen {
+            Some(dt) => {
+                encounter.log(format!("  warded against {dt:?}"));
+                crate::engine::side_effects::install_condition_with_damage_type(
+                    self.condition,
+                    caster_id,
+                    dt,
+                    self.timer,
+                )
+            }
+            None => vec![Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: self.condition,
+                timer: self.timer,
+            })],
+        };
         // Optional temp HP grant — Potion of Heroism (10) and any future
         // Aid-flavored self-buff fold into the same one-static declaration.
         // `None` (the common case) skips the alloc cleanly; `GainTempHp`
@@ -926,6 +1031,7 @@ pub static DRINK_POTION_OF_HEROISM: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: false,
     temp_hp: Some(10),
+    ward: TypedWard::None,
 };
 
 /// Potion of Invisibility — Action; installs the Invisible condition for
@@ -940,6 +1046,7 @@ pub static DRINK_POTION_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: false,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const POTION_OF_SUPERIOR_HEALING_NAME: &str = "Potion of Superior Healing";
@@ -961,22 +1068,23 @@ pub static DRINK_SUPERIOR_HEALING_POTION: SelfHealItem = SelfHealItem {
     bonus_action: false,
 };
 
-/// Potion of Stoneskin — Action; installs `DamageResistant` for 10
-/// rounds (halve all incoming damage). 5e RAW: the Stoneskin spell is
-/// resistant to bludgeoning / piercing / slashing only; we model via the
-/// engine's blanket `DamageResistant` condition (the same one Stoneskin
-/// the spell installs) so the potion delivers the spell's exact
-/// envelope. Single-use; rejects re-drink when the buff is already up.
+/// Potion of Stoneskin — Action; installs `Stoneskinned` for 10 rounds:
+/// resistance to bludgeoning, piercing and slashing and to nothing
+/// else, which is the Stoneskin spell's own envelope and the reason to
+/// bottle it. It carried the blanket `DamageResistant` until the spell
+/// stopped doing so; see `Condition::Stoneskinned`. Single-use; rejects
+/// re-drink when the buff is already up.
 pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
     action_name: "drink potion of stoneskin",
     action_aliases: &["stoneskin", "stone"],
     item_name: POTION_OF_STONESKIN_NAME,
     log_text: "{actor} drinks a potion of stoneskin; their skin hardens.",
-    condition: Condition::DamageResistant,
+    condition: Condition::Stoneskinned,
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
@@ -1318,6 +1426,7 @@ pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
@@ -1373,6 +1482,7 @@ pub static DRINK_POTION_OF_FLYING: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Potion of Climbing — Bonus Action; installs `SpiderClimbing` for 10
@@ -1388,6 +1498,7 @@ pub static DRINK_POTION_OF_CLIMBING: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Wand of Fireballs: 8d6 fire DEX-save burst. Sits a tier above the
@@ -1676,6 +1787,7 @@ pub static DRINK_POTION_OF_MAGE_ARMOR: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Potion of Blur — Action; installs `Blurred` for 10 rounds (attacks
@@ -1693,6 +1805,7 @@ pub static DRINK_POTION_OF_BLUR: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Greater Wand of Magic Missiles — 7 darts of 1d4+1 force each, auto-hit,
@@ -2238,6 +2351,7 @@ pub static DRINK_POTION_OF_SANCTUARY: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Wand of Cure Wounds — Action; touch (1-tile) ally heal for 3d8+3.
@@ -2293,6 +2407,7 @@ pub static DRINK_POTION_OF_GROWTH: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Potion of Longstrider — Bonus Action; installs `Longstriding` for
@@ -2311,6 +2426,7 @@ pub static DRINK_POTION_OF_LONGSTRIDER: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const POTION_OF_LONGSTRIDER_NAME: &str = "Potion of Longstrider";
@@ -2705,43 +2821,47 @@ pub static DRINK_POTION_OF_BARKSKIN: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
-/// Potion of Fire Resistance — Action; installs `DamageResistant` (halve
-/// all incoming damage) for 10 rounds. 5e RAW grants resistance to a
-/// single damage type; the engine's `DamageResistant` condition is type-
-/// blanket so the potion delivers broader value than RAW. Single-use;
-/// rejects re-drink when already resistant. Fires through the shared
-/// `SelfConditionItem` impl. (We don't model per-type buffs as
-/// conditions yet — this is the closest envelope.)
+/// Potion of Fire Resistance — Action; wards the drinker against fire
+/// for 10 rounds, and against nothing else.
+///
+/// It installed the blanket `DamageResistant` for a long time, under a
+/// comment saying the engine did not model per-type buffs as conditions
+/// — which was true when it was written and stopped being true when
+/// Protection from Energy's `EnergyWarded` lane arrived. An uncommon
+/// potion halving psychic, radiant and force damage is a 6th-level
+/// Globe of Invulnerability with a cork in it. `TypedWard::Fixed` is
+/// the fix, and the type is the one printed on the bottle.
 pub static DRINK_POTION_OF_FIRE_RESISTANCE: SelfConditionItem = SelfConditionItem {
     action_name: "drink potion of fire resistance",
     action_aliases: &["fire potion", "fire res"],
     item_name: POTION_OF_FIRE_RESISTANCE_NAME,
     log_text: "{actor} drinks a potion of fire resistance; a cooling shimmer wraps them.",
-    condition: Condition::DamageResistant,
+    condition: Condition::EnergyWarded,
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::Fixed(DamageType::Fire),
 };
 
-/// Potion of Cold Resistance — Action; installs `DamageResistant` for 10
-/// rounds. Sibling to Potion of Fire Resistance — same envelope, distinct
-/// flavor. Both potions share the `DamageResistant` lane (blanket damage
-/// halve) since the engine doesn't yet model per-type buffs as separate
-/// conditions; the loot pool just gets two flavored entries instead of
-/// one. Single-use; rejects re-drink when already resistant.
+/// Potion of Cold Resistance — the Fire potion's sibling, one damage
+/// type over. Both ward against the type on their own label and nothing
+/// else; see `DRINK_POTION_OF_FIRE_RESISTANCE` for why they used not
+/// to. Single-use; rejects re-drink when already warded.
 pub static DRINK_POTION_OF_COLD_RESISTANCE: SelfConditionItem = SelfConditionItem {
     action_name: "drink potion of cold resistance",
     action_aliases: &["cold potion", "cold res"],
     item_name: POTION_OF_COLD_RESISTANCE_NAME,
     log_text: "{actor} drinks a potion of cold resistance; a warm glow sinks into their skin.",
-    condition: Condition::DamageResistant,
+    condition: Condition::EnergyWarded,
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::Fixed(DamageType::Cold),
 };
 
 /// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
@@ -2761,6 +2881,7 @@ pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditio
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const WAND_OF_SLEEP_NAME: &str = "Wand of Sleep";
@@ -3158,21 +3279,27 @@ pub static READ_WEB_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     timer: ConditionTimer::Rounds(10),
 };
 
-/// Potion of Resistance — Action; installs `DamageResistant` for 10 rounds.
-/// Un-flavored generic counterpart to Potion of Fire / Cold Resistance —
-/// same envelope, no flavor tied to a specific damage type. Single-use;
-/// rejects re-drink when already resistant. Fires through the shared
-/// `SelfConditionItem` impl.
+/// Potion of Resistance — the unlabelled bottle, and the best of the
+/// three.
+///
+/// RAW's potion is sold "in a variety", with the type fixed at purchase.
+/// This engine has no shop, so the type is chosen on the way down,
+/// against whatever the room is most likely to throw — `TypedWard::
+/// Likeliest`, the same sweep Protection from Energy uses. That is what
+/// makes the generic worth finding where the two flavoured bottles are a
+/// gamble on what is round the corner. Single-use; rejects re-drink
+/// while a ward is already up.
 pub static DRINK_POTION_OF_RESISTANCE: SelfConditionItem = SelfConditionItem {
     action_name: "drink potion of resistance",
     action_aliases: &["resistance", "resist"],
     item_name: POTION_OF_RESISTANCE_NAME,
     log_text: "{actor} drinks a potion of resistance; a translucent shimmer wraps them.",
-    condition: Condition::DamageResistant,
+    condition: Condition::EnergyWarded,
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::Likeliest,
 };
 
 /// Potion of Vigilance — Bonus Action; installs `DangerSense` for 10 rounds
@@ -3190,6 +3317,7 @@ pub static DRINK_POTION_OF_VIGILANCE: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const NECKLACE_OF_FIREBALLS_NAME: &str = "Necklace of Fireballs";
@@ -3233,6 +3361,7 @@ pub static USE_DUST_OF_DISAPPEARANCE: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Wand of Suggestion — Action; single-target WIS save vs DC 15, fail =
@@ -3408,6 +3537,7 @@ pub static DRINK_POTION_OF_HASTE: SelfConditionItem = SelfConditionItem {
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Scroll of Flesh to Stone — Action; single-target CON save vs DC 15,
@@ -3487,6 +3617,7 @@ pub static DRINK_POTION_OF_MIND_BLANK: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const SCROLL_OF_DISINTEGRATE_NAME: &str = "Scroll of Disintegrate";
@@ -3580,6 +3711,7 @@ pub static DRINK_POTION_OF_FORESIGHT: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Necklace of Prayer Beads — Bonus Action; installs `Blessed` on a
@@ -3723,6 +3855,7 @@ pub static DRINK_POTION_OF_MIRROR_IMAGE: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const SCROLL_OF_HELLISH_REBUKE_NAME: &str = "Scroll of Hellish Rebuke";
@@ -4221,6 +4354,7 @@ pub static READ_BLINK_SCROLL: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Scroll of Contagion — Action; single-target, CON save vs DC 15, fail
@@ -4271,6 +4405,7 @@ pub static READ_SPIDER_CLIMB_SCROLL: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Scroll of Heroism — Action; self-install `Heroic` (Frightened
@@ -4295,6 +4430,7 @@ pub static READ_HEROISM_SCROLL: SelfConditionItem = SelfConditionItem {
     // semantics so the 10-round duration doesn't shrink either).
     reject_when_active: false,
     temp_hp: Some(10),
+    ward: TypedWard::None,
 };
 
 /// Wand of Bless — Bonus Action; single-target ally buff. Installs
@@ -4358,6 +4494,7 @@ pub static READ_MIND_BLANK_SCROLL: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Config struct for "multi-target ally buff" consumable items — the
@@ -4769,6 +4906,7 @@ pub static READ_FLAME_ARROWS_SCROLL: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Potion of Ashardalon's Stride — Bonus Action; install `AshardalonStriding`
@@ -4790,6 +4928,7 @@ pub static DRINK_POTION_OF_ASHARDALONS_STRIDE: SelfConditionItem = SelfCondition
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Potion of Otherworldly Guise — Bonus Action; install `OtherworldlyGuised`
@@ -4811,6 +4950,7 @@ pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfCondition
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 /// Horn of Blasting — Action; RAW's 30-foot cone of thunder, 5d6
@@ -5767,6 +5907,7 @@ pub static DRINK_POTION_OF_WATER_BREATHING: SelfConditionItem = SelfConditionIte
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const POTION_OF_WATER_BREATHING_NAME: &str = "Potion of Water Breathing";
@@ -5790,6 +5931,7 @@ pub static USE_GEM_OF_SEEING: SelfConditionItem = SelfConditionItem {
     bonus_action: false,
     reject_when_active: true,
     temp_hp: None,
+    ward: TypedWard::None,
 };
 
 const GEM_OF_SEEING_NAME: &str = "Gem of Seeing";

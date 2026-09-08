@@ -17502,6 +17502,14 @@ fn ice_storm_is_in_wizard_loadout() {
         .any(|a| a.name() == "dispel magic"));
 }
 
+/// Stoneskin lands its resistance, and lands it on the three types the
+/// spell names rather than on all of them.
+///
+/// The second half is the assertion this test grew. It read
+/// `has_condition(DamageResistant)` for as long as the spell rode the
+/// blanket lane, which was a true statement about a spell that was
+/// halving Fireballs — the sweep passed on exactly the bug it was
+/// closest to.
 #[test]
 fn stoneskin_applies_damage_resistant_and_concentration() {
     use crate::actions::spells::STONESKIN;
@@ -17520,8 +17528,31 @@ fn stoneskin_applies_damage_resistant_and_concentration() {
     for ef in effects {
         ef.apply(&mut e);
     }
-    assert!(e.actors[&ally].has_condition(Condition::DamageResistant));
+    assert!(e.actors[&ally].has_condition(Condition::Stoneskinned));
     assert!(e.actors[&caster].is_concentrating());
+    for physical in [
+        DamageType::Bludgeoning,
+        DamageType::Piercing,
+        DamageType::Slashing,
+    ] {
+        assert!(
+            e.actors[&ally].has_condition_resistance(physical),
+            "stoneskin should answer {physical:?}"
+        );
+    }
+    for elemental in [
+        DamageType::Fire,
+        DamageType::Cold,
+        DamageType::Lightning,
+        DamageType::Force,
+        DamageType::Necrotic,
+        DamageType::Psychic,
+    ] {
+        assert!(
+            !e.actors[&ally].has_condition_resistance(elemental),
+            "a level-4 slot should not be halving {elemental:?}"
+        );
+    }
 }
 
 #[test]
@@ -44906,8 +44937,14 @@ fn potion_of_superior_healing_heals_full_pool() {
     );
 }
 
-/// Potion of Stoneskin: installs `DamageResistant` for 10 rounds
-/// (halves all incoming damage). Mirrors the Stoneskin spell envelope.
+/// Potion of Stoneskin: installs `Stoneskinned` for 10 rounds — half
+/// damage from swords and full damage from everything else, which is
+/// the Stoneskin spell's envelope and the point of bottling it.
+///
+/// The fire assertions are the ones that changed. They used to say the
+/// potion halved a 20-point fire hit, which is what the blanket
+/// `DamageResistant` lane did and what neither RAW nor the spell it
+/// mirrors has ever said.
 #[test]
 fn potion_of_stoneskin_installs_damage_resistant_and_consumes() {
     use crate::actions::action_template::ActionExecutionInfo;
@@ -44925,8 +44962,12 @@ fn potion_of_stoneskin_installs_damage_resistant_and_consumes() {
         .unwrap()
         .pickup_item(&POTION_OF_STONESKIN);
 
-    // Before: 20 fire damage lands at full.
+    // Before: both land at full.
     assert_eq!(e.actors[&caster].effective_damage(20, DamageType::Fire), 20);
+    assert_eq!(
+        e.actors[&caster].effective_damage(20, DamageType::Slashing),
+        20
+    );
 
     let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_STONESKIN, caster, None, None, None);
     assert!(aei.validate(&e));
@@ -44934,11 +44975,19 @@ fn potion_of_stoneskin_installs_damage_resistant_and_consumes() {
     e.process_stack();
 
     assert!(
-        e.actors[&caster].has_condition(Condition::DamageResistant),
-        "DamageResistant should install after drinking"
+        e.actors[&caster].has_condition(Condition::Stoneskinned),
+        "Stoneskinned should install after drinking"
     );
-    // After: same 20 fire damage halves to 10.
-    assert_eq!(e.actors[&caster].effective_damage(20, DamageType::Fire), 10);
+    // After: the sword halves and the fire does not.
+    assert_eq!(
+        e.actors[&caster].effective_damage(20, DamageType::Slashing),
+        10
+    );
+    assert_eq!(
+        e.actors[&caster].effective_damage(20, DamageType::Fire),
+        20,
+        "a bottled level-4 spell does not answer fire"
+    );
     assert!(
         e.actors[&caster].items().is_empty(),
         "potion should be consumed"
@@ -49084,8 +49133,17 @@ fn potion_of_resistance_installs_and_rejects_redrink() {
     e.push_action(aei);
     e.process_stack();
     assert!(
-        e.actors[&actor].has_condition(Condition::DamageResistant),
-        "drinking should install DamageResistant"
+        e.actors[&actor].has_condition(Condition::EnergyWarded),
+        "drinking should install the ward"
+    );
+    // The unlabelled bottle picks a type on the way down, and it must
+    // pick *a* type — a ward with no type recorded resists nothing and
+    // would look exactly like a ward that works.
+    assert!(
+        e.actors[&actor]
+            .damage_type_of(Condition::EnergyWarded)
+            .is_some(),
+        "the potion warded against nothing in particular"
     );
     assert_eq!(
         e.actors[&actor].items().len(),
@@ -49101,7 +49159,7 @@ fn potion_of_resistance_installs_and_rejects_redrink() {
     );
     assert!(
         !aei2.validate(&e),
-        "re-drink while DamageResistant should be rejected"
+        "re-drink while already warded should be rejected"
     );
 }
 
@@ -91300,5 +91358,104 @@ fn a_shrieker_screams_once_when_something_crosses_into_earshot() {
             .count(),
         1,
         "a minute-long shriek does not restart every time somebody walks past"
+    );
+}
+
+/// A resistance potion wards against the type on its label and against
+/// nothing else — and the unlabelled bottle picks the type that is
+/// actually being thrown.
+///
+/// All three used to install the blanket `DamageResistant`, which meant
+/// an uncommon potion halved psychic, radiant, force and necrotic
+/// alongside the element it was named for. Nothing failed: a test that
+/// asks `has_condition` passes just as well against a buff four rarity
+/// tiers too strong, and the player it favours never files a bug.
+///
+/// The third case is the one worth the sweep. `TypedWard::Likeliest`
+/// reads the board, so the assertion has to arrange a board — a
+/// fire-breathing enemy in the room, and a ward that comes out fire.
+#[test]
+fn a_resistance_potion_answers_its_own_element_and_not_the_rest() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::item_actions::{
+        DRINK_POTION_OF_COLD_RESISTANCE, DRINK_POTION_OF_FIRE_RESISTANCE,
+        DRINK_POTION_OF_RESISTANCE,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{
+        POTION_OF_COLD_RESISTANCE, POTION_OF_FIRE_RESISTANCE, POTION_OF_RESISTANCE,
+    };
+
+    // (potion, action, the type it must ward against)
+    let flavoured: [(_, &'static (dyn crate::actions::action_template::Action + Send + Sync), _); 2] = [
+        (
+            &POTION_OF_FIRE_RESISTANCE,
+            &DRINK_POTION_OF_FIRE_RESISTANCE
+                as &'static (dyn crate::actions::action_template::Action + Send + Sync),
+            DamageType::Fire,
+        ),
+        (
+            &POTION_OF_COLD_RESISTANCE,
+            &DRINK_POTION_OF_COLD_RESISTANCE
+                as &'static (dyn crate::actions::action_template::Action + Send + Sync),
+            DamageType::Cold,
+        ),
+    ];
+    for (item, action, warded) in flavoured {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drinker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&drinker).unwrap().pickup_item(item);
+        let aei = ActionExecutionInfo::new(action, drinker, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(
+            e.actors[&drinker].effective_damage(20, warded),
+            10,
+            "{} should halve {warded:?}",
+            item.name
+        );
+        for other in [
+            DamageType::Psychic,
+            DamageType::Radiant,
+            DamageType::Force,
+            DamageType::Slashing,
+        ] {
+            assert_eq!(
+                e.actors[&drinker].effective_damage(20, other),
+                20,
+                "{} has no business answering {other:?}",
+                item.name
+            );
+        }
+    }
+
+    // The unlabelled bottle, drunk in a room full of fire.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let drinker = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.instantiate_creature(
+        &crate::actors::creatures::hell_hounds::HELL_HOUND_TEMPLATE,
+        Coordinate::new(6, 2),
+        1,
+        0,
+    )
+    .unwrap();
+    e.actors
+        .get_mut(&drinker)
+        .unwrap()
+        .pickup_item(&POTION_OF_RESISTANCE);
+    let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_RESISTANCE, drinker, None, None, None);
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&drinker].damage_type_of(Condition::EnergyWarded),
+        Some(DamageType::Fire),
+        "a hell hound in the room is a fire problem:\n{}",
+        e.messages().join("\n")
     );
 }

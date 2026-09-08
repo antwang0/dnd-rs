@@ -115,9 +115,42 @@ pub enum Condition {
     /// +5 AC from the Shield reaction spell, until the start of your
     /// next turn. Cleared by the `UntilStartOfNextTurn` timer.
     Shielded,
-    /// Generic "halve incoming damage" buff (e.g. Stoneskin).
-    /// Stacks multiplicatively with damage-type resistance.
+    /// Generic "halve **all** incoming damage" buff.
+    ///
+    /// The engine's blanket resistance, and deliberately a narrow club
+    /// now that it used to be a wide one. It is on
+    /// `BLANKET_RESISTANCE_CONDITIONS`, which means every damage type in
+    /// the game, which is what a 6th-level Globe of Invulnerability
+    /// buys — so anything cheaper than that wearing it is over-tuned by
+    /// definition.
+    ///
+    /// Three effects used to ride it whose RAW names specific types:
+    /// Stoneskin (physical only), and the Potions of Fire and Cold
+    /// Resistance. All three said so in their own comments, which
+    /// pleaded that the engine had no per-type condition lane — true
+    /// when they were written and untrue since
+    /// `TYPED_RESISTANCE_CONDITIONS` and the chosen-type
+    /// `EnergyWarded` lane arrived. They have moved; see
+    /// `Stoneskinned`.
+    ///
+    /// What is left is the handful whose RAW really is "all damage".
     DamageResistant,
+    /// 5e **Stoneskin** — *"the target has Resistance to Bludgeoning,
+    /// Piercing, and Slashing damage."*
+    ///
+    /// Its own condition rather than a fourth flavour of
+    /// `DamageResistant`, because the difference between the two is the
+    /// whole spell. Stoneskin is a level-4 concentration slot that
+    /// answers a room full of swords and does nothing at all about a
+    /// Fireball; blanket resistance is a level-6 Globe. Riding the
+    /// blanket lane made the cheaper spell strictly better than the
+    /// dearer one, which is the kind of over-tune that never produces a
+    /// bug report because the player it favours is winning.
+    ///
+    /// One row on `TYPED_RESISTANCE_CONDITIONS`, sharing the physical
+    /// trio with Investiture of Stone and Gaseous Form — three spells
+    /// that arrive at the same three types from three directions.
+    Stoneskinned,
     /// Hostile-to-hostile attack against the holder is at advantage and
     /// the holder cannot benefit from the Invisible condition. Used by
     /// Faerie Fire / Hunter's Mark style effects.
@@ -3002,6 +3035,7 @@ impl Condition {
             Condition::ShieldOfFaith => "shield of faith",
             Condition::Shielded => "shielded",
             Condition::DamageResistant => "damage resistant",
+            Condition::Stoneskinned => "skin of stone",
             Condition::Outlined => "outlined",
             Condition::WispLit => "wisp-lit",
             Condition::GuidingBoltLit => "marked by guiding bolt",
@@ -3369,6 +3403,7 @@ impl Condition {
                 | Condition::Hidden
                 | Condition::Invisible
                 | Condition::DamageResistant
+                | Condition::Stoneskinned
                 | Condition::MirroredImages
                 | Condition::Blurred
                 | Condition::DeathWarded
