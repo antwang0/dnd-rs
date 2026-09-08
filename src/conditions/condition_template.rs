@@ -2850,6 +2850,116 @@ pub enum Condition {
     /// enemy per round — the smaller of the two, and the one that keeps
     /// a cantrip a cantrip.
     Braced,
+    /// Holding a 5e **Dragon Slayer** — *"The weapon deals an extra 3d6
+    /// damage of the weapon's type if the target is a Dragon."*
+    ///
+    /// The first of six weapon-borne conditions on this enum, and they
+    /// are conditions for a structural reason worth stating once here
+    /// rather than six times below. The engine's per-hit damage riders
+    /// are keyed on a condition the *attacker* holds
+    /// (`engine::attack::ON_HIT_RIDERS`), and `Item::passive_conditions`
+    /// installs a condition for as long as an item is carried. So a
+    /// magic weapon's on-hit clause is written once as a rider row and
+    /// reaches every wielder — a player who picks the sword up, a
+    /// monster that starts with it — through the inventory rather than
+    /// through a second copy of the rule.
+    ///
+    /// What that model deliberately does not carry is *which* weapon the
+    /// swing was made with. The engine has never bound a swing to an
+    /// item — the `+1 Weapon` has always added its bonus to every attack
+    /// its holder makes — so a Dragon Slayer in the off hand sharpens
+    /// the mace in the other one. That is the same abstraction the whole
+    /// loot table already runs on, and narrowing it for these six would
+    /// have meant threading weapon identity through the attack pipeline
+    /// for one item family.
+    DragonSlaying,
+    /// Holding a 5e **Giant Slayer** — *"When you hit a Giant with this
+    /// weapon, the Giant takes an extra 2d6 damage of the weapon's type
+    /// and must succeed on a DC 15 Strength saving throw or have the
+    /// Prone condition."*
+    ///
+    /// The save rides the rider's own follow-up rather than a separate
+    /// install, so the giant that shrugs it off is the giant that made
+    /// the save on the swing that landed the die — RAW's two clauses are
+    /// one sentence and they resolve together.
+    GiantSlaying,
+    /// Holding a lit 5e **Sun Blade** — *"deals Radiant damage instead
+    /// of Slashing damage. When you hit an Undead with it, that target
+    /// takes an extra 1d8 Radiant damage."*
+    ///
+    /// Only the second sentence is modeled. The first is about the
+    /// weapon's *base* damage type, which is a property of the swing and
+    /// not of a rider, and the engine binds no swing to an item — see
+    /// `DragonSlaying` above for why. The blade's sunlight is real
+    /// though: the item carries it through the same light-source lane a
+    /// torch does, so a Sun Blade lights a dark room and makes the drow
+    /// flinch.
+    SunBladed,
+    /// Holding a 5e **Mace of Disruption** — *"When you hit a Fiend or
+    /// an Undead with this magic weapon, that creature takes an extra
+    /// 2d6 Radiant damage… On a successful save, the creature has the
+    /// Frightened condition until the end of your next turn."*
+    ///
+    /// RAW's destroy-outright clause fires on a target left at 25 hit
+    /// points or fewer *after* the radiant die, and the engine's rider
+    /// follow-up can express exactly that — `hp_threshold` predicts the
+    /// post-damage total, which is what Banishing Smite's own 50-hp
+    /// clause is written on. What the engine does not have is a
+    /// "destroyed outright" effect, so the mace's failed save lands
+    /// Frightened where RAW would land death, and the save is not rolled
+    /// at all above the threshold. That is the weaker half of RAW in the
+    /// direction that cannot break a fight open by accident.
+    Disrupting,
+    /// Wielding a **Flame Tongue** whose flames are lit — *"While the
+    /// weapon is ablaze, it deals an extra 2d6 Fire damage on a hit."*
+    ///
+    /// The only one of the six that is not installed by picking the item
+    /// up. RAW's flames cost a Bonus Action to call and last "until you
+    /// take a Bonus Action to issue the command again", so the sword
+    /// arrives dark and the wielder decides when to light it — which is
+    /// a real decision on a board where light is a liability as often as
+    /// an asset (see `crate::engine::lighting`). Installed by
+    /// `item_actions::IGNITE_FLAME_TONGUE`, which unlike every other
+    /// item action on that module does *not* consume the item it fires
+    /// from.
+    FlameTongued,
+    /// Holding a 5e **Frost Brand** — *"When you hit with an attack roll
+    /// using this magic weapon, the target takes an extra 1d6 Cold
+    /// damage."*
+    ///
+    /// The weapon's other half — resistance to fire while you hold it —
+    /// is not this condition's business: it rides the item's own
+    /// `damage_resistances`, the lane every other resistance trinket on
+    /// the loot table uses.
+    FrostBranded,
+    /// Holding a 5e **Vicious Weapon** — *"This magic weapon deals an
+    /// extra 2d6 damage to any creature it hits."*
+    ///
+    /// The only bane-shaped weapon on the roster with no bane: no target
+    /// gate, no save, no creature type. That is RAW, and it is what
+    /// makes the item interesting next to the six that do have a gate —
+    /// a flat 2d6 on every swing beats a conditional 3d6 against
+    /// everything that is not a dragon.
+    Vicious,
+    /// Holding a 5e **Sword of Wounding** — *"the target takes an extra
+    /// 2d6 Necrotic damage and must succeed on a DC 15 Constitution
+    /// saving throw or be unable to regain Hit Points for 1 hour."*
+    ///
+    /// The attacker's half. The victim's half is `Wounded`.
+    Wounding,
+    /// Cut by a **Sword of Wounding** — RAW's *"unable to regain Hit
+    /// Points"*.
+    ///
+    /// Read at `ActorInstance::can_regain_hitpoints`, the one chokepoint
+    /// every heal in the engine passes through, alongside Chill Touch's
+    /// round-long version of the same clause. RAW's hour collapses to
+    /// ten rounds, the engine's standing stand-in for any duration
+    /// longer than a fight; RAW's end-of-turn repeat save is not
+    /// modeled, which makes the wound strictly worse than RAW for as
+    /// long as it lasts and strictly shorter than RAW's hour. The two
+    /// errors point opposite ways and the fight-scale one is the one a
+    /// player can see.
+    Wounded,
 }
 
 impl Condition {
@@ -3086,6 +3196,15 @@ impl Condition {
             Condition::Earthbound => "earthbound",
             Condition::EnergyWarded => "warded against energy",
             Condition::Braced => "braced",
+            Condition::DragonSlaying => "wielding a dragon slayer",
+            Condition::GiantSlaying => "wielding a giant slayer",
+            Condition::SunBladed => "wielding a sun blade",
+            Condition::Disrupting => "wielding a mace of disruption",
+            Condition::FlameTongued => "wielding a lit flame tongue",
+            Condition::FrostBranded => "wielding a frost brand",
+            Condition::Vicious => "wielding a vicious weapon",
+            Condition::Wounding => "wielding a sword of wounding",
+            Condition::Wounded => "wounded, and unable to close it",
         }
     }
 

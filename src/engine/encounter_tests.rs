@@ -72945,6 +72945,7 @@ fn a_smite_prime_survives_a_melee_spell_attack_unspent() {
             is_spell: true,
             is_crit: false,
             damage_so_far: 0,
+            damage_type: crate::engine::types::DamageType::Slashing,
         },
     );
     assert_eq!(added, 0, "a melee spell attack adds no smite damage");
@@ -73312,6 +73313,7 @@ fn giants_might_rider_fires_once_per_turn() {
         is_spell: false,
         is_crit: false,
         damage_so_far: 0,
+        damage_type: crate::engine::types::DamageType::Slashing,
     };
     let first = push_on_hit_riders(&mut e, &mut effects, f, g, swing);
     assert!(first > 0, "the first swing of the turn carries the rider");
@@ -73411,6 +73413,7 @@ fn fire_rune_primes_once_and_is_spent_by_the_swing() {
             is_spell: false,
             is_crit: false,
             damage_so_far: 0,
+            damage_type: crate::engine::types::DamageType::Slashing,
         },
     );
     assert!((2..=12).contains(&rider), "2d6 fire, got {}", rider);
@@ -88539,6 +88542,7 @@ fn the_absorb_elements_rider_returns_the_element_that_was_thrown() {
             is_spell: false,
             is_crit: false,
             damage_so_far: 0,
+            damage_type: crate::engine::types::DamageType::Slashing,
         },
     );
     assert!(added > 0, "the prime should have fired on a melee hit");
@@ -90753,5 +90757,323 @@ fn a_sphinx_can_reach_its_own_roar() {
     assert!(
         reached,
         "a sphinx with two adventurers across the room should reach for its roar"
+    );
+}
+
+// =====================================================================
+// The magic armoury — SRD 5.2's named magic weapons, and the two engine
+// lanes they needed.
+//
+// The family's whole shape is "an item installs a marker, and a row on
+// `ON_HIT_RIDERS` reads it", so what these tests pin is the seam: that
+// the marker reaches the rider, that the rider's gate answers about the
+// *target* and not the wielder, and that the two clauses which are not
+// damage at all — the wound and the demoted critical — reach the parts
+// of the engine they are about.
+// =====================================================================
+
+/// A Dragon Slayer bites a dragon and not a goblin.
+///
+/// The reason this is one test and not two: a target-gated rider has
+/// exactly two ways to be wrong, and they look identical from either
+/// side alone. A gate that never passes is a sword that does nothing; a
+/// gate that always passes is a `+1` sword with 3d6 stapled to it and no
+/// dragon in sight. Both halves are swept over the same seeds against
+/// the same fighter with the same weapon, so the only difference between
+/// the two runs is what is standing in front of them.
+#[test]
+fn a_dragon_slayer_bites_a_dragon_and_not_a_goblin() {
+    use crate::actors::creatures::dragons::BLACK_DRAGON_WYRMLING_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::DRAGON_SLAYER;
+
+    let mut bit_the_dragon = false;
+    for (template, is_dragon) in [
+        (&*BLACK_DRAGON_WYRMLING_TEMPLATE, true),
+        (&*GOBLIN_TEMPLATE, false),
+    ] {
+        for seed in 0..40 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            e.roller = FastRandRoller::with_seed(seed);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(template, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&fighter).unwrap().pickup_item(&DRAGON_SLAYER);
+            let swing = e.actors[&fighter]
+                .find_action("scimitar")
+                .expect("the fighter chassis carries a scimitar");
+            for ef in swing.execute(&mut e, fighter, Some(&vec![victim]), None, None) {
+                ef.apply(&mut e);
+            }
+            let fired = e.messages().iter().any(|m| m.contains("dragon slayer"));
+            if is_dragon {
+                bit_the_dragon |= fired;
+            } else {
+                assert!(
+                    !fired,
+                    "seed {seed}: the dragon slayer paid out against a goblin"
+                );
+            }
+        }
+    }
+    assert!(
+        bit_the_dragon,
+        "forty seeds should land at least one longsword on a wyrmling"
+    );
+}
+
+/// The Giant Slayer's knockdown rolls against the DC the *sword* prints,
+/// not against the wielder's spellcasting.
+///
+/// A fighter's spell save DC is a number the engine will happily compute
+/// and which means nothing — this is the case `SmiteFollowUp::fixed_dc`
+/// exists for, and the failure it guards is silent: a DC derived from a
+/// STR-based fighter's non-existent spellcasting would sit somewhere
+/// near RAW's 15 and knock giants over at roughly the right rate for
+/// entirely the wrong reason.
+#[test]
+fn the_giant_slayer_rolls_its_knockdown_against_its_own_printed_dc() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::GIANT_SLAYER;
+
+    let mut saw_the_save = false;
+    for seed in 0..60 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let giant = e
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&fighter).unwrap().pickup_item(&GIANT_SLAYER);
+        let swing = e.actors[&fighter]
+            .find_action("scimitar")
+            .expect("the fighter chassis carries a scimitar");
+        for ef in swing.execute(&mut e, fighter, Some(&vec![giant]), None, None) {
+            ef.apply(&mut e);
+        }
+        if !e.messages().iter().any(|m| m.contains("giant slayer")) {
+            continue;
+        }
+        saw_the_save = true;
+        // The save line names the DC it was rolled against. RAW's 15,
+        // read off the log rather than off the rider row, so the test
+        // fails if the plumbing between them ever stops connecting.
+        assert!(
+            e.messages()
+                .iter()
+                .any(|m| m.contains("giant slayer knockdown") || m.contains("DC 15")),
+            "seed {seed}: the knockdown fired without naming its own DC:\n{}",
+            e.messages().join("\n")
+        );
+        break;
+    }
+    assert!(
+        saw_the_save,
+        "sixty seeds should land at least one longsword on a hill giant"
+    );
+}
+
+/// A Sword of Wounding's cut refuses every heal in the engine.
+///
+/// Driven by installing `Wounded` directly rather than by swinging for
+/// it: what is being pinned is that the condition reaches
+/// `can_regain_hitpoints`, which is the single gate every heal in the
+/// engine passes through, and the DC-15 save between the swing and the
+/// condition is not the part that can silently stop working.
+#[test]
+fn a_wound_from_the_sword_refuses_every_heal() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hurt = {
+        let a = e.actors.get_mut(&fighter).unwrap();
+        a.take_damage(10);
+        a.hitpoints()
+    };
+    assert!(
+        e.actors[&fighter].can_regain_hitpoints(),
+        "an ordinary wound closes"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Wounded, ConditionTimer::Rounds(10));
+    assert!(!e.actors[&fighter].can_regain_hitpoints());
+    e.actors.get_mut(&fighter).unwrap().heal(20);
+    assert_eq!(
+        e.actors[&fighter].hitpoints(),
+        hurt,
+        "the wound is held open, so the heal does nothing"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .remove_condition(Condition::Wounded);
+    e.actors.get_mut(&fighter).unwrap().heal(20);
+    assert!(
+        e.actors[&fighter].hitpoints() > hurt,
+        "and closes again once the wound lifts"
+    );
+}
+
+/// Adamantine Armor turns a critical hit into an ordinary one, and does
+/// not turn it into a miss.
+///
+/// Both halves matter and only one of them is obvious. RAW's clause is a
+/// demotion, so a wearer who took *no* damage from a natural 20 would be
+/// wearing something far better than uncommon armour — and an
+/// implementation that folded the demotion into the hit/miss verdict
+/// instead of into the damage would look right in every log line.
+///
+/// Driven through the auto-crit lane (a Paralyzed target hands every
+/// melee attacker a critical) rather than by fishing for a natural 20,
+/// because that is also the sharper test of *where* the demotion is
+/// read: a check written at the nat-20 site would pass a d20 test and
+/// fail this one.
+#[test]
+fn adamantine_armor_demotes_a_critical_hit_without_stopping_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::ADAMANTINE_ARMOR;
+
+    let mut saw_a_landed_swing = false;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Paralyzed: every melee hit against them is a critical, which
+        // takes the die out of the question entirely.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(5));
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&ADAMANTINE_ARMOR);
+        let before = e.actors[&fighter].hitpoints();
+        let swing = e.actors[&goblin]
+            .find_action("scimitar")
+            .expect("the goblin swings a scimitar");
+        for ef in swing.execute(&mut e, goblin, Some(&vec![fighter]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages().iter().any(|m| m.contains("CRIT!")),
+            "seed {seed}: the armour let a critical through:\n{}",
+            e.messages().join("\n")
+        );
+        if e.actors[&fighter].hitpoints() < before {
+            saw_a_landed_swing = true;
+            assert!(
+                e.messages()
+                    .iter()
+                    .any(|m| m.contains("adamantine armor")),
+                "seed {seed}: the crit was demoted without saying so"
+            );
+        }
+    }
+    assert!(
+        saw_a_landed_swing,
+        "forty seeds should land at least one scimitar on a paralyzed fighter"
+    );
+}
+
+/// A rider whose RAW says "of the weapon's type" deals what the weapon
+/// deals.
+///
+/// The Vicious Weapon is the clean case — no gate, no save, and 2d6 of
+/// whatever it is riding — so it is the one that can show the difference
+/// between `RiderDamage::Weapon` and a type fixed when the table was
+/// written. Pinned against a skeleton, which resists bludgeoning and
+/// does not resist slashing: a longsword's 2d6 must arrive whole.
+#[test]
+fn a_weapon_typed_rider_is_typed_as_the_weapon() {
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::engine::attack::{RiderDamage, RiderSwing};
+
+    let swing = RiderSwing {
+        is_melee: true,
+        is_spell: false,
+        is_crit: false,
+        damage_so_far: 0,
+        damage_type: LONGSWORD.damage_type,
+    };
+    assert_eq!(LONGSWORD.damage_type, DamageType::Slashing);
+    // The two arms of the enum, asked the same question about the same
+    // swing. `Fixed` ignores it; `Weapon` is it.
+    assert_eq!(
+        RiderDamage::Fixed(DamageType::Radiant).resolve_for(&swing),
+        DamageType::Radiant
+    );
+    assert_eq!(
+        RiderDamage::Weapon.resolve_for(&swing),
+        DamageType::Slashing
+    );
+}
+
+/// Lighting the Flame Tongue arms its rider, lights the board, and
+/// leaves the sword in the wielder's hand.
+///
+/// The third clause is the one worth a test: every other item action in
+/// the engine consumes the item it fires from, `KindleWeapon` is the one
+/// that must not, and "the sword vanished" is a failure that would only
+/// ever be noticed on the second swing.
+#[test]
+fn lighting_the_flame_tongue_arms_it_and_keeps_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
+    use crate::items::item_template::FLAME_TONGUE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&fighter).unwrap().pickup_item(&FLAME_TONGUE);
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::FlameTongued),
+        "the sword arrives dark"
+    );
+    assert!(!e.actor_carries_light(fighter));
+    // `available_actions`, not `find_action`: an action that arrives on
+    // a carried item is not on the stat block's own list.
+    let light = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "light flame tongue")
+        .expect("holding the sword offers the command word");
+    for ef in light.execute(&mut e, fighter, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&fighter].has_condition(Condition::FlameTongued));
+    assert!(e.actor_carries_light(fighter), "the flames light the room");
+    assert!(
+        e.actors[&fighter].has_item_named(FLAME_TONGUE.name),
+        "the sword is still in the wielder's hand"
+    );
+    // And the command word is not offered twice — a second bonus action
+    // spent on an already-lit blade would buy nothing.
+    assert!(
+        !light.validate_input(&e, fighter, None, None, None),
+        "an already-lit blade refuses to be lit again"
     );
 }

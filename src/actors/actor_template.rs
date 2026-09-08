@@ -31,6 +31,27 @@ use crate::actions::class_features::{
 /// appears.
 const TEMP_HP_BOUND_CONDITIONS: &[Condition] = &[Condition::SymbioticEntity];
 
+/// Conditions that hold a wound open — while any of these is up, the
+/// holder regains no hit points from any source.
+///
+/// Read by `can_regain_hitpoints`, the single gate every heal in the
+/// engine passes through. A table rather than a chain of `!has_condition`
+/// because the two entries already disagree about everything except the
+/// rule they share, and a third ("Heal-blocking" effects are a standing
+/// fixture of 5e: the Mummy Lord's rot, a Death Knight's curse) should
+/// land as a row rather than as another `&&`:
+///
+///   - **Chill Touch** (`ChillTouched`) — "the target can't regain hit
+///     points until the start of your next turn". A round long, and
+///     from a cantrip.
+///   - **Sword of Wounding** (`Wounded`) — "unable to regain Hit Points
+///     for 1 hour", from a rare magic weapon, on a failed CON save.
+///
+/// Deliberately hit points only: the swarm's own clause covers
+/// temporary hit points as well and is asked separately at
+/// `gain_temp_hp`, because neither of these two does.
+const NO_HEAL_CONDITIONS: &[Condition] = &[Condition::ChillTouched, Condition::Wounded];
+
 /// Conditions whose resistance covers every damage type — a blanket
 /// "halve all incoming damage" buff. Read by `has_condition_resistance`
 /// so a new generic damage-resistant condition (future Stoneskin /
@@ -5789,21 +5810,24 @@ impl ActorInstance {
     /// Also read by the AI's support rung, which will not offer a heal
     /// to an ally that cannot take one.
     ///
-    /// Two sources say no:
+    /// Two kinds of source say no:
     ///
     ///   - **Swarm** — "the swarm can't regain hit points or gain
-    ///     temporary hit points". Permanent, and it also covers temp HP
-    ///     (see `gain_temp_hp`).
-    ///   - **Chill Touch** (`ChillTouched`) — "the target can't regain
-    ///     hit points until the start of your next turn". A round long,
-    ///     and hit points only.
+    ///     temporary hit points". Permanent, a property of the creature
+    ///     rather than of anything done to it, and it also covers temp
+    ///     HP (see `gain_temp_hp`).
+    ///   - Anything on `NO_HEAL_CONDITIONS` — the wounds that hold
+    ///     themselves open. See that table.
     ///
     /// Deliberately *not* a bar on being revived from Dying: RAW's
     /// no-heal clauses stop the HP going up, and the `Dead` /
     /// `HpState` arms in `heal` already own the question of who can be
     /// brought back at all.
     pub fn can_regain_hitpoints(&self) -> bool {
-        !self.is_swarm && !self.has_condition(Condition::ChillTouched)
+        !self.is_swarm
+            && !NO_HEAL_CONDITIONS
+                .iter()
+                .any(|&c| self.has_condition(c))
     }
 
     /// True while a swarm has been thinned to half its hit points or
@@ -6724,6 +6748,15 @@ impl ActorInstance {
     /// can be magical.
     pub fn wields_enchanted_weapon(&self) -> bool {
         self.items.iter().any(|i| i.grants_magical_attacks)
+    }
+
+    /// True while the actor wears something that turns a critical hit
+    /// against them into an ordinary one — the Adamantine Armor, and
+    /// nothing else on the loot table. Read by the
+    /// `CRITICAL_NEGATION_SOURCES` cohort in `crate::engine::criticals`;
+    /// see there for where in the swing the demotion lands.
+    pub fn blunts_critical_hits(&self) -> bool {
+        self.items.iter().any(|i| i.blunts_critical_hits)
     }
 
     /// True while the actor carries a silvered weapon. Answers strictly

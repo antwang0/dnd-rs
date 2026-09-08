@@ -262,6 +262,11 @@ pub fn spell_attack_roll(
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
     let is_crit = nat_crit
         || (hit && encounter.target_grants_auto_crit(caster_id, target_id, is_melee));
+    // Adamantine Armor's demotion, shared with the weapon chokepoint:
+    // RAW's "any Critical Hit against you" does not stop at weapons, so
+    // a crit on a Fire Bolt is demoted exactly as a crit on a longsword
+    // is. See `crate::engine::criticals`.
+    let is_crit = crate::engine::criticals::apply_critical_negation(encounter, target_id, is_crit);
     let outcome = if is_nat_one {
         "miss (nat 1)"
     } else if is_crit {
@@ -512,6 +517,7 @@ fn spell_attack_outcome_exploding(
             is_spell: true,
             is_crit,
             damage_so_far: total_dmg,
+            damage_type,
         },
     ));
     // 5e Hex rider on spell attacks. The Hex spell RAW says "you deal

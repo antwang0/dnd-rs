@@ -170,6 +170,22 @@ pub struct Item {
     /// `EncounterInstance::can_breathe` for the order the two are asked
     /// in.
     pub grants_unfettered_breathing: bool,
+    /// True when wearing this item turns every critical hit against the
+    /// holder into an ordinary one — 5e's Adamantine Armor, and nothing
+    /// else on the roster.
+    ///
+    /// Read through `ActorInstance::blunts_critical_hits` by the
+    /// `CRITICAL_NEGATION_SOURCES` cohort in `crate::engine::criticals`,
+    /// which both attack chokepoints consult once they know whether the
+    /// swing crit.
+    ///
+    /// A fourth `grants_*`-shaped flag rather than a row on
+    /// `passive_conditions` for the same reason the other three are
+    /// flags: the armour does this by being worn. A condition would be
+    /// strippable by a Dispel Magic that has no business reaching a suit
+    /// of non-magical-in-the-relevant-sense plate, and would have to be
+    /// reinstalled after every long rest.
+    pub blunts_critical_hits: bool,
 }
 
 impl Item {
@@ -193,6 +209,7 @@ impl Item {
         grants_magical_attacks: false,
         grants_silvered_attacks: false,
         grants_unfettered_breathing: false,
+        blunts_critical_hits: false,
     };
 }
 
@@ -2709,6 +2726,232 @@ pub static SCROLL_OF_PROTECTION_FROM_POISON: Item = Item {
     ..Item::DEFAULTS
 };
 
+// ---------------------------------------------------------------------
+// The magic armoury — SRD 5.2's named magic weapons.
+//
+// Everything above this line is a trinket: it bumps a number, grants a
+// resistance, or is drunk once and gone. These eight are the other half
+// of 5e's loot table, the half whose text is a clause rather than a
+// bonus, and they all reach the engine the same way: an item whose
+// `passive_conditions` install a marker while it is carried, and one row
+// on `engine::attack::ON_HIT_RIDERS` keyed to that marker. See
+// `Condition::DragonSlaying` for why the family is shaped that way and
+// what it deliberately does not model.
+//
+// Two of the eight arrive switched off and are lit with a bonus action
+// (`item_actions::KindleWeapon`); the other six work the moment they are
+// picked up.
+// ---------------------------------------------------------------------
+
+/// **Dragon Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus
+/// to attack rolls and damage rolls… The weapon deals an extra 3d6
+/// damage of the weapon's type if the target is a Dragon."
+///
+/// The `+1` half rides `bonuses`, exactly as the plain `+1 Weapon` does;
+/// the 3d6 rides its rider row. Both halves are on the same item, so a
+/// party that finds it has a `+1 Weapon` that turns into something else
+/// entirely on the day they meet a wyrm — which is the whole design of a
+/// bane weapon and the reason it is worth having in a bestiary with
+/// eleven dragons in it.
+pub static DRAGON_SLAYER: Item = Item {
+    name: "Dragon Slayer",
+    glyph: '{',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::DragonSlaying],
+    ..Item::DEFAULTS
+};
+
+/// **Giant Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus to
+/// attack rolls and damage rolls… When you hit a Giant with this weapon,
+/// the Giant takes an extra 2d6 damage of the weapon's type and must
+/// succeed on a DC 15 Strength saving throw or have the Prone
+/// condition."
+///
+/// A smaller die than the Dragon Slayer against a much wider gate — the
+/// bestiary carries hill, stone, frost, fire, cloud and storm giants,
+/// plus ettins, cyclopes, ogres and trolls — and the knockdown is worth
+/// more than the two dice against any of them: a prone giant is a giant
+/// every melee ally swings at with advantage.
+pub static GIANT_SLAYER: Item = Item {
+    name: "Giant Slayer",
+    glyph: '}',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::GiantSlaying],
+    ..Item::DEFAULTS
+};
+
+/// **Sun Blade** (Weapon, longsword; Rare) — "+2 bonus to attack rolls
+/// and damage rolls… When you hit an Undead with it, that target takes
+/// an extra 1d8 Radiant damage… The sword's luminous blade emits Bright
+/// Light in a 15-foot radius."
+///
+/// No `passive_conditions`: the blade does not exist until somebody
+/// calls it into being, so both the rider and the light are installed by
+/// `item_actions::DRAW_SUN_BLADE`. The `+2` is passive because RAW's is
+/// — it is a property of the weapon, not of the light — which does mean
+/// a wielder who never draws the blade still swings at `+2`, the same
+/// abstraction the rest of the loot table already runs on.
+pub static SUN_BLADE: Item = Item {
+    name: "Sun Blade",
+    glyph: '!',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    on_use: Some(&crate::actions::item_actions::DRAW_SUN_BLADE),
+    ..Item::DEFAULTS
+};
+
+/// **Mace of Disruption** (Weapon, mace; Rare) — "When you hit a Fiend
+/// or an Undead with this magic weapon, that creature takes an extra 2d6
+/// Radiant damage. If the target has 25 Hit Points or fewer after taking
+/// this damage, it must succeed on a DC 15 Wisdom saving throw or be
+/// destroyed."
+///
+/// No attack or damage bonus, which is RAW and is what makes it a
+/// specialist rather than a strictly-better mace: against anything that
+/// is neither a fiend nor undead it is a mundane weapon that happens to
+/// count as magical.
+///
+/// RAW's "sheds Bright Light in a 20-foot radius" is not modeled. The
+/// engine's light sources are registered on the board by an action, and
+/// the mace's glow is passive — there is no lane for "this item lights
+/// the room while carried", and inventing one for a single item would
+/// have meant the light survived the wielder dropping it or dying.
+pub static MACE_OF_DISRUPTION: Item = Item {
+    name: "Mace of Disruption",
+    glyph: 'ǂ',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Disrupting],
+    ..Item::DEFAULTS
+};
+
+/// **Flame Tongue** (Weapon, any melee weapon; Rare) — "While the weapon
+/// is ablaze, it deals an extra 2d6 Fire damage on a hit."
+///
+/// Arrives dark, like the Sun Blade, and for a better reason than
+/// symmetry: the flames are a 40-ft bright radius, twice a torch, and on
+/// a dark board that is a decision rather than a bonus. Lighting it is
+/// how the wielder sees; it is also how everything in the corridor sees
+/// the wielder.
+pub static FLAME_TONGUE: Item = Item {
+    name: "Flame Tongue",
+    glyph: '†',
+    grants_magical_attacks: true,
+    on_use: Some(&crate::actions::item_actions::LIGHT_FLAME_TONGUE),
+    ..Item::DEFAULTS
+};
+
+/// **Frost Brand** (Weapon, one of six blades; Very Rare) — "When you
+/// hit with an attack roll using this magic weapon, the target takes an
+/// extra 1d6 Cold damage. In addition, while you hold the weapon, you
+/// have Resistance to Fire damage."
+///
+/// The smallest rider on the armoury and the only one paired with a
+/// defence. The fire resistance rides `damage_resistances`, the same
+/// lane the Ring of Fire Resistance uses, so the two do not stack
+/// twice — the engine's "one halving" rule is enforced at the damage
+/// pipeline rather than here.
+pub static FROST_BRAND: Item = Item {
+    name: "Frost Brand",
+    glyph: '≠',
+    grants_magical_attacks: true,
+    damage_resistances: &[crate::engine::types::DamageType::Fire],
+    passive_conditions: &[crate::conditions::Condition::FrostBranded],
+    ..Item::DEFAULTS
+};
+
+/// **Vicious Weapon** (Weapon, any simple or martial; Rare) — "This
+/// magic weapon deals an extra 2d6 damage to any creature it hits. This
+/// extra damage is of the same type as the weapon's normal damage."
+///
+/// The plainest item in the armoury and, against most of the bestiary,
+/// the best of them: 2d6 with no gate beats 3d6 against dragons on every
+/// board that has no dragon on it. It is on the loot table at the same
+/// weight as the two slayers for exactly that reason — a party that
+/// finds one has found the reliable one.
+pub static VICIOUS_WEAPON: Item = Item {
+    name: "Vicious Weapon",
+    glyph: '×',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Vicious],
+    ..Item::DEFAULTS
+};
+
+/// **Sword of Wounding** (Weapon, one of six blades; Rare) — "the target
+/// takes an extra 2d6 Necrotic damage and must succeed on a DC 15
+/// Constitution saving throw or be unable to regain Hit Points for 1
+/// hour."
+///
+/// The one weapon on the armoury whose damage is not the point. 2d6
+/// necrotic is the same die a Vicious Weapon lands with no save at all;
+/// what the sword buys is a cleric who cannot undo the fight. See
+/// `Condition::Wounded`.
+pub static SWORD_OF_WOUNDING: Item = Item {
+    name: "Sword of Wounding",
+    glyph: '¦',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Wounding],
+    ..Item::DEFAULTS
+};
+
+/// **Adamantine Armor** (Armor, any medium or heavy except hide;
+/// Uncommon) — "While you're wearing it, any Critical Hit against you
+/// becomes a normal hit."
+///
+/// The engine models no armour slot and no armour type, so what this
+/// carries is the clause and not the plate: no AC bonus, because RAW's
+/// adamantine grants none — the suit's AC is whatever the suit's AC
+/// already was. That makes it the only item on the loot table whose
+/// entire value is a rule, which is also what makes it interesting to
+/// find: it is worth nothing at all until something rolls a 20, and then
+/// it is worth more than any `+1` in the file.
+///
+/// See `crate::engine::criticals` for where the demotion lands.
+pub static ADAMANTINE_ARMOR: Item = Item {
+    name: "Adamantine Armor",
+    glyph: '=',
+    blunts_critical_hits: true,
+    ..Item::DEFAULTS
+};
+
+/// The magic armoury as a set — the nine items above whose value is a
+/// printed clause rather than a bonus.
+///
+/// Exists so the invariants can ask about the family instead of listing
+/// it. `exactly_the_weapons_carry_the_magic` needs to know which items
+/// are allowed to sharpen a swing, and
+/// `every_weapon_in_the_armoury_is_wired_to_a_rider` needs to know when
+/// the family has grown without its sweep growing with it — both
+/// questions the set can answer and a scattering of statics cannot.
+///
+/// Deliberately not the loot table. `LOOT_POOL` weights its entries by
+/// repeating them, so it can say how *often* one of these drops but not
+/// which ones there are.
+pub static MAGIC_ARMOURY: &[&Item] = &[
+    &DRAGON_SLAYER,
+    &GIANT_SLAYER,
+    &SUN_BLADE,
+    &MACE_OF_DISRUPTION,
+    &FLAME_TONGUE,
+    &FROST_BRAND,
+    &VICIOUS_WEAPON,
+    &SWORD_OF_WOUNDING,
+    &ADAMANTINE_ARMOR,
+];
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -3359,27 +3602,68 @@ pub static LOOT_POOL: &[&Item] = &[
     //     weight as the other lv2 buff scrolls (Barkskin / Longstrider).
     &SCROLL_OF_TRUE_SEEING,
     &SCROLL_OF_PROTECTION_FROM_POISON,
+    // The magic armoury, all at single-entry weight — nine named
+    // weapons and one suit of armour against a pool of a couple of
+    // hundred entries, so any one of them is a rare find and the pool
+    // as a whole is not.
+    //
+    // Deliberately one entry each rather than weighting the two
+    // ungated ones (Vicious Weapon, Frost Brand) down. They are the
+    // ones a party can use on any board, which makes them the most
+    // *valuable* of the set; it does not make them the strongest, and a
+    // Dragon Slayer found on the night the ancient red wakes up is
+    // worth every other item in this file put together. Even odds
+    // across the family is what keeps that swing in the game.
+    &DRAGON_SLAYER,
+    &GIANT_SLAYER,
+    &SUN_BLADE,
+    &MACE_OF_DISRUPTION,
+    &FLAME_TONGUE,
+    &FROST_BRAND,
+    &VICIOUS_WEAPON,
+    &SWORD_OF_WOUNDING,
+    &ADAMANTINE_ARMOR,
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Exactly the `+N Weapon` tier makes its holder's swings magical,
-    /// and every rung of that tier does.
+    /// Exactly the weapons make their holder's swings magical, and every
+    /// one of them does.
     ///
     /// Both directions, for the reason every one-line flag on a struct
     /// literal needs both: the `+3` tier arrived after the `+1` and
     /// `+2` and shipped without the flag, so the best weapon in the
     /// game was the only one a wraith still halved. Nothing said so —
     /// it simply did less than the `+1` sitting one loot tier below it.
+    ///
+    /// The allowlist is the `+N` ladder plus `MAGIC_ARMOURY`, and the
+    /// reverse direction is what earns it: an armour, a ring or a potion
+    /// that quietly set this flag would hand every wielder a magic
+    /// weapon they never found, which is the whole magical/nonmagical
+    /// axis undone by one struct field. The Adamantine Armor is the row
+    /// that proves the sweep still bites — it is on `MAGIC_ARMOURY`, it
+    /// is not a weapon, and it must not carry the flag.
     #[test]
-    fn exactly_the_plus_n_weapons_carry_the_magic() {
-        let expected = [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE];
-        for item in expected {
+    fn exactly_the_weapons_carry_the_magic() {
+        let tiers = [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE];
+        for item in tiers {
             assert!(
                 item.grants_magical_attacks,
                 "{} is a magic weapon and does not say so",
+                item.name
+            );
+        }
+        assert!(
+            !ADAMANTINE_ARMOR.grants_magical_attacks,
+            "a suit of armour does not sharpen the sword in your hand"
+        );
+        for item in MAGIC_ARMOURY {
+            assert_eq!(
+                item.grants_magical_attacks,
+                item.name != ADAMANTINE_ARMOR.name,
+                "{} disagrees with the armoury about whether it is a weapon",
                 item.name
             );
         }
@@ -3388,11 +3672,79 @@ mod tests {
                 continue;
             }
             assert!(
-                expected.iter().any(|e| e.name == item.name),
-                "{} grants magical attacks and is not one of the +N weapons",
+                tiers.iter().any(|e| e.name == item.name)
+                    || MAGIC_ARMOURY.iter().any(|e| e.name == item.name),
+                "{} grants magical attacks and is neither a +N weapon nor part of the armoury",
                 item.name
             );
         }
+    }
+
+    /// Every weapon in the armoury actually does something when it is
+    /// swung, and the thing it does is wired to a rider the engine will
+    /// walk.
+    ///
+    /// The failure this names is the one the family is most exposed to.
+    /// A magic weapon here is two halves in two files — an item whose
+    /// `passive_conditions` install a marker, and a row on
+    /// `ON_HIT_RIDERS` keyed to that marker — and either half is
+    /// perfectly valid Rust without the other. An item with a marker no
+    /// rider reads is a sword that does nothing, and it looks exactly
+    /// like a sword that works.
+    ///
+    /// The two kindled blades are the exception, and they are exempted
+    /// by name rather than by "has no passive conditions": their marker
+    /// is installed by an action instead, so the sweep checks the rider
+    /// row exists and lets the item off the inventory half.
+    #[test]
+    fn every_weapon_in_the_armoury_is_wired_to_a_rider() {
+        use crate::conditions::Condition;
+        use crate::engine::attack::on_hit_rider_conditions;
+
+        let riders = on_hit_rider_conditions();
+        // (item, the marker its rider keys off, is it kindled rather
+        // than carried)
+        let wiring: &[(&Item, Condition, bool)] = &[
+            (&DRAGON_SLAYER, Condition::DragonSlaying, false),
+            (&GIANT_SLAYER, Condition::GiantSlaying, false),
+            (&SUN_BLADE, Condition::SunBladed, true),
+            (&MACE_OF_DISRUPTION, Condition::Disrupting, false),
+            (&FLAME_TONGUE, Condition::FlameTongued, true),
+            (&FROST_BRAND, Condition::FrostBranded, false),
+            (&VICIOUS_WEAPON, Condition::Vicious, false),
+            (&SWORD_OF_WOUNDING, Condition::Wounding, false),
+        ];
+        for (item, marker, kindled) in wiring {
+            assert!(
+                riders.contains(marker),
+                "{} installs {} and no on-hit rider reads it — the weapon does nothing",
+                item.name,
+                marker.name()
+            );
+            if *kindled {
+                assert!(
+                    item.passive_conditions.is_empty(),
+                    "{} is lit with an action; holding it should install nothing",
+                    item.name
+                );
+                assert!(
+                    item.on_use.is_some(),
+                    "{} arrives switched off and has no way to switch on",
+                    item.name
+                );
+            } else {
+                assert!(
+                    item.passive_conditions.contains(marker),
+                    "{} does not install the marker its rider reads",
+                    item.name
+                );
+            }
+        }
+        assert_eq!(
+            wiring.len() + 1,
+            MAGIC_ARMOURY.len(),
+            "the armoury grew and this sweep did not — every weapon on it needs a row here"
+        );
     }
 
     /// Exactly one item silvers a swing, and it does not also magic it.

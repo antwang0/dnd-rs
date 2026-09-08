@@ -5414,3 +5414,200 @@ impl Action for LightTorch {
 }
 
 pub static LIGHT_TORCH: LightTorch = LightTorch {};
+
+/// **Kindle a magic weapon** — the shared shape behind the two blades
+/// on the loot table that arrive switched off.
+///
+/// 5e prints the same three-part clause on both of them. The Flame
+/// Tongue: *"you can take a Bonus Action and use a command word to
+/// cause flames to engulf the damage-dealing part of the weapon. These
+/// flames shed Bright Light in a 40-foot radius… While the weapon is
+/// ablaze, it deals an extra 2d6 Fire damage on a hit."* The Sun Blade:
+/// *"you can take a Bonus Action to cause a blade of pure radiance to
+/// spring into existence… The sword's luminous blade emits Bright Light
+/// in a 15-foot radius."* A bonus action, a light, and a damage rider
+/// that is live only while the light is.
+///
+/// It is a struct of its own rather than a `SelfConditionItem` row for
+/// two reasons, and both of them are the sword staying in the wielder's
+/// hand:
+///
+///   - **It does not consume the item.** Every other item action in this
+///     module pops its item on use, because every other one is a potion,
+///     a scroll or a wand charge. A sword that vanished the first time
+///     you lit it would be a strange sword. `SelfConditionItem` has no
+///     way to decline the consumption, and teaching it one would have
+///     meant a flag that reads `false` on all twenty of its existing
+///     rows.
+///   - **It lights the board as well as the wielder.** Light is a
+///     property of tiles, not a condition — the same distinction that
+///     keeps `LightTorch` out of `SelfConditionItem` — so the action has
+///     to reach `add_light_source` alongside its condition install.
+///
+/// The condition is `Permanent` rather than timed, and RAW agrees for
+/// once: the flames "last until you take a Bonus Action to issue the
+/// command again or until you drop, stow, or sheathe the weapon", none
+/// of which is a clock. A wielder who loses the weapon keeps the
+/// condition until the fight ends, which is the one place this parts
+/// company with RAW — the engine strips an item's `passive_conditions`
+/// when the item goes, and this one is not installed that way precisely
+/// because it is not passive.
+pub struct KindleWeapon {
+    /// Player-facing action name ("light flame tongue").
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate on. Never consumed.
+    pub item_name: &'static str,
+    /// Condition installed on the wielder, and the one the weapon's
+    /// `ON_HIT_RIDERS` row keys off. Also the re-light guard: the action
+    /// refuses while it is already up.
+    pub condition: Condition,
+    /// Name the light source carries in the log and on the panel.
+    pub light_name: &'static str,
+    /// Bright / dim radii in tiles, RAW's feet divided by the 2.5-ft
+    /// grid.
+    pub bright_tiles: isize,
+    pub dim_tiles: isize,
+    /// Full log line, `{actor}` substituted with the wielder's name.
+    pub log_text: &'static str,
+}
+
+impl Action for KindleWeapon {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A bonus action for everybody, straight off RAW's own wording,
+        // rather than through `item_use_cost`: that helper's job is to
+        // decide whether reaching into a pack is an Action or a Thief's
+        // bonus action, and neither blade is in a pack — it is already
+        // in the wielder's hand and RAW prices the command word at a
+        // bonus action for anyone holding it.
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Two refusals. You have to be holding it, and it has to be
+        // dark — RAW's second Bonus Action puts the blade out again,
+        // and an engine with no "off" for a light source would have
+        // spent the wielder's bonus action to change nothing.
+        caster_holds(encounter, caster_id, self.item_name)
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| !a.has_condition(self.condition))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::lighting::{LightAnchor, LightSource};
+        // Deliberately no `consume_caster_item` — see the type
+        // docstring. The validator has already established the wielder
+        // is holding it, so the only thing left is to check they are
+        // still on the board.
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: self.light_name,
+            anchor: LightAnchor::Carried(caster_id),
+            bright_tiles: self.bright_tiles,
+            dim_tiles: self.dim_tiles,
+            rounds_remaining: None,
+            // Magical light, and therefore *not* the first thing a
+            // Darkness sphere puts out — a level-2 Darkness quenches
+            // light "created by a spell of 2nd level or lower", and a
+            // rare magic weapon outranks it. Rated at 3 for that
+            // reason rather than because either blade is a 3rd-level
+            // spell; see `LightSource::spell_level`.
+            spell_level: 3,
+            // Carried, not innate: the wielder can drop it.
+            innate: false,
+        });
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log_text.replace("{actor}", &name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: self.condition,
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+/// The Flame Tongue's command word. RAW's flames are a 40-ft bright
+/// radius with a 40-ft dim collar — 16 tiles each on the 2.5-ft grid,
+/// twice a torch in both, which is what makes lighting it a genuine
+/// decision rather than a free upgrade: it is the brightest thing on
+/// the board and everything in the room can see the wielder holding it.
+pub static LIGHT_FLAME_TONGUE: KindleWeapon = KindleWeapon {
+    action_name: "light flame tongue",
+    action_aliases: &["flame tongue", "ignite", "kindle blade"],
+    item_name: crate::items::item_template::FLAME_TONGUE.name,
+    condition: Condition::FlameTongued,
+    light_name: "flame tongue",
+    bright_tiles: 16,
+    dim_tiles: 16,
+    log_text: "{actor} speaks the command word and the blade catches fire.",
+};
+
+/// The Sun Blade's hilt. RAW is a 15-ft bright radius and a 15-ft dim
+/// collar — 6 tiles each, the smallest lamp on the loot table and less
+/// than half a torch.
+///
+/// RAW adds "the light is sunlight", and the engine deliberately does
+/// not carry that half. `AmbientLight::is_sunlight` is true for the open
+/// sky and for nothing else — the Daylight spell itself answers `false`
+/// there, on the reasoning that a vampire is not destroyed by a
+/// 3rd-level spell — and a rare longsword is not a better answer than
+/// Daylight. So the blade lights a dark room and does not burn the
+/// things that fear the sun. See `AmbientLight::is_sunlight` for the
+/// whole of that argument.
+pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
+    action_name: "draw sun blade",
+    action_aliases: &["sun blade", "sunblade", "draw blade"],
+    item_name: crate::items::item_template::SUN_BLADE.name,
+    condition: Condition::SunBladed,
+    light_name: "sun blade",
+    bright_tiles: 6,
+    dim_tiles: 6,
+    log_text: "{actor} grips the hilt and a blade of pure radiance springs into being.",
+};
