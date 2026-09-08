@@ -5653,6 +5653,12 @@ impl Action for SelfCureItem {
         self.action_name
     }
 
+    /// The whole point of the struct, surfaced for the AI's cleanse
+    /// rung: a cure is only worth drinking against the thing it cures.
+    fn cures_conditions(&self) -> &'static [Condition] {
+        self.cures
+    }
+
     fn aliases(&self) -> Vec<&str> {
         self.action_aliases.to_vec()
     }

@@ -1441,6 +1441,27 @@ pub trait Action {
         false
     }
 
+    /// The conditions this action lifts from the creature that takes it,
+    /// or an empty slice — which is the answer for all but a handful.
+    ///
+    /// The cure-shaped sibling of `is_heal`, and it returns the *list*
+    /// rather than a boolean for the reason a heal does not have to: a
+    /// heal is worth taking whenever the taker is wounded, and a cure is
+    /// worth taking only when the taker has the specific thing it cures.
+    /// A Potion of Vitality ends exhaustion and poison and does nothing
+    /// whatever for a paralyzed drinker, so an AI rung that could only
+    /// ask "is this a cure" would drink it on the wrong turn.
+    ///
+    /// Read by `ai::simple::try_self_cleanse`. Scoped to the taker,
+    /// which is why it needs no target parameter — every implementor is
+    /// a `TargetingSchema::NoArgs` self-consumable. An ally-targeted
+    /// cure (Lesser Restoration, Greater Restoration) is a different
+    /// question with a different rung, and answers `&[]` here rather
+    /// than pretending its list applies to the caster.
+    fn cures_conditions(&self) -> &'static [crate::conditions::Condition] {
+        &[]
+    }
+
     /// True if this action's whole effect is a buff spread over the
     /// allies standing near the actor — the Artillerist Protector
     /// cannon's temp-HP pulse, the Bard's Countercharm.

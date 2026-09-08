@@ -120,6 +120,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2e. Light the sword. A Bonus Action that costs the turn
+        //     nothing and pays out on every swing for the rest of the
+        //     fight, so it belongs with the other free rungs rather than
+        //     anywhere near the attack pickers. See `try_kindle_weapon`.
+        if let Some(aei) = try_kindle_weapon(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -144,6 +152,17 @@ impl Controller for SimpleAi {
         // bonus-action restore. Comes before attacks because the heal
         // is bonus-action and doesn't conflict with this turn's swing.
         if let Some(aei) = try_self_heal(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3a''. Drink the cure. Below the self-heal because hit points
+        //       are the more urgent of the two — a fighter at three hit
+        //       points and one level of exhaustion should drink the
+        //       healing potion first — and above everything offensive
+        //       because a poisoned creature swings at disadvantage and a
+        //       cure is a bigger swing to the turn than any pick below
+        //       it. See `try_self_cleanse`.
+        if let Some(aei) = try_self_cleanse(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -1797,6 +1816,64 @@ fn try_make_light(
     try_self_action_inc_items(encounter, actor_id, "light torch")
         .or_else(|| try_self_action(encounter, actor_id, "light"))
         .or_else(|| try_continual_flame(encounter, actor_id))
+}
+
+/// Every magic weapon that arrives switched off, and the Bonus Action
+/// that switches it on.
+///
+/// Read by `try_kindle_weapon`. A table rather than two `or_else` calls
+/// because the pair is a family — a third kindled blade should land as a
+/// row here and in `items::item_template`, not as a third clause in a
+/// chain — and because the rung has to ask about the marker as well as
+/// the action name: an action list is a list of what a creature *could*
+/// do, and the whole question here is whether it has already done it.
+const KINDLED_WEAPONS: &[(&str, Condition)] = &[
+    ("light flame tongue", Condition::FlameTongued),
+    ("draw sun blade", Condition::SunBladed),
+];
+
+/// Light a Flame Tongue or draw a Sun Blade, when there is anything
+/// worth swinging it at.
+///
+/// Deliberately **not** part of `try_make_light` one rung down, even
+/// though both actions put light on the board. That rung's whole gate is
+/// "this turn has nothing in it because I cannot see" — it fires only
+/// when no enemy is visible at all, and refuses the moment one is. A
+/// wielder wants the blade lit for the opposite reason: because there is
+/// something in front of them and the sword deals 2d6 more to it. Routed
+/// through the light rung, the Flame Tongue would have been lit only on
+/// the turns its damage could not be collected.
+///
+/// The engagement gate is `LIGHT_REVEAL_BAND` — the same sixteen tiles
+/// the torch rung uses — and for a related reason rather than the same
+/// one. Lighting a blade is a giveaway: it is the brightest thing on the
+/// board and it announces exactly where the wielder is standing. Doing
+/// it with nothing in sight is pure cost, so the rung waits until
+/// something is close enough that the extra damage is going to be
+/// collected this fight.
+///
+/// Fires at most once per blade per fight without needing a ledger: the
+/// action's own validator refuses while the marker is up, so a lit blade
+/// falls straight through.
+fn try_kindle_weapon(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let unlit: Vec<&'static str> = KINDLED_WEAPONS
+        .iter()
+        .filter(|(_, marker)| !actor.has_condition(*marker))
+        .map(|(name, _)| *name)
+        .collect();
+    if unlit.is_empty() {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, LIGHT_REVEAL_BAND) {
+        return None;
+    }
+    unlit
+        .into_iter()
+        .find_map(|name| try_self_action_inc_items(encounter, actor_id, name))
 }
 
 /// Strike a **Continual Flame** on the floor underfoot, when the free
@@ -7868,6 +7945,50 @@ fn try_self_heal(
             }
             _ => continue,
         };
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
+/// Drink the thing that fixes what is wrong with you.
+///
+/// The cure-shaped sibling of `try_self_heal` one rung up, and it takes
+/// the same shape for the same reason: walk `available_actions()` — the
+/// template list *plus* one entry per carried consumable — and take the
+/// first that validates. What differs is the gate. A heal is worth
+/// taking whenever the taker is wounded, so that rung asks about hit
+/// points; a cure is worth taking only against the specific thing it
+/// cures, so this one asks the action what it lifts and the actor what
+/// it is under. See `Action::cures_conditions`.
+///
+/// Before this rung, an AI actor holding a Potion of Vitality never
+/// drank it. There was no lane in the pipeline that could see a
+/// consumable whose effect was a removal: `try_self_heal` filters on
+/// `is_heal`, the buff rungs filter on a condition the action installs,
+/// and a cure installs nothing. So the very rare potion the party's
+/// fighter picked up went into the ground with them.
+///
+/// Deliberately no HP gate and no engagement gate. Exhaustion and poison
+/// are worth shedding at any hit point total and against any number of
+/// enemies, and the action's own validator already refuses when there is
+/// nothing to cure — which is the gate that matters and the one that
+/// keeps the potion corked.
+fn try_self_cleanse(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    for action in actor.available_actions() {
+        let cures = action.cures_conditions();
+        if cures.is_empty() || !cures.iter().any(|&c| actor.has_condition(c)) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
         if aei.validate(encounter) {
             return Some(aei);
         }
@@ -18759,5 +18880,150 @@ mod tests {
             !fight(false),
             "three enemies in the lake is the cast that helps them"
         );
+    }
+
+    /// The AI lights the sword it is holding, and stops asking once it
+    /// is lit.
+    ///
+    /// The second half is what makes the rung safe to put where it is.
+    /// `decide` is called repeatedly across a turn, so a rung that kept
+    /// returning the same bonus action would be a turn that never
+    /// advanced — and the guard against it is not in the rung at all but
+    /// in `KindleWeapon`'s own validator, which is exactly the kind of
+    /// arrangement that stops being true when somebody edits the other
+    /// file.
+    #[test]
+    fn the_ai_lights_a_flame_tongue_and_then_leaves_it_alone() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::Coordinate;
+        use crate::items::item_template::FLAME_TONGUE;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        // Unarmed, the fighter has nothing to light.
+        assert!(try_kindle_weapon(&e, fighter).is_none());
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&FLAME_TONGUE);
+        let aei = try_kindle_weapon(&e, fighter).expect("a held Flame Tongue is worth lighting");
+        assert_eq!(aei.action().name(), "light flame tongue");
+        for ef in aei.action().execute(&mut e, fighter, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&fighter].has_condition(Condition::FlameTongued));
+        assert!(
+            try_kindle_weapon(&e, fighter).is_none(),
+            "a lit blade is not worth another bonus action"
+        );
+    }
+
+    /// Every kindled blade the item table ships is one the AI knows to
+    /// light.
+    ///
+    /// The drift this names is quiet in the direction that matters. A
+    /// blade added to `item_template` with a `KindleWeapon` and no row
+    /// on `KINDLED_WEAPONS` works perfectly for a human player and is
+    /// never once switched on by a monster — the item is not broken,
+    /// only invisible to half the creatures that can hold it, which no
+    /// other test in the suite would notice.
+    ///
+    /// The family is read off `MAGIC_ARMOURY` rather than off the whole
+    /// loot pool, because "an item with an `on_use`" is every potion and
+    /// scroll in the file, and "an action whose name starts with light"
+    /// is a torch. An armoury item that offers an action is a blade that
+    /// has to be drawn — that is what the armoury *is* — so the set is
+    /// exactly right and stays right as both sides grow.
+    #[test]
+    fn every_kindled_blade_on_the_loot_table_is_one_the_ai_can_light() {
+        use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY};
+
+        for item in MAGIC_ARMOURY {
+            let Some(action) = item.on_use else {
+                continue;
+            };
+            assert!(
+                KINDLED_WEAPONS
+                    .iter()
+                    .any(|(known, _)| *known == action.name()),
+                "{} is drawn with `{}` and the AI has never heard of it",
+                item.name,
+                action.name()
+            );
+        }
+        // And the other direction: a row naming an action nothing ships
+        // is a rung that can never fire.
+        for (name, marker) in KINDLED_WEAPONS {
+            let backing = MAGIC_ARMOURY
+                .iter()
+                .filter_map(|item| item.on_use)
+                .any(|action| action.name() == *name);
+            assert!(
+                backing,
+                "{name} is on the AI's list and no item in the armoury offers it"
+            );
+            assert!(
+                LOOT_POOL.iter().any(|item| item
+                    .on_use
+                    .is_some_and(|action| action.name() == *name)),
+                "{name} is wired end to end and nobody can find the weapon"
+            );
+            // The marker column has to be the one the blade actually
+            // installs, or the rung lights it again every turn.
+            assert!(
+                crate::engine::attack::on_hit_rider_conditions().contains(marker),
+                "{name} claims to install {} and no rider reads it",
+                marker.name()
+            );
+        }
+    }
+
+    /// A cure is drunk against the thing it cures and not before.
+    ///
+    /// Both directions in one test because the rung's whole content is
+    /// the gate: with no gate it drinks a very rare potion on turn one
+    /// of every fight, and with the wrong gate it never drinks it at
+    /// all.
+    #[test]
+    fn the_ai_drinks_a_cure_only_against_what_it_cures() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::Coordinate;
+        use crate::items::item_template::POTION_OF_VITALITY;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&POTION_OF_VITALITY);
+        assert!(
+            try_self_cleanse(&e, fighter).is_none(),
+            "a healthy fighter has nothing to cure"
+        );
+        // Something the potion does *not* cure leaves it corked too —
+        // the gate is the list, not "am I under anything at all".
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(3));
+        assert!(
+            try_self_cleanse(&e, fighter).is_none(),
+            "a potion of vitality does nothing for a blinded drinker"
+        );
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Rounds(3));
+        let aei = try_self_cleanse(&e, fighter).expect("poison is what the potion is for");
+        assert_eq!(aei.action().name(), "drink potion of vitality");
     }
 }
