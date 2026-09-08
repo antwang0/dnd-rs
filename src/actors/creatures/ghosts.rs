@@ -7,8 +7,10 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Ghost — CR 4 incorporeal undead. RAW: a wandering soul with a
-/// withering necrotic touch and a Horrifying Visage burst that
-/// frightens nearby living creatures. We model the incorporeal-
+/// withering necrotic touch and a **Horrific Visage** — a 60-foot cone
+/// of dread that deals psychic damage and sends the living running, and
+/// that anyone who holds their nerve against once is done with for
+/// good. We model the incorporeal-
 /// movement clause via straight resistance to non-magical B/P/S (the
 /// 5e formula is "resistance to non-magical weapons, immune to most
 /// things else" — we keep parity with the rest of the undead pool

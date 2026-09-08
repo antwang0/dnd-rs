@@ -7119,6 +7119,15 @@ pub struct BreathWeapon {
 /// area is unmistakably the creature's own.
 const EMANATION_AIM_LEASH: isize = 2;
 
+/// RAW's 30-foot Cone, in tiles on the 2.5 ft grid — the length the
+/// gaze and breath cones on this roster share (the gorgon's petrifying
+/// breath, the medusa's and the basilisk's gaze).
+///
+/// Named rather than repeated because it is the same sentence in three
+/// stat blocks, and because "12" at a call site is the one number in a
+/// cone declaration that reads like an accident.
+pub const CONE_30_FT: isize = 12;
+
 impl Action for BreathWeapon {
     fn name(&self) -> &str {
         self.display_name
@@ -9305,13 +9314,48 @@ impl Action for GhostWitheringTouch {
 pub static GHOST_WITHERING_TOUCH: LazyLock<GhostWitheringTouch> =
     LazyLock::new(|| GhostWitheringTouch {});
 
-/// Ghost Horrifying Visage — 60ft radius burst (centred on the ghost),
-/// each non-undead enemy in range makes a WIS save vs DC 13. Fail =
-/// Frightened for 5 rounds. Success = immunity to this ghost's Visage
-/// for 24 hours (not modeled — single-encounter scope). Undead and
-/// fiends are immune to fright already via the engine's condition-
-/// immunity table, so the no-target case folds out naturally.
+/// Ghost **Horrific Visage** — SRD 5.2: *"Wisdom Saving Throw: DC 13,
+/// each creature in a 60-foot Cone that can see the ghost and isn't an
+/// Undead. Failure: 10 (2d6 + 3) Psychic damage, and the target has the
+/// Frightened condition until the start of the ghost's next turn.
+/// Success: The target is immune to this ghost's Horrific Visage for 24
+/// hours."*
+///
+/// Four clauses, and the version this replaces had one of them. It was
+/// a `NoArgs` sixty-foot *sphere* — the ghost frightening everything in
+/// every direction, which at CR 4 is most of a generated board — with
+/// no damage, no sight gate, no type filter, and a five-round timer in
+/// place of RAW's one. The docstring conceded the immunity clause was
+/// "not modeled — single-encounter scope", which was true of the engine
+/// when it was written and is no longer: the ledger the ghast's Stench
+/// banks its saves in is the same sentence, so this banks in it too.
+///
+/// The two gates are what make the ghost a thing you can *do something
+/// about*. A cone is faced, so a party spread around the room takes it
+/// in ones; the sight clause means a blinded fighter, or one round a
+/// corner, walks through it; and the success clause means a party that
+/// makes its saves is finished with this ghost's face for good.
+///
+/// `deals_damage` still answers false. The psychic damage is real but
+/// incidental — the flag is what stops the AI's focus-fire lane
+/// treating a fear cone as a way to whittle somebody down, which is the
+/// bug that had a medusa re-gazing a petrified corpse four hundred
+/// times.
 pub struct GhostHorrifyingVisage {}
+
+impl GhostHorrifyingVisage {
+    const DC: i32 = 13;
+    /// RAW's 60-foot Cone.
+    const CONE: isize = 24;
+    /// RAW's "10 (2d6 + 3) Psychic damage" — the dice and the flat
+    /// term, which is the ghost's own Charisma modifier written out.
+    const DAMAGE: Dice = Dice::new(2, 6);
+    const DAMAGE_BONUS: u32 = 3;
+    /// The name the 24-hour immunity is banked under. A `&'static str`
+    /// because the ledger is keyed by trait name — see
+    /// `EncounterInstance::bank_trait_immunity`.
+    const TRAIT: &'static str = "Horrific Visage";
+}
 
 impl Action for GhostHorrifyingVisage {
     fn name(&self) -> &str {
@@ -9321,16 +9365,17 @@ impl Action for GhostHorrifyingVisage {
         vec!["hv", "visage"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
+        TargetingSchema::Cone { length: Self::CONE }
     }
     fn requires_los(&self) -> bool {
         true
     }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
     fn deals_damage(&self) -> bool {
-        // Frightens; never reduces HP. Stays in `is_harmful: true` lane
-        // so the AI's burst heuristic still picks it up when 2+ enemies
-        // cluster, but the focus-fire path that ranks "does this whittle
-        // HP?" skips it cleanly.
+        // Frightens first and foremost; see the type docs for why the
+        // psychic damage does not flip this.
         false
     }
     fn side_effects(
@@ -9338,25 +9383,85 @@ impl Action for GhostHorrifyingVisage {
         encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        const DC: i32 = 13;
-        const RADIUS: isize = 24; // 60 ft
-        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+        use crate::engine::areas::AreaShape;
+        use crate::engine::side_effects::DealDamage;
+
+        let Some(aim) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        encounter.log("  horrifying visage: enemies make a WIS save vs DC 13");
-        crate::actions::action_template::resolve_burst_save_condition(
-            encounter,
-            caster_id,
-            caster_loc,
-            RADIUS,
-            AbilityScoreType::Wisdom,
-            DC,
-            Condition::Frightened,
-            ConditionTimer::Rounds(5),
-        )
+        let shape = AreaShape::Cone { length: Self::CONE };
+        // One roll, shared, the way every area in the engine rolls.
+        let rolled = encounter.roll(&Self::DAMAGE) + Self::DAMAGE_BONUS;
+        encounter.log(format!(
+            "  horrific visage: a 60 ft cone of dread (DC {} WIS, {}{:+} = {} psychic on a fail)",
+            Self::DC,
+            Self::DAMAGE,
+            Self::DAMAGE_BONUS,
+            rolled
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_area_targets(caster_id, shape, aim) {
+            // "…and isn't an Undead." One dead thing does not frighten
+            // another.
+            if encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|a| a.creature_type().is_undead())
+            {
+                continue;
+            }
+            // "…that can see the ghost."
+            if !encounter.viewer_can_see(tid, caster_id) {
+                continue;
+            }
+            // "…is immune to this ghost's Horrific Visage for 24 hours",
+            // banked by a previous success.
+            if encounter.trait_immunity_banked(tid, caster_id, Self::TRAIT) {
+                continue;
+            }
+            let save = encounter.roll_save_against_caster_vs_condition(
+                tid,
+                AbilityScoreType::Wisdom,
+                Self::DC,
+                caster_id,
+                Condition::Frightened,
+            );
+            if save.passed() {
+                encounter.bank_trait_immunity(tid, caster_id, Self::TRAIT);
+                let name = encounter.actor_name(tid);
+                encounter.log(format!(
+                    "  {} holds their nerve, and will not flinch at this ghost again.",
+                    name
+                ));
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: rolled,
+                damage_type: DamageType::Psychic,
+            }));
+            // Through the linked installer rather than a bare
+            // `ApplyCondition`, because Frightened is one of the
+            // conditions that has to remember *who*: without the link a
+            // frightened creature reads as unable to approach any enemy
+            // at all, and cannot run away from the ghost, which is the
+            // one thing being frightened of a ghost should make it do.
+            effects.extend(crate::engine::side_effects::install_condition_with_link(
+                Condition::Frightened,
+                tid,
+                caster_id,
+                // RAW's "until the start of the ghost's next turn" — a
+                // round, measured from the ghost's slot. The engine's
+                // `UntilStartOfNextTurn` is holder-relative and would
+                // lift it at the top of the *victim's* turn, which is
+                // the turn the fear is supposed to ruin.
+                ConditionTimer::Rounds(1),
+            ));
+        }
+        effects
     }
 }
 
@@ -11848,12 +11953,12 @@ pub static GORGON_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Gorgon Petrifying Breath — 30-foot cone (radius 2 / range 4 in this
-/// 2.5ft grid) targeted at a tile. Every actor caught in the burst
-/// makes a CON save vs DC 13; on fail, the target picks up Petrified
-/// for 1 round (the action-economy lockout is the threat — we cap at
-/// 1 round so a single hit doesn't game-over the target, matching the
-/// Cockatrice / Medusa / Basilisk shape).
+/// Gorgon Petrifying Breath — RAW's 30-foot Cone, twelve tiles on the
+/// 2.5 ft grid. Every enemy caught in it makes a CON save vs DC 13; on
+/// fail, the target picks up Petrified for 1 round (the action-economy
+/// lockout is the threat — we cap at 1 round so a single hit doesn't
+/// game-over the target, matching the Cockatrice / Medusa / Basilisk
+/// shape).
 ///
 /// Recharge 5-6 via the shared `"breath_weapon"` pool so the gorgon
 /// can't double-tap with this and a second breath option (it has none,
@@ -11868,10 +11973,7 @@ impl Action for GorgonPetrifyingBreath {
         vec!["pb", "stone-breath"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(4)
+        TargetingSchema::Cone { length: CONE_30_FT }
     }
     fn requires_los(&self) -> bool {
         true
@@ -11904,18 +12006,17 @@ impl Action for GorgonPetrifyingBreath {
             return Vec::new();
         };
         const DC: i32 = 13;
-        const RADIUS: isize = 2;
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
             caster.spend_recharge("breath_weapon");
         }
-        encounter.log("  petrifying breath: gorgon exhales a cloud of stoning vapor");
-        // Route through the shared `resolve_burst_save_condition` helper —
-        // same chokepoint that future save-or-condition AoEs will use.
-        crate::actions::action_template::resolve_burst_save_condition(
+        encounter.log("  petrifying breath: gorgon exhales a cone of stoning vapour");
+        // Route through the shared save-or-condition chokepoint — the
+        // same one every other condition area in the engine uses.
+        crate::actions::action_template::resolve_area_save_condition(
             encounter,
             caster_id,
+            AreaShape::Cone { length: CONE_30_FT },
             origin,
-            RADIUS,
             AbilityScoreType::Constitution,
             DC,
             Condition::Petrified,

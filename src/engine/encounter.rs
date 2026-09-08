@@ -2069,19 +2069,26 @@ pub struct EncounterInstance {
     /// a creature shoved into a web on somebody else's turn triggers it,
     /// and shoving them back in on that same turn does not.
     zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
-    /// The 24-hour clause on `engine::emanations`: `(victim id, emitter
-    /// id, trait name)` triples that have already made their save once
-    /// and are done with that creature's trait for the rest of the
-    /// fight.
+    /// SRD 5.2's *"Success: The target is immune to this X's Y for 24
+    /// hours"* clause, as `(victim id, source id, trait name)` triples
+    /// that have already made the save once and are done with that
+    /// creature's trait for the rest of the fight.
+    ///
+    /// Shared by every rule that ends with that sentence rather than
+    /// owned by one of them, because the sentence is the same in all of
+    /// them and the bookkeeping is the whole of it: the ghast's and the
+    /// sea hag's start-of-turn emanations, the ghost's Horrific Visage.
+    /// (The hezrou's Stench is the one that does *not* print it, which
+    /// is what makes it a CR-8 trait — see `engine::emanations`.)
     ///
     /// Never swept, unlike `zone_contacts_this_turn` directly above,
     /// and the difference is the rule rather than the plumbing: RAW's
     /// window is 24 hours, which outlasts any encounter, where the
-    /// zone ledger's is one turn. Keyed on the emitter as well as the
-    /// trait because RAW scopes the immunity to "this ghast's Stench"
-    /// — walking away from one ghast's is no protection from the one
+    /// zone ledger's is one turn. Keyed on the source as well as the
+    /// trait because RAW scopes the immunity to "this ghast's Stench" —
+    /// walking away from one ghast's is no protection from the one
     /// standing beside it.
-    emanation_immunities: std::collections::HashSet<(usize, usize, &'static str)>,
+    trait_immunities: std::collections::HashSet<(usize, usize, &'static str)>,
     /// Map tiles a spell has retyped, and the ledger that hands them
     /// back — see `crate::engine::conjured_terrain`. Sibling to `zones`
     /// in every respect but one: a zone overlays the map and this
@@ -10819,7 +10826,7 @@ impl EncounterInstance {
             zones: Vec::new(),
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
-            emanation_immunities: std::collections::HashSet::new(),
+            trait_immunities: std::collections::HashSet::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
             ambient_light: AmbientLight::default(),
@@ -12684,6 +12691,35 @@ impl EncounterInstance {
         .apply(self);
     }
 
+    /// Has `victim_id` already made its save against `source_id`'s
+    /// trait named `trait_name`, and banked SRD 5.2's 24-hour immunity
+    /// to it?
+    ///
+    /// See `trait_immunities` for why the ledger is keyed on all three
+    /// and why it is never swept.
+    pub fn trait_immunity_banked(
+        &self,
+        victim_id: usize,
+        source_id: usize,
+        trait_name: &'static str,
+    ) -> bool {
+        self.trait_immunities
+            .contains(&(victim_id, source_id, trait_name))
+    }
+
+    /// Record the 24-hour immunity a successful save just bought.
+    /// Idempotent — a set insert, so a rule that banks twice is a rule
+    /// that banks once.
+    pub fn bank_trait_immunity(
+        &mut self,
+        victim_id: usize,
+        source_id: usize,
+        trait_name: &'static str,
+    ) {
+        self.trait_immunities
+            .insert((victim_id, source_id, trait_name));
+    }
+
     /// 5e **Emanation** traits, resolved from the victim's side: every
     /// hostile emanation whose radius covers `actor_id` at the top of
     /// its turn gets one saving throw. See `crate::engine::emanations`
@@ -12751,10 +12787,7 @@ impl EncounterInstance {
                     continue;
                 }
                 // The 24-hour clause, already paid.
-                if self
-                    .emanation_immunities
-                    .contains(&(actor_id, emitter_id, emanation.name))
-                {
+                if self.trait_immunity_banked(actor_id, emitter_id, emanation.name) {
                     continue;
                 }
                 // A creature that cannot be put in the condition at all
@@ -12792,8 +12825,7 @@ impl EncounterInstance {
             );
             if outcome.passed() {
                 if emanation.grants_immunity_on_save {
-                    self.emanation_immunities
-                        .insert((actor_id, emitter_id, emanation.name));
+                    self.bank_trait_immunity(actor_id, emitter_id, emanation.name);
                     self.log(format!(
                         "  {}: {} holds out against {}, and is done with it.",
                         emanation.name, victim_name, emitter_name

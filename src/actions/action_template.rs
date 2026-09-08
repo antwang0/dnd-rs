@@ -430,7 +430,34 @@ pub fn resolve_burst_save_condition(
     condition: crate::conditions::Condition,
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
+    resolve_area_save_condition(
+        encounter,
+        caster_id,
+        AreaShape::Burst { radius },
+        center,
+        save_ability,
+        dc,
+        condition,
+        timer,
+    )
+}
+
+/// `resolve_burst_save_condition` for an area of any shape — the lane a
+/// gaze cone resolves through. See `resolve_area_save_damage` for why
+/// the shape-general function is the body and the burst one is the
+/// wrapper.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_area_save_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let target_ids = encounter.enemy_area_targets(caster_id, shape, aim);
     install_condition_on_failed_saves(
         encounter, caster_id, &target_ids, save_ability, dc, condition, timer,
     )

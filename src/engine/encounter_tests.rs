@@ -32756,38 +32756,117 @@ fn ghost_incorporeal_envelope() {
     }
 }
 
-/// Ghost's Horrifying Visage is a NoArgs burst that frightens nearby
-/// non-immune enemies. We seed with a low-WIS target so the save
-/// reliably fails across seeds.
+/// Ghost's Horrific Visage is RAW's 60-foot Cone: the goblin the ghost
+/// is facing takes psychic damage and runs, and the goblin standing the
+/// same distance the other way takes nothing.
+///
+/// Swept over seeds because the outcome rides a save. What the sweep
+/// asserts is that the frightening happens *at all* on the near side —
+/// the far-side assertion holds on every seed, because a creature
+/// outside the cone is never rolled for.
 #[test]
-fn ghost_horrifying_visage_frightens_nearby_enemies() {
+fn ghost_horrific_visage_is_a_cone_and_not_a_room() {
     use crate::actions::monster_attacks::GHOST_HORRIFYING_VISAGE;
     use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     let mut saw_frighten = false;
     for seed in 0..40u64 {
-        let mut e = ei_with_terrain(15, 15, &[]);
-        for _ in 0..seed {
-            let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
-        }
+        let mut e = ei_with_terrain_seeded(30, 15, &[], seed);
         let ghost = e
-            .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(14, 6), 1, 0)
             .unwrap();
-        let goblin = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 0, 0)
+        let ahead = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 6), 0, 0)
             .unwrap();
-        for x in GHOST_HORRIFYING_VISAGE.side_effects(&mut e, ghost, None, None, None) {
+        let behind = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let behind_hp = e.actors[&behind].hitpoints();
+        let aim = e.actors[&ahead].location();
+        for x in
+            GHOST_HORRIFYING_VISAGE.side_effects(&mut e, ghost, None, Some(&vec![aim]), None)
+        {
             x.apply(&mut e);
         }
-        if e.actors[&goblin].has_condition(Condition::Frightened) {
+        assert!(
+            !e.actors[&behind].has_condition(Condition::Frightened),
+            "the goblin behind the ghost is not in the cone (seed {seed})"
+        );
+        assert_eq!(
+            e.actors[&behind].hitpoints(),
+            behind_hp,
+            "and takes none of the psychic damage either (seed {seed})"
+        );
+        if e.actors[&ahead].has_condition(Condition::Frightened) {
             saw_frighten = true;
+            // And RAW's link: a frightened creature has to know what it
+            // is running from.
+            assert_eq!(
+                e.actors[&ahead].linked_by(Condition::Frightened),
+                Some(ghost)
+            );
             break;
         }
     }
     assert!(
         saw_frighten,
-        "ghost's horrifying visage should frighten a low-WIS goblin across seeds"
+        "the visage should frighten a low-WIS goblin somewhere in forty seeds"
     );
+}
+
+/// RAW's closing sentence: "Success: The target is immune to this
+/// ghost's Horrific Visage for 24 hours." A creature that holds its
+/// nerve once is never rolled for again — which is what turns the
+/// ghost's marquee action from an every-round tax into a toll.
+#[test]
+fn holding_your_nerve_against_a_ghost_is_permanent() {
+    use crate::actions::monster_attacks::GHOST_HORRIFYING_VISAGE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
+
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(30, 15, &[], seed);
+        let ghost = e
+            .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(14, 6), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 6), 0, 0)
+            .unwrap();
+        let aim = e.actors[&fighter].location();
+
+        // Keep glaring until the fighter makes one save.
+        let mut banked = false;
+        for _ in 0..12 {
+            for x in GHOST_HORRIFYING_VISAGE
+                .side_effects(&mut e, ghost, None, Some(&vec![aim]), None)
+            {
+                x.apply(&mut e);
+            }
+            if e.trait_immunity_banked(fighter, ghost, "Horrific Visage") {
+                banked = true;
+                break;
+            }
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .remove_condition(Condition::Frightened);
+            let max = e.actors[&fighter].max_hitpoints();
+            e.actors.get_mut(&fighter).unwrap().heal(max);
+        }
+        assert!(banked, "twelve DC 13 saves without a success (seed {seed})");
+
+        // From here the glare is free: no save, no damage, no fear.
+        let hp = e.actors[&fighter].hitpoints();
+        for _ in 0..5 {
+            for x in GHOST_HORRIFYING_VISAGE
+                .side_effects(&mut e, ghost, None, Some(&vec![aim]), None)
+            {
+                x.apply(&mut e);
+            }
+            assert!(!e.actors[&fighter].has_condition(Condition::Frightened));
+            assert_eq!(e.actors[&fighter].hitpoints(), hp);
+        }
+    }
 }
 
 /// Tarrasque carries 3 Legendary Resistance charges. Forcing 3 failing
