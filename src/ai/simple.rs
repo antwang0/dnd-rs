@@ -893,13 +893,12 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3g2. Pit Fiend Fear Aura — boss-level "frighten everyone
-        //      in the room" burst. Fire when 2+ enemies sit inside
-        //      the 20ft radius (single-target a normal swing is
-        //      better, but at 2+ the multi-target frighten dominates).
-        if let Some(aei) = try_fear_aura(encounter, actor_id) {
-            return ControllerDecision::Act(aei);
-        }
+        // 3g2 was the Pit Fiend's Fear Aura, which the fiend used to
+        // spend a whole Action on. RAW's aura is passive — see
+        // `engine::emanations` — so there is no action left to pick and
+        // the rung went with it. The fiend keeps its bite and two claws
+        // every round instead, which is the CR-20 damage the fight is
+        // actually about, and the aura bills the party regardless.
 
         // 3g3. Dragon Breath Weapon — recharge-gated AoE. Fire when
         //      the breath is available and 2+ enemies cluster within
@@ -6192,39 +6191,6 @@ fn try_turn_burst(
     None
 }
 
-/// Pit Fiend Fear Aura — action that frightens every hostile within
-/// 20ft (8 tiles) on a failed WIS save. Fire when at least 2 enemies
-/// (frighten-eligible) are inside the radius — single-target there
-/// are better single-target attacks, but at 2+ the aura's burst payoff
-/// dominates a normal swing.
-fn try_fear_aura(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let team = actor.team();
-    let nearby = encounter
-        .actors
-        .iter()
-        .filter(|(id, a)| {
-            **id != actor_id
-                && a.team() != team
-                && a.is_combat_active()
-                // Honor dynamic immunities too — a Halfling Brave or
-                // Heroic-buffed ally would resist the install even if
-                // their template lacks the static immunity flag, so
-                // they shouldn't count toward the "is the aura worth it"
-                // gate.
-                && !a.effectively_immune_to_condition(Condition::Frightened)
-                && !a.has_condition(Condition::Frightened)
-                && actor.footprint_gap_to(a) <= 8
-        })
-        .count();
-    if nearby < 2 {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "fear aura")
-}
 
 /// Recharge-gated area attacks — a dragon's breath, and everything else
 /// shaped like one. Fires when the actor has such an action available
