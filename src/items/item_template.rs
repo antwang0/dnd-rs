@@ -2823,7 +2823,7 @@ pub static GIANT_SLAYER: Item = Item {
 /// abstraction the rest of the loot table already runs on.
 pub static SUN_BLADE: Item = Item {
     name: "Sun Blade",
-    glyph: '!',
+    glyph: 'i',
     bonuses: ItemBonuses {
         attack_bonus: 2,
         damage_bonus: 2,
@@ -2852,7 +2852,7 @@ pub static SUN_BLADE: Item = Item {
 /// have meant the light survived the wielder dropping it or dying.
 pub static MACE_OF_DISRUPTION: Item = Item {
     name: "Mace of Disruption",
-    glyph: 'ǂ',
+    glyph: '+',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Disrupting],
     ..Item::DEFAULTS
@@ -2868,7 +2868,7 @@ pub static MACE_OF_DISRUPTION: Item = Item {
 /// the wielder.
 pub static FLAME_TONGUE: Item = Item {
     name: "Flame Tongue",
-    glyph: '†',
+    glyph: 'f',
     grants_magical_attacks: true,
     on_use: Some(&crate::actions::item_actions::LIGHT_FLAME_TONGUE),
     ..Item::DEFAULTS
@@ -2886,7 +2886,7 @@ pub static FLAME_TONGUE: Item = Item {
 /// pipeline rather than here.
 pub static FROST_BRAND: Item = Item {
     name: "Frost Brand",
-    glyph: '≠',
+    glyph: '%',
     grants_magical_attacks: true,
     damage_resistances: &[crate::engine::types::DamageType::Fire],
     passive_conditions: &[crate::conditions::Condition::FrostBranded],
@@ -2904,7 +2904,7 @@ pub static FROST_BRAND: Item = Item {
 /// finds one has found the reliable one.
 pub static VICIOUS_WEAPON: Item = Item {
     name: "Vicious Weapon",
-    glyph: '×',
+    glyph: 'x',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Vicious],
     ..Item::DEFAULTS
@@ -2921,7 +2921,7 @@ pub static VICIOUS_WEAPON: Item = Item {
 /// `Condition::Wounded`.
 pub static SWORD_OF_WOUNDING: Item = Item {
     name: "Sword of Wounding",
-    glyph: '¦',
+    glyph: '!',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Wounding],
     ..Item::DEFAULTS
@@ -2963,7 +2963,7 @@ pub static ADAMANTINE_ARMOR: Item = Item {
 /// it is a shield; against an archmage it is close to an answer.
 pub static SPELLGUARD_SHIELD: Item = Item {
     name: "Spellguard Shield",
-    glyph: '⌂',
+    glyph: '(',
     bonuses: ItemBonuses {
         ac: 2,
         ..ItemBonuses::ZERO
@@ -2985,7 +2985,7 @@ pub static SPELLGUARD_SHIELD: Item = Item {
 /// that already sees in the dark gains nothing from them.
 pub static GOGGLES_OF_NIGHT: Item = Item {
     name: "Goggles of Night",
-    glyph: 'ö',
+    glyph: 'o',
     passive_conditions: &[crate::conditions::Condition::Darkvisioned],
     ..Item::DEFAULTS
 };
@@ -3002,7 +3002,7 @@ pub static GOGGLES_OF_NIGHT: Item = Item {
 /// out.
 pub static GLOVES_OF_MISSILE_SNARING: Item = Item {
     name: "Gloves of Missile Snaring",
-    glyph: 'ĝ',
+    glyph: 'g',
     ..Item::DEFAULTS
 };
 
@@ -3019,7 +3019,7 @@ pub static GLOVES_OF_MISSILE_SNARING: Item = Item {
 /// one-spell exemption with no lane of its own.
 pub static CLOAK_OF_ARACHNIDA: Item = Item {
     name: "Cloak of Arachnida",
-    glyph: 'ᛜ',
+    glyph: 'k',
     damage_resistances: &[crate::engine::types::DamageType::Poison],
     passive_conditions: &[crate::conditions::Condition::SpiderClimbing],
     ..Item::DEFAULTS
@@ -3037,7 +3037,7 @@ pub static CLOAK_OF_ARACHNIDA: Item = Item {
 /// by the same gate.
 pub static RING_OF_FEATHER_FALLING: Item = Item {
     name: "Ring of Feather Falling",
-    glyph: '˚',
+    glyph: 'r',
     passive_conditions: &[crate::conditions::Condition::Feathered],
     ..Item::DEFAULTS
 };
@@ -3056,7 +3056,7 @@ pub static RING_OF_FEATHER_FALLING: Item = Item {
 /// initiative once at the bell, before anything has been picked up.
 pub static WEAPON_OF_WARNING: Item = Item {
     name: "Weapon of Warning",
-    glyph: '¡',
+    glyph: '?',
     condition_immunities: &[crate::conditions::Condition::Surprised],
     ..Item::DEFAULTS
 };
@@ -3085,7 +3085,7 @@ pub static POTION_OF_WATER_BREATHING: Item = Item {
 /// See `item_actions::USE_GEM_OF_SEEING`.
 pub static GEM_OF_SEEING: Item = Item {
     name: "Gem of Seeing",
-    glyph: '◇',
+    glyph: '*',
     on_use: Some(&crate::actions::item_actions::USE_GEM_OF_SEEING),
     ..Item::DEFAULTS
 };
@@ -4054,6 +4054,50 @@ mod tests {
             "these items are written but nobody can obtain them — add each to `LOOT_POOL` \
              or to a creature template's `items`:\n  {}",
             orphans.join("\n  ")
+        );
+    }
+
+    /// Every item's map glyph is one the map can actually draw.
+    ///
+    /// `Item::glyph` documents its convention — "a single visible ASCII
+    /// character that doesn't collide with terrain" — and nothing
+    /// enforced it, so the twenty-one items added with the armoury
+    /// arrived carrying `†`, `≠`, `⌂`, `ᛜ` and eight more. Every one of
+    /// them compiled, and each was a `char` the terminal grid is not
+    /// promised to render in one cell: a double-width or unsupported
+    /// glyph shifts the row it is on, which is a map that is wrong
+    /// everywhere to the right of a dropped sword.
+    ///
+    /// Also bars the two terrain glyphs by name. A `█` on the floor is
+    /// an item that looks exactly like a wall, and the map has no other
+    /// way to tell the player it is not one.
+    ///
+    /// Deliberately says nothing about *uniqueness*. Fifty-odd glyphs in
+    /// this file are already shared — every scroll starting with the
+    /// same letter, for one — and that is a deliberate legibility
+    /// choice, not drift: a `b` on the floor is "some scroll" and the
+    /// panel says which.
+    #[test]
+    fn every_item_glyph_is_one_the_map_can_draw() {
+        let mut wrong: Vec<String> = Vec::new();
+        for item in LOOT_POOL {
+            let g = item.glyph;
+            if !g.is_ascii() {
+                wrong.push(format!("{}: {:?} is not ASCII", item.name, g));
+            } else if !g.is_ascii_graphic() {
+                // Space, control characters — a glyph that draws
+                // nothing is an item nobody can see on the floor.
+                wrong.push(format!("{}: {:?} draws nothing", item.name, g));
+            }
+            if matches!(g, '\u{2591}' | '\u{2588}') {
+                wrong.push(format!("{}: {:?} is a terrain glyph", item.name, g));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} glyphs the map cannot place:\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
         );
     }
 
