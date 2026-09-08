@@ -662,6 +662,40 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
             bonus: |a| a.ability_modifier(AbilityScoreType::Wisdom),
         },
     },
+    // 5e **Gloves of Missile Snaring** (Wondrous item, Uncommon): "If
+    // you're hit by an attack roll made with a Ranged or Thrown weapon
+    // while wearing these gloves, you can take a Reaction to reduce the
+    // damage by 1d10 plus your Dexterity modifier."
+    //
+    // The first row on this cohort sourced from an item rather than from
+    // a class feature, and it lands as a row for exactly the reason the
+    // cohort exists: RAW's clause is the Deflect Missiles clause with a
+    // different bonus term, and writing it anywhere else would have been
+    // a second copy of the reaction-spend, the damage-type filter and
+    // the floor-at-zero.
+    //
+    // Sits below Deflect Missiles — a monk who somehow has both spends
+    // the free class feature first — and above the two charge-gated
+    // rows, since the gloves cost nothing but the reaction.
+    //
+    // The `RangedWeapon` lane is RAW's "Ranged or Thrown weapon" as
+    // closely as this engine can say it: the lane already excludes
+    // ranged *spell* attacks, which is the distinction RAW is drawing,
+    // and a thrown handaxe is a ranged weapon attack here as it is at a
+    // table. RAW's "if you have a free hand" is not modeled — the engine
+    // tracks no hands.
+    ReactiveDamageClamp {
+        flag: |a| a.has_item_named(crate::items::item_template::GLOVES_OF_MISSILE_SNARING.name),
+        tag: None,
+        label: "missile snaring",
+        damage_types: None,
+        lane: ClampLane::RangedWeapon,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 10),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Dexterity),
+        },
+    },
     ReactiveDamageClamp {
         flag: |a| a.has_interception_style(),
         tag: None,

@@ -186,6 +186,25 @@ pub struct Item {
     /// of non-magical-in-the-relevant-sense plate, and would have to be
     /// reinstalled after every long rest.
     pub blunts_critical_hits: bool,
+    /// True when holding this item wards its bearer against magic
+    /// itself — 5e's Spellguard Shield: "you have Advantage on saving
+    /// throws against spells and other magical effects, and spell attack
+    /// rolls have Disadvantage against you."
+    ///
+    /// One flag for both halves because RAW writes them as one sentence
+    /// about one object, and because they are the same idea pointed at
+    /// the two ways a spell can reach you. Splitting them would invite
+    /// an item that is warded against one and not the other, which no
+    /// SRD item is.
+    ///
+    /// The save half joins `ActorInstance::has_magic_resistance`, the
+    /// same predicate the archmage's and the pixie's Magic Resistance
+    /// trait rides — so a shield-bearer and an archmage answer the save
+    /// lane identically, which is what RAW's shared wording asks for.
+    /// The attack half is read at the spell-attack chokepoint only:
+    /// RAW's clause says *spell* attack rolls, and a longsword swung by
+    /// a wizard is not one.
+    pub grants_spell_ward: bool,
 }
 
 impl Item {
@@ -210,6 +229,7 @@ impl Item {
         grants_silvered_attacks: false,
         grants_unfettered_breathing: false,
         blunts_critical_hits: false,
+        grants_spell_ward: false,
     };
 }
 
@@ -2927,6 +2947,149 @@ pub static ADAMANTINE_ARMOR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Spellguard Shield** (Armor, shield; Very Rare) — "While holding
+/// this Shield, you have Advantage on saving throws against spells and
+/// other magical effects, and spell attack rolls have Disadvantage
+/// against you."
+///
+/// A shield, so it carries the plain `SHIELD`'s +2 AC on top of its own
+/// clause. Both halves of that clause ride `grants_spell_ward`; see the
+/// flag for how each reaches the engine, and `has_magic_resistance` for
+/// why the save half is answered by the same predicate an archmage's
+/// Magic Resistance is.
+///
+/// It is the only defensive item in the file whose value depends
+/// entirely on what the party is fighting. Against a room full of orcs
+/// it is a shield; against an archmage it is close to an answer.
+pub static SPELLGUARD_SHIELD: Item = Item {
+    name: "Spellguard Shield",
+    glyph: '⌂',
+    bonuses: ItemBonuses {
+        ac: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_spell_ward: true,
+    ..Item::DEFAULTS
+};
+
+/// **Goggles of Night** (Wondrous item, Uncommon) — "While wearing these
+/// dark lenses, you have Darkvision out to 60 feet."
+///
+/// The cheapest answer in the file to a dark board, and the one a
+/// non-caster can wear: a fighter and a barbarian have no Darkvision
+/// spell between them, and until the lighting layer existed there was
+/// nothing for them to do about it but carry a torch that announces
+/// where they are. RAW's second sentence — the goggles extend existing
+/// Darkvision by 60 feet rather than granting a flat 60 — is not
+/// modeled; the engine's Darkvision is a yes/no property, so a creature
+/// that already sees in the dark gains nothing from them.
+pub static GOGGLES_OF_NIGHT: Item = Item {
+    name: "Goggles of Night",
+    glyph: 'ö',
+    passive_conditions: &[crate::conditions::Condition::Darkvisioned],
+    ..Item::DEFAULTS
+};
+
+/// **Gloves of Missile Snaring** (Wondrous item, Uncommon) — "If you're
+/// hit by an attack roll made with a Ranged or Thrown weapon while
+/// wearing these gloves, you can take a Reaction to reduce the damage by
+/// 1d10 plus your Dexterity modifier."
+///
+/// A Deflect Missiles a non-monk can buy. The clause rides
+/// `engine::attack`'s `REACTIVE_DAMAGE_CLAMPS` cohort as the first row
+/// on it sourced from an item rather than a class feature — see there
+/// for the lane and for what RAW's "free hand" clause costs to leave
+/// out.
+pub static GLOVES_OF_MISSILE_SNARING: Item = Item {
+    name: "Gloves of Missile Snaring",
+    glyph: 'ĝ',
+    ..Item::DEFAULTS
+};
+
+/// **Cloak of Arachnida** (Wondrous item, Very Rare) — "you have
+/// Resistance to Poison damage… You can move up, down, and across
+/// vertical surfaces and upside down along ceilings, while leaving your
+/// hands free."
+///
+/// Two of RAW's four clauses. The spider-climb half rides the same
+/// `SpiderClimbing` condition the spell installs; the poison resistance
+/// rides `damage_resistances`. The once-a-day Web cast and the immunity
+/// to being caught in webs are left out — the first would need an item
+/// charge economy the engine does not have, and the second is a
+/// one-spell exemption with no lane of its own.
+pub static CLOAK_OF_ARACHNIDA: Item = Item {
+    name: "Cloak of Arachnida",
+    glyph: 'ᛜ',
+    damage_resistances: &[crate::engine::types::DamageType::Poison],
+    passive_conditions: &[crate::conditions::Condition::SpiderClimbing],
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Feather Falling** (Ring, Rare) — "when you fall more than
+/// 10 feet, you descend 60 feet per round and take no damage from
+/// falling."
+///
+/// Worth a ring here because the engine has a falling lane
+/// (`crate::engine::falling`) and things on this board push each other
+/// off ledges, drop fliers out of the sky when their concentration
+/// breaks, and reverse gravity. The condition is the one the Feather
+/// Fall spell installs, so a ring-wearer and a spell target are answered
+/// by the same gate.
+pub static RING_OF_FEATHER_FALLING: Item = Item {
+    name: "Ring of Feather Falling",
+    glyph: '˚',
+    passive_conditions: &[crate::conditions::Condition::Feathered],
+    ..Item::DEFAULTS
+};
+
+/// **Weapon of Warning** (Weapon, any; Uncommon) — "You and any of your
+/// companions within 30 feet of you can't be surprised."
+///
+/// Modeled as immunity to the `Surprised` condition on the bearer alone;
+/// RAW's 30-foot aura would need a per-actor emanation the engine has no
+/// lane for, and the bearer's own half is the load-bearing one. What it
+/// buys is not subtle: a surprised creature hands every assassin in the
+/// room an automatic critical hit, and this is the only item on the loot
+/// table that says no to that.
+///
+/// RAW's advantage on Initiative is not modeled — the engine rolls
+/// initiative once at the bell, before anything has been picked up.
+pub static WEAPON_OF_WARNING: Item = Item {
+    name: "Weapon of Warning",
+    glyph: '¡',
+    condition_immunities: &[crate::conditions::Condition::Surprised],
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Vitality** (Potion, Very Rare) — the exhaustion and
+/// poison cure. See `item_actions::DRINK_POTION_OF_VITALITY`.
+pub static POTION_OF_VITALITY: Item = Item {
+    name: "Potion of Vitality",
+    glyph: 'v',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_VITALITY),
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Water Breathing** (Potion, Uncommon) — see
+/// `item_actions::DRINK_POTION_OF_WATER_BREATHING`. Sits beside the
+/// Necklace of Adaptation on the drowning lane, and undercuts it by two
+/// rarity tiers at the price of being gone after one fight.
+pub static POTION_OF_WATER_BREATHING: Item = Item {
+    name: "Potion of Water Breathing",
+    glyph: 'w',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_WATER_BREATHING),
+    ..Item::DEFAULTS
+};
+
+/// **Gem of Seeing** (Wondrous item, Rare) — Truesight for the fight.
+/// See `item_actions::USE_GEM_OF_SEEING`.
+pub static GEM_OF_SEEING: Item = Item {
+    name: "Gem of Seeing",
+    glyph: '◇',
+    on_use: Some(&crate::actions::item_actions::USE_GEM_OF_SEEING),
+    ..Item::DEFAULTS
+};
+
 /// The magic armoury as a set — the nine items above whose value is a
 /// printed clause rather than a bonus.
 ///
@@ -3623,6 +3786,25 @@ pub static LOOT_POOL: &[&Item] = &[
     &VICIOUS_WEAPON,
     &SWORD_OF_WOUNDING,
     &ADAMANTINE_ARMOR,
+    // The wondrous half of the same batch — items whose clause is a
+    // defence or a sense rather than a die on a swing. Single entries
+    // apiece for the same reason the armoury gets them: each answers one
+    // specific thing (a spell, an arrow, the dark, a lake, an illusion,
+    // an ambush), and finding the one that matches the room is the
+    // point.
+    &SPELLGUARD_SHIELD,
+    &GOGGLES_OF_NIGHT,
+    &GLOVES_OF_MISSILE_SNARING,
+    &CLOAK_OF_ARACHNIDA,
+    &RING_OF_FEATHER_FALLING,
+    &WEAPON_OF_WARNING,
+    &GEM_OF_SEEING,
+    // Consumables sit at the same weight as the other potions on the
+    // pool rather than at the trinkets' — they are gone after one use,
+    // so a party wants to find them more often than a ring.
+    &POTION_OF_VITALITY,
+    &POTION_OF_WATER_BREATHING,
+    &POTION_OF_WATER_BREATHING,
 ];
 
 #[cfg(test)]

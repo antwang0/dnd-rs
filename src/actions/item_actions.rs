@@ -5611,3 +5611,179 @@ pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
     dim_tiles: 6,
     log_text: "{actor} grips the hilt and a blade of pure radiance springs into being.",
 };
+
+/// Config struct for a consumable whose whole effect is **taking
+/// something away** — the potions and elixirs that cure rather than
+/// buff.
+///
+/// The mirror of `SelfConditionItem` one lane over, and it needs its own
+/// struct for the same reason that one does: what it queues is
+/// `RemoveCondition` rather than `ApplyCondition`, and the two have
+/// opposite validators. A buff refuses when its condition is already up;
+/// a cure refuses when there is nothing to cure, which is a question
+/// about a *list* and not about one flag.
+///
+/// That refusal is the point of the struct rather than a nicety. A
+/// Potion of Vitality drunk by a healthy drinker is a very rare potion
+/// spent on nothing, and the engine's AI picks its items by asking
+/// `validate` — so a cure that always validated would be a cure the AI
+/// drank the moment it found one.
+pub struct SelfCureItem {
+    /// Player-facing action name.
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate and consume on.
+    pub item_name: &'static str,
+    /// Full log line, `{actor}` substituted with the drinker's name.
+    pub log_text: &'static str,
+    /// Every condition the draught lifts. All of them go at once — RAW's
+    /// Potion of Vitality does not choose between the exhaustion and the
+    /// poison — which is the other difference from
+    /// `RemoveOneOfConditions`, the priority-ordered pick Greater
+    /// Restoration makes.
+    pub cures: &'static [Condition],
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost, routed through
+    /// `item_use_cost` so a Thief's Fast Hands still applies.
+    pub bonus_action: bool,
+}
+
+impl Action for SelfCureItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        e: &EncounterInstance,
+        c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        item_use_cost(e, c, self.bonus_action)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        // Something to cure, or the potion stays corked.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| self.cures.iter().any(|&c| a.has_condition(c)))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log_text.replace("{actor}", &name));
+        self.cures
+            .iter()
+            .map(|&condition| {
+                Box::new(RemoveCondition {
+                    actor_id: caster_id,
+                    condition,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+/// **Potion of Vitality** — "it removes any Exhaustion levels you have
+/// and ends the Poisoned condition on you."
+///
+/// RAW's third clause — maximum hit points from every Hit Die spent for
+/// the next 24 hours — has no combat surface: the engine spends no Hit
+/// Dice inside a fight. What is left is the two removals, and they are
+/// worth a very rare potion between them: exhaustion is the engine's
+/// only stacking debuff and the hardest one to shed mid-fight.
+pub static DRINK_POTION_OF_VITALITY: SelfCureItem = SelfCureItem {
+    action_name: "drink potion of vitality",
+    action_aliases: &["vitality", "potion of vitality"],
+    item_name: POTION_OF_VITALITY_NAME,
+    log_text: "{actor} drinks a potion of vitality; the weariness and the venom drain away.",
+    cures: &[Condition::Exhausted, Condition::Poisoned],
+    bonus_action: false,
+};
+
+const POTION_OF_VITALITY_NAME: &str = "Potion of Vitality";
+
+/// **Potion of Water Breathing** — "You can breathe underwater for 24
+/// hours after drinking this potion."
+///
+/// Twenty-four hours is longer than any encounter, so the install is
+/// timed at 100 rounds, the engine's standing stand-in for "the rest of
+/// the fight and then some". The condition it lands is the one the Water
+/// Breathing spell lands, so a drinker and a target of the spell are
+/// answered identically by `EncounterInstance::can_breathe`.
+pub static DRINK_POTION_OF_WATER_BREATHING: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of water breathing",
+    action_aliases: &["water breathing", "breathe"],
+    item_name: POTION_OF_WATER_BREATHING_NAME,
+    log_text: "{actor} drinks a potion of water breathing; gills open along their throat.",
+    condition: Condition::WaterBreathing,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+const POTION_OF_WATER_BREATHING_NAME: &str = "Potion of Water Breathing";
+
+/// **Gem of Seeing** — "you can take a Magic action to speak the gem's
+/// command word, which gives you Truesight out to 120 feet for 10
+/// minutes."
+///
+/// The charge economy is not modeled — RAW's gem has three and regains
+/// `1d3` at dawn, and the engine's items are consumed on use, so this
+/// is a one-charge gem. That is the same collapse every wand on the loot
+/// table takes, and it is the direction that cannot make an item
+/// stronger than RAW.
+pub static USE_GEM_OF_SEEING: SelfConditionItem = SelfConditionItem {
+    action_name: "use gem of seeing",
+    action_aliases: &["gem", "gem of seeing", "truesight"],
+    item_name: GEM_OF_SEEING_NAME,
+    log_text: "{actor} speaks to the gem and the world goes transparent.",
+    condition: Condition::TrueSighted,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+const GEM_OF_SEEING_NAME: &str = "Gem of Seeing";

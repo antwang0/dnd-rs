@@ -91077,3 +91077,150 @@ fn lighting_the_flame_tongue_arms_it_and_keeps_it() {
         "an already-lit blade refuses to be lit again"
     );
 }
+
+/// The Spellguard Shield answers both ways a spell can reach its bearer,
+/// and answers a longsword neither way.
+///
+/// The third assertion is the one the test exists for. RAW's clause
+/// names *spell* attack rolls, and the tempting place to implement it —
+/// the shared attack-mode tally both chokepoints walk — would have given
+/// the bearer disadvantage-proof armour against every orc with a
+/// scimitar as well.
+#[test]
+fn the_spellguard_shield_wards_spells_and_not_swords() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{SHIELD, SPELLGUARD_SHIELD};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(
+        !e.actors[&fighter].has_magic_resistance(),
+        "a fighter is not magic resistant on their own account"
+    );
+    // A plain shield is +2 AC and no clause — the control that shows the
+    // ward is the spellguard's and not every shield's.
+    e.actors.get_mut(&fighter).unwrap().pickup_item(&SHIELD);
+    assert!(!e.actors[&fighter].has_magic_resistance());
+    assert!(!e.actors[&fighter].wards_against_spell_attacks());
+
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&SPELLGUARD_SHIELD);
+    assert!(
+        e.actors[&fighter].has_magic_resistance(),
+        "the save half joins the same predicate an archmage's trait rides"
+    );
+    assert!(e.actors[&fighter].wards_against_spell_attacks());
+    // Dropping it takes both halves back with it.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .remove_item_by_name(SPELLGUARD_SHIELD.name);
+    assert!(!e.actors[&fighter].has_magic_resistance());
+    assert!(!e.actors[&fighter].wards_against_spell_attacks());
+}
+
+/// Gloves of Missile Snaring catch an arrow and do nothing about a
+/// sword.
+///
+/// The lane is what is being pinned. `ClampLane::RangedWeapon` is the
+/// same lane Deflect Missiles rides, and a row that reached for
+/// `AnyAttack` instead would have made an uncommon pair of gloves into a
+/// better Uncanny Dodge than the rogue's.
+#[test]
+fn gloves_of_missile_snaring_catch_arrows_and_not_swords() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::apply_reactive_damage_clamps;
+    use crate::items::item_template::GLOVES_OF_MISSILE_SNARING;
+
+    // Measured as a difference rather than against a bare 30: the
+    // fighter chassis carries clamps of its own (Parry), and what is
+    // under test is what the *gloves* add on each lane.
+    let taken = |gloved: bool, is_melee: bool, is_spell: bool| -> u32 {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let shooter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let wearer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 2), 0, 1)
+            .unwrap();
+        if gloved {
+            e.actors
+                .get_mut(&wearer)
+                .unwrap()
+                .pickup_item(&GLOVES_OF_MISSILE_SNARING);
+        }
+        apply_reactive_damage_clamps(
+            &mut e,
+            shooter,
+            wearer,
+            30,
+            is_melee,
+            is_spell,
+            DamageType::Piercing,
+        )
+    };
+    for (is_melee, is_spell, should_clamp) in [
+        // A longbow: ranged, not a spell — caught.
+        (false, false, true),
+        // A scimitar: melee — not caught.
+        (true, false, false),
+        // A Fire Bolt: ranged, but a spell — not caught, exactly as
+        // Deflect Missiles is not.
+        (false, true, false),
+    ] {
+        let bare = taken(false, is_melee, is_spell);
+        let gloved = taken(true, is_melee, is_spell);
+        assert_eq!(
+            gloved < bare,
+            should_clamp,
+            "melee={is_melee} spell={is_spell}: {bare} bare vs {gloved} gloved"
+        );
+    }
+}
+
+/// A cure refuses to be drunk by somebody with nothing to cure.
+///
+/// The whole reason `SelfCureItem` has a validator of its own. The AI
+/// picks its items by asking `validate`, so a cure that always said yes
+/// would be a very rare potion drunk on the first turn of every fight
+/// for no effect at all.
+#[test]
+fn a_potion_of_vitality_stays_corked_until_there_is_something_to_cure() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::POTION_OF_VITALITY;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&POTION_OF_VITALITY);
+    let drink = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "drink potion of vitality")
+        .expect("holding the potion offers the draught");
+    assert!(
+        !drink.validate_input(&e, fighter, None, None, None),
+        "a healthy drinker has nothing to cure"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Poisoned, ConditionTimer::Rounds(10));
+    assert!(drink.validate_input(&e, fighter, None, None, None));
+    for ef in drink.execute(&mut e, fighter, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(!e.actors[&fighter].has_condition(Condition::Poisoned));
+    assert!(
+        !e.actors[&fighter].has_item_named(POTION_OF_VITALITY.name),
+        "and the potion is gone"
+    );
+}

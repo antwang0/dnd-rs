@@ -179,6 +179,23 @@ pub fn spell_attack_roll(
     // "no matter how many circumstances of each kind" — instead of at
     // whatever the last clause happened to say.
     encounter.apply_reactive_attack_taxes(caster_id, target_id, &mut tally);
+    // 5e Spellguard Shield: "spell attack rolls have Disadvantage
+    // against you."
+    //
+    // Applied here rather than in the shared `attack_mode_tally` for the
+    // reason RAW writes it: the clause names *spell* attack rolls, and
+    // the shared tally is walked by longswords too. This is the one
+    // chokepoint that knows the difference, and it is not far to reach —
+    // a target-side row layered into the same tally as the reactive
+    // taxes, so a Helped caster who then meets the shield comes out
+    // Normal rather than at whichever clause spoke last.
+    if encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|t| t.wards_against_spell_attacks())
+    {
+        tally.add(crate::engine::dice::RollMode::Disadvantage);
+    }
     let mode = encounter.resolve_attack_mode_against(target_id, tally);
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks

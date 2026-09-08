@@ -5847,8 +5847,34 @@ impl ActorInstance {
         self.is_swarm && self.is_bloodied()
     }
 
+    /// 5e **Magic Resistance** — advantage on saving throws against
+    /// spells and other magical effects.
+    ///
+    /// Two sources, and they are deliberately answered by one
+    /// predicate. Most of them are the trait a stat block prints (the
+    /// archmage, the pixie, the mummy lord); the other is a Spellguard
+    /// Shield, whose RAW prints the same sentence about an object
+    /// instead of a creature. A caster looking at either of them is
+    /// looking at the same problem, and the save lane should not be able
+    /// to tell them apart.
+    ///
+    /// The shield's *other* half — "spell attack rolls have Disadvantage
+    /// against you" — is not here, because Magic Resistance has no such
+    /// clause. It is read at the spell-attack chokepoint through
+    /// `wards_against_spell_attacks`.
     pub fn has_magic_resistance(&self) -> bool {
-        self.has_magic_resistance
+        self.has_magic_resistance || self.wards_against_spell_attacks()
+    }
+
+    /// True while the actor holds something that gives spell attack
+    /// rolls disadvantage against them — the Spellguard Shield, and
+    /// nothing else on the loot table.
+    ///
+    /// Read at the spell-attack chokepoint in `actions::spells`, and
+    /// deliberately nowhere else: RAW's clause names spell attack rolls,
+    /// so a longsword swung at the shield-bearer rolls straight.
+    pub fn wards_against_spell_attacks(&self) -> bool {
+        self.items.iter().any(|i| i.grants_spell_ward)
     }
 
     /// True if this actor emits the Paladin's Aura of Protection
