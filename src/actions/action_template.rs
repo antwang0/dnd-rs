@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::engine::{
     action_overrides::ActionOverride,
+    areas::AreaShape,
     encounter::EncounterInstance,
     saves::SaveDamagePolicy,
     side_effects::{ApplicableSideEffect, ConsumeResource, DealDamage, Resource},
@@ -809,7 +810,80 @@ pub enum TargetingSchema {
     Burst {
         radius: isize,
     },
+    /// 5e's **Cone** — a wedge thrown from the caster's own body toward
+    /// a tile it names. Takes one point argument exactly as `Burst`
+    /// does, and the point supplies a *direction* rather than a centre:
+    /// see `crate::engine::areas`.
+    ///
+    /// `length` is in tiles, so a 60-foot breath is 24.
+    Cone {
+        length: isize,
+    },
+    /// 5e's **Line** — "a 90-foot-long, 5-foot-wide Line" — thrown from
+    /// the caster's body toward the named tile. Same argument shape as
+    /// `Cone`; `half_width` is in tiles, so RAW's 5-foot line is 1.
+    Line {
+        length: isize,
+        half_width: isize,
+    },
     Custom,
+}
+
+impl TargetingSchema {
+    /// This schema's area of effect, or `None` for the schemas that are
+    /// not areas at all.
+    ///
+    /// The one place the three area variants are unified. Every caller
+    /// that used to ask "is this a `Burst`, and how big" — the AI's two
+    /// placement searches, its Careful Spell gate, the target prompt —
+    /// asks this instead, and picks up cones and lines without knowing
+    /// they exist. Adding a fourth shape is a variant here and an arm
+    /// in `AreaShape`, not a sweep over the callers.
+    pub fn area_shape(&self) -> Option<AreaShape> {
+        match *self {
+            TargetingSchema::Burst { radius } => Some(AreaShape::Burst { radius }),
+            TargetingSchema::Cone { length } => Some(AreaShape::Cone { length }),
+            TargetingSchema::Line { length, half_width } => {
+                Some(AreaShape::Line { length, half_width })
+            }
+            _ => None,
+        }
+    }
+
+    /// The schema that asks for `shape` — the inverse of
+    /// `area_shape`, for the action chassis that carry an `AreaShape`
+    /// on the struct and derive their schema from it.
+    ///
+    /// `BreathWeapon` is the first: a breath is a cone or a line
+    /// depending on the dragon, that fact belongs on the stat-block
+    /// literal beside the dice and the DC, and the schema is a
+    /// restatement of it. Declaring both would be two places to change
+    /// a black dragon's line into a cone by mistake.
+    pub fn from_area(shape: AreaShape) -> Self {
+        match shape {
+            AreaShape::Burst { radius } => TargetingSchema::Burst { radius },
+            AreaShape::Cone { length } => TargetingSchema::Cone { length },
+            AreaShape::Line { length, half_width } => {
+                TargetingSchema::Line { length, half_width }
+            }
+        }
+    }
+
+    /// True if this schema is invoked with exactly one target tile and
+    /// no target actors — `SinglePoint` and all three areas.
+    ///
+    /// The argument-shape half of `validate_input`, lifted out because
+    /// four schemas answered it identically and the fourth was added by
+    /// remembering to.
+    pub fn takes_one_point(&self) -> bool {
+        matches!(
+            self,
+            TargetingSchema::SinglePoint
+                | TargetingSchema::Burst { .. }
+                | TargetingSchema::Cone { .. }
+                | TargetingSchema::Line { .. }
+        )
+    }
 }
 
 /// The shared body of `Action::expected_damage` for a weapon swing:
@@ -1474,23 +1548,21 @@ pub trait Action {
         // the action's declared schema? Each branch returns true on a
         // legal shape and false otherwise. Custom schemas opt out and
         // delegate everything to `custom_validate_input` below.
-        let schema_ok = match self.targeting_schema() {
+        let schema = self.targeting_schema();
+        let schema_ok = match schema {
             TargetingSchema::NoArgs => {
                 target_ids.is_none() && target_locations.is_none() && overrides.is_none()
-            }
-            TargetingSchema::SinglePoint => {
-                target_ids.is_none()
-                    && target_locations.is_some_and(|tl| tl.len() == 1)
             }
             TargetingSchema::SingleActor => {
                 target_locations.is_none()
                     && target_ids.is_some_and(|ids| !ids.is_empty())
             }
-            TargetingSchema::Burst { .. } => {
+            TargetingSchema::Custom => true,
+            _ if schema.takes_one_point() => {
                 target_ids.is_none()
                     && target_locations.is_some_and(|tl| tl.len() == 1)
             }
-            TargetingSchema::Custom => true,
+            _ => false,
         };
         if !schema_ok {
             return false;

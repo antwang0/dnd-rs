@@ -302,6 +302,7 @@ use crate::conditions::Condition;
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
 use crate::engine::errors::{NoLegalPosition, OffMapCoord};
 use crate::engine::prompt::Prompt;
+use crate::engine::areas::AreaShape;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
@@ -9151,18 +9152,71 @@ impl EncounterInstance {
         false
     }
 
-    /// Shared body for the three public burst-target helpers
-    /// (`enemy_burst_targets` / `ally_burst_targets` / `neutral_burst_targets`).
+    /// True if the area `shape`, thrown by `caster_id` and aimed at
+    /// `aim`, catches `actor_id`.
+    ///
+    /// The single question every area in the engine asks, and the one
+    /// the AI used to answer for itself in three places with an
+    /// open-coded `footprint_chebyshev(..) <= radius`. Those three
+    /// copies were correct for a burst and could not have been made
+    /// right for a cone — the caster's position is not even in scope at
+    /// two of them — which is why the predicate moved here rather than
+    /// growing a fourth copy.
+    pub fn area_catches(
+        &self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+        actor_id: usize,
+    ) -> bool {
+        let Some(target) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        // A burst does not read the caster at all, so a missing caster
+        // is only fatal to the projected shapes. Defaulting to the aim
+        // point rather than bailing keeps `actors_in_burst`'s
+        // caster-free contract intact for the burst arm.
+        let (caster_anchor, caster_size) = match self.actors.get(&caster_id) {
+            Some(c) => (c.location(), c.size()),
+            None if matches!(shape, AreaShape::Burst { .. }) => (aim, Size::Medium),
+            None => return false,
+        };
+        shape.catches_footprint(
+            caster_anchor,
+            caster_size,
+            aim,
+            target.location(),
+            get_tiles_from_size(target.size()),
+        )
+    }
+
+    /// The point cover against this area is measured from — see
+    /// `AreaShape::origin`. Falls back to the aim point when the caster
+    /// has left the board, which is what a burst wants anyway.
+    pub fn area_origin(
+        &self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+    ) -> Coordinate {
+        match self.actors.get(&caster_id) {
+            Some(c) => shape.origin(c.location(), c.size(), aim),
+            None => aim,
+        }
+    }
+
+    /// Shared body for the three public area-target helpers
+    /// (`enemy_area_targets` / `ally_area_targets` / `neutral_area_targets`).
     /// `keep` decides whether a candidate id should be admitted; it sees
     /// the candidate's id, the candidate actor, and the caster's team.
     /// Returning `true` keeps the id; `false` drops it. The geometry +
     /// combat-active + sort invariants live here so adding a new
-    /// burst-target lens is a one-line lambda over a single chokepoint.
-    fn burst_targets_with<F>(
+    /// area-target lens is a one-line lambda over a single chokepoint.
+    fn area_targets_with<F>(
         &self,
         caster_id: usize,
-        point: Coordinate,
-        radius: isize,
+        shape: AreaShape,
+        aim: Coordinate,
         keep: F,
     ) -> Vec<usize>
     where
@@ -9172,6 +9226,8 @@ impl EncounterInstance {
             return Vec::new();
         };
         let caster_team = caster.team();
+        let caster_anchor = caster.location();
+        let caster_size = caster.size();
         let mut ids: Vec<usize> = self
             .actors
             .iter()
@@ -9182,17 +9238,72 @@ impl EncounterInstance {
                 if !keep(*id, a, caster_team) {
                     return None;
                 }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist <= radius { Some(*id) } else { None }
+                shape
+                    .catches_footprint(
+                        caster_anchor,
+                        caster_size,
+                        aim,
+                        a.location(),
+                        get_tiles_from_size(a.size()),
+                    )
+                    .then_some(*id)
             })
             .collect();
         ids.sort_unstable();
         ids
+    }
+
+    /// `area_targets_with` for the burst shape, which is what every
+    /// caller in the engine wanted before there were other shapes.
+    fn burst_targets_with<F>(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+        keep: F,
+    ) -> Vec<usize>
+    where
+        F: Fn(usize, &ActorInstance, usize) -> bool,
+    {
+        self.area_targets_with(caster_id, AreaShape::Burst { radius }, point, keep)
+    }
+
+    /// Sorted ids of combat-active actors the area catches that are
+    /// *not* on the caster's team — the shape-general twin of
+    /// `enemy_burst_targets`.
+    pub fn enemy_area_targets(
+        &self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+    ) -> Vec<usize> {
+        self.area_targets_with(caster_id, shape, aim, |_id, a, caster_team| {
+            a.team() != caster_team
+        })
+    }
+
+    /// Sorted ids of combat-active actors the area catches, the caster
+    /// excepted — the shape-general twin of `neutral_burst_targets`.
+    pub fn neutral_area_targets(
+        &self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+    ) -> Vec<usize> {
+        self.area_targets_with(caster_id, shape, aim, |id, _a, _ct| id != caster_id)
+    }
+
+    /// Sorted ids of combat-active allies the area catches — the
+    /// shape-general twin of `ally_burst_targets`.
+    pub fn ally_area_targets(
+        &self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+    ) -> Vec<usize> {
+        self.area_targets_with(caster_id, shape, aim, |_id, a, caster_team| {
+            a.team() == caster_team
+        })
     }
 
     /// Sorted ids of combat-active actors inside the burst that are *not*
@@ -13870,6 +13981,20 @@ impl EncounterInstance {
         point: Coordinate,
         radius: isize,
     ) -> std::collections::HashSet<usize> {
+        self.auto_pass_shielded_allies_in(caster_id, AreaShape::Burst { radius }, point)
+    }
+
+    /// `auto_pass_shielded_allies` for an area of any shape. Both
+    /// features RAW writes as "creatures of your choice in the spell's
+    /// area" — Careful Spell and Sculpt Spells — say *area*, not
+    /// *burst*, so a Cone of Cold should spare an ally exactly as a
+    /// Fireball does.
+    pub fn auto_pass_shielded_allies_in(
+        &mut self,
+        caster_id: usize,
+        shape: AreaShape,
+        aim: Coordinate,
+    ) -> std::collections::HashSet<usize> {
         use std::collections::HashSet;
         let mut shielded: HashSet<usize> = HashSet::new();
         // Resolve the ally list once and share it between the two lanes —
@@ -13878,7 +14003,7 @@ impl EncounterInstance {
         let mut allies: Option<Vec<usize>> = None;
         let mut ally_ids = |this: &mut Self| -> Vec<usize> {
             allies
-                .get_or_insert_with(|| this.ally_burst_targets(caster_id, point, radius))
+                .get_or_insert_with(|| this.ally_area_targets(caster_id, shape, aim))
                 .clone()
         };
 
@@ -16204,6 +16329,40 @@ impl EncounterInstance {
         // fails the whole teleport rather than half of it.
         if !walked && self.is_mounted(actor_id) {
             self.dismount(actor_id);
+        }
+        // The same sentence, one link over: an *attached* creature is
+        // riding a body too, and a shove or a teleport aimed at the
+        // passenger cannot take the host along.
+        //
+        // This is a repair, not a refinement. An attached creature is
+        // off the occupancy grid and its `location` is mirrored onto
+        // its host's, so relocating it without cutting the link first
+        // did two things to the board at once: it stamped `None` over
+        // the tile of the *host* — a living creature the party could
+        // then walk through — and it stamped the destination with an
+        // id that owns no footprint, leaving a tile nothing could ever
+        // stand on again once the passenger died. Neither shows up in
+        // a log. It took a shove landing on a stirge that happened to
+        // be latched onto a gibbering mouther to surface it.
+        //
+        // A grip that cannot let go anywhere holds, and the relocation
+        // fails rather than proceeding half-done — the same all-or-
+        // nothing the dismount above gives a teleported rider.
+        if !walked
+            && self.is_attached(actor_id)
+            && !self.detach(actor_id, crate::engine::attachment::DetachCause::Displaced)
+        {
+            return Err("attached creature has nowhere to be put down".into());
+        }
+        // A swallowed creature is off the grid for the same reason and
+        // would corrupt it the same way. Nothing reaches this today —
+        // RAW's Total Cover keeps a stomach's occupant off every
+        // targeting and area list — so this is a guard on the
+        // invariant rather than a rule, and it fails loudly rather than
+        // silently writing a stamp nobody owns. Regurgitation does not
+        // come through here; see `swallow::unlink_swallow`.
+        if self.actors.get(&actor_id).is_some_and(|a| a.swallowed_by().is_some()) {
+            return Err("a swallowed creature cannot be relocated from outside".into());
         }
         // Everything else about a mounted rider's movement is the
         // mount's: its tiles, its footprint, its stamp on the grid. The

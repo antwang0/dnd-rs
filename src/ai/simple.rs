@@ -3556,9 +3556,10 @@ fn try_careful_spell(
     }
     // Only fire when the caster owns at least one burst-targeting AoE
     // — otherwise the prime never engages and the SP is wasted.
-    let has_aoe = actor.actions.iter().any(|a| {
-        a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::Burst { .. })
-    });
+    let has_aoe = actor
+        .actions
+        .iter()
+        .any(|a| a.is_harmful() && a.targeting_schema().area_shape().is_some());
     if !has_aoe {
         return None;
     }
@@ -6239,7 +6240,7 @@ fn try_breath_weapon(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    use crate::engine::areas::AreaShape;
 
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
@@ -6247,7 +6248,7 @@ fn try_breath_weapon(
     // Every harmful Burst action gated on a recharge pool the actor
     // currently has up. Two facts, both declared by the action itself:
     // the shape (`Burst`) and the gate (`recharge_key`).
-    let breath_actions: Vec<(&'static (dyn Action + Send + Sync), isize)> = actor
+    let breath_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
         .actions
         .iter()
         .filter_map(|a| {
@@ -6257,17 +6258,29 @@ fn try_breath_weapon(
             if !a.recharge_key().is_some_and(|k| actor.is_recharge_available(k)) {
                 return None;
             }
-            match a.targeting_schema() {
-                TargetingSchema::Burst { radius } => Some((*a, radius)),
-                _ => None,
-            }
+            a.targeting_schema().area_shape().map(|shape| (*a, shape))
         })
         .collect();
     if breath_actions.is_empty() {
         return None;
     }
 
-    // Candidate burst centers: every combat-active enemy's location.
+    // Candidate aim points: every combat-active enemy's location, plus
+    // the breather's own tile.
+    //
+    // Its own tile is there for the shape that is centred on the
+    // creature rather than thrown — RAW's Emanation, which on this
+    // roster is the Sphinx of Lore's Mind-Rending Roar. Its aim point
+    // is leashed to its own body (see `EMANATION_AIM_LEASH`), so an
+    // enemy-only candidate list could only ever fire it when somebody
+    // was already standing on top of the sphinx: a CR-11 boss's
+    // signature ability, unreachable except in the one situation it is
+    // least needed.
+    //
+    // Harmless to every other shape. A burst centred on yourself
+    // catches you, so the friendly-fire gate rejects it; a cone aimed
+    // at your own tile has no direction and covers nobody, so it fails
+    // the two-enemy floor.
     let anchor_ids = encounter.sorted_actor_ids();
     let mut candidate_points: Vec<(Coordinate, usize)> = Vec::new();
     for aid in &anchor_ids {
@@ -6279,13 +6292,14 @@ fn try_breath_weapon(
         }
         candidate_points.push((a.location(), *aid));
     }
+    candidate_points.push((actor.location(), actor_id));
 
     let mut best: Option<(usize, usize, ActionExecutionInfo)> = None;
     for (point, anchor_id) in &candidate_points {
         let point = *point;
         let anchor_id = *anchor_id;
 
-        for (action, radius) in &breath_actions {
+        for (action, shape) in &breath_actions {
             let aei =
                 ActionExecutionInfo::new(*action, actor_id, None, Some(vec![point]), None);
             if !aei.validate(encounter) {
@@ -6302,13 +6316,7 @@ fn try_breath_weapon(
                 if !a.is_combat_active() {
                     continue;
                 }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist > *radius {
+                if !encounter.area_catches(actor_id, *shape, point, *id) {
                     continue;
                 }
                 if *id == actor_id || a.team() == my_team {
@@ -8354,23 +8362,20 @@ fn best_burst_placement(
     actor_id: usize,
     accept: impl Fn(&'static (dyn Action + Send + Sync)) -> bool,
 ) -> Option<ActionExecutionInfo> {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    use crate::engine::areas::AreaShape;
 
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
     // Find Burst actions we own. Most actors have none — bail early.
-    let burst_actions: Vec<(&'static (dyn Action + Send + Sync), isize)> = actor
+    let burst_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
         .actions
         .iter()
         .filter_map(|a| {
             if !a.is_harmful() || !accept(*a) {
                 return None;
             }
-            match a.targeting_schema() {
-                TargetingSchema::Burst { radius } => Some((*a, radius)),
-                _ => None,
-            }
+            a.targeting_schema().area_shape().map(|shape| (*a, shape))
         })
         .collect();
     if burst_actions.is_empty() {
@@ -8390,13 +8395,18 @@ fn best_burst_placement(
         }
         candidate_points.push((anchor.location(), *anchor_id));
     }
+    // And the caster's own tile, for the areas RAW centres on the
+    // creature rather than throwing — see the same addition in
+    // `try_breath_weapon` for why, and why it costs the other shapes
+    // nothing.
+    candidate_points.push((actor.location(), actor_id));
 
     let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
     for (point, anchor_id) in &candidate_points {
         let point = *point;
         let anchor_id = *anchor_id;
 
-        for (action, radius) in &burst_actions {
+        for (action, shape) in &burst_actions {
             // Validate caster→point reach + LOS + cost via the action's
             // own validation (avoids reimplementing).
             let aei =
@@ -8466,13 +8476,7 @@ fn best_burst_placement(
                 if !a.is_combat_active() {
                     continue;
                 }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist > *radius {
+                if !encounter.area_catches(actor_id, *shape, point, *id) {
                     continue;
                 }
                 if *id == actor_id || a.team() == my_team {
@@ -10602,6 +10606,7 @@ mod tests {
     /// the generator for more creatures than the map had anchors to
     /// hold, and failing for a reason that has nothing to do with what
     /// this test is about.
+
     #[test]
     fn generated_encounters_of_every_shape_run_to_completion() {
         use crate::actors::creatures::pc_template_families;

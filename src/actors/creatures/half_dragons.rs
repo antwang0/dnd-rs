@@ -28,6 +28,7 @@
 //! lane for buying movement at a discount that would not simply read as
 //! a worse Dash.
 
+use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BreathWeapon, Multiattack, WeaponWithRider};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -162,10 +163,9 @@ static HALF_DRAGON_MULTIATTACKS: [Multiattack; 5] = [
 /// **Dragon's Breath** (Recharge 5–6) — DEX DC 14, 8d6 of the origin's
 /// type in a 30-foot cone, half on a save.
 ///
-/// Thirty feet is radius 2 on the same scale `dragons.rs` collapses its
-/// cones onto, and the pool is the shared `"breath_weapon"` one, so a
-/// half-dragon standing beside an actual dragon cannot borrow its
-/// recharge.
+/// Thirty feet is twelve tiles of cone on the 2.5 ft grid, and the pool
+/// is the shared `"breath_weapon"` one, so a half-dragon standing beside
+/// an actual dragon cannot borrow its recharge.
 static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
     BreathWeapon {
         display_name: "acid breath",
@@ -173,8 +173,7 @@ static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
         damage: Some((Dice::new(8, 6), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -185,8 +184,7 @@ static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
         damage: Some((Dice::new(8, 6), DamageType::Cold)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -197,8 +195,7 @@ static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
         damage: Some((Dice::new(8, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -209,8 +206,7 @@ static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
         damage: Some((Dice::new(8, 6), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -221,8 +217,7 @@ static HALF_DRAGON_BREATHS: [BreathWeapon; 5] = [
         damage: Some((Dice::new(8, 6), DamageType::Poison)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,

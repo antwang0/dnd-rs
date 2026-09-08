@@ -259,6 +259,10 @@ pub enum DetachCause {
     /// The host is leaving the board and cannot take a passenger with
     /// it. No rule, just teardown.
     HostGone,
+    /// Something moved the attacher itself — a shove, a pull, a
+    /// teleport. A creature that is put somewhere cannot take the body
+    /// it was riding with it, so the grip is what gives.
+    Displaced,
 }
 
 impl DetachCause {
@@ -267,6 +271,7 @@ impl DetachCause {
             DetachCause::Voluntary => "lets go of",
             DetachCause::Pried => "is pulled off",
             DetachCause::HostGone => "loses its grip on",
+            DetachCause::Displaced => "is shaken loose from",
         }
     }
 }

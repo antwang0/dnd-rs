@@ -41,6 +41,7 @@
 //! for what it adds to the roster rather than for fidelity to a
 //! particular column. The picks are called out per block.
 
+use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     BreathWeapon, Multiattack, SimpleWeapon, WeaponWithSaveCondition,
@@ -551,8 +552,7 @@ pub static DRACONIC_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(4, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: SPIRIT_SAVE_DC,
-    radius: 2,
-    range: 4,
+    shape: AreaShape::Cone { length: 12 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,

@@ -1,4 +1,5 @@
 use crate::actions::class_features::DRAKE_COMPANION_TAG;
+use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BreathWeapon, SimpleWeapon};
 use crate::actors::actor_template::CreatureTemplate;
@@ -60,8 +61,7 @@ pub static DRAKE_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(3, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 14,
-    radius: 1,
-    range: 2,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "drake_breath",
     condition: None,
     enemies_only: false,

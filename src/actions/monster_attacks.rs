@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use crate::engine::areas::AreaShape;
 use std::sync::LazyLock;
 
 use crate::engine::attack::{CHARGE_RUN_TILES, ChargeRider, charge_run_tiles};
@@ -7079,11 +7080,24 @@ pub struct BreathWeapon {
     pub damage: Option<(Dice, DamageType)>,
     pub save_ability: AbilityScoreType,
     pub dc: i32,
-    pub radius: isize,
-    /// Max distance (in tile gaps) from the caster's footprint to the
-    /// burst center. RAW dragon breath: 60 ft cone collapses to a
-    /// burst-4 / range-6 envelope in this 2.5 ft grid.
-    pub range: isize,
+    /// RAW's printed area — "each creature in a 60-foot Cone", "each
+    /// creature in a 90-foot-long, 5-foot-wide Line" — as an
+    /// `AreaShape`. See `crate::engine::areas`.
+    ///
+    /// This used to be a `radius` and a `range`, and the comment on
+    /// them conceded the substitution: *"RAW dragon breath: 60 ft cone
+    /// collapses to a burst-4 / range-6 envelope in this 2.5 ft grid."*
+    /// That is not a rounding of a cone, it is a different rule — a
+    /// ten-foot ball thrown fifteen feet, which can be dropped behind
+    /// the dragon or round a corner, and which the dragon's own escort
+    /// stands in. Twenty of the forty dragons breathe a line and twenty
+    /// a cone, and under the old model those were the same shape at
+    /// four sizes.
+    ///
+    /// The aim point is a *direction* for both projected shapes, so
+    /// `reach_tiles` is the length rather than a separate range: a
+    /// breath reaches as far as it reaches.
+    pub shape: AreaShape,
     /// Key passed to `is_recharge_available` / `spend_recharge`. Every
     /// vanilla breath weapon shares the `"breath_weapon"` pool so a
     /// chromatic dragon can't double-tap with two different elements.
@@ -7095,6 +7109,16 @@ pub struct BreathWeapon {
     pub enemies_only: bool,
 }
 
+/// How far from its own body a creature may aim an area that is
+/// centred on it — RAW's Emanation, which is not thrown anywhere.
+///
+/// Two tiles rather than zero because the aim point is still an
+/// argument somebody has to supply, and a leash of zero would admit
+/// only tiles the creature is standing on. Two is enough slack for a
+/// picker to name the tile in front of it and small enough that the
+/// area is unmistakably the creature's own.
+const EMANATION_AIM_LEASH: isize = 2;
+
 impl Action for BreathWeapon {
     fn name(&self) -> &str {
         self.display_name
@@ -7103,12 +7127,16 @@ impl Action for BreathWeapon {
         self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst {
-            radius: self.radius,
-        }
+        TargetingSchema::from_area(self.shape)
     }
     fn reach_tiles(&self) -> Option<isize> {
-        Some(self.range)
+        // A cone or a line is aimed by naming a tile inside it, so its
+        // reach is its own length — `AreaShape::aim_reach` answers for
+        // both. A burst's radius says nothing about how far it can be
+        // thrown, and the one burst breath on the roster is RAW's
+        // *Emanation*, which is centred on the creature rather than
+        // thrown at all: hence the short leash.
+        Some(self.shape.aim_reach().unwrap_or(EMANATION_AIM_LEASH))
     }
     fn requires_los(&self) -> bool {
         true
@@ -7166,8 +7194,9 @@ impl Action for BreathWeapon {
             0
         };
         encounter.log(format!(
-            "  {}: burst centered at ({}, {}) (DC {} {}{}{})",
+            "  {}: {} aimed at ({}, {}) (DC {} {}{}{})",
             self.display_name,
+            self.shape.label(),
             point.x,
             point.y,
             self.dc,
@@ -7180,23 +7209,27 @@ impl Action for BreathWeapon {
                 .unwrap_or_default(),
         ));
         let targets = if self.enemies_only {
-            encounter.enemy_burst_targets(caster_id, point, self.radius)
+            encounter.enemy_area_targets(caster_id, self.shape, point)
         } else {
-            encounter.neutral_burst_targets(caster_id, point, self.radius)
+            encounter.neutral_area_targets(caster_id, self.shape, point)
         };
         // Shielded allies auto-pass and take nothing (Careful Spell,
-        // Sculpt Spells). Enemy-scoped bursts exclude allies at the
+        // Sculpt Spells). Enemy-scoped areas exclude allies at the
         // target-list step, so there is nobody left for the sweep to
         // spare.
         let shielded = if self.enemies_only {
             HashSet::new()
         } else {
-            encounter.auto_pass_shielded_allies(caster_id, point, self.radius)
+            encounter.auto_pass_shielded_allies_in(caster_id, self.shape, point)
         };
+        // Cover against an area is measured from where the area comes
+        // from, which for a breath is the creature's mouth rather than
+        // the tile it was aimed through — see `AreaShape::origin`.
+        let origin = encounter.area_origin(caster_id, self.shape, point);
         let (mut effects, saves) = crate::actions::action_template::resolve_burst_targets(
             encounter,
             caster_id,
-            point,
+            origin,
             &targets,
             self.save_ability,
             self.dc,
@@ -7428,8 +7461,10 @@ pub static BEHIR_LIGHTNING_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(12, 10), DamageType::Lightning)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 16,
-    radius: 3,
-    range: 5,
+    shape: AreaShape::Line {
+        length: 36,
+        half_width: 1,
+    },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -11351,8 +11386,7 @@ pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(4, 8), DamageType::Cold)),
     save_ability: AbilityScoreType::Constitution,
     dc: 12,
-    radius: 2,
-    range: 4,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -13362,8 +13396,7 @@ pub static IRON_GOLEM_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(10, 8), DamageType::Poison)),
     save_ability: AbilityScoreType::Constitution,
     dc: 19,
-    radius: 3,
-    range: 4,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -13493,8 +13526,7 @@ pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(12, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Constitution,
     dc: 18,
-    radius: 3,
-    range: 4,
+    shape: AreaShape::Cone { length: 24 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -15544,8 +15576,7 @@ pub static ICE_MEPHIT_FROST_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(1, 8), DamageType::Cold)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 10,
-    radius: 2,
-    range: 3,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -15635,8 +15666,7 @@ pub static STEAM_MEPHIT_STEAM_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(1, 6), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 10,
-    radius: 2,
-    range: 3,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -15722,8 +15752,7 @@ pub static MAGMA_MEPHIT_FIRE_BREATH: BreathWeapon = BreathWeapon {
     damage: Some((Dice::new(1, 8), DamageType::Fire)),
     save_ability: AbilityScoreType::Dexterity,
     dc: 11,
-    radius: 2,
-    range: 3,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -16792,8 +16821,7 @@ pub static DUST_MEPHIT_BLINDING_BREATH: BreathWeapon = BreathWeapon {
     damage: None,
     save_ability: AbilityScoreType::Constitution,
     dc: 10,
-    radius: 2,
-    range: 3,
+    shape: AreaShape::Cone { length: 6 },
     recharge_key: "breath_weapon",
     condition: Some((Condition::Blinded, ConditionTimer::Rounds(1))),
     enemies_only: false,
@@ -21099,10 +21127,13 @@ pub static MIND_RENDING_ROAR: BreathWeapon = BreathWeapon {
     dc: 16,
     // RAW's 300-foot Emanation, compressed to something a generated
     // board can contain. Everything hostile hears it.
-    radius: 24,
-    // Centred on the sphinx, which is what an Emanation is; the range
-    // is the slack the targeter needs to pick the sphinx's own tile.
-    range: 2,
+    //
+    // A Burst rather than one of the two projected shapes, and it is
+    // the one breath on the roster where that is right: an Emanation
+    // is centred on the creature and radiates in every direction, so
+    // it is the *sphere* the burst has always modelled. The sphinx
+    // aims it at its own tile.
+    shape: AreaShape::Burst { radius: 24 },
     recharge_key: "breath_weapon",
     condition: Some((Condition::Incapacitated, ConditionTimer::Rounds(1))),
     enemies_only: true,

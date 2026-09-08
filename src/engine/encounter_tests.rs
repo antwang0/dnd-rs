@@ -21168,42 +21168,55 @@ fn behir_template_lightning_immune_and_recharge_gated() {
     ));
 }
 
-/// Behir's lightning breath drops the breath into an enemy and chips
-/// HP on a CR-1 goblin. Sanity-check that the new BreathWeapon
-/// chassis routes through `resolve_burst_save_damage` correctly.
+/// The Behir's lightning breath is RAW's 90-foot-long, 5-foot-wide
+/// Line, and the whole point of a line is that it is thin: a goblin
+/// standing in front of the behir burns, and one standing the same
+/// distance away but off the axis does not — even though the second
+/// goblin is closer to the behir than the first.
+///
+/// Which is the thing the old burst could not express. Under a
+/// radius-3 blast thrown five tiles out, both goblins were in it.
 #[test]
-fn behir_lightning_breath_burns_area() {
+fn behir_lightning_breath_burns_a_line_and_not_a_ball() {
     use crate::actions::monster_attacks::BEHIR_LIGHTNING_BREATH;
     use crate::actors::creatures::behirs::BEHIR_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    let mut e = ei_with_terrain(20, 20, &[]);
+    let mut e = ei_with_terrain(40, 40, &[]);
+    // Huge: a 6×6 box anchored at (2,2), so its eastern face is x = 7.
     let bh = e
         .instantiate_creature(&BEHIR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+    // Straight out in front, level with the middle of the behir.
+    let on_axis = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 4), 1, 0)
         .unwrap();
-    let hp_before = e.actors[&goblin].hitpoints();
+    // The same distance out and well off the axis — nearer the behir in
+    // a straight line than the first goblin, and not in the beam.
+    let off_axis = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(16, 20), 1, 1)
+        .unwrap();
+    let on_before = e.actors[&on_axis].hitpoints();
+    let off_before = e.actors[&off_axis].hitpoints();
     let effects = BEHIR_LIGHTNING_BREATH.side_effects(
         &mut e,
         bh,
         None,
-        Some(&vec![Coordinate::new(6, 2)]),
+        Some(&vec![Coordinate::new(20, 4)]),
         None,
     );
     for ef in effects {
         ef.apply(&mut e);
     }
-    let hp_after = e
-        .actors
-        .get(&goblin)
-        .map(|a| a.hitpoints())
-        .unwrap_or(0);
+    let hp = |id| e.actors.get(&id).map(|a: &ActorInstance| a.hitpoints()).unwrap_or(0);
     assert!(
-        hp_after < hp_before,
-        "goblin should burn under Behir's lightning breath (had {}, now {})",
-        hp_before,
-        hp_after,
+        hp(on_axis) < on_before,
+        "the goblin in the beam should burn (had {on_before}, now {})",
+        hp(on_axis)
+    );
+    assert_eq!(
+        hp(off_axis),
+        off_before,
+        "the goblin beside the beam should not"
     );
 }
 
@@ -71631,10 +71644,8 @@ fn every_damaging_cantrip_reaches_the_shared_damage_chokepoint() {
             let at = e.actors[&ogre].location();
             let (ids, locs) = match action.targeting_schema() {
                 TargetingSchema::SingleActor => (Some(vec![ogre]), None),
-                TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
-                    (None, Some(vec![at]))
-                }
-                TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+                s if s.takes_one_point() => (None, Some(vec![at])),
+                _ => (None, None),
             };
             for ef in action.execute(&mut e, cleric, ids.as_ref(), locs.as_ref(), None) {
                 ef.apply(&mut e);
@@ -74335,10 +74346,8 @@ fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
             let loc = e.actors[&ally].location();
             let (targets, locations) = match action.targeting_schema() {
                 TargetingSchema::SingleActor => (Some(vec![ally]), None),
-                TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
-                    (None, Some(vec![loc]))
-                }
-                TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+                s if s.takes_one_point() => (None, Some(vec![loc])),
+                _ => (None, None),
             };
             e.pop_prompt();
             let aei = ActionExecutionInfo::new(action, caster, targets, locations, None);
@@ -74393,10 +74402,8 @@ fn the_slot_heal_chokepoint_covers_every_amplifiable_heal() {
         let loc = e.actors[&ally].location();
         let (targets, locations) = match action.targeting_schema() {
             TargetingSchema::SingleActor => (Some(vec![ally]), None),
-            TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => {
-                (None, Some(vec![loc]))
-            }
-            TargetingSchema::NoArgs | TargetingSchema::Custom => (None, None),
+            s if s.takes_one_point() => (None, Some(vec![loc])),
+            _ => (None, None),
         };
         e.pop_prompt();
         let aei = ActionExecutionInfo::new(action, caster, targets, locations, None);
@@ -74433,7 +74440,6 @@ fn a_burst_heal_picks_up_the_ally_who_is_down() {
     use crate::actions::spells::{AURA_OF_VITALITY, HEALING_SPIRIT, PRAYER_OF_HEALING};
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actions::action_template::TargetingSchema;
 
     for spell in [
         &*PRAYER_OF_HEALING as &(dyn Action + Send + Sync),
@@ -74453,7 +74459,7 @@ fn a_burst_heal_picks_up_the_ally_who_is_down() {
 
         let loc = e.actors[&downed].location();
         let locations = match spell.targeting_schema() {
-            TargetingSchema::SinglePoint | TargetingSchema::Burst { .. } => Some(vec![loc]),
+            s if s.takes_one_point() => Some(vec![loc]),
             _ => None,
         };
         e.pop_prompt();
@@ -74686,8 +74692,16 @@ fn each_colour_breathes_its_own_element_against_its_own_save() {
         // a victim that goes down to *that* leaves the breath with
         // nobody to make a saving throw. Nothing on this list is
         // immune to anything a hill giant needs to survive.
+        //
+        // Clear of the dragon's own 6×6 box (anchored at (5,5), so it
+        // spans x,y ∈ 5..=10) and straight out in front of it. Both
+        // halves matter now that a breath is a cone or a line: the aim
+        // point supplies a *direction*, and one inside the breather's
+        // own footprint supplies none at all. The old fixture stood the
+        // giant at (9,5) — inside the dragon — which a burst centred on
+        // that tile did not care about.
         let victim = e
-            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(16, 6), 0, 0)
             .unwrap();
         let action = e.actors[&dragon]
             .find_action(breath)
@@ -74697,7 +74711,7 @@ fn each_colour_breathes_its_own_element_against_its_own_save() {
         let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![loc]), None);
         assert!(
             aei.validate(&e),
-            "{} should be able to breathe on a target 4 tiles away",
+            "{} should be able to breathe down the length of the room",
             template.name
         );
         let before = e.messages().len();
@@ -89553,5 +89567,168 @@ fn a_creature_immune_to_the_condition_never_rolls_for_the_emanation() {
         !e.messages()[before..].iter().any(|m| m.contains("Stench")),
         "no roll, no line: {:?}",
         &e.messages()[before..]
+    );
+}
+
+/// A cone comes out of the breather, which is the whole tactical content
+/// of the shape: the creatures in front of a dragon burn and the ones
+/// behind it do not, however close behind they are standing.
+///
+/// The burst this replaced could not express that. A radius-4 blast
+/// thrown six tiles out has no front and no back — the dragon could drop
+/// it on the far side of its own escort, or on itself.
+#[test]
+fn a_breath_cone_has_a_front_and_a_back() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 40, &[]);
+    // Huge: 6×6 anchored at (20,16), spanning x,y ∈ 20..=25.
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(20, 16), 1, 0)
+        .unwrap();
+    let ahead = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(32, 17), 0, 0)
+        .unwrap();
+    // The same distance out on the other side. Under a burst centred
+    // on the first giant this one would have been well clear too, so
+    // the assertion that bites is the *pair*: the cone reaches twelve
+    // tiles forward and nothing at all backward.
+    let behind = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(8, 17), 0, 1)
+        .unwrap();
+    let action = e.actors[&dragon]
+        .find_action("fire breath")
+        .expect("an adult red dragon breathes fire");
+    let (ahead_before, behind_before) = (
+        e.actors[&ahead].hitpoints(),
+        e.actors[&behind].hitpoints(),
+    );
+    let aim = e.actors[&ahead].location();
+    e.pop_prompt();
+    let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None);
+    assert!(aei.validate(&e), "a 60 ft cone reaches twelve tiles");
+    e.push_action(aei);
+    e.process_stack();
+
+    let hp = |e: &EncounterInstance, id| {
+        e.actors.get(&id).map(|a: &ActorInstance| a.hitpoints()).unwrap_or(0)
+    };
+    assert!(
+        hp(&e, ahead) < ahead_before,
+        "the giant in front of the dragon is in the cone"
+    );
+    assert_eq!(
+        hp(&e, behind),
+        behind_before,
+        "the one behind it is not, and a burst could never have said so"
+    );
+}
+
+/// A cone is aimed by naming a tile, and only the *direction* of that
+/// tile is read — so a dragon that aims past its target still catches
+/// it, and one that aims at a tile inside its own body catches nobody.
+#[test]
+fn a_breath_cone_reads_its_aim_point_as_a_direction() {
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::areas::AreaShape;
+
+    let mut e = ei_with_terrain(60, 40, &[]);
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(20, 16), 1, 0)
+        .unwrap();
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(30, 17), 0, 0)
+        .unwrap();
+    let cone = AreaShape::Cone { length: 24 };
+    // Aimed one tile past the giant, or ten tiles past it: the same cone.
+    for aim in [Coordinate::new(31, 17), Coordinate::new(40, 17)] {
+        assert!(
+            e.area_catches(dragon, cone, aim, giant),
+            "aiming at {aim:?} should still cover the giant"
+        );
+    }
+    // Aimed at a tile inside the dragon: no direction, no cone.
+    assert!(!e.area_catches(dragon, cone, Coordinate::new(22, 18), giant));
+}
+
+/// Forced movement aimed at a *latched* creature cuts the grip rather
+/// than dragging the host's tiles around with it.
+///
+/// The bug this pins was invisible from the log and corrupted the board
+/// in two directions at once. A latched creature is off the occupancy
+/// grid and its `location` mirrors its host's, so shoving it wrote
+/// `None` over the **host's** tile — a living creature the party could
+/// then walk through — and stamped the destination with an id that owns
+/// no footprint, which stayed there forever once the passenger died.
+/// Neither is a sentence anybody would have read in a transcript; it
+/// took a shove landing on a stirge that happened to be riding a
+/// gibbering mouther for the invariant sweep to catch it.
+#[test]
+fn shoving_a_latched_creature_shakes_it_loose_rather_than_moving_its_host() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let perch = e.actors[&host].location();
+    assert_eq!(e.actor_id_at(perch), Some(host));
+
+    // Shove the passenger. The anchor is three tiles north rather than
+    // the perch itself for two reasons: a creature standing exactly on
+    // the anchor has no outward direction and `forced_move` bails, and
+    // the host's own 2×2 box fills the tiles immediately east of the
+    // perch, so a push that way is blocked before it starts.
+    crate::engine::side_effects::PushActor {
+        actor_id: stirge,
+        from: Coordinate::new(perch.x, perch.y + 3),
+        max_tiles: 2,
+    }
+    .apply(&mut e);
+
+    assert!(
+        !e.is_attached(stirge),
+        "a creature that has been put somewhere else is not still holding on"
+    );
+    assert_eq!(
+        e.actor_id_at(perch),
+        Some(host),
+        "and the host still owns the tile it is standing on"
+    );
+    assert_ne!(e.actors[&stirge].location(), perch);
+    assert_eq!(
+        e.actor_id_at(e.actors[&stirge].location()),
+        Some(stirge),
+        "the stirge owns wherever it landed"
+    );
+    assert!(
+        e.board_inconsistencies().is_empty(),
+        "{:?}",
+        e.board_inconsistencies()
+    );
+}
+
+/// The other half of the same repair: killing the shaken-loose stirge
+/// leaves no stamp behind. This is the half that used to leak — a tile
+/// nothing could ever stand on for the rest of the fight.
+#[test]
+fn a_shaken_loose_creature_takes_its_footprint_with_it_when_it_dies() {
+    let (mut e, stirge, host) = stirge_pair();
+    assert!(e.attach(stirge, host).is_ok());
+    let perch = e.actors[&host].location();
+    crate::engine::side_effects::PushActor {
+        actor_id: stirge,
+        from: Coordinate::new(perch.x, perch.y + 3),
+        max_tiles: 2,
+    }
+    .apply(&mut e);
+    assert!(!e.is_attached(stirge));
+    let landed = e.actors[&stirge].location();
+    e.actors.get_mut(&stirge).unwrap().take_damage(9999);
+    e.cleanup_dead_actors();
+    assert!(!e.actors.contains_key(&stirge), "the stirge is gone");
+    assert_eq!(e.actor_id_at(landed), None, "and so is its stamp");
+    assert!(
+        e.board_inconsistencies().is_empty(),
+        "{:?}",
+        e.board_inconsistencies()
     );
 }

@@ -56,6 +56,7 @@
 //! one failed save, and because a dragon that can be frightened by an
 //! adventurer is a strange thing to have written down.
 
+use crate::engine::areas::AreaShape;
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
@@ -789,13 +790,22 @@ const DRAGONS: [DragonRow; 40] = [
 
 /// One breath weapon per dragon, in `DRAGONS` order.
 ///
-/// RAW's cone and line lengths are collapsed onto the engine's burst
-/// envelope on the same scale the engine's first dragon breath used —
-/// a 60-ft cone is a radius-4 burst thrown up to 6 tiles out —
-/// which makes the ladder monotone in both axes: 15 ft is radius 1,
-/// 120 ft is radius 6. The distinction RAW draws between a cone and a
-/// line is not modeled; the engine has one area shape for a breath and
-/// the length is what separates a wyrmling's from an ancient's.
+/// Each entry carries the shape and the length RAW prints for it, on
+/// the engine's 2.5 ft grid: a 60-foot cone is `Cone { length: 24 }`
+/// and a 90-foot line is `Line { length: 36, half_width: 1 }`.
+///
+/// The distinction between a cone and a line used to be dropped, and
+/// dropping it flattened the chromatic and metallic families into one
+/// creature at four sizes. It is the difference RAW draws between the
+/// two halves of the colour wheel, and it is a real tactical one: a
+/// green dragon wants the party clumped and a blue one wants it in a
+/// row, so the same party formation is the right answer against one and
+/// the wrong one against the other. Twenty of these forty breathe a
+/// line.
+///
+/// The width on the ancient lines is RAW's too — the four oldest
+/// line-breathers widen from 5 feet to 10 — which is why `half_width`
+/// is 2 on those rows and 1 everywhere else.
 static DRAGON_BREATHS: [BreathWeapon; 40] = [
     // Wyrmling Black: 15-ft Line, 5d8 acid, DC 11 DEX.
     BreathWeapon {
@@ -804,8 +814,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(5, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 11,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Line {
+            length: 6,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -817,8 +829,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(14, 6), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Line {
+            length: 12,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -830,8 +844,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 18,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Line {
+            length: 24,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -843,8 +859,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(15, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 22,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Line {
+            length: 36,
+            half_width: 2,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -856,8 +874,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(6, 6), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 12,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Line {
+            length: 12,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -869,8 +889,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(10, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 16,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Line {
+            length: 24,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -882,8 +904,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(11, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 19,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Line {
+            length: 36,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -895,8 +919,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(16, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 23,
-        radius: 6,
-        range: 10,
+        shape: AreaShape::Line {
+            length: 48,
+            half_width: 2,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -908,8 +934,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(6, 6), DamageType::Poison)),
         save_ability: AbilityScoreType::Constitution,
         dc: 11,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Cone { length: 6 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -921,8 +946,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 6), DamageType::Poison)),
         save_ability: AbilityScoreType::Constitution,
         dc: 14,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -934,8 +958,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(16, 6), DamageType::Poison)),
         save_ability: AbilityScoreType::Constitution,
         dc: 18,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Cone { length: 24 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -947,8 +970,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(22, 6), DamageType::Poison)),
         save_ability: AbilityScoreType::Constitution,
         dc: 22,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Cone { length: 36 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -960,8 +982,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(7, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 13,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Cone { length: 6 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -973,8 +994,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(16, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 17,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -986,8 +1006,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(17, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 21,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Cone { length: 24 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -999,8 +1018,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(26, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 24,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Cone { length: 36 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1012,8 +1030,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(5, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 12,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Cone { length: 6 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1025,8 +1042,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(9, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 15,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1038,8 +1054,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 19,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Cone { length: 24 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1051,8 +1066,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(14, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 22,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Cone { length: 36 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1064,8 +1078,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(4, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 11,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Line {
+            length: 8,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1077,8 +1093,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(11, 6), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 3,
-        range: 4,
+        shape: AreaShape::Line {
+            length: 16,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1090,21 +1108,28 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(10, 8), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 18,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Line {
+            length: 24,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
     },
-    // Ancient Brass: 90-ft Line, 13d8 fire, DC 21 DEX.
+    // Ancient Brass: 90-ft × 5-ft Line, 13d8 fire, DC 21 DEX. The one
+    // ancient line-breather RAW leaves at five feet wide — the other
+    // four widen to ten — so it is the row that would be wrong if the
+    // width were derived from the age rather than read off the block.
     BreathWeapon {
         display_name: "fire breath",
         aliases: &["breath", "br"],
         damage: Some((Dice::new(13, 8), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 21,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Line {
+            length: 36,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1116,8 +1141,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(3, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 12,
-        radius: 3,
-        range: 4,
+        shape: AreaShape::Line {
+            length: 16,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1129,8 +1156,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(9, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 15,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Line {
+            length: 24,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1142,8 +1171,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(10, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 19,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Line {
+            length: 36,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1155,8 +1186,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(15, 10), DamageType::Lightning)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 23,
-        radius: 6,
-        range: 10,
+        shape: AreaShape::Line {
+            length: 48,
+            half_width: 2,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1168,8 +1201,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(4, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 11,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Line {
+            length: 8,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1181,8 +1216,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(9, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 14,
-        radius: 3,
-        range: 4,
+        shape: AreaShape::Line {
+            length: 16,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1194,8 +1231,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 18,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Line {
+            length: 24,
+            half_width: 1,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1207,8 +1246,10 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(14, 8), DamageType::Acid)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 22,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Line {
+            length: 36,
+            half_width: 2,
+        },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1220,8 +1261,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(4, 10), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 13,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Cone { length: 6 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1233,8 +1273,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(10, 10), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 17,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1246,8 +1285,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 10), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 21,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Cone { length: 24 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1259,8 +1297,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(13, 10), DamageType::Fire)),
         save_ability: AbilityScoreType::Dexterity,
         dc: 24,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Cone { length: 36 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1272,8 +1309,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(4, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 13,
-        radius: 1,
-        range: 2,
+        shape: AreaShape::Cone { length: 6 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1285,8 +1321,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(11, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 17,
-        radius: 2,
-        range: 3,
+        shape: AreaShape::Cone { length: 12 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1298,8 +1333,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(12, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 20,
-        radius: 4,
-        range: 6,
+        shape: AreaShape::Cone { length: 24 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -1311,8 +1345,7 @@ static DRAGON_BREATHS: [BreathWeapon; 40] = [
         damage: Some((Dice::new(15, 8), DamageType::Cold)),
         save_ability: AbilityScoreType::Constitution,
         dc: 24,
-        radius: 5,
-        range: 8,
+        shape: AreaShape::Cone { length: 36 },
         recharge_key: "breath_weapon",
         condition: None,
         enemies_only: false,
@@ -2553,13 +2586,13 @@ mod tests {
         assert_eq!(crs.iter().cloned().fold(0.0f32, f32::max), 24.0);
     }
 
-    /// The breath envelope grows with the rung and never shrinks — the
-    /// one thing the ft-to-tile collapse could have got wrong, since
-    /// RAW's lengths are not monotone across colours (a bronze
-    /// wyrmling's 40-ft line is longer than an adult gold's 60-ft
-    /// cone is wide).
+    /// The breath reaches further with every rung and never shorter —
+    /// the one thing the ft-to-tile conversion could have got wrong,
+    /// since RAW's lengths are not monotone *across* colours (a bronze
+    /// wyrmling's 40-ft line outreaches an adult gold's 60-ft cone at
+    /// its widest).
     #[test]
-    fn a_dragons_breath_widens_as_it_ages() {
+    fn a_dragons_breath_reaches_further_as_it_ages() {
         for color in COLORS {
             let mut last = 0isize;
             for age in AGES {
@@ -2567,16 +2600,74 @@ mod tests {
                     .iter()
                     .position(|r| r.color == color && r.age == age)
                     .expect("every cell is filled");
-                let radius = DRAGON_BREATHS[i].radius;
+                let length = DRAGON_BREATHS[i]
+                    .shape
+                    .aim_reach()
+                    .expect("every dragon breath is a cone or a line");
                 assert!(
-                    radius >= last,
-                    "{:?} {:?} breathes a smaller cloud than its younger self",
+                    length >= last,
+                    "{:?} {:?} breathes shorter than its younger self",
                     age,
                     color
                 );
-                last = radius;
+                last = length;
             }
         }
+    }
+
+    /// A dragon's breath is the shape its stat block prints, and the
+    /// colour wheel splits cleanly down the middle: black, blue, brass,
+    /// bronze and copper breathe a line, and green, red, white, gold
+    /// and silver breathe a cone. That split is the whole reason the
+    /// engine grew a second area shape — under the old model these
+    /// were one creature at four sizes — so it is pinned rather than
+    /// left to the forty comments above.
+    #[test]
+    fn the_colour_wheel_splits_into_line_breathers_and_cone_breathers() {
+        use crate::engine::areas::AreaShape;
+        let mut lines: Vec<DragonColor> = Vec::new();
+        let mut cones: Vec<DragonColor> = Vec::new();
+        for color in COLORS {
+            let mut kinds = DRAGONS
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.color == color)
+                .map(|(i, _)| DRAGON_BREATHS[i].shape);
+            let first = kinds.next().expect("every colour has four rungs");
+            assert!(
+                kinds.all(|k| std::mem::discriminant(&k) == std::mem::discriminant(&first)),
+                "{color:?} changes breath shape as it ages"
+            );
+            match first {
+                AreaShape::Line { .. } => lines.push(color),
+                AreaShape::Cone { .. } => cones.push(color),
+                AreaShape::Burst { .. } => panic!("{color:?} breathes a sphere"),
+            }
+        }
+        // Sorted so the assertion pins the *membership* of each half
+        // rather than the order `COLORS` happens to be written in.
+        lines.sort_by_key(|c| format!("{c:?}"));
+        cones.sort_by_key(|c| format!("{c:?}"));
+        assert_eq!(
+            lines,
+            vec![
+                DragonColor::Black,
+                DragonColor::Blue,
+                DragonColor::Brass,
+                DragonColor::Bronze,
+                DragonColor::Copper,
+            ]
+        );
+        assert_eq!(
+            cones,
+            vec![
+                DragonColor::Gold,
+                DragonColor::Green,
+                DragonColor::Red,
+                DragonColor::Silver,
+                DragonColor::White,
+            ]
+        );
     }
 
     /// Only the metallic wyrmlings and young dragons swing without an

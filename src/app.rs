@@ -365,7 +365,9 @@ impl App {
             TargetingSchema::SingleActor => {
                 "\u{2190}\u{2192}: target  \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit"
             }
-            TargetingSchema::Burst { .. } => {
+            TargetingSchema::Burst { .. }
+            | TargetingSchema::Cone { .. }
+            | TargetingSchema::Line { .. } => {
                 "type 'X,Y' point + Enter  \u{2191}\u{2193}: cycle action  Tab: cycle  End: end turn  Esc: quit"
             }
             TargetingSchema::NoArgs | TargetingSchema::Custom => {
@@ -544,11 +546,20 @@ impl App {
     fn target_line(&self) -> Option<String> {
         let prompt = self.encounter.peek_prompt()?;
         let action = self.selected_action()?;
-        if let TargetingSchema::Burst { radius } = action.targeting_schema() {
+        if let Some(shape) = action.targeting_schema().area_shape() {
+            // A burst is aimed at a centre and a cone or a line is
+            // aimed *through* a tile, which is a different instruction
+            // to give the player — "where do you want this to land"
+            // versus "which way do you want to point".
+            let how = match shape {
+                crate::engine::areas::AreaShape::Burst { .. } => "target a tile",
+                _ => "aim it through a tile",
+            };
             return Some(format!(
-                "{}: AoE radius {}. Type 'X,Y' to target a tile, Enter to cast.",
+                "{}: {}. Type 'X,Y' to {}, Enter to cast.",
                 action.name(),
-                radius
+                shape.label(),
+                how
             ));
         }
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
@@ -675,7 +686,11 @@ impl App {
                     _ => {}
                 }
             }
-            TargetingSchema::NoArgs | TargetingSchema::Custom | TargetingSchema::Burst { .. } => {
+            TargetingSchema::NoArgs
+            | TargetingSchema::Custom
+            | TargetingSchema::Burst { .. }
+            | TargetingSchema::Cone { .. }
+            | TargetingSchema::Line { .. } => {
                 // Up/Down cycle the action; Left/Right ignored (avoid
                 // accidental selection-changes during command typing).
                 // Burst falls in here because point-targeting goes through
@@ -754,6 +769,15 @@ impl App {
                 let _ = write!(
                     self.tmp_message,
                     "'{}' needs a target tile — type 'X,Y' first",
+                    action.name()
+                );
+                return Tick::Continue;
+            }
+            TargetingSchema::Cone { .. } | TargetingSchema::Line { .. } => {
+                self.tmp_message.clear();
+                let _ = write!(
+                    self.tmp_message,
+                    "'{}' needs a direction — type 'X,Y' to aim it through a tile",
                     action.name()
                 );
                 return Tick::Continue;

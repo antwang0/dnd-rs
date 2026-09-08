@@ -1,5 +1,6 @@
 pub mod action_overrides;
 pub mod actor_gen;
+pub mod areas;
 pub mod attachment;
 pub mod attack;
 pub mod banishment;
