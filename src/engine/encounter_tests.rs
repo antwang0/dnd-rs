@@ -90697,3 +90697,51 @@ fn a_metallic_dragon_fight_settles() {
         );
     }
 }
+
+/// The Sphinx of Lore can actually use its Mind-Rending Roar.
+///
+/// RAW's roar is a 300-foot Emanation centred on the sphinx — the whole
+/// dungeon — so its aim point is leashed to the sphinx's own body.
+/// The AI's area searches enumerated *enemy* positions as candidate aim
+/// points and nothing else, so the one thing that could fire a CR-11
+/// boss's signature ability was somebody standing on top of it. Both
+/// searches offer the caster's own tile now.
+#[test]
+fn a_sphinx_can_reach_its_own_roar() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let mut reached = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(40, 24, &[], seed);
+        let sphinx = e
+            .instantiate_creature(&SPHINX_OF_LORE_TEMPLATE, Coordinate::new(4, 10), 1, 0)
+            .unwrap();
+        // Far enough that no enemy tile is inside the roar's two-tile
+        // aim leash — which is the whole point: every candidate the AI
+        // used to consider fails `validate`, and only the sphinx's own
+        // tile is left. Close enough to be inside the 300-foot
+        // emanation itself, which on this board is everybody.
+        for i in 0..2usize {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(22, 8 + 4 * i as isize),
+                0,
+                i,
+            )
+            .unwrap();
+        }
+        if let ControllerDecision::Act(aei) = SimpleAi.decide(&e, sphinx)
+            && aei.action().name() == "mind-rending roar"
+        {
+            reached = true;
+            break;
+        }
+    }
+    assert!(
+        reached,
+        "a sphinx with two adventurers across the room should reach for its roar"
+    );
+}
