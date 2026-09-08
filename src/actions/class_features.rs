@@ -440,17 +440,17 @@ pub const PALADIN_CHANNEL_DIVINITY_TAG: &str = "paladin.channel_divinity";
 /// Battle Master maneuver tags — the membership list of the superiority
 /// dice pool.
 ///
-/// RAW, a Battle Master does not have fourteen independent per-rest
+/// RAW, a Battle Master does not have sixteen independent per-rest
 /// charges; it has **one pool of superiority dice** and every maneuver
 /// spends from it. This list used to be exactly that collapse — a tag
 /// per maneuver, one charge each, refreshed side-by-side with
-/// `SHORT_REST_FEATURES` — which meant a level-3 fighter could fire all
-/// fourteen maneuvers in a single fight and still walk into the next one
+/// `SHORT_REST_FEATURES` — which meant a level-3 fighter could fire
+/// every maneuver in a single fight and still walk into the next one
 /// with a full sheet. That is four times the resource RAW hands out, on
 /// the class whose entire identity is spending it well.
 ///
 /// The list now names the *members of a shared pool* rather than
-/// fourteen separate resources: `SHARED_FEATURE_POOLS` points every tag
+/// sixteen separate resources: `SHARED_FEATURE_POOLS` points every tag
 /// here at `SUPERIORITY_DICE_TAG`, and `ActorInstance::spend_feature` /
 /// `feature_charges_remaining` redirect the accounting there. Each
 /// maneuver still needs its own tag — the template says *which*
@@ -475,6 +475,7 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     RALLY_TAG,
     COMMANDERS_STRIKE_TAG,
     DISTRACTING_ATTACK_TAG,
+    MANEUVERING_ATTACK_TAG,
     // Reaction maneuvers — both fire automatically on an incoming melee
     // swing (no active action to spend on the fighter's turn), gated on
     // a superiority die and the holder's reaction slot. RAW spends a die
@@ -484,6 +485,13 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     // pool exists to force.
     PARRY_TAG,
     RIPOSTE_TAG,
+    // Neither an action nor a reaction: Evasive Footwork's trigger is
+    // the fighter's own movement, and it fires from the
+    // opportunity-attack dispatcher. It spends from this pool all the
+    // same, which is the point — a fighter who walked out of three
+    // reach envelopes on the way to the caster arrives with one fewer
+    // die to Trip with.
+    EVASIVE_FOOTWORK_TAG,
 ];
 
 /// The Fighter Battle Master's **superiority dice** pool.
@@ -494,7 +502,7 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
 /// finish a short or long rest."
 ///
 /// Unlike every other tag in this file, this one names no action of its
-/// own. It is a *counter* that the fourteen tags in
+/// own. It is a *counter* that the sixteen tags in
 /// `BATTLE_MASTER_MANEUVERS` share: a template carries it alongside the
 /// maneuvers it knows, `FEATURE_CHARGES` sizes it at four, and
 /// `SHORT_REST_FEATURES` refills it. Nothing looks it up by name at an
@@ -606,9 +614,9 @@ pub const MONK_KI_FEATURES: [&str; 6] = [
 /// can this actor use *this* feature", which is the right question for
 /// almost every feature in the book: Action Surge and Second Wind are
 /// genuinely separate resources. A handful of features aren't. The
-/// Battle Master's maneuvers are the canonical case — fourteen distinct
+/// Battle Master's maneuvers are the canonical case — sixteen distinct
 /// abilities priced out of one pool of four dice — and modeling them as
-/// fourteen independent charges was not a rounding error but a
+/// sixteen independent charges was not a rounding error but a
 /// quadrupling of the subclass's whole resource budget.
 ///
 /// The redirect is deliberately **opt-in per actor**: a member tag only
@@ -636,9 +644,9 @@ pub const SHARED_FEATURE_POOLS: &[(&str, &[&str])] = &[
 /// The shared pool `tag` spends from, or `None` if it has a counter of
 /// its own.
 ///
-/// A nested linear scan over a table with one row and fourteen members;
+/// A nested linear scan over a table with one row and sixteen members;
 /// it runs on the charge-check path, which is hot enough to notice a
-/// hash but nowhere near hot enough to notice fourteen pointer
+/// hash but nowhere near hot enough to notice sixteen pointer
 /// comparisons.
 pub fn shared_pool_for(tag: &str) -> Option<&'static str> {
     SHARED_FEATURE_POOLS
@@ -9317,6 +9325,61 @@ pub static LUNGING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPr
     timer: ConditionTimer::Rounds(2),
     log_line: "  lunging attack: fighter's next melee swing gains +5 ft of reach.",
 });
+
+/// Class-feature tag for the Fighter's **Maneuvering Attack** Battle
+/// Master maneuver. Spends from the shared superiority pool alongside
+/// every other entry on `BATTLE_MASTER_MANEUVERS`.
+pub const MANEUVERING_ATTACK_TAG: &str = "fighter.maneuvering_attack";
+
+/// Maneuvering Attack — Fighter Battle Master maneuver. Bonus-action
+/// prime; the next melee weapon hit adds a superiority die to the damage
+/// roll and lets one ally use its reaction to move up to half its speed.
+///
+/// RAW: *"you choose a friendly creature who can see or hear you. That
+/// creature can use its reaction to move up to half its speed without
+/// provoking opportunity attacks from the target of your attack."* The
+/// prime shape is the same one Trip / Menacing / Distracting use — every
+/// one of those is an on-hit maneuver too, and this one is no different
+/// for having its rider land on an ally.
+///
+/// **Who moves, and which way, is the engine's own choice**, and it has
+/// to be: the prompt resolves one action name per line and has no second
+/// slot for "and my comrade steps here". The rule the follow-up handler
+/// applies is written out at `FollowUpEffect::AllyReposition` — it is
+/// the ally that is *out of position*, and RAW's "more advantageous"
+/// means toward the fight for a creature that fights up close and away
+/// from it for one that does not.
+pub static MANEUVERING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "maneuvering attack",
+    aliases: &["maneuver", "mna"],
+    tag: MANEUVERING_ATTACK_TAG,
+    prime_condition: Condition::ManeuveringAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  maneuvering attack: the fighter's next melee hit opens a lane for an ally.",
+});
+
+/// Class-feature tag for the Fighter's **Evasive Footwork** Battle
+/// Master maneuver. Spends from the shared superiority pool like every
+/// other entry on `BATTLE_MASTER_MANEUVERS`.
+///
+/// The only maneuver in the suite with no action attached to it. RAW:
+/// *"When you move, you can expend one superiority die, rolling the die
+/// and adding the number rolled to your AC until you stop moving."*
+/// There is nothing for a turn-ordered action list to offer and nothing
+/// for the AI to pick, so the feature fires where its trigger actually
+/// lives: `EncounterInstance::dispatch_opportunity_attacks`, on the step
+/// that provokes, and only once the swing is certain.
+///
+/// **The lazy spend is the feature.** A fighter who declares this at the
+/// top of a move buys +4 AC against nothing most of the time; RAW's
+/// player spends it knowing full well they are about to be swung at,
+/// because the trigger and the knowledge arrive together. Firing at the
+/// dispatcher reproduces exactly that: the die is spent when an
+/// opportunity attack is already committed to, and a move that provokes
+/// nothing costs nothing. One die covers the whole move however many
+/// reactors it walks past, which is RAW's "until you stop moving" — the
+/// once-per-turn ledger is what carries that across the steps.
+pub const EVASIVE_FOOTWORK_TAG: &str = "fighter.evasive_footwork";
 
 /// Class-feature tag for the Fighter's Rally Battle Master maneuver
 /// (once per long rest in our model). Listed in `SHORT_REST_FEATURES`

@@ -1,9 +1,10 @@
 use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
     DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, ELDRITCH_STRIKE_TAG,
-    ELEGANT_COURTIER_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, FEROCIOUS_CHARGER,
-    FEROCIOUS_CHARGER_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
-    INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
+    ELEGANT_COURTIER_TAG, EVASIVE_FOOTWORK_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG,
+    FEROCIOUS_CHARGER, FEROCIOUS_CHARGER_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
+    INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG,
+    MANEUVERING_ATTACK, MANEUVERING_ATTACK_TAG, MENACING_ATTACK,
     MENACING_ATTACK_TAG, PARRY_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PROTECTIVE_FIELD_TAG,
     PSIONIC_STRIKE_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, RIPOSTE_TAG,
     SECOND_WIND, SECOND_WIND_TAG, SUPERIORITY_DICE_TAG, SURVIVOR_TAG,
@@ -200,6 +201,14 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     cleanly with Sneak Attack riders or Smite spells from a
     //     follow-up ally swing.
     actions.push(&*DISTRACTING_ATTACK);
+    //   - Maneuvering Attack: bonus action prime that adds a superiority
+    //     die to the next melee hit and hands one ally a free
+    //     half-speed reposition off its reaction. The last of RAW's
+    //     sixteen to arrive, and the only one whose rider lands on
+    //     somebody friendly — the fighter's die pays for the rogue
+    //     getting into flanking position, or for the wizard stepping
+    //     out of the ogre's reach.
+    actions.push(&*MANEUVERING_ATTACK);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -235,6 +244,15 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             RALLY_TAG,
             COMMANDERS_STRIKE_TAG,
             DISTRACTING_ATTACK_TAG,
+            MANEUVERING_ATTACK_TAG,
+            // 5e Battle Master **Evasive Footwork** — the one maneuver
+            // in the suite with no action attached to it. RAW's trigger
+            // is the fighter's own movement, so there is nothing for the
+            // action list to offer and nothing for the AI to pick; it
+            // fires from the opportunity-attack dispatcher at the moment
+            // a swing is certain. Tag-only for exactly that reason —
+            // see `EVASIVE_FOOTWORK_TAG`.
+            EVASIVE_FOOTWORK_TAG,
             // Reactive maneuvers — no active action to spend, fire
             // automatically at the melee-attack chokepoint. Parry
             // (1d8 + DEX damage reducer on hit) and Riposte (counter-
@@ -245,10 +263,10 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // primes has one Parry left in the tank.
             PARRY_TAG,
             RIPOSTE_TAG,
-            // The pool all fourteen tags above spend from: four d8s,
+            // The pool all sixteen tags above spend from: four d8s,
             // back on a short rest. Without this row every maneuver
             // falls back to a private charge of its own, which is
-            // fourteen uses per rest instead of four — see
+            // sixteen uses per rest instead of four — see
             // `SHARED_FEATURE_POOLS`.
             SUPERIORITY_DICE_TAG,
         ]),
@@ -316,8 +334,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 ///   - **Baseline Fighter** (`FIGHTER_TEMPLATE`): all Battle Master
 ///     maneuvers (Trip / Menacing / Disarming / Pushing / Goading /
 ///     Precision / Sweeping / Feinting / Lunging / Rally /
-///     Commander's Strike / Distracting) + Parry + Riposte + Dueling
-///     Style. The "tactical / versatile" archetype.
+///     Commander's Strike / Distracting / Maneuvering) + Parry +
+///     Riposte + Evasive Footwork + Dueling Style. The "tactical /
+///     versatile" archetype.
 ///   - **Samurai** (`SAMURAI_FIGHTER_TEMPLATE`): Elegant Courtier
 ///     WIS-save proficiency. The "disciplined / mind-hardened"
 ///     archetype — inherits the baseline Fighter's Battle Master
@@ -405,8 +424,9 @@ pub static SAMURAI_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // tail inside the helper picks up every other field — chain-mail AC
     // 16, HP 24 (3d10+6), STR 16, all Battle Master maneuvers (Trip /
     // Menacing / Disarming / Pushing / Goading / Precision / Sweeping /
-    // Feinting / Lunging / Rally / Commander's Strike / Distracting) +
-    // Parry + Riposte + Dueling Style — without an N-line field-by-
+    // Feinting / Lunging / Rally / Commander's Strike / Distracting /
+    // Maneuvering) + Parry + Riposte + Evasive Footwork + Dueling
+    // Style — without an N-line field-by-
     // field copy. No new actions are pushed — Elegant Courtier is a
     // purely passive WIS-save-proficiency grant read at the shared
     // `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort, not a fresh action

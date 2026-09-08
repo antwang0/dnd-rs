@@ -8886,6 +8886,10 @@ impl EncounterInstance {
             })
             .collect();
 
+        // Whether this call has the mover's Evasive Footwork guard up.
+        // Raised lazily at the first committed swing and taken down
+        // before the function returns — see `try_evasive_footwork`.
+        let mut footwork_raised = false;
         for (reactor_id, attack, r_loc, r_size, reach) in candidates {
             // Re-check liveness (an earlier OA in this loop may have changed things).
             if !self
@@ -8919,6 +8923,15 @@ impl EncounterInstance {
                 continue;
             }
 
+            // Every gate is behind us and this reactor is swinging, so
+            // this is the moment RAW's Battle Master reaches for a
+            // superiority die: "when you move… adding the number rolled
+            // to your AC until you stop moving". Raised here rather than
+            // at the top of the move so a step that provokes nothing
+            // costs nothing — see `EVASIVE_FOOTWORK_TAG` on why the lazy
+            // spend is the feature rather than a shortcut around it.
+            footwork_raised |= self.try_evasive_footwork(mover_id);
+
             let reactor_name = self.actor_name(reactor_id);
             let mover_name = self.actor_name(mover_id);
             self.log(format!(
@@ -8940,15 +8953,91 @@ impl EncounterInstance {
 
             self.cleanup_dead_actors();
             // If the OA dropped the mover, no further OAs (and the move
-            // caller is expected to abort).
+            // caller is expected to abort). `break` rather than `return`
+            // so the footwork strip below still runs — a mover who is
+            // merely unconscious is still on the board holding a +4 that
+            // RAW ended when they stopped moving.
             if self
                 .actors
                 .get(&mover_id)
                 .is_none_or(|a| !a.is_combat_active())
             {
-                return;
+                break;
             }
         }
+        // "Until you stop moving", and this is where the move stops. The
+        // guard comes down whether it was raised this call or carried
+        // over from an earlier step of the same walk; the next
+        // provoking step re-raises it for free off the once-per-turn
+        // mark. See `Condition::EvasiveFootwork`.
+        if footwork_raised
+            && let Some(mover) = self.actors.get_mut(&mover_id)
+        {
+            mover.remove_condition(Condition::EvasiveFootwork);
+        }
+    }
+
+    /// 5e Fighter Battle Master **Evasive Footwork**: *"When you move,
+    /// you can expend one superiority die, rolling the die and adding
+    /// the number rolled to your AC until you stop moving."*
+    ///
+    /// Called by `dispatch_opportunity_attacks` at the instant a swing
+    /// becomes certain, and returns whether the mover is now guarded —
+    /// which is the caller's cue to take the guard back down when the
+    /// step is resolved.
+    ///
+    /// **One die buys the whole move.** RAW's window closes when the
+    /// creature stops moving, not when the first attacker misses, so a
+    /// fighter who walks out of three reach envelopes pays once. The
+    /// once-per-turn ledger carries that across the steps: the first
+    /// provoking step spends and marks, and every later one in the same
+    /// turn re-raises the flag for free off the mark.
+    ///
+    /// Returns `false` for a fighter who knows the maneuver but has no
+    /// die left, which is the trade the shared superiority pool exists
+    /// to force — three maneuvers on the way in is a walk out with no
+    /// footwork.
+    fn try_evasive_footwork(&mut self, mover_id: usize) -> bool {
+        use crate::actions::class_features::EVASIVE_FOOTWORK_TAG;
+        use crate::conditions::ConditionTimer;
+
+        let Some(mover) = self.actors.get(&mover_id) else {
+            return false;
+        };
+        if mover.has_condition(Condition::EvasiveFootwork) {
+            return true;
+        }
+        if !mover.has_passive_feature(EVASIVE_FOOTWORK_TAG) {
+            return false;
+        }
+        // Paid for on an earlier step of this same move: re-raise free.
+        let already_paid = mover.once_per_turn_used(EVASIVE_FOOTWORK_TAG);
+        if !already_paid && !mover.feature_available(EVASIVE_FOOTWORK_TAG) {
+            return false;
+        }
+        let mover_name = self.actor_name(mover_id);
+        if let Some(m) = self.actors.get_mut(&mover_id) {
+            if !already_paid {
+                m.spend_feature(EVASIVE_FOOTWORK_TAG);
+                m.mark_once_per_turn_used(EVASIVE_FOOTWORK_TAG);
+            }
+            // The timer is a safety net that should never be read: the
+            // caller strips this flag unconditionally before it returns.
+            // `UntilStartOfNextTurn` is the shortest window the timer
+            // vocabulary has, and it is still far too long for RAW —
+            // which is exactly why the strip is not optional.
+            m.add_condition(
+                Condition::EvasiveFootwork,
+                ConditionTimer::UntilStartOfNextTurn,
+            );
+        }
+        if !already_paid {
+            self.log(format!(
+                "[reaction] evasive footwork: {} spends a superiority die and gives ground (+4 AC while moving).",
+                mover_name
+            ));
+        }
+        true
     }
 
     /// Sorted ids of every combat-active actor whose footprint lies

@@ -1130,6 +1130,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p''''''''-. Maneuvering Attack — fighter bonus-action prime
+        //              (Battle Master). A superiority die on the next
+        //              melee hit plus a free half-speed move for one
+        //              ally, off that ally's reaction. Sits immediately
+        //              below Distracting Strike because it is the same
+        //              kind of decision — a die spent on somebody else's
+        //              turn going better — and below it specifically
+        //              because Distracting Strike's advantage rider is
+        //              worth more than a reposition to an ally who is
+        //              already adjacent to the fighter's target, which
+        //              is exactly the board state that rung gates on.
+        if let Some(aei) = try_maneuvering_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3p''''''''. Feinting Attack — fighter bonus-action prime (Battle
         //             Master). Targets one enemy in melee reach and grants
         //             self-advantage on the next attack vs them via the
@@ -3264,6 +3279,33 @@ fn try_distracting_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "distracting strike")
+}
+
+/// Fighter Battle Master Maneuvering Attack — bonus-action prime that
+/// adds a superiority die to the next melee hit and hands one ally a
+/// free half-speed move off its reaction.
+///
+/// Two gates, and they are the two halves of the maneuver.
+///
+///   1. **An enemy in melee reach**, so the prime is cashed this turn
+///      rather than carried into the next one. The same clause every
+///      other entry on this lane has.
+///   2. **An ally the reposition would actually help.** That question is
+///      not the AI's to answer twice — `engine::attack::maneuverable_ally`
+///      is what the follow-up handler itself will consult when the swing
+///      lands, so asking it here means the picker and the resolver
+///      cannot disagree about whether there was anybody to move.
+///
+/// Without the second gate the maneuver collapses to a flat superiority
+/// die of damage, which Trip / Menacing / Pushing all beat by carrying a
+/// rider as well — so a fighter with nobody out of position should be
+/// spending the die on one of those instead.
+fn try_maneuvering_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    crate::engine::attack::maneuverable_ally(encounter, actor_id)?;
+    try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "maneuvering attack")
 }
 
 /// Fighter Battle Master Sweeping Attack — bonus-action prime that

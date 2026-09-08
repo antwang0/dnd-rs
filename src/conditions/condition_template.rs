@@ -1448,6 +1448,45 @@ pub enum Condition {
     /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
     /// it doesn't sit across rounds.
     LungingAttacking,
+    /// Maneuvering Attack primed (5e Fighter Battle Master maneuver).
+    /// *"When you hit a creature with a weapon attack, you can expend
+    /// one superiority die to maneuver one of your comrades into a more
+    /// advantageous position. You add the superiority die to the
+    /// attack's damage roll, and you choose a friendly creature who can
+    /// see or hear you. That creature can use its reaction to move up to
+    /// half its speed."*
+    ///
+    /// The only maneuver whose rider lands on somebody who is not the
+    /// creature that was hit and is not the fighter either, which is why
+    /// it needed a `FollowUpEffect` variant of its own rather than a row
+    /// on one of the existing ones. One-shot — the rider table strips
+    /// this flag on the melee swing that cashes it.
+    ManeuveringAttacking,
+    /// **Evasive Footwork** (5e Fighter Battle Master maneuver): *"When
+    /// you move, you can expend one superiority die, rolling the die and
+    /// adding the number rolled to your AC until you stop moving."*
+    ///
+    /// The odd one out among the maneuvers, and the reason it is a
+    /// condition rather than a prime: every other maneuver in the suite
+    /// is a bonus action the fighter *takes*, and this one is a clause
+    /// on a move nobody spends an action on. It is not on
+    /// `is_maneuver_prime` for the same reason — there is no "next melee
+    /// hit" for a rider table to consume, and no prime for a Dispel to
+    /// find.
+    ///
+    /// A flat +4 stands in for the +1d8, matching `PrecisionAttacking`'s
+    /// treatment of the same die, so the two maneuvers that turn a
+    /// superiority die into a d20 modifier turn it into the same one.
+    ///
+    /// **Its lifetime is a function call.** RAW's window is "until you
+    /// stop moving", and the only thing in this engine that can attack a
+    /// creature while it is moving is the opportunity-attack dispatcher,
+    /// so `EncounterInstance::dispatch_opportunity_attacks` installs the
+    /// flag on the step that provokes and strips it before returning. No
+    /// timer covers "the rest of this move": `UntilStartOfNextTurn`
+    /// would hold +4 AC through the entire enemy round, which is a
+    /// better Shield than Shield for one superiority die.
+    EvasiveFootwork,
     /// Empowered Spell primed (5e Sorcerer Metamagic). The sorcerer has
     /// spent a sorcery point via the Empowered Spell bonus-action prime;
     /// the next spell damage roll they make can reroll up to CHA-mod
@@ -2942,6 +2981,8 @@ impl Condition {
             Condition::PrecisionAttacking => "primed for a precision strike",
             Condition::SweepingAttacking => "primed for a sweeping strike",
             Condition::LungingAttacking => "primed to lunge",
+            Condition::ManeuveringAttacking => "primed to maneuver",
+            Condition::EvasiveFootwork => "footwork",
             Condition::EmpoweredSpelling => "primed with empowered spell",
             Condition::HeightenedSpelling => "primed with heightened spell",
             Condition::CarefulSpelling => "primed with careful spell",
@@ -3396,7 +3437,8 @@ impl Condition {
     /// **maneuver** primes — bonus-action "next melee hit gets a control
     /// rider" buffs (TripAttacking / MenacingAttacking / DisarmingAttacking
     /// / PushingAttacking / GoadingAttacking / PrecisionAttacking /
-    /// SweepingAttacking / LungingAttacking / DistractingAttacking).
+    /// SweepingAttacking / LungingAttacking / ManeuveringAttacking /
+    /// DistractingAttacking).
     /// Centralized so the dispellable-buff sweep and any future maneuver-
     /// aware chokepoint read a single helper instead of listing each
     /// prime by name. RAW: each maneuver is a separate superiority die
@@ -3413,6 +3455,7 @@ impl Condition {
                 | Condition::PrecisionAttacking
                 | Condition::SweepingAttacking
                 | Condition::LungingAttacking
+                | Condition::ManeuveringAttacking
                 | Condition::DistractingAttacking
         )
     }

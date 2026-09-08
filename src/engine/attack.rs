@@ -3751,6 +3751,40 @@ pub enum FollowUpEffect {
         dice: Dice,
         damage_type: DamageType,
     },
+    /// Hand one of the attacker's allies a free repositioning move — 5e
+    /// Battle Master **Maneuvering Attack**: *"you choose a friendly
+    /// creature who can see or hear you. That creature can use its
+    /// reaction to move up to half its speed without provoking
+    /// opportunity attacks from the target of your attack."*
+    ///
+    /// The only follow-up whose subject is neither the creature that was
+    /// hit nor the attacker, which is the whole reason it is a variant
+    /// rather than a row on `Push`.
+    ///
+    /// **RAW asks the player two questions this engine cannot ask**, so
+    /// `resolve_ally_reposition` answers both with one rule apiece:
+    ///
+    ///   - *Which comrade?* The one that is **out of position** — a
+    ///     melee ally with nothing in reach, or a ranged ally with
+    ///     something in reach. An ally already where it wants to be has
+    ///     no advantageous position to be maneuvered into, and RAW's
+    ///     player would simply take the damage die and decline the move.
+    ///     Ties break on distance to the fighter and then on id, so the
+    ///     choice is stable across runs of the same seed.
+    ///   - *Which way?* Toward that ally's nearest enemy if it fights up
+    ///     close, away from it if it does not. Those are the only two
+    ///     things "a more advantageous position" can mean to a creature
+    ///     whose weapon is already chosen.
+    ///
+    /// Two departures from RAW, both named here. The move is a straight
+    /// line through `PullActor` / `PushActor` rather than a walk the
+    /// pathfinder routes, which is what every other directed move in the
+    /// engine is. And it provokes from nobody rather than from everybody
+    /// except the fighter's target, because the forced-movement loop is
+    /// where the engine's "moved without walking" lives — the ally is a
+    /// tile or two further from RAW's answer and never in a worse place
+    /// than RAW would have put it.
+    AllyReposition,
 }
 
 /// A per-rest source that can rescue a swing which just missed, by
@@ -5215,6 +5249,33 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             once_per_turn_tag: None,
         },
+        // 5e Battle Master Maneuvering Attack maneuver. +1 superiority
+        // die on the consuming melee hit (RAW: "you add the superiority
+        // die to the attack's damage roll"), and a free repositioning
+        // move for one ally.
+        //
+        // `save_ability: None` because there is nothing to save against:
+        // RAW's follow-up lands on a *friendly* creature, and the
+        // creature that was hit is not consulted about where somebody
+        // else's comrade stands. The only row on this table whose
+        // follow-up subject is neither the target nor the attacker — see
+        // `FollowUpEffect::AllyReposition`.
+        OnHitRider {
+            condition: Condition::ManeuveringAttacking,
+            dice: SUPERIORITY_DIE,
+            label: "maneuvering attack",
+            damage_type: DamageType::Slashing,
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::AllyReposition,
+                label: "maneuvering attack",
+                hp_threshold: None,
+            }),
+            once_per_turn_tag: None,
+        },
         // 5e Arcane Archer Fighter **Arcane Shot** (subclass level 3,
         // XGE) — six rows, one per option, all six on
         // `RiderLane::RangedWeapon` and all six consumed by the shot
@@ -5653,5 +5714,166 @@ fn push_follow_up_effect(
                 }));
             }
         }
+        FollowUpEffect::AllyReposition => {
+            resolve_ally_reposition(encounter, caster_id, label, effects);
+        }
+    }
+}
+
+/// The ally 5e Battle Master **Maneuvering Attack** would move, and
+/// which way.
+pub struct ManeuverableAlly {
+    pub ally_id: usize,
+    /// True to close with `enemy_id`, false to back away from it.
+    pub close_in: bool,
+    /// The ally's nearest live enemy — both the thing it wants to reach
+    /// and the thing it wants to be away from, depending on which of
+    /// those two an ally holding that weapon wants.
+    pub enemy_id: usize,
+}
+
+/// Which of the fighter's comrades Maneuvering Attack would reposition,
+/// and in which direction — RAW's *"you choose a friendly creature"*,
+/// answered by the engine because the prompt has nowhere to ask.
+///
+/// The rule, and the reasoning behind it, is written out at
+/// `FollowUpEffect::AllyReposition`. Public and separate from the
+/// follow-up handler because the AI's prime picker asks the same
+/// question a turn earlier: a superiority die spent on a maneuver whose
+/// rider has nobody to land on is a die spent on a flat damage bump that
+/// four cheaper maneuvers already serve.
+pub fn maneuverable_ally(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+) -> Option<ManeuverableAlly> {
+    use crate::actions::action_template::MELEE_REACH;
+
+    let caster_team = encounter.actors.get(&caster_id).map(|c| c.team())?;
+    // The enemy list is walked per candidate; hoisted so a fight with
+    // many allies doesn't re-sort the actor map once each.
+    let enemies: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|eid| {
+            encounter
+                .actors
+                .get(eid)
+                .is_some_and(|e| e.team() != caster_team && e.is_combat_active())
+        })
+        .collect();
+    // Sorted so the walk over a HashMap can't leak its iteration order
+    // into which ally the fighter picks. First match wins: the ids come
+    // back in order, so ties on distance break on id.
+    let mut best: Option<(isize, ManeuverableAlly)> = None;
+    for id in encounter.sorted_actor_ids() {
+        if id == caster_id {
+            continue;
+        }
+        let Some(ally) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if ally.team() != caster_team || !ally.is_combat_active() {
+            continue;
+        }
+        if !ally.can_consume_resource(Resource::Reaction) {
+            continue;
+        }
+        // The engine's existing "is this creature a melee threat"
+        // predicate — the same one the opportunity-attack dispatcher
+        // asks of a reactor before handing it a swing.
+        let fights_close = ally.first_melee_weapon_action().is_some();
+        let Some((gap, enemy_id)) = enemies
+            .iter()
+            .filter_map(|&eid| encounter.footprint_distance(id, eid).map(|d| (d, eid)))
+            .min()
+        else {
+            continue;
+        };
+        let engaged = gap <= MELEE_REACH;
+        // Out of position, in the only two ways position can be wrong
+        // for a creature whose weapon is already chosen.
+        if fights_close == engaged {
+            continue;
+        }
+        let from_fighter = encounter
+            .footprint_distance(caster_id, id)
+            .unwrap_or(isize::MAX);
+        if best.as_ref().is_none_or(|(d, _)| from_fighter < *d) {
+            best = Some((
+                from_fighter,
+                ManeuverableAlly {
+                    ally_id: id,
+                    close_in: fights_close,
+                    enemy_id,
+                },
+            ));
+        }
+    }
+    best.map(|(_, a)| a)
+}
+
+/// 5e Battle Master **Maneuvering Attack**'s follow-up: one ally spends
+/// its reaction to move up to half its speed. See
+/// `FollowUpEffect::AllyReposition` for the two questions RAW asks the
+/// player and the rule this answers each of them with.
+///
+/// The reaction is charged to the ally rather than granted to it, which
+/// is what makes the maneuver a choice with a cost on somebody else's
+/// sheet: an ally who has already Shielded or opportunity-attacked this
+/// round cannot be maneuvered, and the fighter's die finds the next one
+/// out of position instead.
+fn resolve_ally_reposition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    label: &str,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+) {
+    use crate::engine::side_effects::PullActor;
+    use crate::engine::util::tiles_from_feet;
+
+    let Some(ManeuverableAlly {
+        ally_id,
+        close_in,
+        enemy_id,
+    }) = maneuverable_ally(encounter, caster_id)
+    else {
+        encounter.log(format!("  {}: no ally is out of position", label));
+        return;
+    };
+    let Some(anchor) = encounter.actors.get(&enemy_id).map(|e| e.location()) else {
+        return;
+    };
+    // Half the ally's speed, in this grid's tiles.
+    let tiles = encounter
+        .actors
+        .get(&ally_id)
+        .map(|a| tiles_from_feet((a.speed() / 2.0).max(0.0) as u32))
+        .unwrap_or(0);
+    if tiles == 0 {
+        encounter.log(format!("  {}: the ally has no speed to spend", label));
+        return;
+    }
+    let ally_name = encounter.actor_name(ally_id);
+    encounter.log(format!(
+        "  {}: {} spends a reaction and moves {} the fight.",
+        label,
+        ally_name,
+        if close_in { "toward" } else { "away from" }
+    ));
+    if let Some(ally) = encounter.actors.get_mut(&ally_id) {
+        ally.consume_resource(Resource::Reaction);
+    }
+    if close_in {
+        effects.push(Box::new(PullActor {
+            actor_id: ally_id,
+            toward: anchor,
+            max_tiles: tiles,
+        }));
+    } else {
+        effects.push(Box::new(PushActor {
+            actor_id: ally_id,
+            from: anchor,
+            max_tiles: tiles,
+        }));
     }
 }

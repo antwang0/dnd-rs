@@ -392,6 +392,174 @@ fn opportunity_attack_fires_per_step_on_multitile_path() {
     }
 }
 
+/// 5e Fighter Battle Master **Evasive Footwork**: *"When you move, you
+/// can expend one superiority die, rolling the die and adding the number
+/// rolled to your AC until you stop moving."*
+///
+/// A walk that provokes spends one die; a walk that provokes nothing
+/// spends none. The second half is the whole design — the maneuver is
+/// fired lazily from the opportunity-attack dispatcher precisely so a
+/// fighter does not pay for a guard against an empty room.
+#[test]
+fn evasive_footwork_is_spent_by_a_walk_that_provokes_and_not_by_one_that_does_not() {
+    use crate::actions::class_features::{EVASIVE_FOOTWORK_TAG, SUPERIORITY_DICE_TAG};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+
+    // A walk out of a zombie's reach.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let _zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    let dice_before = e.actors[&fighter].feature_charges_remaining(SUPERIORITY_DICE_TAG);
+    assert!(
+        dice_before > 0 && e.actors[&fighter].has_passive_feature(EVASIVE_FOOTWORK_TAG),
+        "the fighter chassis carries the maneuver and the pool that funds it"
+    );
+    MoveActor {
+        actor_id: fighter,
+        path: (6..=15).map(|x| Coordinate::new(x, 5)).collect(),
+    }
+    .apply(&mut e);
+    // The once-per-turn mark rather than the pool count, because the
+    // pool is shared: the zombie's swing may also have drawn a die for
+    // Parry, which is exactly the trade the shared pool exists to force
+    // and exactly what would make a die-count assertion here a test of
+    // two features at once.
+    assert!(
+        e.actors[&fighter].once_per_turn_used(EVASIVE_FOOTWORK_TAG),
+        "a walk that provokes spends the die"
+    );
+    assert!(
+        e.actors[&fighter].feature_charges_remaining(SUPERIORITY_DICE_TAG) < dice_before,
+        "and the die comes out of the superiority pool"
+    );
+    // The guard does not outlive the move: RAW's window closes when the
+    // fighter stops, and a +4 that survived into the enemy round would
+    // be a better Shield than Shield for one superiority die.
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::EvasiveFootwork),
+        "the guard comes down when the move ends"
+    );
+
+    // The same walk with nobody to provoke.
+    let mut quiet = ei_with_terrain(20, 20, &[]);
+    let lone = quiet
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let before = quiet.actors[&lone].feature_charges_remaining(SUPERIORITY_DICE_TAG);
+    MoveActor {
+        actor_id: lone,
+        path: (6..=15).map(|x| Coordinate::new(x, 5)).collect(),
+    }
+    .apply(&mut quiet);
+    assert!(
+        !quiet.actors[&lone].once_per_turn_used(EVASIVE_FOOTWORK_TAG),
+        "a walk nobody swings at never reaches for the die"
+    );
+    assert_eq!(
+        quiet.actors[&lone].feature_charges_remaining(SUPERIORITY_DICE_TAG),
+        before,
+        "a walk nobody swings at costs nothing"
+    );
+}
+
+/// One die buys the whole move, however many reach envelopes it leaves.
+/// RAW's window is "until you stop moving", not "until the first
+/// attacker misses" — so a fighter running a gauntlet of three zombies
+/// pays once, and the once-per-turn ledger is what carries the guard
+/// across the steps.
+#[test]
+fn evasive_footwork_pays_once_for_a_walk_past_several_reactors() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(1, 5), 0, 0)
+        .unwrap();
+    // Three separate reach envelopes strung along the corridor, spaced
+    // so the walk leaves each of them in turn.
+    for (i, x) in [5, 11, 17].into_iter().enumerate() {
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(x, 8), 1, i)
+            .unwrap();
+    }
+    let log_before = e.messages().len();
+    MoveActor {
+        actor_id: fighter,
+        path: (2..=22).map(|x| Coordinate::new(x, 5)).collect(),
+    }
+    .apply(&mut e);
+    // The log rather than the pool, for the reason the previous test
+    // gives: a parried swing draws from the same four dice, so the
+    // count answers a question about two features. The spend line is
+    // written once per die and never on a free re-raise.
+    let spends = e.messages()[log_before..]
+        .iter()
+        .filter(|m| m.contains("evasive footwork"))
+        .count();
+    assert_eq!(
+        spends, 1,
+        "one superiority die for one move, whatever it walked past"
+    );
+    // The guard really was up for more than the step that raised it —
+    // otherwise "pays once" would be true only because it fired once.
+    let provokes = e.messages()[log_before..]
+        .iter()
+        .filter(|m| m.contains("opportunity-attacks"))
+        .count();
+    assert!(
+        provokes > 1,
+        "the gauntlet should have provoked more than once (saw {})",
+        provokes
+    );
+}
+
+/// The pool is what makes the maneuver a choice. A fighter who has
+/// already spent every superiority die on primes walks out of reach with
+/// nothing to give ground with.
+#[test]
+fn evasive_footwork_has_nothing_to_spend_once_the_pool_is_empty() {
+    use crate::actions::class_features::SUPERIORITY_DICE_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let _zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    {
+        let f = e.actors.get_mut(&fighter).unwrap();
+        while f.feature_charges_remaining(SUPERIORITY_DICE_TAG) > 0 {
+            f.spend_feature(SUPERIORITY_DICE_TAG);
+        }
+    }
+    MoveActor {
+        actor_id: fighter,
+        path: (6..=15).map(|x| Coordinate::new(x, 5)).collect(),
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors
+            .get(&fighter)
+            .map(|f| f.feature_charges_remaining(SUPERIORITY_DICE_TAG)),
+        Some(0),
+        "an empty pool stays empty rather than going negative"
+    );
+    assert!(
+        e.actors
+            .get(&fighter)
+            .is_none_or(|f| !f.has_condition(Condition::EvasiveFootwork)),
+        "and no guard goes up on a die that was not there"
+    );
+}
+
 #[test]
 fn opportunity_attack_skipped_for_same_team() {
     use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
@@ -33568,6 +33736,158 @@ fn distracting_strike_rider_applies_distracted_on_hit() {
     assert!(
         applied,
         "distracting strike rider never landed across 80 seeds"
+    );
+}
+
+/// Maneuvering Attack primed + a melee swing that lands moves an ally
+/// who is out of position. A melee ally with nothing in reach closes
+/// with its nearest enemy, and pays a reaction for the step.
+#[test]
+fn maneuvering_attack_closes_a_stranded_melee_ally_with_the_fight() {
+    use crate::actions::class_features::MANEUVERING_ATTACK;
+    use crate::actions::monster_attacks::SCIMITAR;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut moved = false;
+    for seed in 0..80 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        for _ in 0..seed {
+            let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+        }
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // A second fighter parked across the room with nothing in
+        // reach: a melee body that is not where it wants to be, which
+        // is exactly the ally RAW's "more advantageous position" is
+        // about.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(15, 5), 0, 1)
+            .unwrap();
+        let prime = MANEUVERING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in prime {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::ManeuveringAttacking));
+        let ally_start = e.actors[&ally].location();
+        let tv = vec![g];
+        let swing = SCIMITAR.side_effects(&mut e, f, Some(&tv), None, None);
+        for ef in swing {
+            ef.apply(&mut e);
+        }
+        // Only a landed swing cashes the prime.
+        if e.actors[&f].has_condition(Condition::ManeuveringAttacking) {
+            continue;
+        }
+        let ally_end = e.actors[&ally].location();
+        assert!(
+            ally_end.x < ally_start.x,
+            "seed {}: the stranded ally should have closed with the goblin ({} -> {})",
+            seed,
+            ally_start,
+            ally_end
+        );
+        assert!(
+            !e.actors[&ally].can_consume_resource(Resource::Reaction),
+            "seed {}: RAW charges the move to the ally's own reaction",
+            seed
+        );
+        moved = true;
+        break;
+    }
+    assert!(moved, "maneuvering attack never landed across 80 seeds");
+}
+
+/// The other half of the same rule: an ally who fights at range and has
+/// something in its face is moved *away* from it. Same maneuver, same
+/// die, opposite direction — the direction is a fact about the ally's
+/// weapon rather than about the maneuver.
+#[test]
+fn maneuvering_attack_pulls_a_cornered_caster_out_of_reach() {
+    use crate::actions::class_features::MANEUVERING_ATTACK;
+    use crate::actions::monster_attacks::SCIMITAR;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut moved = false;
+    for seed in 0..80 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        for _ in 0..seed {
+            let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+        }
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // The wizard is standing next to the goblin, which for a
+        // creature with no melee weapon is the wrong side of the room.
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(9, 5), 0, 1)
+            .unwrap();
+        let prime = MANEUVERING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in prime {
+            ef.apply(&mut e);
+        }
+        let start = e.actors[&wizard].location();
+        let tv = vec![g];
+        let swing = SCIMITAR.side_effects(&mut e, f, Some(&tv), None, None);
+        for ef in swing {
+            ef.apply(&mut e);
+        }
+        if e.actors[&f].has_condition(Condition::ManeuveringAttacking) {
+            continue;
+        }
+        let end = e.actors[&wizard].location();
+        assert!(
+            end.x > start.x,
+            "seed {}: the cornered wizard should have backed off ({} -> {})",
+            seed,
+            start,
+            end
+        );
+        moved = true;
+        break;
+    }
+    assert!(moved, "maneuvering attack never landed across 80 seeds");
+}
+
+/// Nobody out of position, nobody moved — and the maneuver still costs
+/// its die, because RAW's fighter has already committed it by the time
+/// the comrade declines the step. The AI is what keeps that from
+/// happening; the resolver just has to not crash or move somebody who
+/// was fine where they were.
+#[test]
+fn maneuvering_attack_finds_nobody_when_every_ally_is_where_it_wants_to_be() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let f = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let _g = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    // A melee ally already toe to toe with the goblin.
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 1)
+        .unwrap();
+    assert!(
+        crate::engine::attack::maneuverable_ally(&e, f).is_none(),
+        "an engaged melee ally is not out of position"
+    );
+    // …and the AI does not spend the die on it.
+    assert!(
+        !e.actors[&ally].has_condition(Condition::ManeuveringAttacking),
+        "sanity: the ally is not the one priming"
     );
 }
 

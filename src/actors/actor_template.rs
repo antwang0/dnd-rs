@@ -2361,6 +2361,16 @@ const CONDITION_AC_BONUSES: &[ConditionAcBonus] = &[
         source: Condition::OtherworldlyGuised,
         bonus: 2,
     },
+    // 5e Fighter Battle Master **Evasive Footwork** — "rolling the die
+    // and adding the number rolled to your AC until you stop moving".
+    // Flat +4 for the +1d8, matching Precision Attack's treatment of the
+    // same die. The only row here that is not magical, and the only one
+    // whose holder never carries it across a call boundary: see
+    // `Condition::EvasiveFootwork`.
+    ConditionAcBonus {
+        source: Condition::EvasiveFootwork,
+        bonus: 4,
+    },
 ];
 
 /// One row in the `CONDITION_SAVE_BONUSES` / `CONDITION_CHECK_BONUSES`
