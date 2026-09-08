@@ -1,7 +1,8 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::class_features::{
     ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE,
-    CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, MAGICAL_AMBUSH_TAG,
+    CUNNING_STRIKE_KNOCK_OUT, CUNNING_STRIKE_OBSCURE, CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP,
+    CUNNING_STRIKE_WITHDRAW, MAGICAL_AMBUSH_TAG,
     STEADY_AIM, SUPERIOR_MOBILITY_TAG, VERSATILE_TRICKSTER, VERSATILE_TRICKSTER_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
@@ -40,6 +41,16 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CUNNING_STRIKE_TRIP);
     actions.push(&*CUNNING_STRIKE_WITHDRAW);
     actions.push(&*CUNNING_STRIKE_DAZE);
+    // 5e 2024 Rogue Devious Strikes (lv14): the other three, on the same
+    // lane and at RAW's steeper prices. Each refuses to prime until the
+    // rogue's sneak pool is bigger than what it costs — RAW will not
+    // reduce that pool below one die — so Obscure comes online around
+    // level 7 and Knock Out around level 13, on a chassis that starts at
+    // level 1 and climbs by encounter. Carried from the start anyway:
+    // the gate is the level, and a sheet that grows an entry mid-campaign
+    // is a sheet with two sources of truth about what a rogue knows.
+    actions.push(&*CUNNING_STRIKE_OBSCURE);
+    actions.push(&*CUNNING_STRIKE_KNOCK_OUT);
     CreatureTemplate {
         name: "Rogue",
         glyph: 'R',

@@ -4064,29 +4064,42 @@ fn try_steady_aim(encounter: &EncounterInstance, actor_id: usize) -> Option<Acti
     try_self_action(encounter, actor_id, "steady aim")
 }
 
-/// Cunning Strike — 5e 2024 Rogue lv5 bonus-action primes. Trades a
-/// Sneak Attack die for one of:
-/// - Poison: CON save or Poisoned for 10 rounds (most generally useful
-///   debuff so it's the AI's first pick).
-/// - Trip: DEX save or Prone (high payoff vs ranged targets but the
-///   rogue's own next swing benefits the least; we save it for backup).
+/// Cunning Strike — the 5e 2024 Rogue's bonus-action primes, which
+/// trade sneak-attack dice for a rider on the swing that cashes them.
 ///
-/// Gates:
-/// - The rogue's once-per-turn Sneak Attack hasn't been spent yet.
-/// - No Cunning Strike prime is already active (mutually exclusive).
-/// - A sneak-eligible enemy is adjacent (i.e. footprint-touching) so the
-///   prime is consumed this turn — the rogue's shortsword is melee-only,
-///   and primes self-clear via `UntilStartOfNextTurn`.
-/// - The shortsword action is installed (otherwise priming is pointless).
-/// - Sneak attack pool ≥ 2 dice so the consume gate (`pool > cost`) accepts
-///   the deduction. At level 1 the pool is 1d6 — priming a Cunning Strike
-///   would dangle since `consume_cunning_strike` refuses to reduce
-///   below 1 die.
+/// **The order is the priority**, and it turns on who else is in the
+/// fight:
 ///
-/// Returns the best installable variant, or None if the gate fails.
-/// Withdraw / Daze are intentionally skipped: Withdraw is a kiting tool
-/// the simple AI doesn't strategize around, and Daze's 2-die cost is
-/// rarely worth the loss in burst damage compared to Poison's 1-die.
+///   1. `cunning strike (obscure)` — three dice for Blinded. It is the
+///      only rider on the menu that works in both directions: the target
+///      swings at disadvantage against everybody *and* is swung at with
+///      advantage by everybody, which is the party's whole round rather
+///      than the rogue's next hit. Gated on there being a party — an
+///      ally footprint-adjacent to the same enemy, the same gate
+///      `try_distracting_attack` uses and for the same reason. A rogue
+///      fighting alone gets only half of what the extra two dice bought
+///      and should be spending one die on Poison instead.
+///   2. `cunning strike (poison)` — one die, ten rounds, disadvantage on
+///      the target's attacks and checks. The cheapest lasting debuff on
+///      the sheet and the right default.
+///   3. `cunning strike (trip)` — one die for Prone. Below Poison
+///      because the rogue's own follow-up benefits least from it: prone
+///      hands advantage to melee allies, and the rogue has already used
+///      its sneak attack by then.
+///
+/// **Withdraw, Daze and Knock Out are deliberately not here.** Withdraw
+/// is a kiting tool this AI does not strategise around. Daze's two dice
+/// buy one turn of one creature's action economy, which Poison's one die
+/// beats over the ten rounds it lasts. Knock Out's six dice buy a sleep
+/// that ends on the next point of damage, and this AI's whole plan is to
+/// deal the next point of damage.
+///
+/// The pool gate is deliberately absent: each prime's own
+/// `custom_validate_input` refuses a pool it cannot pay from, and
+/// `try_self_action` runs it. This rung used to restate that inequality
+/// as `pool >= 2`, which is a third copy of a rule that already
+/// disagreed with itself in two places — see
+/// `every_cunning_strike_costs_the_same_at_both_ends`.
 fn try_cunning_strike(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -4099,10 +4112,6 @@ fn try_cunning_strike(
     if actor.has_any_cunning_strike_prime() {
         return None;
     }
-    let level = actor.level();
-    if crate::actions::class_attacks::sneak_attack_dice_for_level(level) < 2 {
-        return None;
-    }
     // Need a sneak-eligible enemy the shortsword can actually reach,
     // which is `MELEE_REACH` — the gate used to say gap 0 while its own
     // comment named the reach as 1, and a rogue standing at the
@@ -4110,11 +4119,57 @@ fn try_cunning_strike(
     if !any_enemy_within(encounter, actor_id, MELEE_REACH) {
         return None;
     }
-    // Prefer Poison — broadest debuff (disadvantage on attacks and
-    // ability checks across the full 10-round timer). Falls through to
-    // Trip if Poison isn't installed.
+    if rogue_has_a_follow_up_attacker(encounter, actor_id)
+        && let Some(aei) = try_self_action(encounter, actor_id, "cunning strike (obscure)")
+    {
+        return Some(aei);
+    }
     try_self_action(encounter, actor_id, "cunning strike (poison)")
         .or_else(|| try_self_action(encounter, actor_id, "cunning strike (trip)"))
+}
+
+/// True if some ally other than `actor_id` is footprint-adjacent to an
+/// enemy that `actor_id` is also in melee reach of — the board state in
+/// which a debuff that helps *attackers* is worth more than one that
+/// only taxes the target.
+///
+/// The same question `try_distracting_attack` asks, and the same
+/// deliberate conservatism: a ranged ally across the room will also cash
+/// a Blinded target's advantage and does not count here. The gate can
+/// only make the rider fire less often than it should, never wrongly,
+/// which is the right direction for a heuristic that spends three dice
+/// of guaranteed damage on a save.
+fn rogue_has_a_follow_up_attacker(encounter: &EncounterInstance, actor_id: usize) -> bool {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    encounter.actors.iter().any(|(eid, enemy)| {
+        if *eid == actor_id || enemy.team() == my_team || !enemy.is_combat_active() {
+            return false;
+        }
+        let e_loc = enemy.location();
+        let e_size = get_tiles_from_size(enemy.size());
+        if footprint_chebyshev(my_loc, my_size, e_loc, e_size) > MELEE_REACH {
+            return false;
+        }
+        encounter.actors.iter().any(|(aid, ally)| {
+            *aid != actor_id
+                && *aid != *eid
+                && ally.team() == my_team
+                && ally.is_combat_active()
+                && footprint_chebyshev(
+                    ally.location(),
+                    get_tiles_from_size(ally.size()),
+                    e_loc,
+                    e_size,
+                ) == 0
+        })
+    })
 }
 
 /// Tides of Chaos — Wild Magic Sorcerer 1/long-rest bonus action.
@@ -16043,6 +16098,67 @@ mod tests {
             try_cunning_strike(&e, rogue).is_none(),
             "sneak attack already spent → skip"
         );
+    }
+
+    /// **Obscure** is the rider that works in both directions — the
+    /// target swings at disadvantage against everybody and is swung at
+    /// with advantage by everybody — so it is worth its three dice only
+    /// when there is somebody else to cash the second half.
+    ///
+    /// Same board twice: a rogue alone with the zombie reaches for the
+    /// one-die Poison, and a rogue with a fighter on the zombie's other
+    /// side spends the three.
+    #[test]
+    fn a_rogue_blinds_for_the_party_and_poisons_when_it_is_alone() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let pick = |with_company: bool| -> String {
+            let tp = TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+            // Level 9 — a five-die pool, enough to pay for either.
+            e.actors.get_mut(&rogue).unwrap().award_xp(1_000_000);
+            let mut roller = FastRandRoller::with_seed(0);
+            while e.actors[&rogue].level() < 9
+                && e.actors
+                    .get_mut(&rogue)
+                    .unwrap()
+                    .try_level_up(&mut roller)
+                    .is_some()
+            {}
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            if with_company {
+                e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 1)
+                    .unwrap();
+            }
+            try_cunning_strike(&e, rogue)
+                .map(|aei| aei.action().name().to_string())
+                .unwrap_or_default()
+        };
+
+        assert_eq!(pick(true), "cunning strike (obscure)");
+        assert_eq!(pick(false), "cunning strike (poison)");
     }
 
     /// Sorcerer's `has_any_metamagic_prime` returns true when any prime

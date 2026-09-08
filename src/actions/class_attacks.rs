@@ -512,6 +512,28 @@ pub fn sneak_attack_dice_for_level(level: u32) -> u32 {
     level.div_ceil(2).max(1)
 }
 
+/// The largest sneak-attack pool `actor` could roll against *any*
+/// target — the level pool, plus the Inquisitive Rogue's Eye for
+/// Weakness three if they carry it.
+///
+/// Read by the Cunning Strike primes, which are declared a turn before
+/// the swing that cashes them and so cannot know which target they will
+/// be priced against. The prime refuses only what can never fire under
+/// any target, which is the right conservatism for a gate asked that
+/// early: a level-1 Inquisitive rogue standing next to a creature they
+/// have read is holding four dice, and a gate that read the level alone
+/// would tell them they cannot afford a one-die trick.
+pub fn max_sneak_attack_dice(actor: &crate::actors::actor_template::ActorInstance) -> u32 {
+    let bonus = if actor
+        .has_passive_feature(crate::actions::class_features::EYE_FOR_WEAKNESS_TAG)
+    {
+        3
+    } else {
+        0
+    };
+    sneak_attack_dice_for_level(actor.level()) + bonus
+}
+
 /// 5e 2024 Rogue **Cunning Strike** consume site. Walks the active
 /// prime conditions on `rogue_id`, picks the first match, deducts the
 /// die cost from `total_sneak_dice`, builds the queued side-effects (a
@@ -534,23 +556,31 @@ fn consume_cunning_strike(
     let Some(rogue) = encounter.actors.get(&rogue_id) else {
         return (total_sneak_dice, Vec::new());
     };
-    // First-match wins. Order is fixed (Poison → Trip → Daze → Withdraw)
-    // so the consume order is deterministic for tests; the prime-install
-    // gates prevent double-priming so only one condition is ever active
-    // anyway.
-    const PRIORITY: &[Condition] = &[
-        Condition::CunningStrikePoison,
-        Condition::CunningStrikeTrip,
-        Condition::CunningStrikeDaze,
-        Condition::CunningStrikeWithdraw,
+    // First-match wins. Order is fixed so the consume order is
+    // deterministic for tests; the prime-install gates prevent
+    // double-priming so only one condition is ever active anyway.
+    //
+    // The rows are `(prime, dice cost)`, and the costs are the same
+    // numbers `CunningStrikePrime::dice_cost` refuses a prime on. They
+    // are stated twice because the two sites are asked at different
+    // moments — the prime is declared a turn before the swing that
+    // cashes it, and the pool can have changed — and
+    // `every_cunning_strike_costs_the_same_at_both_ends` is what keeps
+    // the two copies agreeing.
+    const PRIORITY: &[(Condition, u32)] = &[
+        (Condition::CunningStrikePoison, 1),
+        (Condition::CunningStrikeTrip, 1),
+        (Condition::CunningStrikeDaze, 2),
+        (Condition::CunningStrikeObscure, 3),
+        (Condition::CunningStrikeKnockOut, 6),
+        (Condition::CunningStrikeWithdraw, 1),
     ];
-    let Some(prime) = PRIORITY.iter().copied().find(|c| rogue.has_condition(*c))
+    let Some((prime, cost)) = PRIORITY
+        .iter()
+        .copied()
+        .find(|(c, _)| rogue.has_condition(*c))
     else {
         return (total_sneak_dice, Vec::new());
-    };
-    let cost = match prime {
-        Condition::CunningStrikeDaze => 2,
-        _ => 1,
     };
     if total_sneak_dice <= cost {
         // RAW: can't reduce sneak below 1 die. Leave the prime up — the
@@ -625,6 +655,42 @@ fn consume_cunning_strike(
                     actor_id: target_id,
                     condition: Condition::NoReaction,
                     timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        Condition::CunningStrikeObscure => {
+            encounter.log(format!(
+                "  cunning strike (obscure): -3d6 sneak \u{2192} DEX save vs DC {}",
+                dc
+            ));
+            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+            if !save.passed() {
+                encounter.log("  cunning strike (obscure): the target's eyes are full of dust.");
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Blinded,
+                    // RAW: "until the end of your next turn", which is
+                    // two of this engine's round-end ticks away.
+                    timer: ConditionTimer::Rounds(2),
+                }));
+            }
+        }
+        Condition::CunningStrikeKnockOut => {
+            encounter.log(format!(
+                "  cunning strike (knock out): -6d6 sneak \u{2192} CON save vs DC {}",
+                dc
+            ));
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+            if !save.passed() {
+                encounter.log("  cunning strike (knock out): the target drops where it stood.");
+                // `Asleep` rather than `Unconscious`, and that is RAW
+                // rather than a near-miss: the clause is "the effect
+                // ends early if the target takes damage", and `Asleep`
+                // is the engine's condition that already carries it.
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Asleep,
+                    timer: ConditionTimer::Rounds(10),
                 }));
             }
         }

@@ -1610,107 +1610,62 @@ impl Action for SteadyAim {
 
 pub static STEADY_AIM: LazyLock<SteadyAim> = LazyLock::new(|| SteadyAim {});
 
-/// 5e 2024 Rogue **Cunning Strike** flavors. Each variant is a bonus-action
-/// prime: the rogue declares which trick they'll layer onto their next
-/// Sneak Attack, trading one (or two) sneak-attack dice for a tactical
-/// effect. The shortsword's sneak-attack rider walks the active prime
-/// table, deducts the dice cost, and applies the effect — see the
-/// `consume_cunning_strike_*` chokepoints in `RogueShortsword::side_effects`.
+/// The **Cunning Strike** chassis: a bonus-action prime that trades
+/// sneak-attack dice for a tactical rider on the swing that cashes it.
 ///
-/// We model the four 2024 base variants:
-/// - **Poison** (1d6 cost): CON save vs rogue's DEX-based DC; on fail the
-///   target is `Poisoned` for 10 rounds (1 minute RAW).
-/// - **Trip** (1d6 cost): DEX save vs the same DC; on fail the target is
-///   knocked Prone (Large or smaller — gated at the consume site).
-/// - **Withdraw** (1d6 cost): no save; immediately after the sneak the
-///   rogue moves up to half speed without provoking OAs.
-/// - **Daze** (2d6 cost): CON save; on fail the target's next turn loses
-///   their Action and Reaction (modeled via the existing `MindWhipped`
-///   action-clip plus `NoReaction`).
+/// 5e 2024 gives the Rogue six of these — three at level 5 (Cunning
+/// Strike) and three more at level 14 (Devious Strikes) — and every one
+/// of them is the same action with a different label: declare the trick,
+/// install a self-condition, and let `consume_cunning_strike` in
+/// `class_attacks` do the work when the sneak attack lands. They shipped
+/// as four hand-written `Action` impls of ninety lines apiece that
+/// differed in a name, an alias list and one enum variant, plus one
+/// extra clause on Daze that every other one of them also needs and
+/// three of them happened not to notice.
 ///
-/// Each variant is validated mutually-exclusive (no double-priming) and
-/// only valid when sneak attack hasn't been used this turn — otherwise
-/// the bonus-action would be wasted on a swing that can't carry the
-/// rider. Self-clearing via `UntilStartOfNextTurn` if the rogue never
-/// connects with a sneak-eligible swing.
+/// That clause is `dice_cost`, and it is the reason this is a chassis
+/// rather than a tidy-up. RAW will not reduce a sneak-attack pool below
+/// one die, so a prime is worth a bonus action only when the rogue's
+/// pool is *larger* than what it costs — and the consume site enforces
+/// that by silently declining, which means a rogue who primed too early
+/// spent a bonus action on nothing and kept the prime. Daze carried the
+/// gate by hand and the level-5 trio did not need one at 1d6, but
+/// Devious Strikes' three cost 2, 3 and 6, and hand-writing the same
+/// arithmetic six times is how five of them end up disagreeing.
 ///
-/// Cunning Strike: Poison variant. 1d6 sneak-attack die cost; on a
-/// successful sneak-attack hit, the target makes a CON save vs the
-/// rogue's DEX-based DC (8 + prof + DEX). On fail, Poisoned for 10
-/// rounds (1 minute RAW). Bonus-action prime.
-pub struct CunningStrikePoison {}
-
-impl Action for CunningStrikePoison {
-    fn name(&self) -> &str {
-        "cunning strike (poison)"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cs-poison", "cspoison", "cunningpoison"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        cunning_strike_prime_ok(encounter, caster_id)
-    }
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::CunningStrikePoison,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
-    }
+/// Sibling to `ManeuverPrime` on the "bonus-action prime, all the
+/// interesting part is data" lane. The difference is what funds them: a
+/// maneuver spends from a per-rest pool of superiority dice, and a
+/// cunning strike spends out of the damage it was about to deal.
+pub struct CunningStrikePrime {
+    /// Display name — the prompt's canonical entry and the log prefix.
+    pub name: &'static str,
+    /// Alias set for the prompt parser.
+    pub aliases: &'static [&'static str],
+    /// The self-condition this prime installs, and the key
+    /// `consume_cunning_strike` matches on.
+    pub prime_condition: Condition,
+    /// Sneak-attack dice this trick costs when it is cashed. Read here
+    /// to refuse a prime the rogue's pool cannot yet afford, and read
+    /// again at the consume site to charge it — one number, so the gate
+    /// and the charge cannot drift.
+    pub dice_cost: u32,
 }
 
-pub static CUNNING_STRIKE_POISON: LazyLock<CunningStrikePoison> =
-    LazyLock::new(|| CunningStrikePoison {});
-
-/// Cunning Strike: Trip variant. 1d6 sneak-attack die cost; target makes
-/// a DEX save (Large or smaller). On fail, knocked Prone. Bonus-action
-/// prime.
-pub struct CunningStrikeTrip {}
-
-impl Action for CunningStrikeTrip {
+impl Action for CunningStrikePrime {
     fn name(&self) -> &str {
-        "cunning strike (trip)"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["cs-trip", "cstrip", "cunningtrip"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
     }
     fn is_harmful(&self) -> bool {
+        // The prime targets the rogue. Whatever lands on the enemy lands
+        // on the swing that cashes it, which routes through the weapon's
+        // own `is_harmful` gate.
         false
     }
     fn deals_damage(&self) -> bool {
@@ -1734,135 +1689,14 @@ impl Action for CunningStrikeTrip {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        cunning_strike_prime_ok(encounter, caster_id)
-    }
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::CunningStrikeTrip,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
-    }
-}
-
-pub static CUNNING_STRIKE_TRIP: LazyLock<CunningStrikeTrip> =
-    LazyLock::new(|| CunningStrikeTrip {});
-
-/// Cunning Strike: Withdraw variant. 1d6 sneak-attack die cost; on a
-/// successful sneak-attack hit, the rogue immediately moves up to half
-/// their speed without provoking opportunity attacks. Bonus-action prime.
-pub struct CunningStrikeWithdraw {}
-
-impl Action for CunningStrikeWithdraw {
-    fn name(&self) -> &str {
-        "cunning strike (withdraw)"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cs-withdraw", "cswith", "cunningwithdraw"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        cunning_strike_prime_ok(encounter, caster_id)
-    }
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::CunningStrikeWithdraw,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
-    }
-}
-
-pub static CUNNING_STRIKE_WITHDRAW: LazyLock<CunningStrikeWithdraw> =
-    LazyLock::new(|| CunningStrikeWithdraw {});
-
-/// Cunning Strike: Daze variant. 2d6 sneak-attack die cost (RAW: 2
-/// dice — strongest variant); target makes a CON save on a successful
-/// sneak hit, and on fail their next turn loses its Action and Reaction
-/// (we layer the action clip via `MindWhipped` plus a `NoReaction`).
-/// Bonus-action prime.
-pub struct CunningStrikeDaze {}
-
-impl Action for CunningStrikeDaze {
-    fn name(&self) -> &str {
-        "cunning strike (daze)"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cs-daze", "csdaze", "cunningdaze"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        // Daze costs 2d6 — only worth priming when the rogue's sneak
-        // attack pool can spare 2 dice (level 3+ = 2d6, level 5+ = 3d6).
         if !cunning_strike_prime_ok(encounter, caster_id) {
             return false;
         }
+        // Strictly greater, matching the consume site: RAW's "you can't
+        // reduce the number of dice rolled to less than 1" means a pool
+        // exactly equal to the cost buys nothing.
         encounter.actors.get(&caster_id).is_some_and(|a| {
-            crate::actions::class_attacks::sneak_attack_dice_for_level(a.level()) >= 2
+            crate::actions::class_attacks::max_sneak_attack_dice(a) > self.dice_cost
         })
     }
     fn side_effects(
@@ -1875,14 +1709,90 @@ impl Action for CunningStrikeDaze {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         vec![Box::new(ApplyCondition {
             actor_id: caster_id,
-            condition: Condition::CunningStrikeDaze,
+            condition: self.prime_condition,
             timer: ConditionTimer::UntilStartOfNextTurn,
         })]
     }
 }
 
-pub static CUNNING_STRIKE_DAZE: LazyLock<CunningStrikeDaze> =
-    LazyLock::new(|| CunningStrikeDaze {});
+/// Cunning Strike: **Poison** (5e 2024 Rogue level 5). One d6 of sneak
+/// attack for a CON save against the rogue's DEX-based DC; on a failure
+/// the target is Poisoned for a minute.
+pub static CUNNING_STRIKE_POISON: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (poison)",
+        aliases: &["cs-poison", "cspoison", "cunningpoison"],
+        prime_condition: Condition::CunningStrikePoison,
+        dice_cost: 1,
+    });
+
+/// Cunning Strike: **Trip** (5e 2024 Rogue level 5). One d6 for a DEX
+/// save; on a failure a Large-or-smaller target is knocked Prone. The
+/// size clause lives at the consume site, where the target is known.
+pub static CUNNING_STRIKE_TRIP: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (trip)",
+        aliases: &["cs-trip", "cstrip", "cunningtrip"],
+        prime_condition: Condition::CunningStrikeTrip,
+        dice_cost: 1,
+    });
+
+/// Cunning Strike: **Withdraw** (5e 2024 Rogue level 5). One d6 to move
+/// up to half the rogue's speed without provoking, immediately after the
+/// attack. The only one of the six with no save and no target — it is
+/// the rogue's own footwork rather than something done to anybody.
+pub static CUNNING_STRIKE_WITHDRAW: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (withdraw)",
+        aliases: &["cs-withdraw", "cswith", "cunningwithdraw"],
+        prime_condition: Condition::CunningStrikeWithdraw,
+        dice_cost: 1,
+    });
+
+/// Cunning Strike: **Daze** (5e 2024 Rogue **Devious Strikes**, level
+/// 14). Two d6 for a CON save; on a failure the target's next turn loses
+/// its Action and its Reaction.
+pub static CUNNING_STRIKE_DAZE: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (daze)",
+        aliases: &["cs-daze", "csdaze", "cunningdaze"],
+        prime_condition: Condition::CunningStrikeDaze,
+        dice_cost: 2,
+    });
+
+/// Cunning Strike: **Obscure** (5e 2024 Rogue **Devious Strikes**, level
+/// 14). Three d6 for a DEX save; on a failure the target is Blinded
+/// until the end of the rogue's next turn.
+///
+/// The one Cunning Strike whose rider is worth more to the party than to
+/// the rogue: a blinded creature swings at disadvantage against
+/// everybody and is swung at with advantage by everybody, which is worth
+/// three dice of one rogue's damage several times over as soon as there
+/// is a second body on the rogue's side.
+pub static CUNNING_STRIKE_OBSCURE: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (obscure)",
+        aliases: &["cs-obscure", "csobscure", "cunningobscure"],
+        prime_condition: Condition::CunningStrikeObscure,
+        dice_cost: 3,
+    });
+
+/// Cunning Strike: **Knock Out** (5e 2024 Rogue **Devious Strikes**,
+/// level 14). Six d6 for a CON save; on a failure the target is put to
+/// sleep for a minute, and wakes on any damage.
+///
+/// Six dice means a pool of seven, which means level 13, which on a
+/// chassis that starts at level 1 and climbs by encounter makes this the
+/// last button on the rogue's sheet to come online. It ships at RAW's
+/// price rather than at a discount, because a discounted Knock Out is
+/// the only Cunning Strike anybody would ever pick.
+pub static CUNNING_STRIKE_KNOCK_OUT: LazyLock<CunningStrikePrime> =
+    LazyLock::new(|| CunningStrikePrime {
+        name: "cunning strike (knock out)",
+        aliases: &["cs-knockout", "csknockout", "cunningknockout"],
+        prime_condition: Condition::CunningStrikeKnockOut,
+        dice_cost: 6,
+    });
 
 /// Shared validation for the Cunning Strike bonus-action primes. Returns
 /// true when:

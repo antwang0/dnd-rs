@@ -1638,6 +1638,36 @@ pub enum Condition {
     /// action-economy clip plus `NoReaction`). Consumed on sneak-attack
     /// trigger or `UntilStartOfNextTurn`.
     CunningStrikeDaze,
+    /// Cunning Strike: Obscure primed (5e 2024 Rogue **Devious Strikes**,
+    /// level 14). Bonus-action prime; the next sneak-attack swing trades
+    /// three d6 of damage for a DEX save, and on a failure the target is
+    /// Blinded until the end of the rogue's next turn.
+    ///
+    /// The first Cunning Strike whose rider is worth more to the rogue's
+    /// *allies* than to the rogue — a blinded creature attacks everyone
+    /// at disadvantage and is attacked by everyone at advantage, which
+    /// is the party's whole round rather than the rogue's next swing.
+    CunningStrikeObscure,
+    /// Cunning Strike: Knock Out primed (5e 2024 Rogue **Devious
+    /// Strikes**, level 14). Bonus-action prime; the next sneak-attack
+    /// swing trades six d6 of damage for a CON save, and on a failure
+    /// the target falls unconscious for a minute.
+    ///
+    /// The consume site installs `Asleep` rather than `Unconscious`, and
+    /// that is the rule rather than a near-miss: RAW's clause is *"the
+    /// effect ends early if the target takes damage"*, and `Asleep` is
+    /// the engine's condition that already says exactly that — it is
+    /// what the Sleep spell installs and what the damage pipeline
+    /// already knows to strip. `Unconscious` carries no such clause and
+    /// would leave a creature down for ten rounds through anything.
+    ///
+    /// **Six dice is the price and the gate.** The prime refuses to
+    /// install below a seven-die sneak pool, because RAW will not reduce
+    /// the pool below one — so this is a level-13 button on a chassis
+    /// that starts at level 1 and climbs by encounter. It ships at RAW's
+    /// cost rather than at a discount that would make it the only
+    /// Cunning Strike anybody ever picks.
+    CunningStrikeKnockOut,
     /// Caustic-Brewed (5e Tasha's Caustic Brew, level-1 evocation). The
     /// target is splashed with magical acid that clings to skin / scales:
     /// they take 2d4 acid at the end of each of their turns until they (or
@@ -3008,6 +3038,8 @@ impl Condition {
             Condition::CunningStrikeTrip => "primed with cunning trip",
             Condition::CunningStrikeWithdraw => "primed with cunning withdraw",
             Condition::CunningStrikeDaze => "primed with cunning daze",
+            Condition::CunningStrikeObscure => "primed with cunning obscure",
+            Condition::CunningStrikeKnockOut => "primed with cunning knock out",
             Condition::CausticBrewed => "splashed with caustic brew",
             Condition::DistractingAttacking => "primed to distract",
             Condition::Distracted => "distracted",
@@ -3496,6 +3528,8 @@ impl Condition {
                 | Condition::CunningStrikeTrip
                 | Condition::CunningStrikeWithdraw
                 | Condition::CunningStrikeDaze
+                | Condition::CunningStrikeObscure
+                | Condition::CunningStrikeKnockOut
         )
     }
 

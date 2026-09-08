@@ -46178,8 +46178,12 @@ fn cunning_strike_poison_primes_rogue() {
     let rogue = e
         .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
+    // A one-die trick needs a two-die pool, which is level 3 — see
+    // `cunning_strike_daze_gated_on_sneak_pool` for why the inequality
+    // is strict.
+    level_rogue_to(&mut e, rogue, 3);
     let aei = ActionExecutionInfo::new(&*CUNNING_STRIKE_POISON, rogue, None, None, None);
-    assert!(aei.validate(&e), "fresh rogue should be able to prime");
+    assert!(aei.validate(&e), "a rogue with dice to spare can prime");
     let effects = CUNNING_STRIKE_POISON.side_effects(&mut e, rogue, None, None, None);
     for ef in effects {
         ef.apply(&mut e);
@@ -46193,9 +46197,16 @@ fn cunning_strike_poison_primes_rogue() {
     );
 }
 
-/// Cunning Strike (Daze) requires the rogue's sneak attack pool to
-/// hold at least 2 dice. Level-1 rogues only have 1d6, so the prime
-/// is refused; promoting to lv3+ unlocks it.
+/// A Cunning Strike prime is refused until the rogue's sneak pool is
+/// *bigger* than what the trick costs — RAW will not reduce that pool
+/// below one die, so a pool exactly equal to the cost buys nothing.
+///
+/// Daze costs two, so the gate opens at a three-die pool, which is level
+/// 5. It used to open at two, which is level 3, and a level-3 rogue who
+/// primed Daze spent a bonus action on a prime the consume site would
+/// then silently decline for the rest of the fight: the two ends
+/// disagreed about the same inequality, and the loose one was the one
+/// the player could see.
 #[test]
 fn cunning_strike_daze_gated_on_sneak_pool() {
     use crate::actions::class_features::CUNNING_STRIKE_DAZE;
@@ -46207,21 +46218,87 @@ fn cunning_strike_daze_gated_on_sneak_pool() {
     // Rogue spawns at level 1 → sneak pool 1d6 → Daze refused.
     let aei = ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None);
     assert!(!aei.validate(&e), "level-1 rogue: pool too small for Daze");
-    // Bump the rogue to level 3 (sneak pool 2d6). Use the public
-    // level-up path so the test doesn't poke at private fields.
-    e.actors.get_mut(&rogue).unwrap().award_xp(10_000);
+    level_rogue_to(&mut e, rogue, 3);
+    assert!(
+        !ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None).validate(&e),
+        "level-3 rogue: a two-die pool cannot pay a two-die trick"
+    );
+    level_rogue_to(&mut e, rogue, 5);
+    assert!(
+        ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None).validate(&e),
+        "level-5 rogue: three dice pays two and keeps one"
+    );
+}
+
+/// Level `rogue` up to `target` through the public XP path, so the
+/// pool-gate tests don't poke at private fields.
+fn level_rogue_to(e: &mut EncounterInstance, rogue: usize, target: u32) {
+    e.actors.get_mut(&rogue).unwrap().award_xp(1_000_000);
     let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
-    while e
-        .actors
-        .get_mut(&rogue)
-        .unwrap()
-        .try_level_up(&mut roller)
-        .is_some()
-        && e.actors[&rogue].level() < 3
+    while e.actors[&rogue].level() < target
+        && e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .try_level_up(&mut roller)
+            .is_some()
     {}
-    // Re-validate — now the daze pool gate should pass.
-    let aei2 = ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None);
-    assert!(aei2.validate(&e), "level-3 rogue: Daze unlocked");
+    assert_eq!(e.actors[&rogue].level(), target, "level-up path stalled");
+}
+
+/// The two ends of a Cunning Strike agree about what it costs.
+///
+/// The prime refuses a pool it cannot pay from, and the consume site
+/// charges the pool — two numbers, stated in two files, one of which is
+/// read a turn before the other. They disagreed about Daze until the
+/// chassis put the cost on the prime itself.
+///
+/// Driven through the level ladder rather than by reading the constants,
+/// because a test that read both constants and compared them would pass
+/// on the version of this code that had the bug: the bug was an
+/// inequality, not a number.
+#[test]
+fn every_cunning_strike_costs_the_same_at_both_ends() {
+    use crate::actions::class_features::{
+        CUNNING_STRIKE_DAZE, CUNNING_STRIKE_KNOCK_OUT, CUNNING_STRIKE_OBSCURE,
+        CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW,
+    };
+    use crate::actions::class_attacks::sneak_attack_dice_for_level;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+    // (prime, the dice it costs at the consume site in class_attacks)
+    let primes: &[(&'static (dyn crate::actions::action_template::Action + Send + Sync), u32)] = &[
+        (&*CUNNING_STRIKE_POISON, 1),
+        (&*CUNNING_STRIKE_TRIP, 1),
+        (&*CUNNING_STRIKE_WITHDRAW, 1),
+        (&*CUNNING_STRIKE_DAZE, 2),
+        (&*CUNNING_STRIKE_OBSCURE, 3),
+        (&*CUNNING_STRIKE_KNOCK_OUT, 6),
+    ];
+    for &(prime, cost) in primes {
+        for level in 1..=20u32 {
+            let mut e = ei_with_terrain(10, 10, &[]);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            if level > 1 {
+                level_rogue_to(&mut e, rogue, level);
+            }
+            let pool = sneak_attack_dice_for_level(level);
+            let primed = ActionExecutionInfo::new(prime, rogue, None, None, None).validate(&e);
+            // The consume site's own inequality, restated: it refuses
+            // when `pool <= cost`.
+            assert_eq!(
+                primed,
+                pool > cost,
+                "{} at level {} (pool {}, cost {}): the prime and the \
+                 consume site disagree about whether it can be paid for",
+                prime.name(),
+                level,
+                pool,
+                cost
+            );
+        }
+    }
 }
 
 /// End-to-end: with the Cunning Strike (Withdraw) prime up and a
@@ -46366,6 +46443,76 @@ fn cunning_strike_poison_applies_on_sneak_hit() {
         sneak_landed_with_poison,
         "cunning strike (poison): rider should land at least once across 200 swings",
     );
+}
+
+/// The two Devious Strikes that were missing, end to end. Both ride the
+/// same consume site as the level-5 trio; what is worth pinning is the
+/// condition each one installs, because both were chosen against a
+/// near-miss.
+///
+/// Obscure installs `Blinded` — the rider that works in both directions,
+/// and the reason the AI prefers it when the rogue has company. Knock
+/// Out installs `Asleep` rather than `Unconscious`, because RAW's clause
+/// is "the effect ends early if the target takes damage" and `Asleep` is
+/// the engine's condition that already carries it.
+#[test]
+fn the_two_devious_strikes_install_the_conditions_raw_names() {
+    use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    // (prime, the condition it should land, the level whose sneak pool
+    // can pay for it).
+    let cases: &[(Condition, Condition, u32)] = &[
+        (Condition::CunningStrikeObscure, Condition::Blinded, 9),
+        (Condition::CunningStrikeKnockOut, Condition::Asleep, 15),
+    ];
+    for &(prime, expected, level) in cases {
+        let mut landed = false;
+        for seed in 0..200 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            level_rogue_to(&mut e, rogue, level);
+            // Ally adjacent to target → ally-adjacency sneak trigger.
+            let _ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // A rogue this deep into the sneak ladder will otherwise
+            // simply kill the fighter before the rider resolves.
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            // …and a slab of temporary hit points on top, so the swing
+            // cannot drop it before the rider resolves.
+            e.actors.get_mut(&target).unwrap().gain_temp_hp(400);
+            e.actors
+                .get_mut(&rogue)
+                .unwrap()
+                .add_condition(prime, ConditionTimer::UntilStartOfNextTurn);
+            let targets = vec![target];
+            for ef in ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&targets), None, None) {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&rogue].has_condition(prime)
+                && e.actors
+                    .get(&target)
+                    .is_some_and(|a| a.has_condition(expected))
+            {
+                landed = true;
+                break;
+            }
+        }
+        assert!(
+            landed,
+            "{:?} should have installed {:?} at least once across 200 swings",
+            prime, expected
+        );
+    }
 }
 
 /// Investiture of Ice: self-buff installs InvestedInIce + a
