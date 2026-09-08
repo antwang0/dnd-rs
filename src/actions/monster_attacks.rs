@@ -6117,16 +6117,24 @@ pub static STIRGE_PROBOSCIS: AttachingWeapon = AttachingWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Cockatrice bite — DEX-flavored melee that deals 1d4 piercing on hit
-/// and, more importantly, forces a CON save (DC 11) for a "petrify"
-/// rider that applies the Petrified condition for 1 round on a fail.
-/// Mirrors the imp-sting "hit, then save-or-suck" shape: the petty
-/// damage is the hook for the real threat, which is the lockout.
+/// Cockatrice **Petrifying Bite** — SRD 5.2: 1d4+1 piercing, and *"if
+/// the target is a creature, it is subjected to the following effect.
+/// Constitution Saving Throw: DC 11. First Failure: The target has the
+/// Restrained condition… Second Failure: The target has the Petrified
+/// condition, instead of the Restrained condition."*
 ///
-/// 5e's full petrification is permanent and lethal; we cap the rider at
-/// `Rounds(1)` so a single hit doesn't game-over the target on a missed
-/// save — combined with our action-economy / save-auto-fail clauses on
-/// Petrified the round is already brutal enough.
+/// The petty damage is the hook; the ladder is the threat. Routed
+/// through `staged_saves::PETRIFICATION`, which is the same sentence
+/// the basilisk, the gorgon and the medusa print.
+///
+/// This used to be one save and a one-round `Petrified`, with a
+/// docstring explaining that RAW's petrification is permanent and the
+/// timer had been cut *"so a single hit doesn't game-over the target on
+/// a missed save."* That is the problem RAW solves with the ladder
+/// rather than with the timer: one failure stiffens you and hands your
+/// party a round to do something, and only the second turns you to
+/// stone. Which is why the second rung is allowed to be five rounds
+/// now instead of one.
 pub struct CockatriceBite {}
 
 impl Action for CockatriceBite {
@@ -6156,7 +6164,7 @@ impl Action for CockatriceBite {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let mut effects = simple_weapon_attack(
+        let effects = simple_weapon_attack(
             encounter,
             caster_id,
             target_ids,
@@ -6170,14 +6178,23 @@ impl Action for CockatriceBite {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        const DC: i32 = 11;
+        let save = encounter.roll_save_vs_condition(
+            target_id,
+            AbilityScoreType::Constitution,
+            DC,
+            Condition::Restrained,
+        );
         if !save.passed() {
-            encounter.log("  petrifying gaze: target turns to stone");
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Petrified,
-                timer: ConditionTimer::Rounds(1),
-            }));
+            // Opened on the spot rather than queued as a side effect:
+            // the ladder installs a condition *and* writes an encounter
+            // ledger, and only the encounter can do the second half.
+            encounter.begin_staged_save(
+                target_id,
+                caster_id,
+                DC,
+                &crate::engine::staged_saves::PETRIFICATION,
+            );
         }
         effects
     }
@@ -8847,11 +8864,21 @@ pub static STONE_GIANT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
     count: 2,
 });
 
-/// Medusa Petrifying Gaze — single-target action. CON save against a
-/// fixed DC 14; on fail, the target is Petrified for 1 round. No damage
-/// — the petrification is the threat. The gaze is line-of-sight gated
-/// (the medusa must see the target). Mirrors the cockatrice bite's
-/// shape but without the bite damage: pure stone-lock.
+/// Medusa **Petrifying Gaze** — a CON save at DC 13 (RAW's number) on
+/// SRD 5.2's two-stage ladder: a first failure stiffens the target, and
+/// a second, at the end of its next turn, turns it to stone. No damage;
+/// the ladder is the entire threat.
+///
+/// **Delivery diverges.** RAW makes this a Bonus Action against a
+/// 30-foot Cone, on Recharge 5–6. The engine keeps it as a single
+/// target the medusa can see, which is the shape it has always had, and
+/// the reason is the AI rather than the geometry: the area pickers want
+/// two bodies in the shape before they will spend a turn on it, so a
+/// medusa facing one adventurer would simply stop gazing. Worth
+/// revisiting when the area lane grows a single-target rung.
+///
+/// What was wrong and is now right is the *ladder*, which is where the
+/// gaze's whole character lives — see `staged_saves::PETRIFICATION`.
 pub struct MedusaPetrifyingGaze {}
 
 impl Action for MedusaPetrifyingGaze {
@@ -8886,7 +8913,7 @@ impl Action for MedusaPetrifyingGaze {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -8894,18 +8921,24 @@ impl Action for MedusaPetrifyingGaze {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        const DC: i32 = 14;
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, DC);
+        const DC: i32 = 13;
+        let save = encounter.roll_save_vs_condition(
+            target_id,
+            AbilityScoreType::Constitution,
+            DC,
+            Condition::Restrained,
+        );
         if save.passed() {
             encounter.log("  petrifying gaze: target averts their eyes");
             return Vec::new();
         }
-        encounter.log("  petrifying gaze: target turns to stone");
-        vec![Box::new(crate::engine::side_effects::ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Petrified,
-            timer: ConditionTimer::Rounds(1),
-        })]
+        encounter.begin_staged_save(
+            target_id,
+            caster_id,
+            DC,
+            &crate::engine::staged_saves::PETRIFICATION,
+        );
+        Vec::new()
     }
 }
 
@@ -10337,7 +10370,7 @@ impl Action for BasiliskBite {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let mut effects = simple_weapon_attack(
+        let effects = simple_weapon_attack(
             encounter,
             caster_id,
             target_ids,
@@ -10351,14 +10384,20 @@ impl Action for BasiliskBite {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
+        const DC: i32 = 12;
+        let save = encounter.roll_save_vs_condition(
+            target_id,
+            AbilityScoreType::Constitution,
+            DC,
+            Condition::Restrained,
+        );
         if !save.passed() {
-            encounter.log("  petrifying gaze: target turns to stone!");
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Petrified,
-                timer: ConditionTimer::Rounds(1),
-            }));
+            encounter.begin_staged_save(
+                target_id,
+                caster_id,
+                DC,
+                &crate::engine::staged_saves::PETRIFICATION,
+            );
         }
         effects
     }
@@ -11953,12 +11992,15 @@ pub static GORGON_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Gorgon Petrifying Breath — RAW's 30-foot Cone, twelve tiles on the
-/// 2.5 ft grid. Every enemy caught in it makes a CON save vs DC 13; on
-/// fail, the target picks up Petrified for 1 round (the action-economy
-/// lockout is the threat — we cap at 1 round so a single hit doesn't
-/// game-over the target, matching the Cockatrice / Medusa / Basilisk
-/// shape).
+/// Gorgon **Petrifying Breath** — RAW's 30-foot Cone at DC 15, on the
+/// two-stage ladder every petrification in SRD 5.2 shares: a first
+/// failure stiffens, and a second, at the end of the victim's next
+/// turn, turns it to stone. See `staged_saves::PETRIFICATION`.
+///
+/// The cone is what makes the gorgon's version the dangerous one. The
+/// cockatrice bites one creature and the medusa gazes at one; a gorgon
+/// puts four people on the ladder at once, and each of them rolls their
+/// own second die a turn later.
 ///
 /// Recharge 5-6 via the shared `"breath_weapon"` pool so the gorgon
 /// can't double-tap with this and a second breath option (it has none,
@@ -12005,23 +12047,34 @@ impl Action for GorgonPetrifyingBreath {
         let Some(origin) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const DC: i32 = 13;
+        const DC: i32 = 15;
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
             caster.spend_recharge("breath_weapon");
         }
         encounter.log("  petrifying breath: gorgon exhales a cone of stoning vapour");
-        // Route through the shared save-or-condition chokepoint — the
-        // same one every other condition area in the engine uses.
-        crate::actions::action_template::resolve_area_save_condition(
-            encounter,
-            caster_id,
-            AreaShape::Cone { length: CONE_30_FT },
-            origin,
-            AbilityScoreType::Constitution,
-            DC,
-            Condition::Petrified,
-            ConditionTimer::Rounds(1),
-        )
+        // Resolved inline rather than through
+        // `resolve_area_save_condition`, which installs one condition on
+        // a failure and has nowhere to put the escalation this needs.
+        // Same target list, same save; a different failure branch.
+        let shape = AreaShape::Cone { length: CONE_30_FT };
+        for tid in encounter.enemy_area_targets(caster_id, shape, origin) {
+            let save = encounter.roll_save_against_caster_vs_condition(
+                tid,
+                AbilityScoreType::Constitution,
+                DC,
+                caster_id,
+                Condition::Restrained,
+            );
+            if !save.passed() {
+                encounter.begin_staged_save(
+                    tid,
+                    caster_id,
+                    DC,
+                    &crate::engine::staged_saves::PETRIFICATION,
+                );
+            }
+        }
+        Vec::new()
     }
 }
 

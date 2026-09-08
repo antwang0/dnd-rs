@@ -9,9 +9,10 @@ use std::sync::LazyLock;
 
 /// Medusa — CR 6 monstrosity. The iconic petrifying-gaze threat:
 /// - **Multiattack** (snake hair + petrifying gaze in one Action). The
-///   gaze forces a CON save vs DC 14; on fail the target is Petrified
-///   for 1 round (we cap at 1 round so a single hit doesn't game-over;
-///   the action-economy lockout while Petrified is brutal enough).
+///   gaze forces a CON save vs DC 13 (RAW's number); on a failure the
+///   target starts down SRD 5.2's petrification ladder — Restrained
+///   now, stone if it fails again at the end of its next turn. See
+///   `engine::staged_saves`.
 /// - **Snake Hair** (standalone): 1d4+DEX piercing + 4d6 poison rider.
 /// - **Petrifying Gaze** (standalone): the pure stone-lock save.
 /// - **Longbow**: ranged piercing option for when the gaze is on cooldown.

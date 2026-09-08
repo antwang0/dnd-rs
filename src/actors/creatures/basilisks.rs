@@ -5,10 +5,18 @@ use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Basilisk — CR 3 monstrosity. Eight-legged reptile with a petrifying
-/// gaze. Bite deals 2d6+3 piercing plus a CON save (DC 12) for Petrified
-/// (1 round). AC 15, ~52 HP (8d8+16). Slow (speed 20ft) but durable,
-/// with darkvision 60ft.
+/// Basilisk — CR 3 monstrosity. Eight-legged reptile whose bite deals
+/// 2d6+3 piercing and opens the petrification ladder on a failed DC 12
+/// CON save: Restrained now, stone one failed save later. See
+/// `engine::staged_saves`.
+///
+/// **Delivery diverges from RAW**, which gives the basilisk a
+/// Petrifying Gaze as a bonus-action 30-foot cone and leaves the bite
+/// plain. The engine hangs the ladder on the bite, which is where it
+/// has always been; the ladder itself is the part that was missing.
+///
+/// AC 15, ~52 HP (8d8+16). Slow (speed 20ft) but durable, with
+/// darkvision 60ft.
 pub static BASILISK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*BASILISK_BITE);

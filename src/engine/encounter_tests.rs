@@ -17414,62 +17414,50 @@ fn ice_storm_damages_in_radius() {
     );
 }
 
+/// A cockatrice's bite does not turn anybody to stone. It puts them on
+/// the ladder — SRD 5.2's *"First Failure: the target has the Restrained
+/// condition"* — and the stone is one more failed save away, at the end
+/// of the victim's next turn.
+///
+/// The distinction is the whole feature: the version this replaces
+/// petrified on the first failed save and apologised for it in a
+/// docstring, cutting the timer to a single round so that one unlucky
+/// die could not end a character's fight. RAW solves that with the
+/// ladder instead.
 #[test]
-fn cockatrice_bite_can_petrify_target() {
+fn a_cockatrice_bite_opens_the_ladder_rather_than_finishing_it() {
     use crate::actions::monster_attacks::COCKATRICE_BITE;
     use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::conditions::Condition;
 
-    // The bite's petrify rider depends on a failed CON save — loop a
-    // few seeds to demonstrate the condition lands at least once.
     let mut seen = false;
-    for seed in 0..20u64 {
-        let tp = crate::engine::terrain_gen::TerrainGenParams {
-            width: 15,
-            height: 15,
-            branch_depth: 0,
-            branch_prob: 0.0,
-        };
-        let ap = crate::engine::actor_gen::ActorGenParams {
-            cr_target: 0.0,
-            n_teams: 0,
-            pc_template: None,
-            start_team: 0,
-        };
-        let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
-        e.terrain = vec![
-            crate::engine::terrain::TerrainInfo {
-                terrain_type: TerrainType::Floor,
-            };
-            15 * 15
-        ];
-        let attacker = e
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let bird = e
             .instantiate_creature(&COCKATRICE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let target = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
             .unwrap();
-        let effects = COCKATRICE_BITE.side_effects(
-            &mut e,
-            attacker,
-            Some(&vec![target]),
-            None,
-            None,
-        );
-        for ef in effects {
+        for ef in
+            COCKATRICE_BITE.side_effects(&mut e, bird, Some(&vec![target]), None, None)
+        {
             ef.apply(&mut e);
         }
-        if e
-            .actors
-            .get(&target)
-            .is_some_and(|a| a.has_condition(Condition::Petrified))
-        {
+        assert!(
+            !e.actors[&target].has_condition(Condition::Petrified),
+            "one bite is never enough (seed {seed})"
+        );
+        if e.staged_save_pending(target) {
+            assert!(
+                e.actors[&target].has_condition(Condition::Restrained),
+                "the first rung is RAW's Restrained"
+            );
             seen = true;
             break;
         }
     }
-    assert!(seen, "cockatrice bite should occasionally petrify");
+    assert!(seen, "a DC 11 save fails somewhere in forty seeds");
 }
 
 #[test]
@@ -32244,38 +32232,40 @@ fn salamander_fire_cold_envelope() {
     assert_eq!(a.effective_damage(10, DamageType::Bludgeoning), 10);
 }
 
-/// Medusa Petrifying Gaze: on a failed CON save, the target is
-/// Petrified for 1 round. Low-CON goblin should fail across seeds.
+/// A medusa's gaze puts a low-CON goblin on the petrification ladder,
+/// and the goblin is Restrained rather than stone until the second die
+/// lands.
 #[test]
-fn medusa_gaze_petrifies_on_failed_con() {
+fn medusa_gaze_opens_the_petrification_ladder() {
     use crate::actions::monster_attacks::MEDUSA_PETRIFYING_GAZE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
-    use crate::conditions::Condition;
-    let mut saw_stone = false;
+    let mut caught = false;
     for seed in 0..40u64 {
-        let mut e = ei_with_terrain(20, 20, &[]);
-        for _ in 0..seed {
-            let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
-        }
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
         let medusa = e
             .instantiate_creature(&MEDUSA_TEMPLATE, Coordinate::new(5, 5), 1, 0)
             .unwrap();
         let goblin = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 0, 0)
             .unwrap();
-        let tids = vec![goblin];
-        let effects = MEDUSA_PETRIFYING_GAZE
-            .side_effects(&mut e, medusa, Some(&tids), None, None);
-        for x in effects {
+        for x in MEDUSA_PETRIFYING_GAZE.side_effects(
+            &mut e,
+            medusa,
+            Some(&vec![goblin]),
+            None,
+            None,
+        ) {
             x.apply(&mut e);
         }
-        if e.actors[&goblin].has_condition(Condition::Petrified) {
-            saw_stone = true;
+        assert!(!e.actors[&goblin].has_condition(Condition::Petrified));
+        if e.staged_save_pending(goblin) {
+            assert!(e.actors[&goblin].has_condition(Condition::Restrained));
+            caught = true;
             break;
         }
     }
-    assert!(saw_stone, "low-CON goblin should fail gaze at least once");
+    assert!(caught, "low-CON goblin should fail the gaze at least once");
 }
 
 /// Stone Giant boulder is ranged (reach 24) but the greatclub is a
@@ -89952,4 +89942,202 @@ fn lightning_bolt_is_a_corridor_rather_than_a_ball() {
         before[2],
         "and not the one standing off to the side, closer than either"
     );
+}
+
+// ---------------------------------------------------------------------
+// engine::staged_saves — SRD 5.2's "First Failure / Second Failure"
+// ---------------------------------------------------------------------
+
+/// Drive one full round of the initiative queue, which is what fires
+/// `round_end` and therefore every "at the end of each of its turns"
+/// clause in the engine.
+fn burn_a_round(e: &mut EncounterInstance) {
+    for _ in 0..e.initiative_slots().len() {
+        e.skip_turn();
+    }
+}
+
+/// The ladder, end to end. A creature caught by a gorgon's breath is
+/// Restrained and *not* stone; it gets a whole turn of its own before
+/// the second die is rolled; and then it either shakes the stone off or
+/// it does not.
+///
+/// Both outcomes are asserted over a seed sweep, because a ladder that
+/// only ever escalated would be a one-round delay on the old behaviour
+/// and a ladder that never escalated would be a Restrain with extra
+/// steps.
+#[test]
+fn a_petrification_ladder_takes_two_failures_and_a_round_in_between() {
+    use crate::actions::monster_attacks::GORGON_PETRIFYING_BREATH;
+    use crate::actors::creatures::gorgons::GORGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut escalated = 0;
+    let mut escaped = 0;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+        let gorgon = e
+            .instantiate_creature(&GORGON_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 9), 0, 0)
+            .unwrap();
+        let aim = e.actors[&goblin].location();
+        e.pop_prompt();
+        for ef in
+            GORGON_PETRIFYING_BREATH.side_effects(&mut e, gorgon, None, Some(&vec![aim]), None)
+        {
+            ef.apply(&mut e);
+        }
+        if !e.staged_save_pending(goblin) {
+            continue;
+        }
+        assert!(
+            e.actors[&goblin].has_condition(Condition::Restrained),
+            "the first rung"
+        );
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Petrified),
+            "and not the second"
+        );
+
+        // RAW's "at the end of its *next* turn": the round the ladder
+        // opened on does not roll it.
+        burn_a_round(&mut e);
+        assert!(
+            e.staged_save_pending(goblin),
+            "the round it was caught on is not the round it rolls (seed {seed})"
+        );
+        assert!(!e.actors[&goblin].has_condition(Condition::Petrified));
+
+        // The next one does.
+        burn_a_round(&mut e);
+        assert!(
+            !e.staged_save_pending(goblin),
+            "the ladder resolves one way or the other (seed {seed})"
+        );
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Restrained),
+            "and the first rung comes off either way (seed {seed})"
+        );
+        if e.actors[&goblin].has_condition(Condition::Petrified) {
+            escalated += 1;
+        } else {
+            escaped += 1;
+        }
+    }
+    assert!(escalated > 0, "a DC 15 save fails sometimes");
+    assert!(escaped > 0, "and is made sometimes");
+}
+
+/// Getting off the first rung by any means at all takes the creature
+/// off the ladder — RAW conditions the repeat on *"if it is still
+/// Restrained"*, so an ally who cuts the victim free has actually saved
+/// them rather than merely delayed the stone.
+#[test]
+fn shaking_the_first_rung_loose_ends_the_ladder() {
+    use crate::actions::monster_attacks::COCKATRICE_BITE;
+    use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let bird = e
+            .instantiate_creature(&COCKATRICE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        for ef in COCKATRICE_BITE.side_effects(&mut e, bird, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if !e.staged_save_pending(victim) {
+            continue;
+        }
+        // Cut free before the second die.
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .remove_condition(Condition::Restrained);
+        burn_a_round(&mut e);
+        burn_a_round(&mut e);
+        assert!(
+            !e.actors[&victim].has_condition(Condition::Petrified),
+            "a creature no longer held is no longer turning to stone (seed {seed})"
+        );
+        assert!(!e.staged_save_pending(victim), "and is off the ledger");
+        return;
+    }
+    panic!("a DC 11 save fails somewhere in forty seeds");
+}
+
+/// A creature already immune to the first rung never starts the ladder.
+/// A skeleton cannot be Restrained by creeping stone it has no muscles
+/// for, and a ladder with no first rung has nothing to escalate from.
+#[test]
+fn a_creature_immune_to_the_first_rung_never_climbs() {
+    use crate::actions::monster_attacks::MEDUSA_PETRIFYING_GAZE;
+    use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let medusa = e
+        .instantiate_creature(&MEDUSA_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    // The engine's ghost carries a Restrained immunity as part of the
+    // incorporeal envelope; it is the roster's clearest example of a
+    // creature the first rung cannot touch.
+    let ghost = e
+        .instantiate_creature(
+            &crate::actors::creatures::ghosts::GHOST_TEMPLATE,
+            Coordinate::new(8, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    assert!(
+        e.actors[&ghost].effectively_immune_to_condition(Condition::Restrained),
+        "the premise of the test"
+    );
+    for _ in 0..20 {
+        for x in
+            MEDUSA_PETRIFYING_GAZE.side_effects(&mut e, medusa, Some(&vec![ghost]), None, None)
+        {
+            x.apply(&mut e);
+        }
+        assert!(!e.staged_save_pending(ghost));
+        assert!(!e.actors[&ghost].has_condition(Condition::Petrified));
+    }
+}
+
+/// A body that leaves the board takes its ladder with it, so the entry
+/// cannot outlive the corpse and greet whoever inherits the id.
+#[test]
+fn a_dead_creature_is_not_still_turning_to_stone() {
+    use crate::actions::monster_attacks::COCKATRICE_BITE;
+    use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let bird = e
+            .instantiate_creature(&COCKATRICE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        for ef in COCKATRICE_BITE.side_effects(&mut e, bird, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if !e.staged_save_pending(victim) {
+            continue;
+        }
+        e.actors.get_mut(&victim).unwrap().take_damage(9999);
+        e.cleanup_dead_actors();
+        assert!(!e.actors.contains_key(&victim));
+        assert!(!e.staged_save_pending(victim));
+        return;
+    }
+    panic!("a DC 11 save fails somewhere in forty seeds");
 }

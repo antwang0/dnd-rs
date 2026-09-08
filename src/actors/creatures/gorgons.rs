@@ -9,9 +9,12 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Gorgon — CR 5 large monstrosity. A mechanical-looking iron bull whose
-/// signature trick is its petrifying-breath cone — a CON-save AoE that
-/// applies the `Petrified` condition for one round to every failed-save
-/// victim. Pairs with a heavy gore + hooves multi (2d12 piercing +
+/// signature trick is RAW's 30-foot petrifying-breath cone: a DC 15 CON
+/// save that puts everyone who fails it on the petrification ladder at
+/// once, each of them rolling their own second die a turn later. See
+/// `engine::staged_saves`.
+///
+/// Pairs with a heavy gore + hooves multi (2d12 piercing +
 /// 2d10 bludgeoning, both STR-modded) for a brutal melee envelope and a
 /// 40ft walk speed for chase pressure.
 ///

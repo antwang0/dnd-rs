@@ -20,6 +20,7 @@ pub mod mounts;
 pub mod prompt;
 pub mod saves;
 pub mod side_effects;
+pub mod staged_saves;
 pub mod swallow;
 pub mod terrain;
 pub mod terrain_gen;

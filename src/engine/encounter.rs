@@ -351,9 +351,11 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
     // gets 3 saves before becoming permanently stone; we collapse the
     // ladder to a single break-free save (matches the Hold Person /
     // Hideous Laughter shape). Concentration-anchored, so the
-    // `find_concentration_owner` lookup skips non-spell petrification
-    // (Medusa Gaze, Cockatrice Bite, Basilisk) — those rely on their
-    // own short Rounds timers to expire.
+    // `find_concentration_owner` lookup skips the monster
+    // petrifications entirely — the basilisk, the cockatrice, the
+    // gorgon and the medusa run their own two-stage ladder in
+    // `engine::staged_saves`, which reaches stone by a different route
+    // and gives no repeat once it is there.
     RoundEndSave {
         condition: Condition::Petrified,
         save_ability: crate::engine::types::AbilityScoreType::Constitution,
@@ -2089,6 +2091,21 @@ pub struct EncounterInstance {
     /// walking away from one ghast's is no protection from the one
     /// standing beside it.
     trait_immunities: std::collections::HashSet<(usize, usize, &'static str)>,
+    /// Creatures part-way down SRD 5.2's *"First Failure / Second
+    /// Failure"* ladder — see `crate::engine::staged_saves`.
+    ///
+    /// A map rather than a condition because the three things a pending
+    /// escalation needs — the DC, who opened it, and which second
+    /// condition is waiting — have no home on the actor, and because
+    /// the first rung *is* an ordinary condition that every existing
+    /// consumer should keep reading as one.
+    ///
+    /// `pub(crate)` for the same reason `actors` is public: the rule
+    /// that owns it lives in its own module, and a private field would
+    /// mean either moving the rule in here or opening a pair of
+    /// accessors that exist only to get around the keyword.
+    pub(crate) staged_saves:
+        std::collections::HashMap<usize, crate::engine::staged_saves::PendingStage>,
     /// Map tiles a spell has retyped, and the ledger that hands them
     /// back — see `crate::engine::conjured_terrain`. Sibling to `zones`
     /// in every respect but one: a zone overlays the map and this
@@ -10827,6 +10844,7 @@ impl EncounterInstance {
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
             trait_immunities: std::collections::HashSet::new(),
+            staged_saves: std::collections::HashMap::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
             ambient_light: AmbientLight::default(),
@@ -16097,6 +16115,14 @@ impl EncounterInstance {
             // drops. Runs after DoTs so the damage for this round has
             // already landed; matches RAW timing.
             self.apply_round_end_saves(id);
+            // SRD 5.2's *"repeats the save at the end of its next turn"*
+            // — the second rung of a two-stage ladder. See
+            // `crate::engine::staged_saves`. Beside the repeated-save
+            // table above because it is the same moment, and separate
+            // from it because the failure branches disagree: that table
+            // ends the effect on a success and leaves it standing on a
+            // failure, and this one *escalates*.
+            self.tick_staged_save(id);
             // 5e: "the grapple ends if the grappler is incapacitated."
             // Checked here rather than at the moment the grappler goes
             // down, because the ways to become incapacitated are many
@@ -17073,6 +17099,8 @@ impl EncounterInstance {
     }
 
     pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {
+        // Same teardown as `remove_actor`'s, and for the same reason.
+        self.clear_staged_save(id);
         // Same reason as `remove_actor`: an actor leaving the board
         // takes their concentration — and so the areas it was holding
         // up — with them.
@@ -17113,6 +17141,10 @@ impl EncounterInstance {
     /// intentionally skips the burst since the actor isn't truly dying.
     fn remove_actor(&mut self, id: usize) {
         self.trigger_death_burst(id);
+        // A corpse is not part-way through turning to stone. Cleared
+        // here rather than left to expire, so the entry cannot outlive
+        // the body and greet whoever inherits the id.
+        self.clear_staged_save(id);
         // Cut before the corpse is lifted out of the table: a rider and
         // a mount are the only two actors in the engine that hold ids
         // pointing at each other, and either half surviving the other
