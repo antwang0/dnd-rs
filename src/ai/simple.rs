@@ -2124,6 +2124,13 @@ const LOCKDOWNS: &[LockdownPick] = &[
     // docstring records the bug the declaration fixed (re-gazing an
     // already-petrified succubus four hundred times); what it left
     // behind was a medusa that never gazed at all.
+    //
+    // `Petrified` is the ladder's *second* rung, so this marker alone
+    // stopped covering the case the day the gaze grew a first one — a
+    // victim standing there Restrained does not have it. The gaze's own
+    // `custom_validate_input` asks the ledger instead, which is the
+    // truth rather than a copy of it, and this row keeps the marker for
+    // the creature that has already finished the climb.
     LockdownPick { name: "petrifying gaze", condition: Some(Condition::Petrified) },
     LockdownPick { name: "forcecage", condition: Some(Condition::Caged) },
     LockdownPick { name: "maze", condition: Some(Condition::Mazed) },

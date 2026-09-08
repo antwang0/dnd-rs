@@ -565,24 +565,45 @@ impl App {
     /// name in front of it (`cone of cold 20,14`) and the tile is
     /// always the tail. Parsed relative to the actor, so the `r3u2`
     /// forms `parse_coord` supports preview too.
+    ///
+    /// And when the input names an action, *that* is the action
+    /// previewed — resolved through the same `Prompt::resolve_action`
+    /// the cast will use, rather than through the arrow-key selection.
+    /// The two disagree exactly when the player types a spell's name
+    /// while the highlight sits on a different one, and a preview that
+    /// read the highlight would shade a sixty-foot cone and then cast a
+    /// fifteen-foot one. Falls back to the selection when the input is
+    /// a bare coordinate, which is the ordinary case and the one the
+    /// selection is for.
     fn previewed_area(&self) -> std::collections::HashSet<Coordinate> {
         let empty = std::collections::HashSet::new();
         let Some(prompt) = self.encounter.peek_prompt() else {
             return empty;
         };
-        let Some(action) = self.selected_action() else {
-            return empty;
-        };
-        let Some(shape) = action.targeting_schema().area_shape() else {
-            return empty;
-        };
         let Some(actor) = self.encounter.actors.get(&prompt.actor_id()) else {
             return empty;
         };
-        let Some(token) = self.input_str.split_whitespace().next_back() else {
+        let tokens: Vec<&str> = self.input_str.split_whitespace().collect();
+        let Some(token) = tokens.last() else {
             return empty;
         };
         let Some(aim) = crate::engine::util::parse_coord(token, actor.location()) else {
+            return empty;
+        };
+        // Everything before the tile is the action, if there is
+        // anything. An unresolvable or ambiguous name previews nothing
+        // rather than falling back to the selection: the cast is going
+        // to be refused, and shading an area for a spell that will not
+        // be cast is worse than shading none.
+        let named = &tokens[..tokens.len() - 1];
+        let action = if named.is_empty() {
+            self.selected_action()
+        } else {
+            crate::engine::prompt::Prompt::resolve_action(prompt.actions(), named)
+                .ok()
+                .map(|(_, a)| a)
+        };
+        let Some(shape) = action.and_then(|a| a.targeting_schema().area_shape()) else {
             return empty;
         };
         shape
@@ -1062,7 +1083,7 @@ mod tests {
             .collect();
         assert!(!expected.is_empty());
 
-        for typed in ["12,5", "burning hands 12,5", "bh 12,5"] {
+        for typed in ["12,5", "burning hands 12,5"] {
             app.input_str.clear();
             app.input_str.push_str(typed);
             assert_eq!(
@@ -1071,6 +1092,15 @@ mod tests {
                 "typing {typed:?} should preview the same cone"
             );
         }
+
+        // `bh` is one of the collisions `Prompt::resolve_action`
+        // refuses outright — a wizard's Burning Hands and Bigby's Hand
+        // both answer to it — and the preview refuses it for the same
+        // reason: the cast is going to be rejected, so shading either
+        // spell's area would be a promise the Enter key does not keep.
+        app.input_str.clear();
+        app.input_str.push_str("bh 12,5");
+        assert!(app.previewed_area().is_empty());
 
         // A half-typed coordinate previews nothing rather than
         // guessing, which is what keeps the map from flickering through
@@ -1083,6 +1113,33 @@ mod tests {
                 "typing {typed:?} should preview nothing"
             );
         }
+
+        // And a *named* action wins over the arrow-key selection, which
+        // is the case the two can disagree about: the wizard's Cone of
+        // Cold is twenty-four tiles long where Burning Hands is six, so
+        // a preview that read the highlight would shade one and cast
+        // the other.
+        let coc = app.encounter.actors[&wiz]
+            .actions
+            .iter()
+            .position(|a| a.name() == "cone of cold")
+            .expect("a wizard carries cone of cold");
+        app.selected_action_idx = coc;
+        app.input_str.clear();
+        app.input_str.push_str("burning hands 12,5");
+        assert_eq!(
+            app.previewed_area(),
+            expected,
+            "the typed spell is the one being cast, so it is the one drawn"
+        );
+
+        // An unresolvable name previews nothing rather than falling
+        // back to the highlight — the cast is going to be refused, and
+        // shading an area for a spell that will not be cast is worse
+        // than shading none.
+        app.input_str.clear();
+        app.input_str.push_str("wobble 12,5");
+        assert!(app.previewed_area().is_empty());
     }
 
     /// A single-target action previews nothing however valid the tile

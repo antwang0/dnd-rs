@@ -99,6 +99,20 @@ fn chebyshev(a: Coordinate, b: Coordinate) -> isize {
     (a.x - b.x).abs().max((a.y - b.y).abs())
 }
 
+/// Is `tile` inside the `span`×`span` box anchored at `anchor`?
+///
+/// One helper rather than the same four comparisons written at each of
+/// the three sites that need it — and the three sites are the reason it
+/// exists at all: they are the caster's-own-body exclusion, and they
+/// have to agree exactly or `tiles` draws an area `catches_footprint`
+/// disagrees with.
+fn in_box(tile: Coordinate, anchor: Coordinate, span: isize) -> bool {
+    tile.x >= anchor.x
+        && tile.x < anchor.x + span
+        && tile.y >= anchor.y
+        && tile.y < anchor.y + span
+}
+
 /// Where a cone cast by a creature standing at `anchor` (with a
 /// `span`×`span` footprint) and aimed at `aim` comes out of: the tile of
 /// that footprint nearest the aim point.
@@ -180,23 +194,6 @@ pub fn cone_tiles(apex: Coordinate, aim: Coordinate, length: isize) -> Vec<Coord
     out
 }
 
-/// True if any tile of the footprint anchored at `anchor` with side
-/// `span` is inside the cone.
-///
-/// Any-tile rather than all-tiles or centre-tile, which is the reading
-/// every area in the engine already uses: `actors_in_burst` measures the
-/// *gap* between footprints, so a Huge creature with one toe in a
-/// Fireball is in the Fireball. A cone that asked for the whole body
-/// would let a dragon walk half of itself out of a Cone of Cold.
-pub fn cone_catches_footprint(
-    apex: Coordinate,
-    aim: Coordinate,
-    length: isize,
-    anchor: Coordinate,
-    span: isize,
-) -> bool {
-    footprint_tiles(anchor, span).any(|t| cone_covers(apex, aim, length, t))
-}
 
 /// True if `tile` lies inside the line of length `length` and half-width
 /// `half_width` (both in tiles) running from `apex` toward `aim`.
@@ -330,12 +327,15 @@ impl AreaShape {
             AreaShape::Cone { length } => {
                 let caster_span = get_tiles_from_size(caster_size) as isize;
                 let apex = cone_apex(caster_anchor, caster_span, aim);
-                cone_catches_footprint(apex, aim, length, anchor, span as isize)
+                footprint_tiles(anchor, span as isize)
+                    .filter(|t| !in_box(*t, caster_anchor, caster_span))
+                    .any(|t| cone_covers(apex, aim, length, t))
             }
             AreaShape::Line { length, half_width } => {
                 let caster_span = get_tiles_from_size(caster_size) as isize;
                 let apex = cone_apex(caster_anchor, caster_span, aim);
                 footprint_tiles(anchor, span as isize)
+                    .filter(|t| !in_box(*t, caster_anchor, caster_span))
                     .any(|t| line_covers(apex, aim, length, half_width, t))
             }
         }
@@ -435,12 +435,7 @@ impl AreaShape {
                 line_tiles(apex, aim, length, half_width)
             }
         };
-        tiles.retain(|t| {
-            !(t.x >= caster_anchor.x
-                && t.x < caster_anchor.x + span
-                && t.y >= caster_anchor.y
-                && t.y < caster_anchor.y + span)
-        });
+        tiles.retain(|t| !in_box(*t, caster_anchor, span));
         tiles
     }
 }
@@ -595,23 +590,59 @@ mod tests {
 
     /// RAW's origin clause, applied to a body rather than a point: none
     /// of the caster's own tiles are in its own cone or its own line.
+    ///
+    /// Swept over every aim direction and every size rather than
+    /// spot-checked at one, because the two shapes fail this for
+    /// different reasons and only one of them failed it by accident.
+    /// The cone's angle test excludes a caster's own tiles on its own —
+    /// they are beside the apex, not in front of it — so a single
+    /// example passes. The **line's** width test does not: a flat strip
+    /// one tile wide, thrown at any oblique angle, swallows the tile
+    /// diagonally beside its apex. For a Medium caster that is nearly
+    /// half of all aim directions, and the consequences were entirely
+    /// silent: `area_catches(caster, shape, aim, caster)` came back
+    /// true, so `best_burst_placement` counted the caster as an ally in
+    /// its own blast and refused to cast, and Careful Spell burned its
+    /// prime shielding a caster the target list had already excluded.
+    /// A wizard would simply never cast Lightning Bolt except along an
+    /// exact axis or diagonal.
     #[test]
     fn a_caster_is_never_inside_its_own_projected_area() {
-        let anchor = c(10, 10);
-        for shape in [
-            AreaShape::Cone { length: 24 },
-            AreaShape::Line {
-                length: 36,
-                half_width: 1,
-            },
-        ] {
-            let tiles = shape.tiles(anchor, Size::Huge, c(40, 12));
-            assert!(!tiles.is_empty(), "{shape:?}");
-            for t in &tiles {
-                assert!(
-                    !(t.x >= 10 && t.x < 16 && t.y >= 10 && t.y < 16),
-                    "{t:?} is inside the dragon ({shape:?})"
-                );
+        for size in [Size::Tiny, Size::Medium, Size::Large, Size::Huge] {
+            let span = crate::engine::util::get_tiles_from_size(size) as isize;
+            let anchor = c(20, 20);
+            for shape in [
+                AreaShape::Cone { length: 24 },
+                AreaShape::Line {
+                    length: 36,
+                    half_width: 1,
+                },
+                AreaShape::Line {
+                    length: 36,
+                    half_width: 2,
+                },
+            ] {
+                for dy in -12..=12isize {
+                    for dx in -12..=12isize {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let aim = c(anchor.x + dx, anchor.y + dy);
+                        // The drawn area never includes the caster's box…
+                        for t in shape.tiles(anchor, size, aim) {
+                            assert!(
+                                !in_box(t, anchor, span),
+                                "{shape:?} at {size:?} aimed {dx},{dy} draws {t:?}"
+                            );
+                        }
+                        // …and neither does the predicate the AI reads,
+                        // which is the half that was wrong.
+                        assert!(
+                            !shape.catches_footprint(anchor, size, aim, anchor, span as usize),
+                            "{shape:?} at {size:?} aimed {dx},{dy} catches its own caster"
+                        );
+                    }
+                }
             }
         }
     }
@@ -744,13 +775,14 @@ mod tests {
     /// keep five sixths of itself out of a breath and take nothing.
     #[test]
     fn one_tile_of_a_footprint_is_enough_to_be_caught() {
-        let apex = c(0, 0);
-        let aim = c(1, 0);
-        // A 4×4 Large creature anchored so that only its westernmost
-        // column is inside a narrow cone.
-        assert!(cone_catches_footprint(apex, aim, 6, c(4, 0), 4));
+        let caster = c(0, 0);
+        let shape = AreaShape::Cone { length: 8 };
+        let aim = c(20, 0);
+        // A Large creature (4×4) anchored so that only its westernmost
+        // column is inside the cone.
+        assert!(shape.catches_footprint(caster, Size::Tiny, aim, c(6, 0), 4));
         // And one entirely off the axis is not caught at all.
-        assert!(!cone_catches_footprint(apex, aim, 6, c(1, 6), 4));
+        assert!(!shape.catches_footprint(caster, Size::Tiny, aim, c(2, 8), 4));
     }
 
     /// A cone with no direction is not a cone. Guards the degenerate

@@ -90548,3 +90548,71 @@ fn a_fear_emanation_records_the_creature_that_caused_it() {
     }
     panic!("a DC 11 save fails somewhere in forty seeds");
 }
+
+/// A ladder touches only the condition it put there.
+///
+/// A fighter already held in a giant spider's web, then caught by a
+/// basilisk's gaze, is on both — and when the ladder resolves it must
+/// leave the web exactly where it found it. The engine holds one
+/// instance of a condition per creature with no refcount, so a ladder
+/// that removed `Restrained` wholesale would cut the fighter free of
+/// the spider a round later: no escape check, no contest, and the
+/// spider's back-link gone with it.
+///
+/// The other half of the same rule is the *install*: `add_condition`
+/// merges timers by taking the longer, so writing the ladder's
+/// `Permanent` over the web's `Rounds(10)` would promote the web to
+/// permanent — a hold that outlives the thing holding it. The ladder
+/// installs nothing when the rung is already standing.
+#[test]
+fn a_ladder_leaves_a_restraint_it_did_not_install() {
+    use crate::actions::monster_attacks::MEDUSA_PETRIFYING_GAZE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+        let medusa = e
+            .instantiate_creature(&MEDUSA_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 4), 0, 0)
+            .unwrap();
+        // Webbed first, by somebody else, on a timer of its own.
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(10));
+        for x in MEDUSA_PETRIFYING_GAZE.side_effects(
+            &mut e,
+            medusa,
+            Some(&vec![victim]),
+            None,
+            None,
+        ) {
+            x.apply(&mut e);
+        }
+        if !e.staged_save_pending(victim) {
+            continue;
+        }
+        // The web's timer was not promoted to permanent by the ladder
+        // writing over it.
+        assert_eq!(
+            e.actors[&victim]
+                .conditions()
+                .get(&Condition::Restrained)
+                .copied(),
+            Some(ConditionTimer::Rounds(10)),
+            "the ladder must not rewrite somebody else's clock (seed {seed})"
+        );
+        burn_a_round(&mut e);
+        burn_a_round(&mut e);
+        assert!(!e.staged_save_pending(victim), "the ladder resolved");
+        assert!(
+            e.actors[&victim].has_condition(Condition::Restrained),
+            "and the web is still there, on either branch (seed {seed})"
+        );
+        return;
+    }
+    panic!("a DC 13 save fails somewhere in forty seeds");
+}

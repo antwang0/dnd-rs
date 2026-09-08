@@ -193,15 +193,44 @@ pub struct PendingStage {
     /// reach, healed, or to walk away, before the die that turns it to
     /// stone is rolled.
     pub opened_this_round: bool,
+    /// True when *this ladder* is what put the first condition on the
+    /// victim, rather than finding it already there.
+    ///
+    /// The engine holds one instance of a condition per creature with
+    /// no refcount, so "remove the first rung when the ladder resolves"
+    /// is only safe for a rung the ladder owns. A fighter already
+    /// `Restrained` in a giant spider's web, then caught by a
+    /// basilisk's gaze, would otherwise be cut free of the web a round
+    /// later — no escape check, no contest, and the spider's back-link
+    /// gone with it. Same hazard `engine::attachment` documents for
+    /// `Blinded`, and the same answer: touch only what you put there.
+    ///
+    /// It is also why the install is skipped entirely when the
+    /// condition is already standing. `add_condition` merges timers by
+    /// taking the *longer* of the two, so writing this ladder's
+    /// `Permanent` over a web's `Rounds(10)` would promote the web to
+    /// permanent — a hold that outlives the creature holding it.
+    pub owns_first_condition: bool,
 }
 
 impl EncounterInstance {
     /// Open a staged save on `victim_id` — RAW's First Failure branch.
     ///
-    /// Installs the ladder's first condition, linked to `source_id`
-    /// (which matters for `Restrained` no more than for anything else,
-    /// but costs nothing and keeps every condition install on the one
-    /// path), and records the pending escalation.
+    /// Installs the ladder's first condition and records the pending
+    /// escalation.
+    ///
+    /// A bare install rather than `install_condition_with_link`, which
+    /// is the one place in the engine that is the right call for
+    /// `Restrained`. That condition's link means *"who is holding
+    /// you"* — `GrappleEscape` reads it to tell a restraint that came
+    /// off a roper's tendril from one that came off a Web across the
+    /// room — and stone creeping up your legs is not a hold anybody is
+    /// maintaining. A link here would offer the victim an Athletics
+    /// contest against a basilisk that is not touching it.
+    ///
+    /// If the victim is *already* under the first condition, nothing is
+    /// installed at all and the ladder simply records itself; see
+    /// `PendingStage::owns_first_condition` for both halves of why.
     ///
     /// A victim already on this ladder is left where it is: RAW says
     /// nothing about being caught twice, and re-opening would hand the
@@ -224,23 +253,25 @@ impl EncounterInstance {
         if self.staged_saves.contains_key(&victim_id) {
             return;
         }
-        if self
-            .actors
-            .get(&victim_id)
-            .is_none_or(|a| a.effectively_immune_to_condition(ladder.first))
-        {
+        let Some(victim) = self.actors.get(&victim_id) else {
+            return;
+        };
+        if victim.effectively_immune_to_condition(ladder.first) {
             return;
         }
-        ApplyCondition {
-            actor_id: victim_id,
-            condition: ladder.first,
-            // No timer of its own: the ladder is what ends it, one way
-            // or the other, at the end of the victim's next turn. A
-            // `Rounds(n)` here would be a second clock racing the one
-            // that matters.
-            timer: ConditionTimer::Permanent,
+        let already_held = victim.has_condition(ladder.first);
+        if !already_held {
+            ApplyCondition {
+                actor_id: victim_id,
+                condition: ladder.first,
+                // No timer of its own: the ladder is what ends it, one
+                // way or the other, at the end of the victim's next
+                // turn. A `Rounds(n)` here would be a second clock
+                // racing the one that matters.
+                timer: ConditionTimer::Permanent,
+            }
+            .apply(self);
         }
-        .apply(self);
         // The install can still have bounced — an aura suppressor, a
         // dynamic immunity the static check does not see. A ladder with
         // no first rung is not a ladder.
@@ -260,6 +291,7 @@ impl EncounterInstance {
                 source_id,
                 dc,
                 opened_this_round: true,
+                owns_first_condition: !already_held,
             },
         );
     }
@@ -312,7 +344,15 @@ impl EncounterInstance {
             ladder.second,
         );
         self.staged_saves.remove(&victim_id);
-        if let Some(a) = self.actors.get_mut(&victim_id) {
+        // Only the rung this ladder put there — see
+        // `PendingStage::owns_first_condition`. A victim who was
+        // already webbed when the gaze caught it stays webbed, on
+        // either branch, which is both the safe answer and RAW's: the
+        // ladder replaces *its own* Restrained with the Petrified, and
+        // has nothing to say about the spider's.
+        if pending.owns_first_condition
+            && let Some(a) = self.actors.get_mut(&victim_id)
+        {
             a.remove_condition(ladder.first);
         }
         if save.passed() {

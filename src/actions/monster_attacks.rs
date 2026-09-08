@@ -8851,6 +8851,38 @@ impl Action for MedusaPetrifyingGaze {
     fn damage_types(&self) -> Vec<DamageType> {
         Vec::new()
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // A creature already climbing a ladder gains nothing from being
+        // pushed onto one: `begin_staged_save` declines a second entry,
+        // so the gaze would roll, fail, and do nothing at all.
+        //
+        // This gate is what the `LOCKDOWNS` marker used to do on its
+        // own. That marker names `Petrified` — the ladder's *second*
+        // rung — and a creature on the first rung does not have it, so
+        // the AI would re-gaze the same victim every round for the rest
+        // of the fight. Which is a softer replay of the bug this
+        // action's `deals_damage` declaration was added to fix, and the
+        // reason the state is asked about here rather than encoded in a
+        // second marker: the ledger is the truth, and a marker is a
+        // copy of it.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if encounter.staged_save_pending(target_id) {
+            return false;
+        }
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| !a.has_condition(Condition::Petrified))
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -9351,6 +9383,15 @@ impl Action for GhostHorrifyingVisage {
         // Frightens first and foremost; see the type docs for why the
         // psychic damage does not flip this.
         false
+    }
+    fn spares_allies(&self) -> bool {
+        // The cone resolves through `enemy_area_targets`, so the
+        // ghost's own side is never in it. Newly load-bearing: this was
+        // a `NoArgs` self-centred burst before it was a cone, so it did
+        // not pass through the AI's area placement search at all — and
+        // that search vetoes any placement catching an ally unless the
+        // action declares it spares them.
+        true
     }
     fn side_effects(
         &self,
@@ -12163,6 +12204,15 @@ impl Action for MetallicBreath {
     fn damage_types(&self) -> Vec<DamageType> {
         Vec::new()
     }
+    fn spares_allies(&self) -> bool {
+        // Resolved entirely through `enemy_area_targets`, so an ally
+        // standing in the cone is not in the breath. Declared, because
+        // the AI's placement search reads the flag rather than the
+        // resolver: without it a copper dragon would refuse to breathe
+        // anywhere a kobold happened to be standing, on a cone that
+        // could never have touched the kobold.
+        true
+    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -12304,15 +12354,44 @@ impl Action for GorgonPetrifyingBreath {
     fn deals_damage(&self) -> bool {
         false
     }
+    fn spares_allies(&self) -> bool {
+        // Resolved through `enemy_area_targets`; declared so the AI's
+        // placement search does not veto a cone an ally is standing in
+        // but could never be caught by.
+        true
+    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        actor_has_recharge(encounter, caster_id, "breath_weapon")
+        if !actor_has_recharge(encounter, caster_id, "breath_weapon") {
+            return false;
+        }
+        // And there has to be somebody in the cone the ladder could
+        // still catch — see the medusa's gaze for why a creature
+        // already climbing one is not that somebody. Worth more here
+        // than there: this spends a recharge as well as an Action.
+        let Some(aim) = first_target_location(target_locations) else {
+            return false;
+        };
+        encounter
+            .enemy_area_targets(
+                caster_id,
+                AreaShape::Cone { length: CONE_30_FT },
+                aim,
+            )
+            .into_iter()
+            .any(|id| {
+                !encounter.staged_save_pending(id)
+                    && encounter
+                        .actors
+                        .get(&id)
+                        .is_some_and(|a| !a.has_condition(Condition::Petrified))
+            })
     }
     fn side_effects(
         &self,
