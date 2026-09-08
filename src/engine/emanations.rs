@@ -113,14 +113,14 @@ pub struct Emanation {
     /// the save has to be made again next round.
     pub grants_immunity_on_save: bool,
     /// RAW's "while it doesn't have the Incapacitated condition" — the
-    /// clause the pit fiend's aura carries and the three body-odour
-    /// traits do not.
+    /// clause the pit fiend's aura carries and the other three do not.
     ///
     /// The distinction is worth a field rather than a blanket rule,
     /// because it is the difference between something a creature *does*
     /// and something it *is*. A pit fiend's dread is projected and stops
-    /// when the fiend is stunned; a hezrou's reek is a fact about the
-    /// hezrou, and a hezrou lying paralysed on the floor still stinks.
+    /// when the fiend is stunned; a hezrou's reek and a sea hag's face
+    /// are facts about the creature, and a hezrou lying paralysed on the
+    /// floor still stinks.
     /// The paladin auras answer this the same way and always have — see
     /// `aura_emitters`, which gates every one of them on exactly this.
     pub requires_conscious_source: bool,

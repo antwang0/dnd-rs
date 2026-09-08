@@ -1116,8 +1116,23 @@ pub trait Action {
     /// to be valid. `None` disables the spatial check (non-targeted actions
     /// or actions that do their own range logic). Used both by the engine
     /// (validation) and by the UI (target picker filters by reach).
+    ///
+    /// **Defaults to the area's own length for a cone or a line**, and to
+    /// `None` for everything else, including a burst — see
+    /// `AreaShape::aim_reach` for why those two answers differ. A
+    /// projected area is aimed by naming a tile inside it, so its reach
+    /// and its length are the same number and declaring them separately
+    /// is two places to say one thing.
+    ///
+    /// The default is load-bearing rather than a convenience. An action
+    /// with no reach at all is one nothing measures: it validates
+    /// against a tile on the far side of the map, and — the reason this
+    /// was found — `EncounterInstance::is_ranged_engagement_option`
+    /// reads `reach_tiles` *first*, so a wizard whose only ranged
+    /// option was Lightning Bolt was marked stalemate-locked behind a
+    /// wall it could have shot straight over.
     fn reach_tiles(&self) -> Option<isize> {
-        None
+        self.targeting_schema().area_shape().and_then(|s| s.aim_reach())
     }
 
     /// The recharge pool this action is gated on, or `None` for the

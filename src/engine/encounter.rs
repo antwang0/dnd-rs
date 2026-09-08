@@ -12752,11 +12752,13 @@ impl EncounterInstance {
     /// board, and `is_combat_active` is the line the engine draws
     /// there.
     ///
-    /// Deliberately *not* gated on the emitter being conscious, which
-    /// is the one clause this shares no ground with the paladin auras
-    /// on. RAW makes their projection conditional ("you must be
+    /// Gated on the emitter being conscious only for the emanations
+    /// that say so — see `Emanation::requires_conscious_source`. RAW
+    /// makes the paladin auras' projection conditional ("you must be
     /// conscious to grant this bonus") because they are something the
-    /// paladin does; a stench is something a hezrou *is*.
+    /// paladin does, and makes the pit fiend's the same way; a stench
+    /// is something a hezrou *is*, and a paralysed hezrou still
+    /// stinks.
     fn apply_hostile_emanations(&mut self, actor_id: usize) {
         use crate::engine::emanations::Emanation;
         use crate::engine::side_effects::install_condition_with_link;
@@ -16981,6 +16983,14 @@ impl EncounterInstance {
         // a red dragon's only ranged option is its breath, and a
         // hard-coded `Burst` arm would have called a dragon on the
         // wrong side of a wall deadlocked.
+        //
+        // The `reach_tiles` gate above it is the other half, and the
+        // half that made this only half a fix when it was first
+        // written: a cone or a line that declared no reach was skipped
+        // here before the schema was ever consulted, so a wizard whose
+        // only ranged option was Lightning Bolt stayed deadlocked. That
+        // is why `Action::reach_tiles` now defaults to the area's own
+        // length rather than to `None`.
         attacker.actions.iter().any(|a| {
             let in_range = a.reach_tiles().is_some_and(|r| r > MELEE_REACH && dist <= r);
             if !in_range {

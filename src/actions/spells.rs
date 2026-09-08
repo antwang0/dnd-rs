@@ -10101,12 +10101,22 @@ impl Action for Sunbeam {
         );
         // RAW's sun-flare clause, on the same save the damage rode: a
         // creature that made it is dazzled and nothing more.
+        //
+        // `Rounds(1)` rather than `UntilStartOfNextTurn`, because RAW's
+        // clause is *"until the start of **your** next turn"* — the
+        // caster's — and the engine's `UntilStartOfNextTurn` is
+        // holder-relative: it lifts at the top of the *victim's* turn,
+        // which is the turn the blindness is supposed to ruin. Every
+        // creature in the line whose initiative sits after the caster's
+        // would have shrugged it off before rolling a single attack.
+        // The ghost's Horrific Visage encodes the same caster-relative
+        // round the same way, and for the same reason.
         push_condition_on_failed_save(
             &mut effects,
             caster_id,
             &saves,
             Condition::Blinded,
-            ConditionTimer::UntilStartOfNextTurn,
+            ConditionTimer::Rounds(1),
         );
         effects.push(Box::new(StartConcentration {
             caster_id,

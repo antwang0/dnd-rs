@@ -7993,6 +7993,27 @@ impl ActorInstance {
             || self.item_immunity_to(c)
     }
 
+    /// Overwrite a standing condition's timer without touching anything
+    /// else about it — its back-link above all.
+    ///
+    /// Written for one caller and narrow on purpose:
+    /// `engine::staged_saves` borrows a condition somebody else
+    /// installed, pins it for the length of the ladder, and has to give
+    /// it back. `add_condition` cannot do that — it merges timers by
+    /// taking the longer of the two, which is exactly what pinning
+    /// means and exactly what handing it back must undo — and the
+    /// remove-then-re-add pair cannot either, because `remove_condition`
+    /// drops the link and the spider on the other end of a web is what
+    /// that link *is*.
+    ///
+    /// No-op on a condition the actor does not have: this restores a
+    /// timer, it does not install one.
+    pub(crate) fn set_condition_timer(&mut self, c: Condition, timer: ConditionTimer) {
+        if let Some(slot) = self.conditions.get_mut(&c) {
+            *slot = timer;
+        }
+    }
+
     pub fn remove_condition(&mut self, c: Condition) -> bool {
         // The mirror of the install: RAW's cleanses for exhaustion —
         // Greater Restoration, a long rest — each say "reduce the

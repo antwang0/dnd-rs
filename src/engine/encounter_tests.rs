@@ -90549,23 +90549,24 @@ fn a_fear_emanation_records_the_creature_that_caused_it() {
     panic!("a DC 11 save fails somewhere in forty seeds");
 }
 
-/// A ladder touches only the condition it put there.
+/// A ladder hands back the condition it borrowed.
 ///
 /// A fighter already held in a giant spider's web, then caught by a
-/// basilisk's gaze, is on both — and when the ladder resolves it must
-/// leave the web exactly where it found it. The engine holds one
-/// instance of a condition per creature with no refcount, so a ladder
-/// that removed `Restrained` wholesale would cut the fighter free of
-/// the spider a round later: no escape check, no contest, and the
-/// spider's back-link gone with it.
+/// medusa's gaze, is on both — and when the ladder resolves it must
+/// leave the web where it found it. The engine holds one instance of a
+/// condition per creature with no refcount, so a ladder that removed
+/// `Restrained` wholesale would cut the fighter free of the spider a
+/// round later: no escape check, no contest, and the spider's back-link
+/// gone with it.
 ///
-/// The other half of the same rule is the *install*: `add_condition`
-/// merges timers by taking the longer, so writing the ladder's
-/// `Permanent` over the web's `Rounds(10)` would promote the web to
-/// permanent — a hold that outlives the thing holding it. The ladder
-/// installs nothing when the rung is already standing.
+/// The install is the other half, and it pulls the other way. The
+/// ladder pins the rung at `Permanent` for its duration — a borrowed
+/// one-round hold that expired mid-ladder would void the gaze silently
+/// — and remembers the clock it displaced so the resolution can put it
+/// back. Both halves are checked here: `Permanent` while the ladder is
+/// live, `Rounds(10)` again once it has resolved, on either branch.
 #[test]
-fn a_ladder_leaves_a_restraint_it_did_not_install() {
+fn a_ladder_hands_back_a_restraint_it_borrowed() {
     use crate::actions::monster_attacks::MEDUSA_PETRIFYING_GAZE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
@@ -90595,22 +90596,31 @@ fn a_ladder_leaves_a_restraint_it_did_not_install() {
         if !e.staged_save_pending(victim) {
             continue;
         }
-        // The web's timer was not promoted to permanent by the ladder
-        // writing over it.
+        // Pinned while the ladder is live, so nothing else's clock can
+        // run out from under the second save.
         assert_eq!(
             e.actors[&victim]
                 .conditions()
                 .get(&Condition::Restrained)
                 .copied(),
-            Some(ConditionTimer::Rounds(10)),
-            "the ladder must not rewrite somebody else's clock (seed {seed})"
+            Some(ConditionTimer::Permanent),
+            "the ladder pins the rung it is standing on (seed {seed})"
         );
         burn_a_round(&mut e);
         burn_a_round(&mut e);
         assert!(!e.staged_save_pending(victim), "the ladder resolved");
-        assert!(
-            e.actors[&victim].has_condition(Condition::Restrained),
-            "and the web is still there, on either branch (seed {seed})"
+        assert_eq!(
+            e.actors[&victim]
+                .conditions()
+                .get(&Condition::Restrained)
+                .copied(),
+            // Nine rather than ten, and ten rather than eight: the
+            // ladder hands back the clock it borrowed untouched — the
+            // two rounds it held the rung pinned are the documented
+            // overhang — and the round-end that resolved the ladder
+            // then ticks that clock once, like any other.
+            Some(ConditionTimer::Rounds(9)),
+            "and the web is back on its own clock, on either branch (seed {seed})"
         );
         return;
     }

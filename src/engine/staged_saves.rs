@@ -193,24 +193,37 @@ pub struct PendingStage {
     /// reach, healed, or to walk away, before the die that turns it to
     /// stone is rolled.
     pub opened_this_round: bool,
-    /// True when *this ladder* is what put the first condition on the
-    /// victim, rather than finding it already there.
+    /// The timer the first condition had *before* the ladder pinned it,
+    /// or `None` when the ladder installed the condition itself.
     ///
     /// The engine holds one instance of a condition per creature with
-    /// no refcount, so "remove the first rung when the ladder resolves"
-    /// is only safe for a rung the ladder owns. A fighter already
-    /// `Restrained` in a giant spider's web, then caught by a
-    /// basilisk's gaze, would otherwise be cut free of the web a round
-    /// later — no escape check, no contest, and the spider's back-link
-    /// gone with it. Same hazard `engine::attachment` documents for
-    /// `Blinded`, and the same answer: touch only what you put there.
+    /// no refcount, which makes both halves of the ladder's lifecycle
+    /// awkward and in opposite directions.
     ///
-    /// It is also why the install is skipped entirely when the
-    /// condition is already standing. `add_condition` merges timers by
-    /// taking the *longer* of the two, so writing this ladder's
-    /// `Permanent` over a web's `Rounds(10)` would promote the web to
-    /// permanent — a hold that outlives the creature holding it.
-    pub owns_first_condition: bool,
+    /// The ladder has to **pin** the rung: it always installs
+    /// `Permanent`, because a victim already `Restrained` on a
+    /// one-round timer from an otyugh's tentacle would otherwise shed
+    /// the condition before the second save came due, and the gorgon's
+    /// breath — an Action *and* a recharge — would produce no roll, no
+    /// log and no effect at all.
+    ///
+    /// And it has to **hand the rung back**: a fighter webbed by a
+    /// giant spider and then caught by a basilisk must not be cut free
+    /// of the web when the ladder resolves — no escape check, no
+    /// contest, and the spider's back-link gone with it. That is the
+    /// hazard `engine::attachment` documents for `Blinded`.
+    ///
+    /// So the ladder remembers what it overwrote. `None` means it put
+    /// the condition there and takes it away again; `Some(t)` means it
+    /// borrowed one and restores `t` through
+    /// `ActorInstance::set_condition_timer`, which writes the timer
+    /// without disturbing the link.
+    ///
+    /// The one thing that is not restored is elapsed time: a web with
+    /// four rounds left when the gaze landed gets four rounds back
+    /// rather than two. Two rounds of overhang on somebody else's
+    /// effect, in exchange for never silently voiding a boss's Action.
+    pub restored_timer: Option<ConditionTimer>,
 }
 
 impl EncounterInstance {
@@ -228,9 +241,10 @@ impl EncounterInstance {
     /// maintaining. A link here would offer the victim an Athletics
     /// contest against a basilisk that is not touching it.
     ///
-    /// If the victim is *already* under the first condition, nothing is
-    /// installed at all and the ladder simply records itself; see
-    /// `PendingStage::owns_first_condition` for both halves of why.
+    /// The rung is installed `Permanent` whether or not the victim was
+    /// already under it, and whatever timer it displaced is remembered
+    /// for the resolution to put back — see
+    /// `PendingStage::restored_timer` for both halves of why.
     ///
     /// A victim already on this ladder is left where it is: RAW says
     /// nothing about being caught twice, and re-opening would hand the
@@ -259,19 +273,20 @@ impl EncounterInstance {
         if victim.effectively_immune_to_condition(ladder.first) {
             return;
         }
-        let already_held = victim.has_condition(ladder.first);
-        if !already_held {
-            ApplyCondition {
-                actor_id: victim_id,
-                condition: ladder.first,
-                // No timer of its own: the ladder is what ends it, one
-                // way or the other, at the end of the victim's next
-                // turn. A `Rounds(n)` here would be a second clock
-                // racing the one that matters.
-                timer: ConditionTimer::Permanent,
-            }
-            .apply(self);
+        // Whatever clock the rung was already on, if any. Read before
+        // the install, which is about to overwrite it.
+        let restored_timer = victim.conditions().get(&ladder.first).copied();
+        ApplyCondition {
+            actor_id: victim_id,
+            condition: ladder.first,
+            // No timer of its own: the ladder is what ends it, one way
+            // or the other, at the end of the victim's next turn. A
+            // `Rounds(n)` here would be a second clock racing the one
+            // that matters — and a borrowed one that ran out first
+            // would void the ladder silently.
+            timer: ConditionTimer::Permanent,
         }
+        .apply(self);
         // The install can still have bounced — an aura suppressor, a
         // dynamic immunity the static check does not see. A ladder with
         // no first rung is not a ladder.
@@ -291,7 +306,7 @@ impl EncounterInstance {
                 source_id,
                 dc,
                 opened_this_round: true,
-                owns_first_condition: !already_held,
+                restored_timer,
             },
         );
     }
@@ -344,16 +359,19 @@ impl EncounterInstance {
             ladder.second,
         );
         self.staged_saves.remove(&victim_id);
-        // Only the rung this ladder put there — see
-        // `PendingStage::owns_first_condition`. A victim who was
-        // already webbed when the gaze caught it stays webbed, on
-        // either branch, which is both the safe answer and RAW's: the
-        // ladder replaces *its own* Restrained with the Petrified, and
-        // has nothing to say about the spider's.
-        if pending.owns_first_condition
-            && let Some(a) = self.actors.get_mut(&victim_id)
-        {
-            a.remove_condition(ladder.first);
+        // Hand the rung back, or take it away — see
+        // `PendingStage::restored_timer`. A victim who was already
+        // webbed when the gaze caught it stays webbed, on either
+        // branch, which is both the safe answer and RAW's: the ladder
+        // replaces *its own* Restrained with the Petrified and has
+        // nothing to say about the spider's.
+        if let Some(a) = self.actors.get_mut(&victim_id) {
+            match pending.restored_timer {
+                Some(timer) => a.set_condition_timer(ladder.first, timer),
+                None => {
+                    a.remove_condition(ladder.first);
+                }
+            }
         }
         if save.passed() {
             self.log(format!("  {}: {} {}.", ladder.name, name, ladder.escaped_flavor));
