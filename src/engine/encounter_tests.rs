@@ -27740,6 +27740,58 @@ fn a_readied_attack_fires_on_the_step_that_closes_the_distance() {
     assert!(!e.actors[&readier].can_consume_resource(Resource::Reaction));
 }
 
+/// Evasive Footwork covers a readied shot as well as an opportunity
+/// attack. RAW's window is "until you stop moving", and a readied
+/// attack that fires as the fighter steps into its arc catches them
+/// mid-step exactly as a swing at their back does.
+///
+/// The two dispatchers raise the guard independently and pay for it
+/// once, because the die comes out of the shared once-per-turn ledger
+/// rather than out of either dispatcher's own bookkeeping.
+#[test]
+fn evasive_footwork_answers_a_readied_shot_as_well_as_an_opportunity_attack() {
+    use crate::actions::class_features::{EVASIVE_FOOTWORK_TAG, SUPERIORITY_DICE_TAG};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let readier = e
+        .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let mover = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(15, 4), 0, 0)
+        .unwrap();
+    let reach = e
+        .best_readyable_attack(readier)
+        .and_then(|a| a.reach_tiles())
+        .expect("a veteran should have something to ready");
+    e.actors
+        .get_mut(&readier)
+        .unwrap()
+        .add_condition(Condition::Readied, ConditionTimer::UntilStartOfNextTurn);
+    let dice_before = e.actors[&mover].feature_charges_remaining(SUPERIORITY_DICE_TAG);
+
+    // Same geometry as `a_readied_attack_fires_on_the_step_that_closes_the_distance`:
+    // a step from outside the readier's reach to inside it.
+    let outside = Coordinate::new(4 + reach + 3, 4);
+    let inside = Coordinate::new(4 + reach, 4);
+    e.dispatch_readied_attacks(mover, outside, inside);
+
+    assert!(
+        e.actors[&mover].once_per_turn_used(EVASIVE_FOOTWORK_TAG),
+        "the readied shot is a swing taken while the fighter is moving"
+    );
+    assert!(
+        e.actors[&mover].feature_charges_remaining(SUPERIORITY_DICE_TAG) < dice_before,
+        "and it costs a superiority die"
+    );
+    assert!(
+        !e.actors[&mover].has_condition(Condition::EvasiveFootwork),
+        "the guard comes down when the step resolves"
+    );
+}
+
 /// The three reaction dispatchers read the same list of "may this
 /// creature swing at that one" rules as declared actions do.
 ///
@@ -43700,8 +43752,7 @@ fn lunging_attack_does_not_extend_ranged_reach() {
 }
 
 /// Commander's Strike (Fighter Battle Master): the ordered ally
-/// swings *now*, with advantage, spending the reaction the order
-/// hands them.
+/// swings *now*, with advantage, spending its own reaction.
 ///
 /// The swing is the whole maneuver. Before `try_fire_directed_attack`
 /// existed the action installed a help-grant and a spare reaction and
@@ -43723,13 +43774,6 @@ fn commanders_strike_makes_the_ally_swing_now() {
         .unwrap();
     e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
         .unwrap();
-    // Spend the ally's reaction first, so the swing can only happen
-    // via the fresh one the order grants.
-    let _ = e
-        .actors
-        .get_mut(&ally)
-        .unwrap()
-        .consume_resource(crate::engine::side_effects::Resource::Reaction);
     let dice_before = e.actors[&f].feature_charges_remaining(COMMANDERS_STRIKE_TAG);
     assert!(dice_before > 0);
     for ef in COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None) {
@@ -43747,13 +43791,51 @@ fn commanders_strike_makes_the_ally_swing_now() {
     );
     assert!(
         !e.actors[&ally].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
-        "the ordered swing spends the reaction the order granted"
+        "the ordered swing spends the ally's own reaction"
+    );
+}
+
+/// RAW: *"That creature can immediately use **its** reaction to make one
+/// weapon attack."* An ally who has already reacted this round has
+/// nothing to answer the order with, and the maneuver is refused before
+/// the superiority die is spent.
+///
+/// The action used to hand the ally a fresh reaction at the effect site,
+/// which meant the price was never paid: an ally with a reaction kept it
+/// and an ally without one was given a spare.
+#[test]
+fn commanders_strike_is_refused_by_an_ally_who_has_already_reacted() {
+    use crate::actions::class_features::COMMANDERS_STRIKE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let f = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+        .unwrap();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+        .unwrap();
+    let tv = vec![ally];
+    assert!(
+        COMMANDERS_STRIKE.validate_input(&e, f, Some(&tv), None, None),
+        "an ally holding its reaction can be commanded"
+    );
+    let _ = e
+        .actors
+        .get_mut(&ally)
+        .unwrap()
+        .consume_resource(crate::engine::side_effects::Resource::Reaction);
+    assert!(
+        !COMMANDERS_STRIKE.validate_input(&e, f, Some(&tv), None, None),
+        "an ally who has already reacted cannot"
     );
 }
 
 /// The other half: an ally with nothing in reach can't swing, so the
-/// order leaves them holding the reaction RAW gave them rather than
-/// burning it on nothing.
+/// order leaves them holding their reaction rather than burning it on
+/// nothing. RAW charges the reaction for the attack, not for the order.
 #[test]
 fn commanders_strike_leaves_the_reaction_when_nothing_is_in_reach() {
     use crate::actions::class_features::COMMANDERS_STRIKE;
@@ -43769,11 +43851,6 @@ fn commanders_strike_leaves_the_reaction_when_nothing_is_in_reach() {
     // Far enough that no melee weapon reaches.
     e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
         .unwrap();
-    let _ = e
-        .actors
-        .get_mut(&ally)
-        .unwrap()
-        .consume_resource(crate::engine::side_effects::Resource::Reaction);
     for ef in COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None) {
         ef.apply(&mut e);
     }

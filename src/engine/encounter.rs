@@ -8759,6 +8759,14 @@ impl EncounterInstance {
         // fixed order rather than in whatever order the map iterates.
         candidates.sort_unstable_by_key(|(id, ..)| *id);
 
+        // Same guard the opportunity-attack dispatcher raises, for the
+        // same RAW sentence: a readied shot that fires as the fighter
+        // steps into its arc catches them *while they are moving*, which
+        // is exactly the window Evasive Footwork covers. Raised lazily
+        // and stripped before this returns — see `try_evasive_footwork`.
+        // A move that trips both dispatchers raises twice and pays once,
+        // because the once-per-turn ledger is what the die comes out of.
+        let mut footwork_raised = false;
         for (reactor_id, attack, r_loc, r_size, reach) in candidates {
             if !self
                 .actors
@@ -8780,6 +8788,8 @@ impl EncounterInstance {
                 continue;
             }
 
+            footwork_raised |= self.try_evasive_footwork(mover_id);
+
             let reactor_name = self.actor_name(reactor_id);
             let mover_name = self.actor_name(mover_id);
             self.log(format!(
@@ -8800,13 +8810,20 @@ impl EncounterInstance {
             }
 
             self.cleanup_dead_actors();
+            // `break` rather than `return` so the footwork strip below
+            // still runs on a mover the readied shot dropped.
             if self
                 .actors
                 .get(&mover_id)
                 .is_none_or(|a| !a.is_combat_active())
             {
-                return;
+                break;
             }
+        }
+        if footwork_raised
+            && let Some(mover) = self.actors.get_mut(&mover_id)
+        {
+            mover.remove_condition(Condition::EvasiveFootwork);
         }
     }
 
@@ -8981,10 +8998,11 @@ impl EncounterInstance {
     /// you can expend one superiority die, rolling the die and adding
     /// the number rolled to your AC until you stop moving."*
     ///
-    /// Called by `dispatch_opportunity_attacks` at the instant a swing
-    /// becomes certain, and returns whether the mover is now guarded —
-    /// which is the caller's cue to take the guard back down when the
-    /// step is resolved.
+    /// Called by both mid-step reaction dispatchers — the opportunity
+    /// attack as the fighter leaves a reach envelope and the readied
+    /// shot as they enter one — at the instant a swing becomes certain.
+    /// Returns whether the mover is now guarded, which is the caller's
+    /// cue to take the guard back down when the step is resolved.
     ///
     /// **One die buys the whole move.** RAW's window closes when the
     /// creature stops moving, not when the first attacker misses, so a

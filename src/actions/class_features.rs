@@ -9367,18 +9367,21 @@ pub static MANEUVERING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| Maneuv
 /// and adding the number rolled to your AC until you stop moving."*
 /// There is nothing for a turn-ordered action list to offer and nothing
 /// for the AI to pick, so the feature fires where its trigger actually
-/// lives: `EncounterInstance::dispatch_opportunity_attacks`, on the step
-/// that provokes, and only once the swing is certain.
+/// lives: the two reaction dispatchers that can attack a creature
+/// mid-step — the opportunity attack as the fighter leaves a reach
+/// envelope and the readied shot as they enter one — on the step that
+/// provokes, and only once the swing is certain.
 ///
 /// **The lazy spend is the feature.** A fighter who declares this at the
 /// top of a move buys +4 AC against nothing most of the time; RAW's
 /// player spends it knowing full well they are about to be swung at,
 /// because the trigger and the knowledge arrive together. Firing at the
-/// dispatcher reproduces exactly that: the die is spent when an
-/// opportunity attack is already committed to, and a move that provokes
-/// nothing costs nothing. One die covers the whole move however many
-/// reactors it walks past, which is RAW's "until you stop moving" — the
-/// once-per-turn ledger is what carries that across the steps.
+/// dispatchers reproduces exactly that: the die is spent when a swing is
+/// already committed to, and a move that provokes nothing costs nothing.
+/// One die covers the whole move however many reactors it walks past and
+/// whichever dispatchers they answer through, which is RAW's "until you
+/// stop moving" — the once-per-turn ledger is what carries that across
+/// the steps.
 pub const EVASIVE_FOOTWORK_TAG: &str = "fighter.evasive_footwork";
 
 /// Class-feature tag for the Fighter's Rally Battle Master maneuver
@@ -9582,6 +9585,23 @@ impl Action for CommandersStrike {
         if ally.team() != actor.team() || !ally.is_combat_active() || target_id == caster_id {
             return false;
         }
+        // RAW: *"That creature can immediately use **its** reaction to
+        // make one weapon attack."* The reaction is the ally's own and
+        // is the whole price of the maneuver on their side, so an ally
+        // who has already Shielded, parried or opportunity-attacked this
+        // round cannot be commanded — the order arrives and there is
+        // nothing left to answer it with.
+        //
+        // This gate used to be absent and the effect used to hand the
+        // ally a fresh reaction on the way past, which meant the price
+        // was never actually paid: an ally with a reaction kept it (grant
+        // one, spend one) and an ally without one was given a spare. The
+        // comments called the grant RAW, which it is not — RAW gives the
+        // ally nothing but permission. Same reading as Maneuvering
+        // Attack's, which charges the reaction for the same sentence.
+        if !ally.can_consume_resource(Resource::Reaction) {
+            return false;
+        }
         // Also need a hostile enemy on the map for the ally to attack —
         // otherwise the order has no recipient. We find one inside the
         // side_effects body so the validation here just checks the ally
@@ -9628,12 +9648,12 @@ impl Action for CommandersStrike {
             if strike_target.is_some() {
                 ""
             } else {
-                " (no visible enemy; reaction granted but advantage idle)"
+                " (no visible enemy; the order finds no mark)"
             }
         ));
         // Install the help-grant on the ally — advantage on next swing
-        // against the chosen enemy (if any). Before the reaction is
-        // handed over, so the directed swing below rolls with it.
+        // against the chosen enemy (if any). Before the swing below, so
+        // the directed attack rolls with it.
         if let Some(target_id) = strike_target
             && let Some(ally) = encounter.actors.get_mut(&ally_id)
         {
@@ -9642,13 +9662,11 @@ impl Action for CommandersStrike {
                 against: target_id,
             }));
         }
-        // RAW hands the ally a reaction and has them spend it on one
-        // weapon attack immediately. Grant it in place rather than
-        // through the returned `GiveResource`, because the swing has to
-        // see it — side-effects apply after this builder returns.
-        if let Some(ally) = encounter.actors.get_mut(&ally_id) {
-            ally.give_resource(Resource::Reaction);
-        }
+        // The ally spends its own reaction on the swing —
+        // `try_fire_directed_attack` gates on it and consumes it, and
+        // `custom_validate_input` above has already refused an ally that
+        // has none. Nothing is granted here: RAW hands the ally
+        // permission, not a resource.
         if !crate::engine::attack::try_fire_directed_attack(
             encounter,
             ally_id,
@@ -9656,8 +9674,9 @@ impl Action for CommandersStrike {
             "command",
         ) {
             // Nothing in the ally's reach, or no melee weapon to swing.
-            // The reaction stays granted — RAW gave it to them, and the
-            // geometry is what refused the swing.
+            // The reaction stays unspent — the geometry is what refused
+            // the swing, and RAW charges the reaction for the attack
+            // rather than for the order.
             encounter.log(
                 "  commander's strike: the ally has nothing in reach; the reaction stands."
                     .to_string(),
