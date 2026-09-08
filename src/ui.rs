@@ -1012,9 +1012,15 @@ pub fn render_sideinfo(
     } else {
         0
     };
-    let action_lines: Vec<Line<'static>> = actions
+    // The pane's interior, in rows. Two of the pane's rows are its own
+    // border, and what is left is all the list gets.
+    let action_rows = area_split[2].height.saturating_sub(2) as usize;
+    let window = action_window(n_actions, highlight_idx, action_rows);
+    let mut action_lines: Vec<Line<'static>> = actions
         .iter()
         .enumerate()
+        .skip(window.start)
+        .take(window.end.saturating_sub(window.start))
         .map(|(i, action)| {
             let is_selected = i == highlight_idx;
             let prefix = if is_selected { "> " } else { "  " };
@@ -1065,12 +1071,125 @@ pub fn render_sideinfo(
             Line::from(spans)
         })
         .collect();
+    // The two ends of the list that did not fit, named rather than
+    // silently cut off. A player who cannot see that there is more below
+    // has no reason to press the key that would show it.
+    if window.more_above {
+        action_lines.insert(
+            0,
+            Line::from(Span::styled(
+                format!("  \u{2191} {} more", window.start),
+                Style::default().fg(Color::DarkGray),
+            )),
+        );
+    }
+    if window.more_below {
+        action_lines.push(Line::from(Span::styled(
+            format!("  \u{2193} {} more", n_actions - window.end),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(action_lines)
             .block(Block::default().borders(Borders::ALL).title("Actions")),
         area_split[2],
     );
 }
+
+/// What the action pane draws: a half-open slice of the action list, and
+/// whether either end of the list continues past it.
+///
+/// The two flags are computed here rather than derived from the slice at
+/// the draw site, because "there are more entries above" and "there is a
+/// row to say so in" are different questions, and only this function
+/// knows the answer to the second.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ActionWindow {
+    start: usize,
+    end: usize,
+    more_above: bool,
+    more_below: bool,
+}
+
+/// The half-open slice of the action list that fits in `rows` interior
+/// rows with the selected entry inside it.
+///
+/// The action pane used to render every action a creature had and let
+/// the terminal clip whatever ran past the border. That was survivable
+/// when a goblin had six; it is not now. A Battle Master carries every
+/// default action plus a weapon plus fourteen maneuvers, a wizard
+/// carries sixty spells, and the pane is a third of the sidebar — so on
+/// a 24-row terminal the list is six lines long and everything else
+/// simply was not on the screen. The selection wrapped past the fold and
+/// the player was choosing blind: the highlight bar was somewhere in the
+/// clipped remainder, and the panel looked identical whichever of the
+/// invisible fifty entries was live.
+///
+/// Windowing rather than paging, because the selection moves one step at
+/// a time: a page that flipped every `rows` entries would put the
+/// highlight at the top or the bottom edge on every flip, where a window
+/// that follows the cursor keeps its neighbours in view. Centred where
+/// there is room, flush at either end where there is not, which is what
+/// makes the top and bottom of a list feel like the top and bottom of a
+/// list rather than like the middle of one.
+///
+/// A marker row is reserved for each end that has entries beyond it, and
+/// only for those ends — a window flush against the top of the list
+/// spends the row it saves on one more action instead. That is the whole
+/// reason this returns a slice rather than a scroll offset: how many
+/// rows the content gets depends on which markers are showing, which
+/// depends on where the window is.
+fn action_window(total: usize, highlight: usize, rows: usize) -> ActionWindow {
+    if rows == 0 || total == 0 {
+        return ActionWindow::default();
+    }
+    if total <= rows {
+        return ActionWindow {
+            start: 0,
+            end: total,
+            more_above: false,
+            more_below: false,
+        };
+    }
+    // More entries than rows, so at least one marker wants a row. Start
+    // from a content height that assumes both, then grow it into
+    // whatever the markers turn out not to need — a window flush against
+    // an end pays for one marker, not two, and a pane too short to
+    // afford a marker at all spends every row on the list.
+    let mut content = rows.saturating_sub(2).max(1);
+    loop {
+        let start = window_start(total, highlight, content);
+        let end = start + content;
+        let used = content + usize::from(start > 0) + usize::from(end < total);
+        if used >= rows || content >= rows {
+            // The selection is what the pane is for, so it keeps its row
+            // and a marker that cannot be afforded is simply not drawn.
+            let spare = rows.saturating_sub(content);
+            let more_above = start > 0;
+            let more_below = end < total;
+            return ActionWindow {
+                start,
+                end,
+                more_above: more_above && spare > usize::from(more_below),
+                more_below: more_below && spare >= 1,
+            };
+        }
+        content += 1;
+    }
+}
+
+/// Where a window of `content` entries sits when it is centred on
+/// `highlight` and clamped to the list. Split out because
+/// `action_window` walks it once per candidate height.
+fn window_start(total: usize, highlight: usize, content: usize) -> usize {
+    let start = highlight.saturating_sub(content / 2);
+    if start + content > total {
+        total.saturating_sub(content)
+    } else {
+        start
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1100,11 +1219,22 @@ mod tests {
     /// lines and a martial's weapon sits well below the fold — a test
     /// that asserted on it there would be asserting about the fold.
     fn rendered_panel_tall(encounter: &EncounterInstance, height: u16) -> String {
+        rendered_panel_at(encounter, height, 0)
+    }
+
+    /// `rendered_panel_tall` with the selected action index as a
+    /// parameter, for the tests that read where the action pane's window
+    /// has scrolled to.
+    fn rendered_panel_at(
+        encounter: &EncounterInstance,
+        height: u16,
+        selected_action_idx: usize,
+    ) -> String {
         let mut terminal = Terminal::new(TestBackend::new(60, height)).expect("test backend");
         terminal
             .draw(|f| {
                 let area = f.area();
-                render_sideinfo(encounter, f, area, 0);
+                render_sideinfo(encounter, f, area, selected_action_idx);
             })
             .expect("draw");
         let buffer = terminal.backend().buffer().clone();
@@ -1616,6 +1746,110 @@ mod tests {
     /// statics — the goblin's scimitar *is* the fighter's — so a panel
     /// that printed it off the weapon alone would advertise
     /// "scimitar ·nick" to every goblin on the roster: a clause the
+    /// The action window keeps the selection on screen, never overruns
+    /// the pane, and always reserves a row for each marker it is about
+    /// to draw.
+    ///
+    /// Swept exhaustively over every (list length, selection, pane
+    /// height) the pane can plausibly be handed, because the arithmetic
+    /// has four branches and the interesting ones are the boundaries —
+    /// a window flush against either end, a pane one row tall, a list
+    /// exactly as long as the pane.
+    #[test]
+    fn the_action_window_always_holds_the_selection_and_fits_the_pane() {
+        for total in 0..40usize {
+            for rows in 0..16usize {
+                for highlight in 0..total.max(1) {
+                    let w = super::action_window(total, highlight, rows);
+                    let (start, end) = (w.start, w.end);
+                    assert!(start <= end, "{total}/{highlight}/{rows}: inverted window");
+                    assert!(end <= total, "{total}/{highlight}/{rows}: window past the end");
+                    if rows == 0 || total == 0 {
+                        assert_eq!((start, end), (0, 0));
+                        continue;
+                    }
+                    assert!(
+                        start <= highlight && highlight < end,
+                        "{total}/{highlight}/{rows}: the selection is off screen \
+                         ({start}..{end})"
+                    );
+                    // A marker is only ever claimed when there is more
+                    // list on that side to point at.
+                    assert!(!w.more_above || start > 0, "{total}/{highlight}/{rows}");
+                    assert!(!w.more_below || end < total, "{total}/{highlight}/{rows}");
+                    let markers = usize::from(w.more_above) + usize::from(w.more_below);
+                    assert!(
+                        (end - start) + markers <= rows,
+                        "{total}/{highlight}/{rows}: {} rows of content plus {markers} \
+                         markers overruns a {rows}-row pane",
+                        end - start
+                    );
+                    // Every row the pane has is used unless the whole
+                    // list fits — a window that left a row blank while
+                    // hiding an entry would be wasting the screen.
+                    if total > rows {
+                        assert_eq!(
+                            (end - start) + markers,
+                            rows,
+                            "{total}/{highlight}/{rows}: a row was left empty with \
+                             entries still hidden"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The pane follows the selection rather than clipping it. A fighter
+    /// carries far more actions than a short terminal can show, and the
+    /// entry the highlight is on has to be one of the ones drawn.
+    ///
+    /// Read off the rendered panel rather than off `action_window`,
+    /// because what is under test is the wiring: the window is computed
+    /// from the pane's own height, and the pane's height is a third of
+    /// whatever the sidebar was given.
+    #[test]
+    fn a_long_action_list_scrolls_to_the_selection_rather_than_clipping_it() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        let n = e
+            .peek_prompt()
+            .map(|p| p.actions().len())
+            .expect("the fighter should be holding the prompt");
+        assert!(
+            n > 20,
+            "this test needs a chassis whose list overruns a short pane (saw {n})"
+        );
+
+        // The first entry is on screen at selection 0, and the last
+        // entry is on screen when the selection is on it — which is the
+        // whole of what windowing buys and exactly what clipping lost.
+        let first = e.peek_prompt().unwrap().actions()[0].name().to_string();
+        let last = e.peek_prompt().unwrap().actions()[n - 1].name().to_string();
+        let top = rendered_panel_at(&e, 24, 0);
+        assert!(
+            top.contains(&first),
+            "the first action should be visible at selection 0:\n{top}"
+        );
+        let bottom = rendered_panel_at(&e, 24, n - 1);
+        assert!(
+            bottom.contains(&last),
+            "the last action should be visible when it is selected:\n{bottom}"
+        );
+        // …and the reader is told which way the rest of the list went.
+        assert!(
+            top.contains('\u{2193}'),
+            "a clipped tail should be announced:\n{top}"
+        );
+        assert!(
+            bottom.contains('\u{2191}'),
+            "a clipped head should be announced:\n{bottom}"
+        );
+    }
+
     /// player would plan around and that would never fire.
     #[test]
     fn the_action_list_names_a_mastery_property_only_for_a_trained_wielder() {
