@@ -90141,3 +90141,312 @@ fn a_dead_creature_is_not_still_turning_to_stone() {
     }
     panic!("a DC 11 save fails somewhere in forty seeds");
 }
+
+// ---------------------------------------------------------------------
+// The metallic dragons' second breath
+// ---------------------------------------------------------------------
+
+/// A brass dragon's sleep breath does not put anybody to sleep on the
+/// first failed save. It puts them on the ladder — Incapacitated now,
+/// asleep one more failure later — which is the whole shape of RAW's
+/// non-damaging breaths and the reason they can be at-will.
+#[test]
+fn a_sleep_breath_opens_a_ladder_and_does_not_finish_it() {
+    use crate::actors::creatures::dragons::ANCIENT_BRASS_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut caught = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(60, 30, &[], seed);
+        let dragon = e
+            .instantiate_creature(&ANCIENT_BRASS_DRAGON_TEMPLATE, Coordinate::new(4, 12), 1, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 14), 0, 0)
+            .unwrap();
+        let action = e.actors[&dragon]
+            .find_action("sleep breath")
+            .expect("a brass dragon breathes sleep");
+        let aim = e.actors[&goblin].location();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None);
+        assert!(aei.validate(&e), "a 90 ft cone reaches the goblin");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Asleep),
+            "one breath is never enough (seed {seed})"
+        );
+        if e.staged_save_pending(goblin) {
+            assert!(e.actors[&goblin].has_condition(Condition::Incapacitated));
+            caught = true;
+            break;
+        }
+    }
+    assert!(caught, "a DC 21 save fails somewhere in forty seeds");
+}
+
+/// A bronze dragon's repulsion breath throws you and knocks you down,
+/// and it is the one of the five that has no state to be already in —
+/// so it never refuses to fire.
+#[test]
+fn a_repulsion_breath_throws_its_victims_away_from_the_dragon() {
+    use crate::actors::creatures::dragons::ANCIENT_BRONZE_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut thrown = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(60, 30, &[], seed);
+        let dragon = e
+            .instantiate_creature(
+                &ANCIENT_BRONZE_DRAGON_TEMPLATE,
+                Coordinate::new(4, 12),
+                1,
+                0,
+            )
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        let action = e.actors[&dragon]
+            .find_action("repulsion breath")
+            .expect("a bronze dragon breathes repulsion");
+        let aim = e.actors[&goblin].location();
+        let before = e.actors[&goblin].location();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        if e.actors[&goblin].location() != before {
+            assert!(
+                e.actors[&goblin].location().x > before.x,
+                "away from the dragon, which is to the west"
+            );
+            assert!(e.actors[&goblin].has_condition(Condition::Prone));
+            thrown = true;
+            break;
+        }
+    }
+    assert!(thrown, "a DC 23 STR save fails somewhere in forty seeds");
+}
+
+/// The gate that lets these breaths be at-will: a dragon will not spend
+/// its Action re-breathing on creatures the breath has already caught.
+///
+/// RAW writes it on the gold's version — "each creature that *isn't
+/// currently affected by this breath*" — and it is the honest reading
+/// of the other four, whose second dose does nothing. It is also what
+/// keeps the AI from spending a dragon's every turn on a cone that has
+/// already landed.
+#[test]
+fn a_second_breath_refuses_to_fire_on_creatures_it_has_already_caught() {
+    use crate::actors::creatures::dragons::ANCIENT_COPPER_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 30, &[]);
+    let dragon = e
+        .instantiate_creature(&ANCIENT_COPPER_DRAGON_TEMPLATE, Coordinate::new(4, 12), 1, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 14), 0, 0)
+        .unwrap();
+    let action = e.actors[&dragon]
+        .find_action("slowing breath")
+        .expect("a copper dragon breathes slow");
+    let aim = e.actors[&goblin].location();
+    e.pop_prompt();
+
+    // With a live target it is a legal cast.
+    assert!(
+        ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None).validate(&e),
+        "one un-slowed goblin is reason enough"
+    );
+
+    // Once the only creature in the cone is already slowed, it is not.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Slowed, ConditionTimer::Rounds(5));
+    assert!(
+        !ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None).validate(&e),
+        "and a cone full of already-slowed creatures is not worth an Action"
+    );
+}
+
+/// A silver dragon's paralyzing breath rides the same ladder as the
+/// brass dragon's sleep, and ends somewhere much worse. Run to the
+/// bottom of it here, which also exercises the ladder's round-end tick
+/// through a real action rather than a hand-built one.
+#[test]
+fn a_paralyzing_breath_runs_all_the_way_down_the_ladder() {
+    use crate::actors::creatures::dragons::ANCIENT_SILVER_DRAGON_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(60, 30, &[], seed);
+        let dragon = e
+            .instantiate_creature(
+                &ANCIENT_SILVER_DRAGON_TEMPLATE,
+                Coordinate::new(4, 12),
+                1,
+                0,
+            )
+            .unwrap();
+        // A fighter rather than a goblin: an ancient dragon spends
+        // legendary actions at the end of everybody else's turn, and
+        // this test burns two whole rounds. A 7 HP victim does not
+        // survive to be asked whether it is still paralysed.
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 14), 0, 0)
+            .unwrap();
+        let action = e.actors[&dragon]
+            .find_action("paralyzing breath")
+            .expect("a silver dragon breathes paralysis");
+        let aim = e.actors[&victim].location();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        if !e.staged_save_pending(victim) {
+            continue;
+        }
+        assert!(e.actors[&victim].has_condition(Condition::Incapacitated));
+        burn_a_round(&mut e);
+        burn_a_round(&mut e);
+        // An ancient dragon spends legendary actions at the end of
+        // every other creature's turn, so the victim may simply have
+        // been killed in the two rounds this test needs. A creature
+        // that is down is deliberately *left* on the ladder rather than
+        // taken off it — see `tick_staged_save` — so there is nothing
+        // to assert on that seed.
+        if e.actors.get(&victim).is_none_or(|a| !a.is_combat_active()) {
+            continue;
+        }
+        assert!(!e.staged_save_pending(victim), "the ladder resolves");
+        // Paralysis on a second failure, or nothing at all on a save —
+        // never both, and never still merely incapacitated.
+        assert!(!e.actors[&victim].has_condition(Condition::Incapacitated));
+        return;
+    }
+    panic!("a DC 24 save fails on a standing fighter somewhere in forty seeds");
+}
+
+/// The chromatic half of the wheel has one breath and only one. A red
+/// dragon does not put anybody to sleep, weaken them or push them
+/// around; it breathes fire, and that is the whole of its kit.
+#[test]
+fn a_chromatic_dragon_has_no_second_breath() {
+    use crate::actors::creatures::dragons::ANCIENT_RED_DRAGON_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let dragon = e
+        .instantiate_creature(&ANCIENT_RED_DRAGON_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    for name in [
+        "sleep breath",
+        "repulsion breath",
+        "slowing breath",
+        "weakening breath",
+        "paralyzing breath",
+    ] {
+        assert!(
+            e.actors[&dragon].find_action(name).is_none(),
+            "a red dragon should not carry {name}"
+        );
+    }
+    assert!(e.actors[&dragon].find_action("fire breath").is_some());
+}
+
+/// A gold dragon's weakening breath leaves its victims swinging at half
+/// strength — RAW's damage penalty, rendered as the engine's
+/// `Enfeebled`, which is the clause it already had for the Arcane
+/// Archer's enfeebling arrow.
+#[test]
+fn a_weakening_breath_leaves_its_victims_swinging_at_half_strength() {
+    use crate::actors::creatures::dragons::ANCIENT_GOLD_DRAGON_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut weakened = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(60, 30, &[], seed);
+        let dragon = e
+            .instantiate_creature(&ANCIENT_GOLD_DRAGON_TEMPLATE, Coordinate::new(4, 12), 1, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 14), 0, 0)
+            .unwrap();
+        let action = e.actors[&dragon]
+            .find_action("weakening breath")
+            .expect("a gold dragon breathes weakness");
+        let aim = e.actors[&goblin].location();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(action, dragon, None, Some(vec![aim]), None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // The breath deals no damage at all — its entire content is the
+        // penalty, which is what makes it worth an Action alongside
+        // three Rends rather than instead of them.
+        assert_eq!(
+            e.actors[&goblin].hitpoints(),
+            e.actors[&goblin].max_hitpoints(),
+            "a weakening breath does no damage (seed {seed})"
+        );
+        if e.actors[&goblin].has_condition(Condition::Enfeebled) {
+            weakened = true;
+            break;
+        }
+    }
+    assert!(weakened, "a DC 24 STR save fails somewhere in forty seeds");
+}
+
+/// The AI reaches the second breath. It is an area action with no
+/// recharge, so it falls into the ordinary AoE rung — which is the
+/// point of giving it no recharge, and worth pinning because an ability
+/// nobody selects looks exactly like an ability nobody needed.
+#[test]
+fn the_ai_reaches_for_a_metallic_dragons_second_breath() {
+    use crate::actors::creatures::dragons::ANCIENT_BRASS_DRAGON_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let mut reached = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(60, 30, &[], seed);
+        let dragon = e
+            .instantiate_creature(&ANCIENT_BRASS_DRAGON_TEMPLATE, Coordinate::new(4, 12), 1, 0)
+            .unwrap();
+        // Two of them, because the area rung wants two bodies in the
+        // shape before it will spend a turn on one.
+        for (i, y) in [13usize, 15].into_iter().enumerate() {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(20, y as isize),
+                0,
+                i,
+            )
+            .unwrap();
+        }
+        // Spend the elemental breath, so the recharge-gated rung above
+        // the area one has nothing to fire and the question is only
+        // whether the second breath is reachable at all.
+        e.actors
+            .get_mut(&dragon)
+            .unwrap()
+            .spend_recharge("breath_weapon");
+        if let ControllerDecision::Act(aei) = SimpleAi.decide(&e, dragon)
+            && aei.action().name() == "sleep breath"
+        {
+            reached = true;
+            break;
+        }
+    }
+    assert!(
+        reached,
+        "an ancient brass dragon with two adventurers lined up and no \
+         elemental breath left should reach for its sleep cone"
+    );
+}

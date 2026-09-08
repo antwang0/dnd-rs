@@ -34,17 +34,27 @@
 //!     twenty spell lists, and the engine would need each of them
 //!     curated against what it actually implements; the breath and the
 //!     Rends are the whole of what a dragon does at the table.
-//!   - **The metallics' second breath.** Brass Sleep, Bronze Repulsion,
-//!     Copper Slowing, Gold Weakening, Silver Paralyzing — five distinct
-//!     save-or-suffer cones, each with its own condition, and the
-//!     `BreathWeapon` chassis they would ride shares the
-//!     `"breath_weapon"` recharge pool with the elemental breath, so a
-//!     metallic dragon would silently lose one of its two. Dropped
-//!     together rather than one at a time, which is the honest way to
-//!     drop five clauses that are the same clause.
 //!   - **Burrow and the in-lair bonuses.** The board has no third axis
 //!     for a burrowing dragon to use, and "4/Day in Lair" needs a lair
 //!     flag the engine reads for resistances rather than for actions.
+//!
+//! ## The metallics' second breath
+//!
+//! Brass Sleep, Bronze Repulsion, Copper Slowing, Gold Weakening,
+//! Silver Paralyzing — five save-or-suffer cones that deal no damage,
+//! one per metallic colour, at all four rungs. They lived in the list
+//! above for a while, dropped together on the grounds that the
+//! `BreathWeapon` chassis shares the `"breath_weapon"` recharge pool
+//! with the elemental breath and a metallic dragon would therefore
+//! silently lose one of its two.
+//!
+//! That was the right reading of the chassis and the wrong reading of
+//! RAW, which prints these *without* a recharge. The limiter it prints
+//! instead is the effect: "each creature that isn't currently affected
+//! by this breath". So they ride their own chassis
+//! (`monster_attacks::MetallicBreath`) with no recharge at all and a
+//! validator that refuses the cast when nobody in the cone would be
+//! newly affected — see `DRAGON_SECOND_BREATHS`.
 //!
 //! ## One divergence worth naming
 //!
@@ -56,6 +66,7 @@
 //! one failed save, and because a dragon that can be frightened by an
 //! adventurer is a strange thing to have written down.
 
+use crate::actions::monster_attacks::MetallicBreath;
 use crate::engine::areas::AreaShape;
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
@@ -2090,6 +2101,110 @@ static DRAGON_MULTIATTACKS: [Multiattack; 40] = [
     },
 ];
 
+/// The **second** breath, in `DRAGONS` order — the one that does no
+/// damage, and the one only metallic dragons have.
+///
+/// SRD 5.2 gives brass, bronze, copper, gold and silver dragons two
+/// breath actions apiece: the elemental one on Recharge 5–6 in
+/// `DRAGON_BREATHS`, and a control one with no recharge at all. The
+/// engine had every entry of the first table and no entry of this one,
+/// which is half the action list of twenty stat blocks — and the half
+/// that tells the two families apart. A brass dragon that cannot put
+/// anybody to sleep is a red dragon that breathes fire in a line.
+///
+/// `None` for all twenty chromatics, which is RAW: a black dragon has
+/// acid and nothing else. Written out as forty rows in the same order
+/// as its sibling table rather than as a lookup keyed on colour,
+/// because that is what makes the two indexable by the same `index` and
+/// checkable against each other row by row.
+///
+/// The DC on every metallic row is the one that colour's *primary*
+/// breath already uses, which is RAW and is asserted in the tests
+/// rather than derived here: a table that computed its own DCs would
+/// stop being a transcription of the stat blocks.
+static DRAGON_SECOND_BREATHS: [Option<MetallicBreath>; 40] = [
+    // Wyrmling Black.
+    None,
+    // Young Black.
+    None,
+    // Adult Black.
+    None,
+    // Ancient Black.
+    None,
+    // Wyrmling Blue.
+    None,
+    // Young Blue.
+    None,
+    // Adult Blue.
+    None,
+    // Ancient Blue.
+    None,
+    // Wyrmling Green.
+    None,
+    // Young Green.
+    None,
+    // Adult Green.
+    None,
+    // Ancient Green.
+    None,
+    // Wyrmling Red.
+    None,
+    // Young Red.
+    None,
+    // Adult Red.
+    None,
+    // Ancient Red.
+    None,
+    // Wyrmling White.
+    None,
+    // Young White.
+    None,
+    // Adult White.
+    None,
+    // Ancient White.
+    None,
+    // Wyrmling Brass: 15-ft Cone, DC 11 CON.
+    Some(MetallicBreath::sleep(11, 6)),
+    // Young Brass: 30-ft Cone, DC 14 CON.
+    Some(MetallicBreath::sleep(14, 12)),
+    // Adult Brass: 60-ft Cone, DC 18 CON.
+    Some(MetallicBreath::sleep(18, 24)),
+    // Ancient Brass: 90-ft Cone, DC 21 CON.
+    Some(MetallicBreath::sleep(21, 36)),
+    // Wyrmling Bronze: 30-ft Cone, DC 12 STR, pushed 30 ft.
+    Some(MetallicBreath::repulsion(12, 30)),
+    // Young Bronze: 30-ft Cone, DC 15 STR, pushed 40 ft.
+    Some(MetallicBreath::repulsion(15, 40)),
+    // Adult Bronze: 30-ft Cone, DC 19 STR, pushed 60 ft.
+    Some(MetallicBreath::repulsion(19, 60)),
+    // Ancient Bronze: 30-ft Cone, DC 23 STR, pushed 60 ft.
+    Some(MetallicBreath::repulsion(23, 60)),
+    // Wyrmling Copper: 15-ft Cone, DC 11 CON.
+    Some(MetallicBreath::slowing(11, 6)),
+    // Young Copper: 30-ft Cone, DC 14 CON.
+    Some(MetallicBreath::slowing(14, 12)),
+    // Adult Copper: 60-ft Cone, DC 18 CON.
+    Some(MetallicBreath::slowing(18, 24)),
+    // Ancient Copper: 90-ft Cone, DC 22 CON.
+    Some(MetallicBreath::slowing(22, 36)),
+    // Wyrmling Gold: 15-ft Cone, DC 13 STR.
+    Some(MetallicBreath::weakening(13, 6)),
+    // Young Gold: 30-ft Cone, DC 17 STR.
+    Some(MetallicBreath::weakening(17, 12)),
+    // Adult Gold: 60-ft Cone, DC 21 STR.
+    Some(MetallicBreath::weakening(21, 24)),
+    // Ancient Gold: 90-ft Cone, DC 24 STR.
+    Some(MetallicBreath::weakening(24, 36)),
+    // Wyrmling Silver: 15-ft Cone, DC 13 CON.
+    Some(MetallicBreath::paralyzing(13, 6)),
+    // Young Silver: 30-ft Cone, DC 17 CON.
+    Some(MetallicBreath::paralyzing(17, 12)),
+    // Adult Silver: 60-ft Cone, DC 20 CON.
+    Some(MetallicBreath::paralyzing(20, 24)),
+    // Ancient Silver: 90-ft Cone, DC 24 CON.
+    Some(MetallicBreath::paralyzing(24, 36)),
+];
+
 /// Build the template for `DRAGONS[index]`.
 ///
 /// The whole ladder in one function, which is the point: every question
@@ -2103,6 +2218,11 @@ fn dragon_template(index: usize) -> CreatureTemplate {
     actions.push(&DRAGON_MULTIATTACKS[index]);
     actions.push(&DRAGON_RENDS[index]);
     actions.push(&DRAGON_BREATHS[index]);
+    // The metallic dragons' second, damageless breath. `None` on every
+    // chromatic — see `DRAGON_SECOND_BREATHS`.
+    if let Some(second) = &DRAGON_SECOND_BREATHS[index] {
+        actions.push(second);
+    }
     if row.age.is_legendary() {
         actions.push(&*FRIGHTFUL_PRESENCE);
     }
@@ -2698,4 +2818,115 @@ mod tests {
             ]
         );
     }
+
+    /// Only the metallics carry a second breath, and every metallic
+    /// carries one — RAW's cleanest split between the two families, and
+    /// half of twenty stat blocks' action lists.
+    #[test]
+    fn every_metallic_dragon_has_a_second_breath_and_no_chromatic_does() {
+        const METALLIC: [DragonColor; 5] = [
+            DragonColor::Brass,
+            DragonColor::Bronze,
+            DragonColor::Copper,
+            DragonColor::Gold,
+            DragonColor::Silver,
+        ];
+        for (i, row) in DRAGONS.iter().enumerate() {
+            let metallic = METALLIC.contains(&row.color);
+            assert_eq!(
+                DRAGON_SECOND_BREATHS[i].is_some(),
+                metallic,
+                "{} ({:?} {:?})",
+                DRAGON_NAMES[i],
+                row.age,
+                row.color
+            );
+        }
+    }
+
+    /// A second breath uses the same DC as the dragon's first, at every
+    /// age and in every colour — which is RAW, and which is the one
+    /// number in the table most likely to be mistyped, since it is the
+    /// only one that is not visible from the row's own comment.
+    #[test]
+    fn a_second_breath_shares_the_first_breaths_dc() {
+        for (i, second) in DRAGON_SECOND_BREATHS.iter().enumerate() {
+            let Some(second) = second else { continue };
+            assert_eq!(
+                second.dc, DRAGON_BREATHS[i].dc,
+                "{} breathes at DC {} and {} at DC {}",
+                DRAGON_NAMES[i],
+                DRAGON_BREATHS[i].dc,
+                second.display_name,
+                second.dc
+            );
+        }
+    }
+
+    /// The second breath reaches further with every rung, exactly as the
+    /// first does — with the bronze's repulsion as the deliberate
+    /// exception RAW prints: thirty feet of cone at every age, and what
+    /// grows is how far it throws you.
+    #[test]
+    fn a_second_breath_grows_with_the_dragon_except_the_bronzes() {
+        for color in COLORS {
+            let mut last = 0isize;
+            for age in AGES {
+                let i = DRAGONS
+                    .iter()
+                    .position(|r| r.color == color && r.age == age)
+                    .expect("every cell is filled");
+                let Some(second) = &DRAGON_SECOND_BREATHS[i] else {
+                    continue;
+                };
+                if color == DragonColor::Bronze {
+                    assert_eq!(
+                        second.cone,
+                        crate::actions::monster_attacks::CONE_30_FT,
+                        "a bronze's repulsion is thirty feet at every age"
+                    );
+                    continue;
+                }
+                assert!(second.cone >= last, "{:?} {:?}", age, color);
+                last = second.cone;
+            }
+        }
+    }
+
+    /// Both breaths reach the instantiated creature under the names a
+    /// player would type, and the second one is not gated on the
+    /// recharge the first one spends.
+    #[test]
+    fn a_metallic_dragon_carries_both_of_its_breaths() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::Coordinate;
+
+        for (i, second) in DRAGON_SECOND_BREATHS.iter().enumerate() {
+            let Some(second) = second else { continue };
+            let a = ActorInstance::from_creature_template(
+                all_dragon_templates()[i],
+                Coordinate::new(0, 0),
+                1,
+                &mut FastRandRoller::with_seed(0),
+                0,
+            )
+            .unwrap();
+            assert!(
+                a.find_action(DRAGON_BREATHS[i].name()).is_some(),
+                "{} should carry its elemental breath",
+                DRAGON_NAMES[i]
+            );
+            let found = a
+                .find_action(second.display_name)
+                .unwrap_or_else(|| panic!("{} should carry {}", DRAGON_NAMES[i], second.display_name));
+            assert!(
+                found.recharge_key().is_none(),
+                "{}'s {} is at-will in RAW",
+                DRAGON_NAMES[i],
+                second.display_name
+            );
+        }
+    }
+
 }

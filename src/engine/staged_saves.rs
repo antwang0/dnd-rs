@@ -122,6 +122,59 @@ pub static PETRIFICATION: StagedSave = StagedSave {
     lost_flavor: "turns to stone",
 };
 
+/// The brass dragon's **Sleep Breath** ladder. RAW: *"Failure: The
+/// target has the Incapacitated condition until the end of its next
+/// turn, at which point it repeats the save. Second Failure: The target
+/// has the Unconscious condition for 1 minute … This effect ends for
+/// the target if it takes damage or a creature within 5 feet of it
+/// takes an action to wake it."*
+///
+/// The second rung is `Asleep` rather than `Unconscious`, which is the
+/// engine's distinction and exactly the one RAW's last sentence draws:
+/// both put a creature on the floor, and only one of them ends the
+/// moment somebody hits it. A brass dragon that puts the party to sleep
+/// has bought a round, not the fight.
+pub static SLEEP_BREATH: StagedSave = StagedSave {
+    name: "sleep breath",
+    ability: AbilityScoreType::Constitution,
+    first: Condition::Incapacitated,
+    second: Condition::Asleep,
+    // RAW's minute, at the engine's six seconds to the round. Longer
+    // than the petrification rung can afford to be, because this one
+    // ends the moment anybody lands a blow.
+    second_timer: ConditionTimer::Rounds(10),
+    caught_flavor: "sags, eyelids heavy",
+    escaped_flavor: "shakes the drowsiness off",
+    lost_flavor: "drops where they stand, fast asleep",
+};
+
+/// The silver dragon's **Paralyzing Breath** ladder. RAW: *"First
+/// Failure: The target has the Incapacitated condition until the end of
+/// its next turn, when it repeats the save. Second Failure: The target
+/// has the Paralyzed condition, and it repeats the save at the end of
+/// each of its turns … After 1 minute, it succeeds automatically."*
+///
+/// The same two rungs as the brass dragon's sleep with a crueller
+/// second: paralysis auto-fails Strength and Dexterity saves and makes
+/// every melee hit a critical, and unlike sleep it does not break when
+/// somebody hits you — which is the whole reason a silver dragon
+/// breathes this second and its cold first.
+///
+/// RAW's per-turn repeat on the second rung collapses into the timer,
+/// the way every other "repeats the save each turn" outside
+/// `ROUND_END_SAVES` does in this engine: that table is anchored on a
+/// concentrating caster, and a dragon is not concentrating.
+pub static PARALYZING_BREATH: StagedSave = StagedSave {
+    name: "paralyzing breath",
+    ability: AbilityScoreType::Constitution,
+    first: Condition::Incapacitated,
+    second: Condition::Paralyzed,
+    second_timer: ConditionTimer::Rounds(3),
+    caught_flavor: "stiffens as the frost bites",
+    escaped_flavor: "forces their limbs back under control",
+    lost_flavor: "freezes solid where they stand",
+};
+
 /// A ladder the encounter is part-way through on one creature: which
 /// one, who opened it, and at what DC.
 #[derive(Debug, Clone, Copy)]

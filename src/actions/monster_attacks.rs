@@ -11992,6 +11992,325 @@ pub static GORGON_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
+
+// ─── Metallic dragon second breaths ──────────────────────────────────
+
+/// What a metallic dragon's *second* breath does to a creature that
+/// fails its save.
+///
+/// Five colours, five clauses, one chassis — because everything else
+/// about them is identical. Each is a cone out of the dragon's mouth
+/// with a save and no damage at all; what differs is the sentence after
+/// "Failure:".
+#[derive(Debug, Clone, Copy)]
+pub enum MetallicBreathEffect {
+    /// Brass and silver: SRD 5.2's two-stage ladder — see
+    /// `crate::engine::staged_saves`.
+    Ladder(&'static crate::engine::staged_saves::StagedSave),
+    /// Bronze's **Repulsion Breath**: *"the target is pushed up to N
+    /// feet straight away from the dragon and has the Prone
+    /// condition."*
+    Repulse { push_feet: u32 },
+    /// Copper's **Slowing Breath**: *"the target can't take Reactions;
+    /// its Speed is halved; and it can take either an action or a Bonus
+    /// Action on its turn, not both. This effect lasts until the end of
+    /// its next turn."* Which is the `Slowed` condition, clause for
+    /// clause — the engine grew it for the Slow spell, whose second
+    /// paragraph is the same sentence.
+    Slow,
+    /// Gold's **Weakening Breath**: *"the target has Disadvantage on
+    /// Strength-based D20 Tests and subtracts 1dN from its damage
+    /// rolls."*
+    ///
+    /// Modelled as `Enfeebled`, which halves the holder's weapon damage
+    /// rather than subtracting a die. A halving is the harsher reading
+    /// at the top of the ladder and the gentler one at the bottom, and
+    /// it is the clause the engine already has; the disadvantage half
+    /// is not modelled, because nothing in the engine rolls a
+    /// Strength-based check often enough for it to be felt.
+    Weaken,
+}
+
+impl MetallicBreathEffect {
+    /// The condition a creature already carrying it would gain nothing
+    /// from — RAW's *"each creature that isn't currently affected by
+    /// this breath"* on the gold's version, and the honest answer for
+    /// the other four, whose second application is a no-op the dragon
+    /// should not be spending its Action on.
+    ///
+    /// `None` for the repulsion breath, which does something to a
+    /// creature every single time: there is no state to be already in,
+    /// only sixty feet of floor to be thrown across.
+    fn redundant_when(self) -> Option<Condition> {
+        match self {
+            MetallicBreathEffect::Ladder(l) => Some(l.first),
+            MetallicBreathEffect::Repulse { .. } => None,
+            MetallicBreathEffect::Slow => Some(Condition::Slowed),
+            MetallicBreathEffect::Weaken => Some(Condition::Enfeebled),
+        }
+    }
+}
+
+/// The second breath every **metallic** dragon has and no chromatic one
+/// does — the one that does not deal damage.
+///
+/// SRD 5.2 gives brass, bronze, copper, gold and silver dragons two
+/// breath actions apiece: the elemental one on Recharge 5–6, and a
+/// control one with no recharge at all. The engine had the first of
+/// each and none of the second, which is half of twenty stat blocks'
+/// action lists — and the more characterful half. A brass dragon that
+/// cannot put anybody to sleep is a red dragon that breathes fire in a
+/// line.
+///
+/// **No recharge, deliberately.** RAW prints these without one, and the
+/// limiter it prints instead is the effect itself: a creature already
+/// asleep, already slowed, already weakened or already stiffening gains
+/// nothing from a second dose, and `custom_validate_input` refuses the
+/// cast when *nobody* in the cone would be newly affected. That is
+/// RAW's own gate on the gold's version ("each creature that isn't
+/// currently affected by this breath") applied to all five, and it is
+/// also what stops the AI spending a dragon's Action every round
+/// re-breathing on two creatures it has already put down.
+///
+/// `deals_damage` is false on all five. They deal none, and the flag is
+/// what keeps the focus-fire lane from ranking a sleep cone as a way to
+/// whittle somebody's hit points down.
+pub struct MetallicBreath {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    /// The cone's length in tiles. RAW's ladder for four of the five is
+    /// the age ladder — 15 / 30 / 60 / 90 feet — and the bronze's
+    /// repulsion is thirty feet at every age.
+    pub cone: isize,
+    pub effect: MetallicBreathEffect,
+}
+
+impl MetallicBreath {
+    /// Brass — Sleep Breath.
+    pub const fn sleep(dc: i32, cone: isize) -> Self {
+        Self {
+            display_name: "sleep breath",
+            aliases: &["sleep", "sb"],
+            save_ability: AbilityScoreType::Constitution,
+            dc,
+            cone,
+            effect: MetallicBreathEffect::Ladder(
+                &crate::engine::staged_saves::SLEEP_BREATH,
+            ),
+        }
+    }
+
+    /// Silver — Paralyzing Breath.
+    pub const fn paralyzing(dc: i32, cone: isize) -> Self {
+        Self {
+            display_name: "paralyzing breath",
+            aliases: &["paralyze", "pzb"],
+            save_ability: AbilityScoreType::Constitution,
+            dc,
+            cone,
+            effect: MetallicBreathEffect::Ladder(
+                &crate::engine::staged_saves::PARALYZING_BREATH,
+            ),
+        }
+    }
+
+    /// Bronze — Repulsion Breath. Thirty feet of cone at every age; what
+    /// grows is how far it throws you.
+    pub const fn repulsion(dc: i32, push_feet: u32) -> Self {
+        Self {
+            display_name: "repulsion breath",
+            aliases: &["repulse", "rb"],
+            save_ability: AbilityScoreType::Strength,
+            dc,
+            cone: CONE_30_FT,
+            effect: MetallicBreathEffect::Repulse { push_feet },
+        }
+    }
+
+    /// Copper — Slowing Breath.
+    pub const fn slowing(dc: i32, cone: isize) -> Self {
+        Self {
+            display_name: "slowing breath",
+            aliases: &["slowbreath", "slb"],
+            save_ability: AbilityScoreType::Constitution,
+            dc,
+            cone,
+            effect: MetallicBreathEffect::Slow,
+        }
+    }
+
+    /// Gold — Weakening Breath.
+    pub const fn weakening(dc: i32, cone: isize) -> Self {
+        Self {
+            display_name: "weakening breath",
+            aliases: &["weaken", "wkb"],
+            save_ability: AbilityScoreType::Strength,
+            dc,
+            cone,
+            effect: MetallicBreathEffect::Weaken,
+        }
+    }
+
+    fn shape(&self) -> AreaShape {
+        AreaShape::Cone { length: self.cone }
+    }
+
+    /// Everyone in the cone this breath could still do something to.
+    /// Shared by the validator and the resolver so the two cannot
+    /// disagree about who is worth breathing on.
+    fn live_targets(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        aim: Coordinate,
+    ) -> Vec<usize> {
+        let redundant = self.effect.redundant_when();
+        encounter
+            .enemy_area_targets(caster_id, self.shape(), aim)
+            .into_iter()
+            .filter(|id| {
+                let Some(a) = encounter.actors.get(id) else {
+                    return false;
+                };
+                match redundant {
+                    // Already under this breath, or already climbing
+                    // the ladder it opens.
+                    Some(c) => !a.has_condition(c) && !encounter.staged_save_pending(*id),
+                    None => true,
+                }
+            })
+            .collect()
+    }
+}
+
+impl Action for MetallicBreath {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Cone { length: self.cone }
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(aim) = first_target_location(target_locations) else {
+            return false;
+        };
+        !self.live_targets(encounter, caster_id, aim).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+
+        let Some(aim) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let origin = encounter.area_origin(caster_id, self.shape(), aim);
+        encounter.log(format!(
+            "  {}: a {} ft cone (DC {} {})",
+            self.display_name,
+            crate::engine::util::feet_from_tiles(self.cone.max(0) as u32),
+            self.dc,
+            self.save_ability,
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in self.live_targets(encounter, caster_id, aim) {
+            let against = match self.effect {
+                MetallicBreathEffect::Ladder(l) => l.first,
+                MetallicBreathEffect::Repulse { .. } => Condition::Prone,
+                MetallicBreathEffect::Slow => Condition::Slowed,
+                MetallicBreathEffect::Weaken => Condition::Enfeebled,
+            };
+            let save = encounter.roll_save_against_caster_vs_condition(
+                tid,
+                self.save_ability,
+                self.dc,
+                caster_id,
+                against,
+            );
+            if save.passed() {
+                continue;
+            }
+            match self.effect {
+                MetallicBreathEffect::Ladder(ladder) => {
+                    // Opened on the spot rather than queued: the ladder
+                    // writes an encounter ledger as well as installing
+                    // a condition, and only the encounter can do that.
+                    encounter.begin_staged_save(tid, caster_id, self.dc, ladder);
+                }
+                MetallicBreathEffect::Repulse { push_feet } => {
+                    // Pushed away from the cone's apex, which is where
+                    // the wind is coming from, and then knocked down.
+                    effects.push(Box::new(PushActor {
+                        actor_id: tid,
+                        from: origin,
+                        max_tiles: crate::engine::util::tiles_from_feet(push_feet),
+                    }));
+                    effects.push(Box::new(
+                        crate::engine::side_effects::ApplyCondition {
+                            actor_id: tid,
+                            condition: Condition::Prone,
+                            timer: ConditionTimer::Permanent,
+                        },
+                    ));
+                }
+                MetallicBreathEffect::Slow => {
+                    effects.push(Box::new(
+                        crate::engine::side_effects::ApplyCondition {
+                            actor_id: tid,
+                            condition: Condition::Slowed,
+                            // RAW's "until the end of its next turn".
+                            timer: ConditionTimer::Rounds(1),
+                        },
+                    ));
+                }
+                MetallicBreathEffect::Weaken => {
+                    effects.push(Box::new(
+                        crate::engine::side_effects::ApplyCondition {
+                            actor_id: tid,
+                            condition: Condition::Enfeebled,
+                            // RAW lets the target repeat the save at
+                            // the end of each of its turns. The engine's
+                            // repeated-save table is anchored on a
+                            // concentrating caster and a dragon is not
+                            // concentrating, so the escape collapses
+                            // into a short timer — three rounds, which
+                            // is about what a middling save buys.
+                            timer: ConditionTimer::Rounds(3),
+                        },
+                    ));
+                }
+            }
+        }
+        effects
+    }
+}
+
 /// Gorgon **Petrifying Breath** — RAW's 30-foot Cone at DC 15, on the
 /// two-stage ladder every petrification in SRD 5.2 shares: a first
 /// failure stiffens, and a second, at the end of the victim's next
