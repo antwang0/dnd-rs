@@ -2980,18 +2980,34 @@ pub enum Condition {
     ///
     /// The attacker's half. The victim's half is `Wounded`.
     Wounding,
-    /// Cut by a **Sword of Wounding** — RAW's *"unable to regain Hit
-    /// Points"*.
+    /// A wound that will not close — 5e's *"can't regain Hit Points"*,
+    /// wherever it comes from.
     ///
     /// Read at `ActorInstance::can_regain_hitpoints`, the one chokepoint
-    /// every heal in the engine passes through, alongside Chill Touch's
-    /// round-long version of the same clause. RAW's hour collapses to
-    /// ten rounds, the engine's standing stand-in for any duration
-    /// longer than a fight; RAW's end-of-turn repeat save is not
-    /// modeled, which makes the wound strictly worse than RAW for as
-    /// long as it lasts and strictly shorter than RAW's hour. The two
-    /// errors point opposite ways and the fight-scale one is the one a
-    /// player can see.
+    /// every heal in the engine passes through, through the
+    /// `NO_HEAL_CONDITIONS` cohort it shares with Chill Touch's
+    /// round-long version of the same clause.
+    ///
+    /// Two sources, and they are deliberately one condition. The clause
+    /// is the same sentence in both books:
+    ///
+    ///   - **Sword of Wounding** (Rare weapon): "must succeed on a DC 15
+    ///     Constitution saving throw or be unable to regain Hit Points
+    ///     for 1 hour". RAW's hour collapses to ten rounds, the engine's
+    ///     standing stand-in for any duration longer than a fight; RAW's
+    ///     end-of-turn repeat save is not modeled, which makes the wound
+    ///     strictly worse than RAW while it lasts and strictly shorter
+    ///     than RAW's hour. The two errors point opposite ways and the
+    ///     fight-scale one is the one a player can see.
+    ///   - **Bearded Devil** (*Beard*): "the target has the Poisoned
+    ///     condition until the start of the devil's next turn. Until
+    ///     this poison ends, the target can't regain Hit Points." Rides
+    ///     the beard's own save on the same timer as its Poisoned, which
+    ///     is what RAW's "until this poison ends" says.
+    ///
+    /// Naming it for the effect rather than for the sword is what let
+    /// the second source be a one-line change instead of a second
+    /// condition doing the same job under another name.
     Wounded,
     /// A **Shrieker Fungus** that has gone off — SRD 5.2's *"The shrieker
     /// emits a shriek audible within 300 feet of itself for 1 minute or

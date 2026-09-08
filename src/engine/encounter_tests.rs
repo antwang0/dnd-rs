@@ -91459,3 +91459,55 @@ fn a_resistance_potion_answers_its_own_element_and_not_the_rest() {
         e.messages().join("\n")
     );
 }
+
+/// A bearded devil's beard poisons *and* seals the wound, on one save
+/// and one timer.
+///
+/// The two halves are one RAW sentence — "the target has the Poisoned
+/// condition… Until this poison ends, the target can't regain Hit
+/// Points" — and pinning them together is the point: a rider that
+/// landed the poison and forgot the wound would pass any test that only
+/// looks for the Poisoned flag, which is the shape the devil shipped in
+/// for years.
+///
+/// Sweeps seeds because the beard rides a save, and asserts both flags
+/// on the same swing rather than accepting either.
+#[test]
+fn the_bearded_devils_beard_seals_the_wound_it_opens() {
+    use crate::actions::monster_attacks::BEARDED_DEVIL_BEARD;
+    use crate::actors::creatures::bearded_devils::BEARDED_DEVIL_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+
+    let mut saw_the_wound = false;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let devil = e
+            .instantiate_creature(&BEARDED_DEVIL_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        for ef in BEARDED_DEVIL_BEARD.execute(&mut e, devil, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if !e.actors[&victim].has_condition(Condition::Poisoned) {
+            continue;
+        }
+        saw_the_wound = true;
+        assert!(
+            e.actors[&victim].has_condition(Condition::Wounded),
+            "seed {seed}: the poison landed and the wound did not"
+        );
+        assert!(
+            !e.actors[&victim].can_regain_hitpoints(),
+            "seed {seed}: an infernal wound that a Cure Wounds closes is not one"
+        );
+        break;
+    }
+    assert!(
+        saw_the_wound,
+        "forty seeds should land at least one beard on a fighter"
+    );
+}

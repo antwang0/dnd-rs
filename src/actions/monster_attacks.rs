@@ -2082,6 +2082,25 @@ pub struct WeaponWithSaveCondition {
     /// and no "target fails the save" line should appear for a hold
     /// that was never on offer.
     pub max_target_size: Option<Size>,
+    /// A second condition the same failed save installs, or `None` for
+    /// the forty-odd riders that land one thing.
+    ///
+    /// RAW writes some riders as one sentence with two consequences —
+    /// the bearded devil's beard is "the target has the Poisoned
+    /// condition… Until this poison ends, the target can't regain Hit
+    /// Points", which is one save, one duration, and two flags. The
+    /// alternative to this column was a second chassis, or a
+    /// hand-written `Action` impl per creature, for a clause that is
+    /// otherwise identical to the one already here.
+    ///
+    /// Installed with the *same* timer as `condition`, deliberately:
+    /// every RAW clause of this shape ties the second effect to the
+    /// first's duration ("until this poison ends"), and a rider whose
+    /// halves could expire separately would need a way to say which
+    /// outlives which — which no stat block on the roster asks for.
+    ///
+    /// Set with `and_also`.
+    pub also_installs: Option<Condition>,
 }
 
 impl WeaponWithSaveCondition {
@@ -2116,6 +2135,7 @@ impl WeaponWithSaveCondition {
             timer,
             rider_name,
             max_target_size: None,
+            also_installs: None,
         }
     }
 
@@ -2153,6 +2173,7 @@ impl WeaponWithSaveCondition {
             timer,
             rider_name,
             max_target_size: None,
+            also_installs: None,
         }
     }
 
@@ -2161,6 +2182,13 @@ impl WeaponWithSaveCondition {
     /// the gate is a builder rather than another positional argument.
     pub const fn against_at_most(mut self, max: Size) -> Self {
         self.max_target_size = Some(max);
+        self
+    }
+
+    /// Chainable: this rider's failed save lands a second condition
+    /// alongside the first, on the same timer. See `also_installs`.
+    pub const fn and_also(mut self, extra: Condition) -> Self {
+        self.also_installs = Some(extra);
         self
     }
 }
@@ -2268,7 +2296,7 @@ impl Action for WeaponWithSaveCondition {
             if !rider_reaches_size(e, target_id, self.max_target_size, self.rider_name) {
                 return effects;
             }
-            save_or_condition_rider(
+            let save = save_or_condition_rider(
                 e,
                 caster_id,
                 target_id,
@@ -2279,6 +2307,22 @@ impl Action for WeaponWithSaveCondition {
                 self.rider_name,
                 &mut effects,
             );
+            // The second half of a two-flag clause, on the same failed
+            // save and the same timer. Queued as an `ApplyCondition`
+            // rather than through the linked installer because nothing
+            // on this lane carries a back-link — the companion flags are
+            // states of the victim, not relationships to the attacker.
+            if !save.passed()
+                && let Some(extra) = self.also_installs
+            {
+                effects.push(Box::new(
+                    crate::engine::side_effects::ApplyCondition {
+                        actor_id: target_id,
+                        condition: extra,
+                        timer: self.timer,
+                    },
+                ));
+            }
             effects
         };
         let mut effects = swing(encounter);
@@ -15882,7 +15926,21 @@ pub static BEARDED_DEVIL_BEARD: WeaponWithSaveCondition = WeaponWithSaveConditio
     Condition::Poisoned,
     ConditionTimer::Rounds(3),
     "infernal beard",
-);
+)
+// SRD 5.2: "the target has the Poisoned condition until the start of
+// the devil's next turn. **Until this poison ends, the target can't
+// regain Hit Points.**"
+//
+// The second sentence is the devil, and it was dropped for years under
+// a comment saying healing was not a tactically load-bearing axis in
+// this simulator. That was never quite true and is plainly untrue now —
+// the engine has clerics with Healing Word, potions on the loot table,
+// and an AI rung that drinks them — so a devil that stops the healing is
+// a different fight from a devil that does not.
+//
+// One condition on the same timer, which is exactly what "until this
+// poison ends" asks for. See `Condition::Wounded`.
+.and_also(Condition::Wounded);
 
 /// Bearded Devil Multiattack — 1 glaive + 1 beard per Action via
 /// `CompoundAttack`. Heterogeneous compound (slashing + piercing) — the

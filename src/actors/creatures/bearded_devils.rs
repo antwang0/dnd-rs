@@ -29,11 +29,17 @@ use std::sync::LazyLock;
 ///   slashing melee at reach 10ft. The polearm-style primary lane.
 /// - **bearded devil beard** (standalone) — STR-based 1d8+STR piercing
 ///   melee at reach 5ft with a CON 12 save rider for Poisoned (3
-///   rounds). RAW's "no-healing-while-poisoned" clause is approximated
-///   by leaning on the engine's standard Poisoned condition (which
-///   imposes disadvantage on attacks / ability checks); the no-healing
-///   clause is dropped since healing isn't a tactically-load-bearing
-///   axis in this combat sim.
+///   rounds) *and* `Wounded` on the same timer: SRD 5.2's "Until this
+///   poison ends, the target can't regain Hit Points", which is the
+///   clause the devil is named for and the one that makes it more than
+///   a glaive with a rider.
+///
+///   The no-healing half was dropped for years under a note saying
+///   healing was not a tactically load-bearing axis here. It is: the
+///   engine has clerics casting Healing Word, potions on the loot
+///   table, and an AI rung that reaches for them. A devil that closes
+///   the healing lane for three rounds changes what the party can do
+///   about the glaive.
 ///
 /// Defensive identity: resistant to cold (the devil family), immune to
 /// fire / poison (the canonical hellish damage envelope). Immune to
