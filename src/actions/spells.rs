@@ -13284,9 +13284,18 @@ pub static WRATHFUL_SMITE: SmiteSpell = SmiteSpell {
 /// Branding Smite — 2nd-level paladin evocation, bonus action,
 /// concentration. Primes the next melee hit with +2d6 radiant and
 /// brands the target (Outlined, 10 rounds — attackers get advantage).
+///
+/// **SRD 5.2 prints this spell as *Shining Smite*,** and it is the same
+/// spell down to the die: 2d6 radiant, a target that sheds light, and
+/// attack rolls against it at advantage — which is what `Outlined` is.
+/// The 2014 name stays canonical here because the log lines, the
+/// concentration entry and `Condition::BrandingSmiting` all carry it;
+/// the book's name is an alias, so a player reading the SRD can cast
+/// what they see. See
+/// `engine::prompt::tests::the_names_srd_5_2_prints_are_names_a_player_can_type`.
 pub static BRANDING_SMITE: SmiteSpell = SmiteSpell {
     display_name: "branding smite",
-    aliases: &["branding", "smite-brand"],
+    aliases: &["branding", "smite-brand", "shining smite"],
     spell_slot_lvl: 2,
     prime: Condition::BrandingSmiting,
     concentration_name: "Branding Smite",
@@ -16060,7 +16069,7 @@ impl Action for Feeblemind {
         "feeblemind"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["fm", "feeble"]
+        vec!["fm", "feeble", "befuddlement"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -16125,6 +16134,11 @@ impl Action for Feeblemind {
     }
 }
 
+/// **SRD 5.2 prints this spell as *Befuddlement*.** Same slot level,
+/// same INT save, same "can't cast spells or take the Magic action" on
+/// a failure; only the name and the damage die changed between
+/// printings. The book's name is an alias here for the same reason
+/// Shining Smite's is — see `BRANDING_SMITE`.
 pub static FEEBLEMIND: LazyLock<Feeblemind> = LazyLock::new(|| Feeblemind {});
 
 /// Otto's Irresistible Dance — 5e level-6 enchantment, concentration,
@@ -16858,7 +16872,7 @@ pub static SUMMON_CELESTIAL: SummonSpell = SummonSpell {
 /// a d6 at the top of each of its turns.
 pub static SUMMON_DRACONIC_SPIRIT: SummonSpell = SummonSpell {
     display_name: "summon draconic spirit",
-    aliases: &["sdragon"],
+    aliases: &["sdragon", "summon dragon"],
     school: SpellSchool::Conjuration,
     slot_level: 5,
     template: &crate::actors::creatures::summoned_spirits::DRACONIC_SPIRIT_TEMPLATE,
@@ -17542,7 +17556,7 @@ impl Action for MordenkainensSword {
         "mordenkainen's sword"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["mord", "force sword", "sword"]
+        vec!["mord", "force sword", "sword", "arcane sword"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -18013,7 +18027,7 @@ impl Action for BigbysHand {
         "bigby's hand"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["bh", "bigby", "hand"]
+        vec!["bh", "bigby", "hand", "arcane hand"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs

@@ -499,6 +499,85 @@ mod tests {
         }
     }
 
+    /// Every spell SRD 5.2 renamed still answers to the name the book
+    /// prints.
+    ///
+    /// This engine grew up on the 2014 names and keeps them as its
+    /// canonical ones, because they are what its logs, its
+    /// concentration entries and several hundred docstrings say. SRD
+    /// 5.2 dropped the wizards' surnames off eight of them and
+    /// rewrote two more outright, and a player reading the book beside
+    /// the game had no way to cast any of those: the name on the page
+    /// was `unknown or unavailable action`.
+    ///
+    /// Every row here is that book name, and the fix in each case was
+    /// an alias rather than a rename — the 2014 name is not wrong, it
+    /// is just not the only one. Rows whose 5.2 name the engine already
+    /// uses as its canonical (Black Tentacles, Resilient Sphere,
+    /// Freezing Sphere, Acid Arrow, Faithful Hound) are on the list too,
+    /// because what is being pinned is that the book's name works, not
+    /// which side of the rename the engine happens to sit on.
+    ///
+    /// Resolved against the whole PC action universe rather than one
+    /// class's list, so a name that becomes ambiguous when the
+    /// bestiary grows fails here rather than in front of a player.
+    #[test]
+    fn the_names_srd_5_2_prints_are_names_a_player_can_type() {
+        use super::Prompt;
+        use crate::actions::action_template::Action;
+
+        // The book's name, and the canonical name it must reach.
+        const RENAMED: &[(&str, &str)] = &[
+            ("arcane hand", "bigby's hand"),
+            ("arcane sword", "mordenkainen's sword"),
+            ("befuddlement", "feeblemind"),
+            ("hideous laughter", "tasha's hideous laughter"),
+            ("irresistible dance", "otto's irresistible dance"),
+            ("shining smite", "branding smite"),
+            ("summon dragon", "summon draconic spirit"),
+            ("black tentacles", "black tentacles"),
+            ("resilient sphere", "resilient sphere"),
+            ("freezing sphere", "freezing sphere"),
+        ];
+
+        // One flat universe of every action any playable template
+        // carries, deduped by canonical name.
+        let mut universe: Vec<&'static (dyn Action + Send + Sync)> = Vec::new();
+        for (_label, family) in crate::actors::creatures::pc_template_families() {
+            for template in family {
+                for action in &template.actions {
+                    if !universe.iter().any(|a| a.name() == action.name()) {
+                        universe.push(*action);
+                    }
+                }
+            }
+        }
+
+        let mut unreachable: Vec<String> = Vec::new();
+        for (printed, canonical) in RENAMED {
+            // A spell nothing playable carries is not this test's
+            // business — it would be pinning the class lists, not the
+            // names.
+            if !universe.iter().any(|a| a.name() == *canonical) {
+                continue;
+            }
+            let tokens: Vec<&str> = printed.split_whitespace().collect();
+            match Prompt::resolve_action(&universe, &tokens) {
+                Ok((_, action)) if action.name() == *canonical => {}
+                Ok((_, other)) => unreachable.push(format!(
+                    "'{printed}' reaches {} instead of {canonical}",
+                    other.name()
+                )),
+                Err(msg) => unreachable.push(format!("'{printed}' gives {msg:?}")),
+            }
+        }
+        assert!(
+            unreachable.is_empty(),
+            "the book prints these names and the parser refuses them:\n  {}",
+            unreachable.join("\n  ")
+        );
+    }
+
     /// Every alias a player might reasonably type resolves to
     /// *something* — the alias sweep, sibling to the canonical-name
     /// one above.
