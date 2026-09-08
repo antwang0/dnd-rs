@@ -53,6 +53,7 @@ use crate::actors::creatures::priests::PRIEST_TEMPLATE;
 use crate::actors::creatures::satyrs::SATYR_TEMPLATE;
 use crate::actors::creatures::shield_guardians::SHIELD_GUARDIAN_TEMPLATE;
 use crate::actors::creatures::spies::SPY_TEMPLATE;
+use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
 use crate::actors::creatures::violet_fungi::VIOLET_FUNGUS_TEMPLATE;
 use crate::actors::creatures::warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE;
 use crate::actors::creatures::winged_kobolds::WINGED_KOBOLD_TEMPLATE;
@@ -8644,6 +8645,100 @@ impl EncounterInstance {
                 // attacks that would have followed have nobody to hit.
                 self.dispatch_readied_attacks(actor_id, from, to);
                 self.dispatch_opportunity_attacks(actor_id, from, to);
+                // Last, and it costs the mover nothing: the shriek is
+                // not aimed at them and cannot stop the step. It fires
+                // after the two swings so that a mover dropped by a
+                // readied shot never sets off an alarm about a step they
+                // did not finish.
+                self.dispatch_shrieks(actor_id, from, to);
+            }
+        }
+    }
+
+    /// 5e **Shrieker Fungus** — *Shriek*: "*Trigger:* A creature or a
+    /// source of Bright Light moves within 30 feet of the shrieker.
+    /// *Response:* The shrieker emits a shriek audible within 300 feet
+    /// of itself for 1 minute or until the shrieker dies."
+    ///
+    /// The third consumer of `TriggerEvent::ActorLeaving`, and the first
+    /// that is not an attack. It reads the same `(from, to)` pair the
+    /// other two do and asks the remaining question about it: not "did
+    /// somebody leave my reach" or "did somebody enter it", but "did
+    /// somebody *cross into* thirty feet of me" — which is the
+    /// difference between `from` being outside the radius and `to` being
+    /// inside it.
+    ///
+    /// That crossing test is what keeps a fungus from screaming every
+    /// time an adjacent creature shuffles a tile. RAW's trigger is
+    /// "moves within 30 feet", not "moves while within 30 feet".
+    ///
+    /// The shriek strips `Surprised` from every creature on the board —
+    /// RAW's 300-foot audibility is larger than any map this engine
+    /// generates, so "everyone who can hear it" is everyone. See
+    /// `SHRIEKER_FUNGUS_TEMPLATE` for why a noise with no printed
+    /// mechanics is read as an alarm rather than as a log line.
+    ///
+    /// Deliberately **not** gated on the fungus's reaction. RAW calls it
+    /// one, and RAW's shrieker has nothing else to spend a reaction on;
+    /// charging it here would mean a fungus that had already been swung
+    /// at could be crept past, which is the one thing a shrieker is for.
+    /// The once-per-fight latch (`Condition::Shrieking`) is the real
+    /// ration.
+    ///
+    /// Sight is not required either, and that is RAW rather than a
+    /// shortcut: the shrieker is blind. Its trigger names movement and
+    /// bright light, and it has Blindsight out to exactly the thirty
+    /// feet the trigger describes.
+    fn dispatch_shrieks(&mut self, mover_id: usize, from: Coordinate, to: Coordinate) {
+        /// RAW's 30 feet, on the 2.5-ft grid.
+        const SHRIEK_RADIUS_TILES: isize = crate::engine::util::tiles_from_feet(30) as isize;
+
+        let Some(mover_size) = self
+            .actors
+            .get(&mover_id)
+            .filter(|a| a.is_combat_active())
+            .map(|a| get_tiles_from_size(a.size()))
+        else {
+            return;
+        };
+        // Snapshot before mutating: waking the room touches every actor.
+        let woken: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                **id != mover_id
+                    && a.is_combat_active()
+                    && a.has_passive_feature(crate::actions::class_features::SHRIEKER_TAG)
+                    && !a.has_condition(Condition::Shrieking)
+            })
+            .filter(|(_, a)| {
+                let span = get_tiles_from_size(a.size());
+                let was_outside =
+                    footprint_chebyshev(a.location(), span, from, mover_size) > SHRIEK_RADIUS_TILES;
+                let is_inside =
+                    footprint_chebyshev(a.location(), span, to, mover_size) <= SHRIEK_RADIUS_TILES;
+                was_outside && is_inside
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for fungus_id in woken {
+            let name = self.actor_name(fungus_id);
+            self.log(format!("{name} shrieks. The noise carries."));
+            if let Some(f) = self.actors.get_mut(&fungus_id) {
+                f.add_condition(Condition::Shrieking, crate::conditions::ConditionTimer::Permanent);
+            }
+            let startled: Vec<usize> = self
+                .actors
+                .iter()
+                .filter(|(_, a)| a.has_condition(Condition::Surprised))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in startled {
+                if let Some(a) = self.actors.get_mut(&id) {
+                    a.remove_condition(Condition::Surprised);
+                }
+                let woken_name = self.actor_name(id);
+                self.log(format!("  the alarm wakes {woken_name}"));
             }
         }
     }
@@ -11999,6 +12094,11 @@ impl EncounterInstance {
             &SATYR_TEMPLATE,
             &SHIELD_GUARDIAN_TEMPLATE,
             &VIOLET_FUNGUS_TEMPLATE,
+            // Shrieker Fungus (CR 0 plant): thirteen hit points, no
+            // attack, and one reaction. It joins the pool as scenery
+            // with a consequence — the cheapest thing on the list, and
+            // the only one that costs a party its ambush.
+            &SHRIEKER_FUNGUS_TEMPLATE,
             &WARHORSE_SKELETON_TEMPLATE,
             &WINGED_KOBOLD_TEMPLATE,
             &PANTHER_TEMPLATE,

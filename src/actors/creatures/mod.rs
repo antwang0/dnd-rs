@@ -317,6 +317,7 @@ pub mod duergar;
 pub mod ochre_jellies;
 pub mod satyrs;
 pub mod shield_guardians;
+pub mod shrieker_fungi;
 pub mod violet_fungi;
 pub mod warhorse_skeletons;
 pub mod winged_kobolds;
@@ -866,6 +867,7 @@ mod tests {
         // Plants — the mound alone.
         (&*super::shambling_mounds::SHAMBLING_MOUND_TEMPLATE, true),
         (&*super::violet_fungi::VIOLET_FUNGUS_TEMPLATE, false),
+        (&*super::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE, false),
         (&*super::treants::TREANT_TEMPLATE, false),
         ]
     }
@@ -1357,6 +1359,7 @@ mod tests {
         (&*satyrs::SATYR_TEMPLATE, 13, "7d8", [12, 16, 11, 12, 10, 14], 40, 0, 0.5),
         (&*shield_guardians::SHIELD_GUARDIAN_TEMPLATE, 17, "15d10+60", [18, 8, 18, 7, 10, 3], 30, 0, 7.0),
         (&*violet_fungi::VIOLET_FUNGUS_TEMPLATE, 5, "4d8", [3, 1, 10, 1, 3, 1], 5, 0, 0.25),
+        (&*shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE, 5, "3d8", [1, 1, 10, 1, 3, 1], 5, 0, 0.0),
         (&*warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE, 13, "3d10+6", [18, 12, 15, 2, 8, 5], 60, 0, 0.5),
         (&*panthers::PANTHER_TEMPLATE, 13, "3d8", [14, 16, 10, 3, 14, 7], 50, 0, 0.25),
         (&*remorhazes::REMORHAZ_TEMPLATE, 17, "17d12+85", [24, 13, 21, 4, 10, 5], 40, 0, 11.0),

@@ -91224,3 +91224,81 @@ fn a_potion_of_vitality_stays_corked_until_there_is_something_to_cure() {
         "and the potion is gone"
     );
 }
+
+/// A shrieker screams when something crosses into thirty feet of it,
+/// wakes everyone the surprise round caught, and does not scream twice.
+///
+/// Three assertions and each one is a separate way the trigger could be
+/// wrong. Firing on *any* movement inside the radius rather than on the
+/// crossing would make an adjacent fungus scream every step. Not
+/// latching would make a corridor of shriekers a corridor of log spam.
+/// And a shriek that woke nobody is the whole feature missing, since
+/// RAW's noise has no other mechanical consequence at all.
+#[test]
+fn a_shrieker_screams_once_when_something_crosses_into_earshot() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
+    use crate::engine::triggers::TriggerEvent;
+
+    let mut e = ei_with_terrain(60, 12, &[]);
+    let fungus = e
+        .instantiate_creature(&SHRIEKER_FUNGUS_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(40, 2), 1, 0)
+        .unwrap();
+    let sleeper = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(45, 8), 0, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&sleeper)
+        .unwrap()
+        .add_condition(Condition::Surprised, ConditionTimer::Rounds(1));
+
+    // 30 ft is 12 tiles. A step that stays outside the radius is a step
+    // the fungus sleeps through.
+    e.dispatch_reaction(TriggerEvent::ActorLeaving {
+        actor_id: goblin,
+        from: Coordinate::new(40, 2),
+        to: Coordinate::new(30, 2),
+    });
+    assert!(
+        !e.actors[&fungus].has_condition(Condition::Shrieking),
+        "a step that never came within thirty feet set the alarm off"
+    );
+    assert!(e.actors[&sleeper].has_condition(Condition::Surprised));
+
+    // Crossing the line does it.
+    e.dispatch_reaction(TriggerEvent::ActorLeaving {
+        actor_id: goblin,
+        from: Coordinate::new(30, 2),
+        to: Coordinate::new(13, 2),
+    });
+    assert!(e.actors[&fungus].has_condition(Condition::Shrieking));
+    assert!(
+        !e.actors[&sleeper].has_condition(Condition::Surprised),
+        "the alarm should have woken the room"
+    );
+    let screams = e
+        .messages()
+        .iter()
+        .filter(|m| m.contains("shrieks"))
+        .count();
+    assert_eq!(screams, 1);
+
+    // And a second crossing by somebody else finds a fungus that is
+    // already screaming.
+    e.dispatch_reaction(TriggerEvent::ActorLeaving {
+        actor_id: sleeper,
+        from: Coordinate::new(45, 8),
+        to: Coordinate::new(6, 4),
+    });
+    assert_eq!(
+        e.messages()
+            .iter()
+            .filter(|m| m.contains("shrieks"))
+            .count(),
+        1,
+        "a minute-long shriek does not restart every time somebody walks past"
+    );
+}

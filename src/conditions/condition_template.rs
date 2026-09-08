@@ -2960,6 +2960,22 @@ pub enum Condition {
     /// errors point opposite ways and the fight-scale one is the one a
     /// player can see.
     Wounded,
+    /// A **Shrieker Fungus** that has gone off — SRD 5.2's *"The shrieker
+    /// emits a shriek audible within 300 feet of itself for 1 minute or
+    /// until the shrieker dies."*
+    ///
+    /// A latch rather than an effect. The shriek's one mechanical
+    /// consequence lands the instant it fires (see
+    /// `EncounterInstance::dispatch_shrieks`), and this is what stops it
+    /// firing again: RAW's noise lasts a minute, which outlasts any
+    /// fight, so a fungus that is already screaming has nothing left to
+    /// do when the next creature walks past.
+    ///
+    /// `Permanent`, because the minute never runs out inside an
+    /// encounter, and cleared with the fungus — RAW's "or until the
+    /// shrieker dies" needs no wiring, since a dead actor is not
+    /// combat-active and the dispatcher never reaches it.
+    Shrieking,
 }
 
 impl Condition {
@@ -3205,6 +3221,7 @@ impl Condition {
             Condition::Vicious => "wielding a vicious weapon",
             Condition::Wounding => "wielding a sword of wounding",
             Condition::Wounded => "wounded, and unable to close it",
+            Condition::Shrieking => "shrieking",
         }
     }
 

@@ -1219,6 +1219,21 @@ pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {}
 /// per-rest charge — both gates are purely target-side.
 pub const ASSASSINATE_TAG: &str = "rogue.assassinate";
 
+/// 5e **Shrieker Fungus** — *Shriek* (Reaction): "*Trigger:* A creature
+/// or a source of Bright Light moves within 30 feet of the shrieker."
+///
+/// A monster trait rather than a class feature, and it lives on this
+/// list anyway for the same reason Assassinate does: what the engine
+/// needs is a flag that says "this creature answers this trigger", and
+/// `features` is where a template puts one.
+///
+/// Stored as a `has_passive_feature` flag with no charges. RAW's ration
+/// is not per-rest but per-fight — a shriek lasts a minute, which
+/// outlasts any encounter — and that is enforced by
+/// `Condition::Shrieking` at the trigger site rather than by a charge
+/// pool. See `EncounterInstance::dispatch_shrieks`.
+pub const SHRIEKER_TAG: &str = "monster.shrieker";
+
 /// One of the three things RAW lets a bonus action buy in place of a
 /// full Action: cover ground, leave without being hit, or disappear.
 ///
