@@ -23,13 +23,16 @@ use std::sync::LazyLock;
 ///    end of next turn. Recharge 5-6 via the standard `("blinding
 ///    spittle", 5)` entry; the engine's recharge-d6 chokepoint handles
 ///    refresh at turn-start.
-/// 3. Aberrant Ground: not modeled. RAW's "creatures in a 10-foot
-///    Emanation save or their speed is halved" needs a per-other-turn
-///    aura hook the engine does not have. The mouther's own 20-foot
-///    speed is slow enough that it reads as the swampy-ground
-///    creature it is without borrowing the aura's job — which is what
-///    this note used to claim, on a template whose speed had been cut
-///    to 10 to make the claim true.
+/// 3. Aberrant Ground: not modeled, and not for the reason this note
+///    used to give. It once said the trait needed "a per-other-turn
+///    aura hook the engine does not have", which is now
+///    `engine::emanations` — but the mouther's clause is not one of
+///    those. SRD 5.2 reads "the ground in a 10-foot Emanation
+///    originating from the mouther is Difficult Terrain", with no save
+///    and no condition: it is a *terrain* rule, and the layer it wants
+///    is `engine::conjured_terrain`, moving with a creature. The
+///    mouther's own 20-foot speed is slow enough that it reads as the
+///    swampy-ground creature it is in the meantime.
 ///
 /// Stats roughly track MM Gibbering Mouther at CR 2 — STR 10, DEX 8
 /// (the shambling clumsy mass), CON 16, INT 3 (instinct-driven), WIS 10,

@@ -12174,11 +12174,22 @@ impl MetallicBreath {
                 let Some(a) = encounter.actors.get(id) else {
                     return false;
                 };
-                match redundant {
-                    // Already under this breath, or already climbing
-                    // the ladder it opens.
-                    Some(c) => !a.has_condition(c) && !encounter.staged_save_pending(*id),
-                    None => true,
+                let Some(c) = redundant else {
+                    return true;
+                };
+                if a.has_condition(c) {
+                    return false;
+                }
+                // A ladder's opener also has nothing to offer somebody
+                // already climbing one, because `begin_staged_save`
+                // declines a second entry. Asked only of the ladder
+                // breaths: a creature stiffening under a gorgon's gaze
+                // is still perfectly slowable by a copper dragon.
+                match self.effect {
+                    MetallicBreathEffect::Ladder(_) => {
+                        !encounter.staged_save_pending(*id)
+                    }
+                    _ => true,
                 }
             })
             .collect()

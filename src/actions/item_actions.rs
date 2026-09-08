@@ -4813,23 +4813,26 @@ pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfCondition
     temp_hp: None,
 };
 
-/// Horn of Blasting — Action; self-centered 6-tile (15 ft) thunder burst,
-/// 5d6 damage, CON save vs DC 15 for half. 5e RAW: emits a thunderous
-/// note in a 30-ft cone dealing 5d6 thunder; creatures that fail also
-/// take a `Deafened` rider. We collapse the cone to a friend-or-foe
-/// burst centered on the wielder (the engine has no cone primitive
-/// today; the 6-tile burst's radius approximates the cone's footprint
-/// for combat purposes) and ride the existing Deafened install on a
-/// failed save. The horn is a multi-use trinket in RAW; we collapse to
-/// a single-use consumable so the loot pool keeps a flat "one fire per
+/// Horn of Blasting — Action; RAW's 30-foot cone of thunder, 5d6
+/// damage, CON save vs DC 15 for half, with a `Deafened` rider on a
+/// failure. The horn is a multi-use trinket in RAW; we collapse to a
+/// single-use consumable so the loot pool keeps a flat "one fire per
 /// drop" semantics — matching Necklace of Fireballs / Lightning Bolts.
 ///
-/// Schema is `NoArgs` (self-centered like Thunderwave); the burst sits
-/// at the wielder's footprint center. Does NOT use the
-/// `BurstSaveDamageItem` factor because that factor requires a picked
-/// target tile; folding a self-centered burst variant into the factor
-/// would muddy its single-purpose semantics, so a small custom impl
-/// keeps both lanes orthogonal.
+/// It was a self-centred 15-foot *sphere* until the engine grew a cone,
+/// on the grounds — written down at the time — that "the engine has no
+/// cone primitive today". It has one now, and the difference is the
+/// whole reason somebody blows a horn rather than dropping a bomb: the
+/// blast comes out of the person holding it, so the party standing
+/// behind them is not in it.
+///
+/// Friend-or-foe, deliberately. RAW's horn does not know whose side
+/// anybody is on, and the shape is what the wielder aims — which is
+/// exactly the trade a cone makes and a sphere centred on your own feet
+/// cannot.
+///
+/// Does NOT use the `BurstSaveDamageItem` factor, which is a
+/// point-centred burst chassis and has nowhere to put a direction.
 pub struct HornOfBlastingItem {}
 
 impl Action for HornOfBlastingItem {
@@ -4840,7 +4843,12 @@ impl Action for HornOfBlastingItem {
         vec!["horn", "blast"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
+        TargetingSchema::Cone {
+            length: HORN_OF_BLASTING_CONE,
+        }
+    }
+    fn requires_los(&self) -> bool {
+        true
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Thunder]
@@ -4860,17 +4868,18 @@ impl Action for HornOfBlastingItem {
         encounter: &mut EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
+        target_locations: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(aim) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
         if !consume_caster_item(encounter, caster_id, HORN_OF_BLASTING_NAME) {
             return Vec::new();
         }
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
+        let shape = crate::engine::areas::AreaShape::Cone {
+            length: HORN_OF_BLASTING_CONE,
         };
-        let center = caster.location();
-        const RADIUS: isize = 6;
         const DC: i32 = 15;
         let damage = encounter.roll(&Dice::new(5, 6));
         let name = encounter.actor_name(caster_id);
@@ -4887,8 +4896,8 @@ impl Action for HornOfBlastingItem {
         // chokepoint; we re-route to it for parity with every other
         // burst item.
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let shielded = encounter.auto_pass_shielded_allies(caster_id, center, RADIUS);
-        for tid in encounter.neutral_burst_targets(caster_id, center, RADIUS) {
+        let shielded = encounter.auto_pass_shielded_allies_in(caster_id, shape, aim);
+        for tid in encounter.neutral_area_targets(caster_id, shape, aim) {
             if shielded.contains(&tid) {
                 continue;
             }
@@ -4923,6 +4932,9 @@ impl Action for HornOfBlastingItem {
         effects
     }
 }
+
+/// RAW's 30-foot cone, in tiles on the 2.5 ft grid.
+const HORN_OF_BLASTING_CONE: isize = 12;
 
 pub static BLOW_HORN_OF_BLASTING: HornOfBlastingItem = HornOfBlastingItem {};
 

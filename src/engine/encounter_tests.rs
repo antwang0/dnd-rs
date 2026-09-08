@@ -52604,10 +52604,11 @@ fn sahuagin_blood_frenzy_does_not_apply_to_ranged_attacks() {
     );
 }
 
-/// Horn of Blasting: self-centered thunder burst that damages enemies
-/// in radius, spares the wielder, and consumes the trinket. Sweeps
-/// seeds to confirm at least one fail (Deafened install on a tough
-/// enemy that survives the damage) lands across runs.
+/// Horn of Blasting: RAW's 30-foot thunder cone. It damages what the
+/// wielder points it at, never the wielder (the cone's origin is not in
+/// its own area), and consumes the trinket. Sweeps seeds to confirm at
+/// least one fail — the Deafened rider, observed on an enemy tough
+/// enough to survive the 5d6.
 #[test]
 fn horn_of_blasting_damages_enemies_and_deafens_on_fail() {
     use crate::actions::item_actions::BLOW_HORN_OF_BLASTING;
@@ -52632,7 +52633,10 @@ fn horn_of_blasting_damages_enemies_and_deafens_on_fail() {
             .pickup_item(&HORN_OF_BLASTING);
         let user_hp_pre = e.actors[&user].hitpoints();
         let ogre_hp_pre = e.actors[&ogre].hitpoints();
-        let aei = ActionExecutionInfo::new(&BLOW_HORN_OF_BLASTING, user, None, None, None);
+        // Aimed at the ogre: a cone is a direction, not a centre.
+        let aim = e.actors[&ogre].location();
+        let aei =
+            ActionExecutionInfo::new(&BLOW_HORN_OF_BLASTING, user, None, Some(vec![aim]), None);
         assert!(aei.validate(&e));
         e.push_action(aei);
         e.process_stack();
@@ -52641,8 +52645,9 @@ fn horn_of_blasting_damages_enemies_and_deafens_on_fail() {
             !e.actors[&user].has_item_named("Horn of Blasting"),
             "horn should be consumed on use"
         );
-        // Wielder must never eat their own burst — neutral_burst_targets
-        // excludes the caster.
+        // Wielder must never eat their own blast. Two clauses now say
+        // so: the caster is excluded from the target list, and RAW's
+        // cone does not include the point it comes out of.
         assert_eq!(
             e.actors[&user].hitpoints(),
             user_hp_pre,
