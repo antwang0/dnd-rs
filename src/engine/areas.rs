@@ -1,4 +1,6 @@
-//! 5e's **Cone**, on a square grid.
+//! 5e's areas of effect, on a square grid — the **Cone** and the
+//! **Line** that come out of a creature's body, and the **Burst** that
+//! is thrown at a point.
 //!
 //! The engine has had exactly one area shape since it had any: a Burst,
 //! which is a footprint-Chebyshev disc around a point somebody chose.
@@ -399,6 +401,16 @@ impl AreaShape {
     /// creature's apex is one tile of a sixty-four-tile box, and
     /// without this the other sixty-three would be squarely inside the
     /// cone coming out of them.
+    ///
+    /// **The contract is that a creature standing on a tile this
+    /// returns is a creature `catches_footprint` catches.** That is
+    /// what makes the list safe to draw on a map, and it is not free
+    /// for the burst arm: a burst's radius is a footprint *gap*, so a
+    /// creature whose nearest tile is `radius + 1` away has a gap of
+    /// `radius` and is inside the blast. The disc drawn here is one
+    /// tile wider than the declared radius for exactly that reason,
+    /// and a preview that took the radius literally would have shaded
+    /// a ring smaller than the spell.
     pub fn tiles(
         self,
         caster_anchor: Coordinate,
@@ -409,9 +421,10 @@ impl AreaShape {
         let apex = cone_apex(caster_anchor, span, aim);
         let mut tiles = match self {
             AreaShape::Burst { radius } => {
+                let reach = radius + 1;
                 let mut out = Vec::new();
-                for y in (aim.y - radius)..=(aim.y + radius) {
-                    for x in (aim.x - radius)..=(aim.x + radius) {
+                for y in (aim.y - reach)..=(aim.y + reach) {
+                    for x in (aim.x - reach)..=(aim.x + reach) {
                         out.push(Coordinate::new(x, y));
                     }
                 }
@@ -772,4 +785,61 @@ mod tests {
             }
         }
     }
+
+    /// The contract `tiles` promises the map: standing on a tile it
+    /// returns is being in the area.
+    ///
+    /// Swept over every shape and every tile in a window rather than
+    /// spot-checked, because the direction that fails silently is the
+    /// one where the preview is *tighter* than the effect — the player
+    /// steps out of the shaded region and gets hit anyway, and nothing
+    /// on the screen was wrong enough to notice. That is exactly what
+    /// the burst arm did before it drew its disc a tile wider than the
+    /// declared radius, because a burst's radius is a footprint gap.
+    #[test]
+    fn standing_on_a_drawn_tile_is_being_in_the_area() {
+        let caster = c(20, 20);
+        for shape in [
+            AreaShape::Burst { radius: 0 },
+            AreaShape::Burst { radius: 3 },
+            AreaShape::Cone { length: 8 },
+            AreaShape::Line {
+                length: 10,
+                half_width: 1,
+            },
+            AreaShape::Line {
+                length: 10,
+                half_width: 2,
+            },
+        ] {
+            for aim in [c(28, 20), c(26, 26), c(20, 12), c(27, 23)] {
+                let drawn: std::collections::HashSet<(isize, isize)> = shape
+                    .tiles(caster, Size::Medium, aim)
+                    .into_iter()
+                    .map(|t| (t.x, t.y))
+                    .collect();
+                for y in 0..40isize {
+                    for x in 0..40isize {
+                        if !drawn.contains(&(x, y)) {
+                            continue;
+                        }
+                        // A Tiny creature is one tile, so "caught" and
+                        // "this tile is in the area" are the same
+                        // question for it.
+                        assert!(
+                            shape.catches_footprint(
+                                caster,
+                                Size::Medium,
+                                aim,
+                                c(x, y),
+                                1
+                            ),
+                            "{shape:?} aimed at {aim:?} draws ({x},{y}) but does not catch it"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
 }
