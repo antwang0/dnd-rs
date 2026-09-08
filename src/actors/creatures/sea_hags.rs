@@ -2,6 +2,7 @@ use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SEA_HAG_CLAWS, SEA_HAG_DEATH_GLARE};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::emanations::SEA_HAG_VILE_APPEARANCE;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -36,13 +37,17 @@ use std::sync::LazyLock;
 ///   `UNDERWATER_BREATHING_TAG`. The hag is on
 ///   `underwater_breathing_templates`, so the suffocation clock in
 ///   `engine::breath` never starts on it.
-/// - **Horrific Appearance** (each enemy that starts its turn within
-///   30ft + can see the hag rolls WIS save or takes 1d6 psychic +
-///   Frightened until end of turn) — would need a start-of-turn aura
-///   hook. The engine has `round_end` and `reset_for_new_round` hooks
-///   for the actor itself, but no "any actor adjacent to me at start
-///   of their turn → roll save → take damage" chain. Omitted; the
-///   Death Glare lane covers the load-bearing fear-mortality clause.
+/// - **Vile Appearance** (SRD 5.2: "Wisdom Saving Throw: DC 11, any
+///   Beast or Humanoid that starts its turn within 30 feet of the hag
+///   and can see the hag's true form. Failure: Frightened until the
+///   start of its next turn. Success: immune to this hag's Vile
+///   Appearance for 24 hours") — carried, on
+///   `emanations::SEA_HAG_VILE_APPEARANCE`. This used to be the entry
+///   that said the engine had no start-of-turn aura hook and left the
+///   Death Glare to carry the fear clause on its own, which put the
+///   hag's two halves the wrong way round: RAW's glare is what a
+///   frightened creature dies of, and the fear is what this trait is
+///   for.
 /// - **Death Glare** (RAW: reduces Frightened target to 0 HP) — modeled
 ///   as a heavy psychic burst (see action notes above).
 /// - **Illusory Appearance** (passive shape-shift) — no in-engine
@@ -87,6 +92,10 @@ pub static SEA_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        // RAW **Vile Appearance**, the trait the Death Glare is aimed
+        // down: the glare kills a *Frightened* creature, and this is
+        // what frightens it. See `SEA_HAG_VILE_APPEARANCE`.
+        emanations: std::slice::from_ref(&SEA_HAG_VILE_APPEARANCE),
         ..CreatureTemplate::defaults()
     }
 });
@@ -128,5 +137,35 @@ mod tests {
         assert!(!a.has_magic_resistance());
         // Fey creature type.
         assert_eq!(a.creature_type(), CreatureType::Fey);
+    }
+
+    /// Vile Appearance, pinned against the printed stat block. The two
+    /// gates RAW puts on it — the type filter and the sight clause —
+    /// are what make her dangerous to a party and harmless to the
+    /// construct the party brought with them, so both are named here.
+    #[test]
+    fn sea_hag_carries_vile_appearance() {
+        use crate::engine::types::AbilityScoreType;
+        let a = ActorInstance::from_creature_template(
+            &SEA_HAG_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let [face] = a.emanations() else {
+            panic!("the sea hag has exactly one emanation");
+        };
+        assert_eq!(face.name, "Vile Appearance");
+        assert_eq!(face.radius_feet, 30);
+        assert_eq!(face.dc, 11);
+        assert_eq!(face.save, AbilityScoreType::Wisdom);
+        assert_eq!(face.condition, crate::conditions::Condition::Frightened);
+        assert!(face.requires_sight);
+        assert_eq!(
+            face.affects,
+            &[CreatureType::Beast, CreatureType::Humanoid]
+        );
     }
 }

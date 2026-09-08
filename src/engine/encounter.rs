@@ -2068,6 +2068,19 @@ pub struct EncounterInstance {
     /// a creature shoved into a web on somebody else's turn triggers it,
     /// and shoving them back in on that same turn does not.
     zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
+    /// The 24-hour clause on `engine::emanations`: `(victim id, emitter
+    /// id, trait name)` triples that have already made their save once
+    /// and are done with that creature's trait for the rest of the
+    /// fight.
+    ///
+    /// Never swept, unlike `zone_contacts_this_turn` directly above,
+    /// and the difference is the rule rather than the plumbing: RAW's
+    /// window is 24 hours, which outlasts any encounter, where the
+    /// zone ledger's is one turn. Keyed on the emitter as well as the
+    /// trait because RAW scopes the immunity to "this ghast's Stench"
+    /// — walking away from one ghast's is no protection from the one
+    /// standing beside it.
+    emanation_immunities: std::collections::HashSet<(usize, usize, &'static str)>,
     /// Map tiles a spell has retyped, and the ledger that hands them
     /// back — see `crate::engine::conjured_terrain`. Sibling to `zones`
     /// in every respect but one: a zone overlays the map and this
@@ -10695,6 +10708,7 @@ impl EncounterInstance {
             zones: Vec::new(),
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
+            emanation_immunities: std::collections::HashSet::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
             ambient_light: AmbientLight::default(),
@@ -12383,6 +12397,20 @@ impl EncounterInstance {
         // the top of their turn has no spell to be holding. See
         // `reconcile_broken_concentration`.
         self.reconcile_broken_concentration();
+        // 5e's Emanation traits: "any creature that starts its turn in
+        // a 10-foot Emanation originating from the hezrou." See
+        // `crate::engine::emanations`.
+        //
+        // After all four reconciles, because all four move the
+        // geometry this reads: a creature whose enlargement just lapsed
+        // is measured at the size it will actually spend the turn at,
+        // and one whose flight source expired is measured where it
+        // lands. After `reset_for_new_round` for a sharper reason —
+        // every SRD emanation installs `UntilStartOfNextTurn`, so last
+        // round's copy has to expire before this round's is written or
+        // the install would be a no-op refresh of a condition that was
+        // about to lift.
+        self.apply_hostile_emanations(actor_id);
         // A new turn is a fresh "first time on a turn" for everybody, so
         // the ledger is cleared for the whole board rather than for the
         // actor whose turn is opening. RAW scopes the clause to *a
@@ -12543,6 +12571,141 @@ impl EncounterInstance {
             damage_type: DamageType::Radiant,
         }
         .apply(self);
+    }
+
+    /// 5e **Emanation** traits, resolved from the victim's side: every
+    /// hostile emanation whose radius covers `actor_id` at the top of
+    /// its turn gets one saving throw. See `crate::engine::emanations`
+    /// for the three SRD traits and for why they are their own shape.
+    ///
+    /// Written as a sweep over emitters rather than as a hook on the
+    /// emitter's turn because that is how RAW words it — the trigger is
+    /// *"any creature that starts its turn in"* the emanation, not
+    /// anything the emitter does. The emitter may be Stunned, Prone,
+    /// unconscious-but-alive, or three rounds from its own initiative
+    /// slot; a corpse still stinks right up until it stops being on the
+    /// board, and `is_combat_active` is the line the engine draws
+    /// there.
+    ///
+    /// Deliberately *not* gated on the emitter being conscious, which
+    /// is the one clause this shares no ground with the paladin auras
+    /// on. RAW makes their projection conditional ("you must be
+    /// conscious to grant this bonus") because they are something the
+    /// paladin does; a stench is something a hezrou *is*.
+    fn apply_hostile_emanations(&mut self, actor_id: usize) {
+        use crate::engine::emanations::Emanation;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let Some(victim) = self.actors.get(&actor_id) else {
+            return;
+        };
+        if !victim.is_combat_active() {
+            return;
+        }
+        let victim_team = victim.team();
+        let victim_type = victim.creature_type();
+        let victim_loc = victim.location();
+        let victim_span = get_tiles_from_size(victim.size());
+
+        // Collected before anything resolves, and in ascending id
+        // order: the first failed save can install a condition that
+        // changes the answer for the second (a Frightened victim is
+        // still in the stench, but a `viewer_can_see` gate can flip
+        // under a Blinded install), and a borrow of `self.actors` can't
+        // outlive the first `ApplyCondition` anyway. Sorted for the
+        // reason `sorted_actor_ids` exists — two ghasts flanking one
+        // victim must resolve in the same order on every run of a seed.
+        let mut caught: Vec<(usize, &'static Emanation)> = Vec::new();
+        for emitter_id in self.sorted_actor_ids() {
+            if emitter_id == actor_id {
+                continue;
+            }
+            let Some(emitter) = self.actors.get(&emitter_id) else {
+                continue;
+            };
+            if emitter.emanations().is_empty()
+                || emitter.team() == victim_team
+                || !emitter.is_combat_active()
+            {
+                continue;
+            }
+            let gap = footprint_chebyshev(
+                emitter.location(),
+                get_tiles_from_size(emitter.size()),
+                victim_loc,
+                victim_span,
+            );
+            for emanation in emitter.emanations() {
+                if gap > emanation.radius_tiles() || !emanation.catches_type(victim_type) {
+                    continue;
+                }
+                // The 24-hour clause, already paid.
+                if self
+                    .emanation_immunities
+                    .contains(&(actor_id, emitter_id, emanation.name))
+                {
+                    continue;
+                }
+                // A creature that cannot be put in the condition at all
+                // is skipped rather than rolled for. RAW would have it
+                // roll and shrug the result off, which is the same
+                // outcome one log line louder — and rolling would let a
+                // zombie that cannot be Poisoned bank a permanent
+                // immunity to a stench it was never in danger from,
+                // which is a difference that outlives the round.
+                if self
+                    .actors
+                    .get(&actor_id)
+                    .is_some_and(|v| v.effectively_immune_to_condition(emanation.condition))
+                {
+                    continue;
+                }
+                caught.push((emitter_id, emanation));
+            }
+        }
+
+        for (emitter_id, emanation) in caught {
+            // Re-checked here rather than only in the gather loop: the
+            // sight clause reads conditions, and an earlier emanation
+            // in this same sweep may have installed one.
+            if emanation.requires_sight && !self.viewer_can_see(actor_id, emitter_id) {
+                continue;
+            }
+            let victim_name = self.actor_name(actor_id);
+            let emitter_name = self.actor_name(emitter_id);
+            let outcome = self.roll_save_vs_condition(
+                actor_id,
+                emanation.save,
+                emanation.dc,
+                emanation.condition,
+            );
+            if outcome.passed() {
+                if emanation.grants_immunity_on_save {
+                    self.emanation_immunities
+                        .insert((actor_id, emitter_id, emanation.name));
+                    self.log(format!(
+                        "  {}: {} holds out against {}, and is done with it.",
+                        emanation.name, victim_name, emitter_name
+                    ));
+                } else {
+                    self.log(format!(
+                        "  {}: {} holds out against {}.",
+                        emanation.name, victim_name, emitter_name
+                    ));
+                }
+                continue;
+            }
+            self.log(format!(
+                "  {}: {} {}.",
+                emanation.name, victim_name, emanation.flavor
+            ));
+            ApplyCondition {
+                actor_id,
+                condition: emanation.condition,
+                timer: emanation.timer,
+            }
+            .apply(self);
+        }
     }
 
     /// Advance the initiative queue and fire `round_end` if the queue

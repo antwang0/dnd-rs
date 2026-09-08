@@ -2,6 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GHAST_BITE, GHAST_CLAWS, GHAST_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
+use crate::engine::emanations::GHAST_STENCH;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -40,12 +41,16 @@ use std::sync::LazyLock;
 /// WIS 10, CHA 8. Speed 30. Senses: Darkvision 60. Languages: Common.
 /// Size Medium. CR 2. XP: 450 per RAW.
 ///
-/// **Stench** (RAW): every creature within 5 ft starts of its turn
-/// makes a DC 10 CON save or is Poisoned until the start of its next
-/// turn. Omitted here as a deliberate scope cut — the engine doesn't
-/// surface start-of-turn aura saves through a generic chassis yet,
-/// and the load-bearing combat clauses (claws-paralysis + bite + multi)
-/// already define the ghast's per-round footprint. **Turning Defiance**
+/// **Stench** (SRD 5.2): "Constitution Saving Throw: DC 10, any
+/// creature that starts its turn in a 5-foot Emanation originating from
+/// the ghast. Failure: Poisoned until the start of its next turn.
+/// Success: immune to this ghast's Stench for 24 hours." Carried, on
+/// `emanations::GHAST_STENCH`. It is what makes closing with a ghast
+/// cost something before a single claw lands — Poisoned is
+/// disadvantage on every attack roll the victim makes for the round —
+/// and the success clause is the one way out, which is why the fight
+/// swings on whether the party's front line makes one DC 10 save.
+/// **Turning Defiance**
 /// (RAW: advantage on saves vs being turned, applies to the ghast and
 /// undead within 30 ft) is similarly flavor-only — the engine's Turn
 /// Undead lane runs through a single save, not the radius aura.
@@ -79,6 +84,9 @@ pub static GHAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Standard undead damage envelope: poison immunity.
         damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // RAW **Stench** — see the template docstring above and
+        // `emanations::GHAST_STENCH`.
+        emanations: std::slice::from_ref(&GHAST_STENCH),
         // Standard undead condition envelope: Charmed / Poisoned
         // immunity. Distinct from the ghoul (which doesn't carry
         // Poisoned immunity in some MM printings — we standardize on
@@ -135,5 +143,22 @@ mod tests {
         );
         assert!(a.effectively_immune_to_condition(Condition::Charmed));
         assert!(a.effectively_immune_to_condition(Condition::Poisoned));
+    }
+
+    /// The ghast's Stench, pinned against the printed stat block. The
+    /// success clause is the field worth pinning: it is the only thing
+    /// separating this trait from the hezrou's, and dropping it would
+    /// silently turn a CR 2 toll into a CR 8 tax.
+    #[test]
+    fn ghast_carries_its_stench() {
+        let a = make();
+        let [stench] = a.emanations() else {
+            panic!("the ghast has exactly one emanation");
+        };
+        assert_eq!(stench.name, "Stench");
+        assert_eq!(stench.radius_feet, 5);
+        assert_eq!(stench.dc, 10);
+        assert_eq!(stench.condition, Condition::Poisoned);
+        assert!(stench.grants_immunity_on_save);
     }
 }

@@ -3104,6 +3104,28 @@ pub struct CreatureTemplate {
     /// save, the Total Cover gate, the teardown on death — never see the
     /// action.
     pub swallow: Option<&'static crate::engine::swallow::SwallowProfile>,
+    /// This creature's 5e **Emanation** traits — the sentences that make
+    /// standing near it cost a saving throw at the top of your turn.
+    /// Empty for almost the whole bestiary.
+    ///
+    /// Three SRD 5.2 stat blocks carry one: the Ghast's and the
+    /// Hezrou's *Stench* and the Sea Hag's *Vile Appearance*. See
+    /// `crate::engine::emanations::Emanation` for the clauses they
+    /// differ on, and the module docstring above it for why an
+    /// emanation is neither an aura, an action, nor a zone.
+    ///
+    /// A slice rather than an `Option`, unlike `attach` and `swallow`
+    /// next door, because nothing in RAW says a creature has only one —
+    /// the clause is a line in the Traits block, and stat blocks
+    /// routinely carry several. The two neighbours are `Option` because
+    /// each of them installs a *link*, and a creature cannot be latched
+    /// onto two things at once.
+    ///
+    /// Declared on the creature rather than wired at the encounter for
+    /// the reason the sheet exists, and read from exactly one site:
+    /// `EncounterInstance::apply_hostile_emanations`, at the top of
+    /// every *other* creature's turn.
+    pub emanations: &'static [crate::engine::emanations::Emanation],
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -4249,6 +4271,7 @@ impl CreatureTemplate {
             mountable: false,
             attach: None,
             swallow: None,
+            emanations: &[],
             features: HashSet::new(),
             regen_per_round: 0,
             regen_suppressors: HashSet::new(),
@@ -4854,6 +4877,9 @@ pub struct ActorInstance {
     /// This creature's 5e attach clause, copied from its template. See
     /// `CreatureTemplate::attach`.
     attach: Option<&'static crate::engine::attachment::AttachProfile>,
+    /// This creature's 5e Emanation traits, copied from its template.
+    /// See `CreatureTemplate::emanations`.
+    emanations: &'static [crate::engine::emanations::Emanation],
     /// The creature this actor is currently latched onto, or `None` for
     /// everything that fights at arm's length.
     ///
@@ -5434,6 +5460,7 @@ impl ActorInstance {
             mounted_on: None,
             ridden_by: None,
             attach: ct.attach,
+            emanations: ct.emanations,
             attached_to: None,
             swallow: ct.swallow,
             swallowed_by: None,
@@ -9624,6 +9651,13 @@ impl ActorInstance {
     /// The creature this actor is latched onto, if any.
     pub fn attached_to(&self) -> Option<usize> {
         self.attached_to
+    }
+
+    /// This creature's 5e Emanation traits, or an empty slice for the
+    /// overwhelming majority that are only dangerous when they swing.
+    /// See `CreatureTemplate::emanations`.
+    pub fn emanations(&self) -> &'static [crate::engine::emanations::Emanation] {
+        self.emanations
     }
 
     /// Write the attach link. Crate-visible rather than public for the

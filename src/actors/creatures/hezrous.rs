@@ -2,6 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HEZROU_BITE, HEZROU_CLAW, HEZROU_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
+use crate::engine::emanations::HEZROU_STENCH;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
@@ -23,12 +24,16 @@ use std::sync::LazyLock;
 /// condition (demon physiology). Magic Resistance gives advantage on
 /// every save vs spells / magical effects.
 ///
-/// The Stench aura RAW (10ft sickening burst at start of nearby creature's
-/// turn) is omitted — the engine has no per-tick aura hook surface that
-/// matches the "start of *other* creature's turn" trigger cleanly, and
-/// the load-bearing combat clause is the heavy multi + resistance
-/// envelope. Future polish bucket if a `start_of_other_turn_aura` hook
-/// lands.
+/// **Stench** (SRD 5.2: "Constitution Saving Throw: DC 16, any creature
+/// that starts its turn in a 10-foot Emanation originating from the
+/// hezrou. Failure: Poisoned until the start of its next turn") is
+/// carried, on `emanations::HEZROU_STENCH`. This is where the hezrou's
+/// CR-8 identity actually lives, and the clause that says so is the one
+/// that *isn't* printed: unlike the ghast's stench, RAW gives it no
+/// success line, so there is no making the save once and being done.
+/// Anyone who wants to fight it in melee rolls a DC 16 Constitution
+/// save at the top of every round for as long as the fight lasts, and
+/// the two-tile-wider radius means backing off one step does not help.
 pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&HEZROU_BITE);
@@ -75,6 +80,11 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Demons brush off poison-related conditions (RAW: poisoned
         // immunity from demon physiology).
         condition_immunities: HashSet::from([Condition::Poisoned]),
+        // RAW **Stench** — see the template docstring above and
+        // `emanations::HEZROU_STENCH`. The hezrou's own Poisoned
+        // immunity is what keeps a pair of them from sickening each
+        // other, on the rare board where they end up on opposite teams.
+        emanations: std::slice::from_ref(&HEZROU_STENCH),
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects. Read by `compute_save_mode`.
         has_magic_resistance: true,
@@ -148,5 +158,28 @@ mod tests {
         assert!(a.find_action("bite + claws").is_some());
         assert!(a.find_action("hezrou bite").is_some());
         assert!(a.find_action("hezrou claw").is_some());
+    }
+
+    /// The hezrou's Stench, and specifically the sentence RAW does not
+    /// print on it: there is no success clause, so nobody standing in
+    /// the reek ever stops rolling for it.
+    #[test]
+    fn hezrou_carries_a_stench_with_no_way_out_of_it() {
+        let a = ActorInstance::from_creature_template(
+            &HEZROU_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let [stench] = a.emanations() else {
+            panic!("the hezrou has exactly one emanation");
+        };
+        assert_eq!(stench.name, "Stench");
+        assert_eq!(stench.radius_feet, 10);
+        assert_eq!(stench.dc, 16);
+        assert_eq!(stench.condition, Condition::Poisoned);
+        assert!(!stench.grants_immunity_on_save);
     }
 }

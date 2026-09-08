@@ -89269,3 +89269,289 @@ fn control_water_declines_a_burst_with_no_water_in_it() {
         "a burst on dry ground parts nothing, however wet the far corner is"
     );
 }
+
+// ---------------------------------------------------------------------
+// engine::emanations — the start-of-turn traits
+// ---------------------------------------------------------------------
+
+/// The load-bearing fact about a stench: it costs the front line a
+/// saving throw for standing where the front line has to stand, and it
+/// fires out of the *victim's* initiative slot rather than the ghast's.
+///
+/// Swept over seeds because the outcome is a die roll. What is asserted
+/// is the shape rather than any one roll — over enough seeds both
+/// branches show up, and neither branch ever leaves the victim
+/// somewhere between poisoned and not.
+#[test]
+fn a_turn_opened_next_to_a_ghast_is_paid_for_in_a_constitution_save() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+
+    let mut poisoned = 0;
+    let mut clean = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let ghast = e
+            .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&fighter].has_condition(Condition::Poisoned),
+            "nothing has happened yet"
+        );
+        // The ghast's own turn does nothing to anybody: RAW's trigger
+        // is the victim's turn opening, not the emitter's.
+        e.start_turn_for(ghast);
+        assert!(!e.actors[&fighter].has_condition(Condition::Poisoned));
+
+        e.start_turn_for(fighter);
+        if e.actors[&fighter].has_condition(Condition::Poisoned) {
+            poisoned += 1;
+        } else {
+            clean += 1;
+        }
+    }
+    assert!(poisoned > 0, "a DC 10 save is not a formality");
+    assert!(clean > 0, "nor is it unmakeable");
+}
+
+/// RAW's success clause — "the target is immune to this ghast's Stench
+/// for 24 hours" — is what makes the ghast's stench a toll and the
+/// hezrou's a tax. Once the save lands, the trait is over for that
+/// pairing: no further rolls, and no way back into it.
+#[test]
+fn making_the_save_once_ends_a_ghasts_stench_for_good() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let _ghast = e
+            .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+
+        // Open turns until one of them is survived, then assert that no
+        // later turn ever bills the fighter again.
+        let mut banked = false;
+        for _ in 0..12 {
+            e.start_turn_for(fighter);
+            if !e.actors[&fighter].has_condition(Condition::Poisoned) {
+                banked = true;
+                break;
+            }
+        }
+        assert!(banked, "twelve DC 10 saves without a single success (seed {seed})");
+        for _ in 0..8 {
+            e.start_turn_for(fighter);
+            assert!(
+                !e.actors[&fighter].has_condition(Condition::Poisoned),
+                "the 24-hour clause is not a one-round reprieve (seed {seed})"
+            );
+        }
+    }
+}
+
+/// The hezrou's stench is the same trait with the success line struck
+/// out, and that single missing sentence is its whole CR-8 identity: a
+/// creature that stands next to it keeps rolling, and keeps failing
+/// eventually.
+#[test]
+fn a_hezrous_stench_never_stops_billing() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hezrous::HEZROU_TEMPLATE;
+
+    let mut ever_poisoned_late = false;
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let _hezrou = e
+            .instantiate_creature(&HEZROU_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(11, 6), 0, 0)
+            .unwrap();
+        // Burn ten turns; whatever happened on them, the trait is still
+        // live afterwards, which is what the missing success clause
+        // means.
+        for _ in 0..10 {
+            e.start_turn_for(fighter);
+        }
+        for _ in 0..10 {
+            e.start_turn_for(fighter);
+            if e.actors[&fighter].has_condition(Condition::Poisoned) {
+                ever_poisoned_late = true;
+            }
+        }
+    }
+    assert!(
+        ever_poisoned_late,
+        "twenty turns in, a DC 16 save should still be landing on somebody"
+    );
+}
+
+/// Three ways to walk through a sea hag's Vile Appearance untouched,
+/// and RAW spells out all three: be the wrong kind of creature, be
+/// unable to see her, or be out of the thirty feet.
+#[test]
+fn vile_appearance_reads_every_clause_of_its_own_sentence() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
+    use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
+
+    // "any Beast or Humanoid" — a golem has no face to be frightened
+    // with, and never rolls however long it stands there.
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let _hag = e
+            .instantiate_creature(&SEA_HAG_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let golem = e
+            .instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .unwrap();
+        for _ in 0..6 {
+            e.start_turn_for(golem);
+            assert!(!e.actors[&golem].has_condition(Condition::Frightened));
+        }
+    }
+
+    // "and can see the hag's true form" — a blinded fighter is standing
+    // in exactly the same tile and pays nothing.
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let _hag = e
+            .instantiate_creature(&SEA_HAG_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .unwrap();
+        for _ in 0..6 {
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+            e.start_turn_for(fighter);
+            assert!(
+                !e.actors[&fighter].has_condition(Condition::Frightened),
+                "you cannot recoil from a face you cannot see"
+            );
+        }
+    }
+
+    // "within 30 feet" — twelve tiles on this grid, so a fighter parked
+    // twenty tiles out is outside it.
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(40, 40, &[], seed);
+        let _hag = e
+            .instantiate_creature(&SEA_HAG_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(30, 5), 0, 0)
+            .unwrap();
+        for _ in 0..6 {
+            e.start_turn_for(fighter);
+            assert!(!e.actors[&fighter].has_condition(Condition::Frightened));
+        }
+    }
+}
+
+/// A sea hag with a line of sight to a humanoid inside thirty feet does
+/// frighten it — the positive control for the three negative ones
+/// above, so that test cannot pass by the trait being wired to nothing.
+#[test]
+fn vile_appearance_frightens_a_humanoid_that_can_see_her() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
+
+    let mut frightened_somewhere = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let _hag = e
+            .instantiate_creature(&SEA_HAG_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .unwrap();
+        e.start_turn_for(fighter);
+        if e.actors[&fighter].has_condition(Condition::Frightened) {
+            frightened_somewhere = true;
+            break;
+        }
+    }
+    assert!(frightened_somewhere, "a DC 11 save fails sometimes");
+}
+
+/// The two clauses that keep an emanation from being a board-wide
+/// hazard: it is scoped to enemies, and it stops when the emitter does.
+#[test]
+fn a_stench_spares_its_own_side_and_dies_with_its_owner() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+
+    // Same team: the skeleton shoulder to shoulder with the ghast is
+    // never billed, however many turns it opens there.
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let _ghast = e
+            .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        for _ in 0..6 {
+            e.start_turn_for(ally);
+            assert!(!e.actors[&ally].has_condition(Condition::Poisoned));
+        }
+    }
+
+    // A ghast that has been put down stops stinking — `is_combat_active`
+    // is the line, and it is the only clause of the emitter's own state
+    // the sweep reads.
+    for seed in 0..20u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let ghast = e
+            .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&ghast).unwrap().take_damage(9999);
+        assert!(!e.actors[&ghast].is_combat_active());
+        for _ in 0..6 {
+            e.start_turn_for(fighter);
+            assert!(!e.actors[&fighter].has_condition(Condition::Poisoned));
+        }
+    }
+}
+
+/// A creature that cannot be Poisoned at all is skipped rather than
+/// rolled for. RAW would have it roll and shrug the result off, which
+/// is the same outcome one log line louder — except for the success
+/// clause, which would let a zombie bank a permanent immunity to a
+/// hazard it was never in danger from.
+#[test]
+fn a_creature_immune_to_the_condition_never_rolls_for_the_emanation() {
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let _ghast = e
+        .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&zombie].effectively_immune_to_condition(Condition::Poisoned),
+        "the premise of the test"
+    );
+    let before = e.messages().len();
+    e.start_turn_for(zombie);
+    assert!(
+        !e.messages()[before..].iter().any(|m| m.contains("Stench")),
+        "no roll, no line: {:?}",
+        &e.messages()[before..]
+    );
+}
