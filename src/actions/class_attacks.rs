@@ -512,26 +512,38 @@ pub fn sneak_attack_dice_for_level(level: u32) -> u32 {
     level.div_ceil(2).max(1)
 }
 
-/// The largest sneak-attack pool `actor` could roll against *any*
-/// target — the level pool, plus the Inquisitive Rogue's Eye for
-/// Weakness three if they carry it.
+/// The largest sneak-attack pool `rogue_id` could roll on this board —
+/// the level pool, plus the Inquisitive Rogue's Eye for Weakness three
+/// when there is a target on the board carrying that rogue's own
+/// `Analyzed` mark.
 ///
 /// Read by the Cunning Strike primes, which are declared a turn before
 /// the swing that cashes them and so cannot know which target they will
-/// be priced against. The prime refuses only what can never fire under
-/// any target, which is the right conservatism for a gate asked that
-/// early: a level-1 Inquisitive rogue standing next to a creature they
-/// have read is holding four dice, and a gate that read the level alone
-/// would tell them they cannot afford a one-die trick.
-pub fn max_sneak_attack_dice(actor: &crate::actors::actor_template::ActorInstance) -> u32 {
-    let bonus = if actor
-        .has_passive_feature(crate::actions::class_features::EYE_FOR_WEAKNESS_TAG)
-    {
-        3
-    } else {
-        0
+/// be priced against. Both halves of the qualifier are load-bearing, and
+/// they pull in opposite directions:
+///
+///   - Reading the level alone would tell a level-1 Inquisitive rogue
+///     standing over a creature they have read — a four-die pool — that
+///     they cannot afford a one-die trick.
+///   - Adding the three unconditionally would let the same rogue prime
+///     against an unread target and watch the consume site decline it,
+///     which is the bonus action wasted and the prime left dangling.
+///
+/// Asking the board is what makes the gate agree with what the consume
+/// site will actually find, because the Analyzed mark is itself laid by
+/// a bonus action on an earlier turn: a rogue that has read a target has
+/// read it before the prime is declared, not between.
+pub fn max_sneak_attack_dice(encounter: &EncounterInstance, rogue_id: usize) -> u32 {
+    let Some(rogue) = encounter.actors.get(&rogue_id) else {
+        return 0;
     };
-    sneak_attack_dice_for_level(actor.level()) + bonus
+    let has_read_target = rogue
+        .has_passive_feature(crate::actions::class_features::EYE_FOR_WEAKNESS_TAG)
+        && encounter
+            .actors
+            .keys()
+            .any(|&tid| target_is_analyzed_by(encounter, rogue_id, tid));
+    sneak_attack_dice_for_level(rogue.level()) + if has_read_target { 3 } else { 0 }
 }
 
 /// 5e 2024 Rogue **Cunning Strike** consume site. Walks the active

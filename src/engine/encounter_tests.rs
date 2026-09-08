@@ -46245,6 +46245,61 @@ fn level_rogue_to(e: &mut EncounterInstance, rogue: usize, target: u32) {
     assert_eq!(e.actors[&rogue].level(), target, "level-up path stalled");
 }
 
+/// The Inquisitive Rogue's three extra dice count toward the prime gate
+/// only when there is a target on the board carrying that rogue's own
+/// `Analyzed` mark — which is what makes the gate agree with the pool
+/// the consume site will actually roll.
+///
+/// The mark is laid by a bonus action on an earlier turn, so a rogue who
+/// has read a target has read it before the prime is declared. Both
+/// directions matter: without the board question a level-3 Inquisitive
+/// rogue can prime a three-die Obscure against an unread target and
+/// watch the swing decline it, and without the three at all the same
+/// rogue standing over a target they *have* read is told it cannot
+/// afford a trick it can.
+#[test]
+fn eye_for_weakness_counts_toward_a_prime_only_against_a_target_it_has_read() {
+    use crate::actions::class_features::CUNNING_STRIKE_OBSCURE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rogues::INQUISITIVE_ROGUE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let rogue = e
+        .instantiate_creature(&INQUISITIVE_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    // Level 3: a two-die pool, one short of paying for Obscure's three.
+    level_rogue_to(&mut e, rogue, 3);
+    assert!(
+        !ActionExecutionInfo::new(&*CUNNING_STRIKE_OBSCURE, rogue, None, None, None)
+            .validate(&e),
+        "two dice cannot pay a three-die trick, however good the rogue's eye"
+    );
+    // Read the goblin. Five dice now, and the trick is affordable.
+    {
+        let g = e.actors.get_mut(&goblin).unwrap();
+        g.add_condition(Condition::Analyzed, ConditionTimer::Rounds(10));
+        g.set_condition_link(Condition::Analyzed, Some(rogue));
+    }
+    assert!(
+        ActionExecutionInfo::new(&*CUNNING_STRIKE_OBSCURE, rogue, None, None, None).validate(&e),
+        "a read target is three more dice, and the consume site will find them"
+    );
+    // A mark that belongs to somebody else is not this rogue's to spend.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .set_condition_link(Condition::Analyzed, Some(goblin));
+    assert!(
+        !ActionExecutionInfo::new(&*CUNNING_STRIKE_OBSCURE, rogue, None, None, None)
+            .validate(&e),
+        "another reader's mark buys this rogue nothing"
+    );
+}
+
 /// The two ends of a Cunning Strike agree about what it costs.
 ///
 /// The prime refuses a pool it cannot pay from, and the consume site

@@ -1695,9 +1695,8 @@ impl Action for CunningStrikePrime {
         // Strictly greater, matching the consume site: RAW's "you can't
         // reduce the number of dice rolled to less than 1" means a pool
         // exactly equal to the cost buys nothing.
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            crate::actions::class_attacks::max_sneak_attack_dice(a) > self.dice_cost
-        })
+        crate::actions::class_attacks::max_sneak_attack_dice(encounter, caster_id)
+            > self.dice_cost
     }
     fn side_effects(
         &self,
