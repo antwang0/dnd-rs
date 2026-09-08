@@ -573,8 +573,16 @@ impl App {
     /// while the highlight sits on a different one, and a preview that
     /// read the highlight would shade a sixty-foot cone and then cast a
     /// fifteen-foot one. Falls back to the selection when the input is
-    /// a bare coordinate, which is the ordinary case and the one the
-    /// selection is for.
+    /// a bare coordinate, which is the ordinary case, the one the
+    /// selection is for, and the one `bare_point_cast` casts.
+    ///
+    /// Shades nothing when the cast would be refused, which it asks by
+    /// building the cast and validating it rather than by re-deriving
+    /// the conditions. The shading is a promise about what the Enter
+    /// key will do, so the only way for it to stay honest is to ask the
+    /// Enter key's own question: a cone aimed past its own length is
+    /// out of reach, an unaffordable slot is unaffordable, and neither
+    /// should be drawn as though it were about to happen.
     fn previewed_area(&self) -> std::collections::HashSet<Coordinate> {
         let empty = std::collections::HashSet::new();
         let Some(prompt) = self.encounter.peek_prompt() else {
@@ -603,13 +611,57 @@ impl App {
                 .ok()
                 .map(|(_, a)| a)
         };
-        let Some(shape) = action.and_then(|a| a.targeting_schema().area_shape()) else {
+        let Some(action) = action else {
             return empty;
         };
+        let Some(shape) = action.targeting_schema().area_shape() else {
+            return empty;
+        };
+        let aei = ActionExecutionInfo::new(action, prompt.actor_id(), None, Some(vec![aim]), None);
+        if !aei.validate(&self.encounter) {
+            return empty;
+        }
         shape
             .tiles(actor.location(), actor.size(), aim)
             .into_iter()
             .collect()
+    }
+
+    /// The cast a bare `X,Y` means: the highlighted action, aimed at
+    /// that tile.
+    ///
+    /// The prompt's parser wants an action name in front of the tile,
+    /// so `12,5` on its own came back as *unknown or unavailable action
+    /// "12,5"* — while the target line above it read `cone of cold:
+    /// 60-foot cone. Type 'X,Y' to aim it through a tile, Enter to
+    /// cast.` and the map shaded the cone as the digits went in. Three
+    /// parts of the interface promised a cast the fourth refused. This
+    /// is the one that was wrong: the action is already named, by the
+    /// highlight, and making the player retype it is asking them to say
+    /// twice what they have said once.
+    ///
+    /// `None` when the input is not a lone coordinate or the highlight
+    /// does not take a point, which leaves the parser's own error to be
+    /// shown — a mistyped spell name must still read as a mistyped
+    /// spell name and not as a rejected tile.
+    fn bare_point_cast(&self, trimmed: &str) -> Option<ActionExecutionInfo> {
+        let prompt = self.encounter.peek_prompt()?;
+        let actor = self.encounter.actors.get(&prompt.actor_id())?;
+        if trimmed.split_whitespace().count() != 1 {
+            return None;
+        }
+        let aim = crate::engine::util::parse_coord(trimmed, actor.location())?;
+        let action = self.selected_action()?;
+        if !action.targeting_schema().takes_one_point() {
+            return None;
+        }
+        Some(ActionExecutionInfo::new(
+            action,
+            prompt.actor_id(),
+            None,
+            Some(vec![aim]),
+            None,
+        ))
     }
 
     fn target_line(&self) -> Option<String> {
@@ -795,8 +847,29 @@ impl App {
                     self.tmp_message.clear();
                 }
                 Err(e) => {
-                    self.tmp_message.clear();
-                    self.tmp_message.push_str(&e.to_string());
+                    // A bare tile against the highlighted action, which
+                    // is what the target line has been telling the
+                    // player to type all along — see `bare_point_cast`.
+                    match self.bare_point_cast(trimmed) {
+                        Some(aei) if aei.validate(&self.encounter) => {
+                            self.encounter.pop_prompt();
+                            self.encounter.push_action(aei);
+                            self.input_str.clear();
+                            self.tmp_message.clear();
+                        }
+                        Some(aei) => {
+                            self.tmp_message.clear();
+                            let _ = write!(
+                                self.tmp_message,
+                                "'{}' cannot be aimed there",
+                                aei.action().name()
+                            );
+                        }
+                        None => {
+                            self.tmp_message.clear();
+                            self.tmp_message.push_str(&e.to_string());
+                        }
+                    }
                 }
             }
             return Tick::Continue;
@@ -1140,6 +1213,100 @@ mod tests {
         app.input_str.clear();
         app.input_str.push_str("wobble 12,5");
         assert!(app.previewed_area().is_empty());
+    }
+
+    /// A bare tile casts the highlighted action at it.
+    ///
+    /// The other half of the preview: the map shades the cone as the
+    /// digits go in and the target line says *type 'X,Y' to aim it
+    /// through a tile, Enter to cast*, so Enter has to cast it. It used
+    /// to answer `unknown or unavailable action "12,5"`, because the
+    /// prompt's parser wants the spell named in front of the tile —
+    /// which the highlight has already named.
+    #[test]
+    fn a_bare_tile_casts_the_highlighted_action() {
+        let mut app = app_with_empty_board();
+        let wiz = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the wizard fits");
+        let goblin = spawn(&mut app, 1, Coordinate::new(9, 5));
+        let idx = app.encounter.actors[&wiz]
+            .actions
+            .iter()
+            .position(|a| a.name() == "burning hands")
+            .expect("a wizard carries burning hands");
+        app.selected_action_idx = idx;
+        app.encounter.process_stack();
+        assert!(app.encounter.peek_prompt().is_some(), "the wizard is asked");
+
+        app.input_str.push_str("9,5");
+        // The preview and the cast agree on the shape, which is the
+        // property the two share a parse for.
+        let previewed = app.previewed_area();
+        assert!(previewed.contains(&Coordinate::new(9, 5)));
+        app.handle_enter();
+        assert!(
+            app.tmp_message.is_empty(),
+            "no complaint: {}",
+            app.tmp_message
+        );
+        assert!(app.input_str.is_empty(), "the input was consumed");
+        assert!(
+            app.encounter.peek_prompt().is_none(),
+            "and the prompt was answered rather than re-asked"
+        );
+        let before = app.encounter.actors[&goblin].hitpoints();
+        app.encounter.process_stack();
+        assert!(
+            app.encounter
+                .messages()
+                .iter()
+                .any(|m| m.contains("burning hands")),
+            "the highlighted spell is the one that went off"
+        );
+        assert!(
+            app.encounter.actors[&goblin].hitpoints() < before,
+            "and the goblin standing in the cone felt it"
+        );
+    }
+
+    /// A mistyped spell name still reads as one.
+    ///
+    /// The bare-tile path is a fallback for input the parser rejected,
+    /// so it has to stay out of the way of every other rejection: a
+    /// player who typed `wobble 12,5` has misspelled a spell, not aimed
+    /// one, and the message must say so rather than blaming the tile.
+    #[test]
+    fn a_mistyped_name_is_not_read_as_a_bare_tile() {
+        let mut app = app_with_empty_board();
+        app.encounter
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the wizard fits");
+        spawn(&mut app, 1, Coordinate::new(9, 5));
+        app.encounter.process_stack();
+
+        app.input_str.push_str("wobble 9,5");
+        app.handle_enter();
+        assert!(
+            app.tmp_message.contains("wobble"),
+            "the name is what was wrong: {}",
+            app.tmp_message
+        );
+        assert!(
+            app.encounter.peek_prompt().is_some(),
+            "and the prompt is still waiting"
+        );
     }
 
     /// A single-target action previews nothing however valid the tile
